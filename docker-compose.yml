@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cp
+      POSTGRES_PASSWORD: cp
+      POSTGRES_DB: cp
+    ports:
+      - "5433:5432"
+    volumes:
+      - cp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cp -d cp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cp_postgres_data:
