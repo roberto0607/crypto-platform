@@ -8,5 +8,8 @@ pnpm-lock.yaml
 # Claude
 .claude/
 
+# Test artifacts
+cookies.txt
+
 # OS
 .DS_Store
