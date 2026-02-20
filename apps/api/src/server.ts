@@ -14,6 +14,7 @@
 
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
+import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -28,11 +29,20 @@ import { auditLog } from "./audit/log";
 import { requireUser } from "./auth/requireUser";
 import { newRefreshToken, storeRefreshToken } from "./auth/refreshTokens";
 import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "./auth/refreshRepo";
+import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "./auth/cookieOptions";
 
 async function start() {
   const app = Fastify({ logger: true });
 
   await app.register(cookie);
+
+  // TODO: tighten origins for production (use env-based allowlist)
+  await app.register(cors, {
+    origin: ["http://localhost:5173", "http://localhost:3000"],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
 
   await app.register(jwt, {
     secret: config.jwtAccessSecret,
@@ -151,13 +161,7 @@ async function start() {
       expiresAt: refreshExpiresAt,
     });
 
-    reply.setCookie("refresh_token", refreshToken, {
-      httpOnly: true,
-      secure: config.isProd,
-      sameSite: "lax",
-      path: "/auth/refresh",
-      expires: refreshExpiresAt,
-    });
+    reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieSetOptions(refreshExpiresAt));
 
     await auditLog({
       actorUserId: user.id,
@@ -180,15 +184,13 @@ async function start() {
 
   // -------- Phase 1.4: Refresh (rotate refresh token, issue new access token) --------
   app.post("/auth/refresh", async (req, reply) => {
-    const refreshToken = (req.cookies as any)?.refresh_token as
-      | string
-      | undefined;
+    const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
 
-    if (!refreshToken) {
+    if (!rawToken) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
     }
 
-    const tokenHash = createHash("sha256").update(refreshToken).digest("hex");
+    const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
     const row = await findValidRefreshTokenByHash(tokenHash);
     if (!row) {
@@ -211,13 +213,7 @@ async function start() {
     });
 
     // Set new cookie
-    reply.setCookie("refresh_token", newToken, {
-      httpOnly: true,
-      secure: config.isProd,
-      sameSite: "lax",
-      path: "/auth/refresh",
-      expires: refreshExpiresAt,
-    });
+    reply.setCookie(REFRESH_COOKIE_NAME, newToken, refreshCookieSetOptions(refreshExpiresAt));
 
     // Issue new access token (lookup role from users)
     const userRes = await pool.query<{ role: string }>(
@@ -247,12 +243,12 @@ async function start() {
 
   // -------- Phase 1.5: Logout (revoke refresh token + clear cookie) --------
   app.post("/auth/logout", async (req, reply) => {
-    const refreshToken = (req.cookies as any)?.refresh_token as string | undefined;
+    const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
 
     let actorUserId: string | null = null;
 
-    if (refreshToken) {
-      const tokenHash = createHash("sha256").update(refreshToken).digest("hex");
+    if (rawToken) {
+      const tokenHash = createHash("sha256").update(rawToken).digest("hex");
       const row = await findValidRefreshTokenByHash(tokenHash);
       if (row) {
         actorUserId = row.user_id;
@@ -260,12 +256,7 @@ async function start() {
       }
     }
 
-    reply.clearCookie("refresh_token", {
-      path: "/auth/refresh",
-      httpOnly: true,
-      secure: config.isProd,
-      sameSite: "lax",
-    });
+    reply.clearCookie(REFRESH_COOKIE_NAME, refreshCookieClearOptions);
 
     await auditLog({
       actorUserId,

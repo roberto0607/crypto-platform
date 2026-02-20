@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "auth:smoke": "bash scripts/auth-smoke.sh"
   },
   "keywords": [],
   "author": "",
@@ -14,6 +15,7 @@
   "packageManager": "pnpm@10.30.0",
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.2.0",
     "@fastify/jwt": "^10.0.0",
     "argon2": "^0.44.0",
     "dotenv": "^17.3.1",

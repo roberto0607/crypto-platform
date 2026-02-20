@@ -5,16 +5,14 @@
  * The pool is created at import time (module-level side effect), so every
  * module that imports `pool` shares the same set of connections.
  *
- * SECURITY: The hardcoded fallback connection string contains plaintext
- * credentials. This is acceptable for local development only. In production,
- * always set the database URL via environment variables or a secrets manager.
+ * DATABASE_URL must be set in the environment (or .env). The process will
+ * fail fast at startup if it is missing.
  */
 
 import { Pool } from "pg";
+import { requireEnv } from "../config";
 
-// Falls back to the local Docker Compose database when the env var is unset.
-const connectionString =
-    process.env.DATABASE_URL ?? "postgresql://cp:cp@localhost:5433/cp";
+const connectionString = requireEnv("DATABASE_URL");
 
 export const pool = new Pool({
     connectionString,
