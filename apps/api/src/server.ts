@@ -24,9 +24,10 @@ import { pool } from "./db/pool";
 
 import { normalizeEmail } from "./auth/normalizeEmail";
 import { hashPassword, verifyPassword } from "./auth/password";
-import { createUser, findUserByEmailNormalized } from "./auth/userRepo";
+import { createUser, findUserByEmailNormalized, findUserById, updateUserRole, listUsers } from "./auth/userRepo";
 import { auditLog } from "./audit/log";
 import { requireUser } from "./auth/requireUser";
+import { requireRole } from "./auth/requireRole";
 import { newRefreshToken, storeRefreshToken } from "./auth/refreshTokens";
 import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "./auth/refreshRepo";
 import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "./auth/cookieOptions";
@@ -269,6 +270,75 @@ async function start() {
     return reply.code(200).send({ ok: true });
   });
   // ------------------------------------------------------------------------
+
+  // -------- Phase 2: Admin Routes (RBAC) --------
+  const changeRoleParams = z.object({ id: z.string().uuid() });
+  const changeRoleBody = z.object({ role:z.enum(["USER", "ADMIN"]) });
+
+  app.get("/admin/users", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const users = await listUsers();
+
+    return reply.send({
+        ok: true,
+        users: users.map((u) => ({
+            id: u.id,
+            email: u.email,
+            role: u.role,
+            created_at: u.created_at,
+        })),
+    });
+  });
+
+  app.patch("/admin/users/:id/role", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const paramsParsed = changeRoleParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({
+            ok: false,
+            error: "invalid_input",
+            details: paramsParsed.error.flatten(),
+        });
+    }
+
+    const bodyParsed = changeRoleBody.safeParse(req.body);
+    if (!bodyParsed.success) {
+        return reply.code(400).send({
+            ok: false,
+            error: "invalid_input",
+            details: bodyParsed.error?.flatten(),
+        });
+    }
+
+    const targetUser = await findUserById(paramsParsed.data.id);
+    if (!targetUser) {
+        return reply.code(404).send({ ok: false, error: "user_not_found" });
+    }
+
+    if (targetUser.role === bodyParsed.data.role) {
+        return reply.code(409).send({ ok: false, error: "role_unchanged"});
+    }
+
+    const oldRole = targetUser.role;
+    const updated = await updateUserRole(targetUser.id, bodyParsed.data.role);
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    await auditLog({
+        actorUserId: actor.id,
+        action: "admin.role_change",
+        targetType: "user",
+        targetId: targetUser.id,
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { oldRole, newRole: bodyParsed.data.role },
+    });
+
+    return reply.send({
+        ok: true,
+        user: { id: updated!.id, email: updated!.email, role: updated!.role },
+    });
+  });
+  // -----------------------------------------------
 
   const port = config.port;
   const host = config.host;

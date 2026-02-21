@@ -41,3 +41,42 @@ export async function findUserByEmailNormalized(emailNormalized: string): Promis
 
     return result.rows[0] ?? null;
 }
+
+export async function findUserById(id: string): Promise<UserRow | null> {
+    const result = await pool.query<UserRow>(
+        `
+        SELECT id, email, email_normalized, role, created_at, updated_at
+        FROM users
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [id]
+    );
+
+    return result.rows[0] ?? null;
+}
+
+export async function updateUserRole(id: string, role: string): Promise<UserRow | null> {
+    const result = await pool.query<UserRow>(
+        `
+        UPDATE users SET role = $1, updated_at = now()
+        WHERE id = $2
+        RETURNING id, email, email_normalized, role, created_at, updated_at
+        `,
+        [role, id]
+    );
+
+    return result.rows[0] ?? null;
+}
+
+export async function listUsers(): Promise<UserRow[]> {
+    const result = await pool.query<UserRow>(
+        `
+        SELECT id, email, email_normalized, role, created_at, updated_at
+        FROM users
+        ORDER BY created_at
+        `
+    );
+
+    return result.rows;
+}
