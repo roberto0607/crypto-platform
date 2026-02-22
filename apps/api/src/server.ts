@@ -31,6 +31,9 @@ import { requireRole } from "./auth/requireRole";
 import { newRefreshToken, storeRefreshToken } from "./auth/refreshTokens";
 import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "./auth/refreshRepo";
 import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "./auth/cookieOptions";
+import { createAsset, findAssetById, listActiveAssets } from "./assets/assetRepo";
+import {createWallet, listWalletsByUserId, findWalletById, creditWallet, debitWallet} from "./wallets/walletRepo";
+import { listLedgerEntries } from "./wallets/ledgerRepo";
 
 async function start() {
   const app = Fastify({ logger: true });
@@ -339,6 +342,191 @@ async function start() {
     });
   });
   // -----------------------------------------------
+
+  // -------- Phase 3: Assets & Wallets --------
+  const createAssetBody = z.object({
+    symbol: z.string().min(1).max(10),
+    name: z.string().min(1).max(100),
+    decimals: z.number().int().min(0).max(18).default(8),
+  });
+
+  const createWalletBody = z.object({
+    assetId: z.string().uuid(),
+  });
+
+  const walletIdParams = z.object({ id: z.string().uuid() });
+
+  const creditDebitBody = z.object({
+    amount: z.string().regex(/^\d+(\.\d{1,8})?$/, "Invalid amount format"),
+  });
+
+  // POST /admin/assets - create a new asset (admin only)
+  app.post("/admin/assets", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const parsed = createAssetBody.safeParse(req.body);
+    if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    try {
+        const asset = await createAsset(parsed.data);
+
+        const actor = (req as any).user as { id: string; role: string };
+        await auditLog({
+            actorUserId: actor.id,
+            action: "admin.asset_create",
+            targetType: "asset",
+            targetId: asset.id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: { symbol: asset.symbol },
+        });
+
+        return reply.code(201).send({ ok: true, asset });
+    } catch (err: any) {
+        if (err?.code === "23505") {
+            return reply.code(409).send({ ok: false, error: "asset_already_exists" });
+        }
+        throw err;
+    }
+  });
+
+  // GET /assets - list active assets (authenticated)
+  app.get("/assets", { preHandler: requireUser }, async (req, reply) => {
+    const assets = await listActiveAssets();
+    return reply.send({ ok: true, assets });
+  });
+
+  // POST /wallets - create a wallet for an asset (authenticated)
+  app.post("/wallets", { preHandler: requireUser }, async (req, reply) => {
+    const parsed = createWalletBody.safeParse(req.body);
+    if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const asset = await findAssetById(parsed.data.assetId);
+    if (!asset || !asset.is_active) {
+        return reply.code(404).send({ ok: false, error: "asset_not_found" });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    try {
+        const wallet = await createWallet(actor.id, parsed.data.assetId);
+        return reply.code(201).send({ ok: true, wallet });
+    } catch(err: any) {
+        if (err?.code === "23505") {
+            return reply.code(409).send({ ok: false, error: "wallet_already_exists" });
+        }
+        req.log.error({ err }, "create_wallet_failed");
+        return reply.code(500).send({ ok: false, error: "server_error "});
+    }
+  });
+
+  // GET /wallets - list user's wallets (authenticated)
+  app.get("/wallets", { preHandler: requireUser }, async (req, reply) => {
+    const actor = (req as any).user as { id: string; role: string };
+    const wallets = await listWalletsByUserId(actor.id);
+    return reply.send({ ok: true, wallets });
+  });
+
+  // GET /wallets/:id/transactions - ledger entries (authenticated, ownership check)
+  app.get("/wallets/:id/transactions", { preHandler: requireUser }, async (req, reply) => {
+    const paramsParsed = walletIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const wallet = await findWalletById(paramsParsed.data.id);
+    if (!wallet) {
+        return reply.code(404).send({ ok: false, error: "wallet_not_found" });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+    if (wallet.user_id !== actor.id) {
+        return reply.code(403).send({ ok: false, error: "forbidden" });
+    }
+
+    const entries = await listLedgerEntries(wallet.id);
+    return reply.send({ ok: true, entries });
+  });
+
+  // POST /admin/wallets/:id/credit - admin credit (DB transaction)
+  app.post("/admin/wallets/:id/credit", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const paramsParsed = walletIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const bodyParsed = creditDebitBody.safeParse(req.body);
+    if (!bodyParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: bodyParsed.error.flatten() });
+    }
+
+    const wallet = await findWalletById(paramsParsed.data.id);
+    if (!wallet) {
+        return reply.code(404).send({ ok: false, error: "wallet_not_found" });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    const result = await creditWallet(wallet.id, bodyParsed.data.amount, "ADMIN_CREDIT", { creditBy: actor.id });
+
+    await auditLog({
+        actorUserId: actor.id,
+        action: "admin.wallet_credit",
+        targetType: "wallet",
+        targetId: wallet.id,
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { amount: bodyParsed.data.amount, ledgerEntryId: result.ledgerEntryId },
+    });
+
+    return reply.send({ ok: true, wallet: result.wallet, ledgerEntryId: result.ledgerEntryId });
+  });
+
+  // POST /admin/wallets/:id/debit - admin debit (DB transaction, balance check)
+  app.post("/admin/wallets/:id/debit", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const paramsParsed = walletIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const bodyParsed = creditDebitBody.safeParse(req.body);
+    if (!bodyParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: bodyParsed.error.flatten() });
+    }
+
+    const wallet = await findWalletById(paramsParsed.data.id);
+    if (!wallet) {
+        return reply.code(404).send({ ok: false, error: "wallet_not_found" });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    try {
+        const result = await debitWallet(wallet.id, bodyParsed.data.amount, "ADMIN_DEBIT", { debitedBy: actor.id });
+
+        await auditLog({
+            actorUserId: actor.id,
+            action: "admin.wallet_debit",
+            targetType: "wallet",
+            targetId: wallet.id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: { amount: bodyParsed.data.amount, ledgerEntryId: result.ledgerEntryId },
+        });
+
+        return reply.send({ ok: true, wallet: result.wallet, ledgerEntryId: result.ledgerEntryId });
+    } catch (err: any) {
+        if (err?.message === "insufficient_balance") {
+            return reply.code(400).send({ ok: false, error: "insufficient_balance" });
+        }
+        throw err;
+    }
+  });
 
   const port = config.port;
   const host = config.host;
