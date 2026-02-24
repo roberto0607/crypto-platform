@@ -1,10 +1,12 @@
 import { pool } from "../db/pool";
+import type { PoolClient } from "pg";
 
 export type WalletRow = {
     id: string;
     user_id: string;
     asset_id: string;
     balance: string;
+    reserved: string;
     created_at: string;
     updated_at: string;
 };
@@ -14,12 +16,14 @@ export type WalletWithAsset = WalletRow & {
     name: string;
 };
 
+/* ───── Existing functions (updated SELECTs to include reserved) ───── */
+
 export async function createWallet(userId: string, assetId: string): Promise<WalletRow> {
     const result = await pool.query<WalletRow>(
         `
         INSERT INTO wallets (user_id, asset_id)
         VALUES ($1, $2)
-        RETURNING id, user_id, asset_id, balance, created_at, updated_at
+        RETURNING id, user_id, asset_id, balance, reserved, created_at, updated_at
         `,
         [userId, assetId]
     );
@@ -30,7 +34,7 @@ export async function createWallet(userId: string, assetId: string): Promise<Wal
 export async function listWalletsByUserId(userId: string): Promise<WalletWithAsset[]> {
     const result = await pool.query<WalletWithAsset>(
         `
-        SELECT w.id, w.user_id, w.asset_id, w.balance, w.created_at, w.updated_at,
+        SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
                a.symbol, a.name
         FROM wallets w
         JOIN assets a ON a.id = w.asset_id
@@ -46,7 +50,7 @@ export async function listWalletsByUserId(userId: string): Promise<WalletWithAss
 export async function findWalletById(id: string): Promise<WalletRow | null> {
     const result = await pool.query<WalletRow>(
         `
-        SELECT id, user_id, asset_id, balance, created_at, updated_at
+        SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
         FROM wallets
         WHERE id = $1
         LIMIT 1
@@ -69,7 +73,7 @@ export async function creditWallet(
         await client.query("BEGIN");
 
         const lockResult = await client.query<WalletRow>(
-            `SELECT id, user_id, asset_id, balance, created_at, updated_at
+            `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
              FROM wallets WHERE id = $1 FOR UPDATE `,
              [walletId]
         );
@@ -121,7 +125,7 @@ export async function debitWallet(
 
         const lockResult = await client.query<WalletRow>(
             `
-            SELECT id, user_id, asset_id, balance, created_at, updated_at
+            SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
             FROM wallets WHERE id = $1 FOR UPDATE`,
             [walletId]
         );
@@ -131,7 +135,7 @@ export async function debitWallet(
             throw new Error("wallet_not_found");
         }
 
-        if (parseFloat(wallet.balance) < parseFloat(amount)) {
+        if (parseFloat(wallet.balance) - parseFloat(wallet.reserved) < parseFloat(amount)) {
             throw new Error("insufficient_balance");
         }
 
@@ -163,6 +167,171 @@ export async function debitWallet(
     } finally {
         client.release();
     }
+}
+
+/* ───── New Phase 4 functions (transaction-aware, take PoolClient) ───── */
+
+export async function findWalletByUserAndAsset(
+    client: PoolClient,
+    userId: string,
+    assetId: string,
+): Promise<WalletRow | null> {
+    const result = await client.query<WalletRow>(
+        `
+        SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+        FROM wallets
+        WHERE user_id = $1 AND asset_id = $2
+        LIMIT 1
+        `,
+        [userId, assetId]
+    );
+
+    return result.rows[0] ?? null;
+}
+
+export async function lockWalletsForUpdate(
+    client: PoolClient,
+    walletIds: string[]
+): Promise<Map<string, WalletRow>> {
+    const sorted = [...walletIds].sort();
+    const result = await client.query<WalletRow>(
+        `
+        SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+        FROM wallets
+        WHERE id = ANY($1)
+        ORDER BY id
+        FOR UPDATE
+        `,
+        [sorted]
+    );
+
+    const map = new Map<string, WalletRow>();
+    for (const row of result.rows) {
+        map.set(row.id, row);
+    }
+    return map;
+}
+
+export async function reserveFunds(
+    client: PoolClient,
+    walletId: string,
+    amount: string
+): Promise<void> {
+    await client.query(
+        `UPDATE wallets SET reserved = reserved + $1 WHERE id = $2`,
+        [amount, walletId]
+    );
+}
+
+export async function releaseReserved(
+    client: PoolClient,
+    walletId: string,
+    amount: string
+): Promise<void> {
+    await client.query(
+        `UPDATE wallets SET reserved = reserved - $1 WHERE id = $2`,
+        [amount, walletId]
+    );
+}
+
+export async function creditWalletTx(
+    client: PoolClient,
+    walletId: string,
+    amount: string,
+    entryType: string,
+    refId?: string,
+    refType?: string,
+    metadata: any = {}
+): Promise<void> {
+    const newBalance = await client.query<{ balance: string }>(
+        `
+        UPDATE wallets SET balance = balance + $1
+        WHERE id = $2
+        RETURNING balance
+        `,
+        [amount, walletId]
+    );
+
+    const balanceAfter = newBalance.rows[0].balance;
+
+    await client.query(
+        `
+        INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        `,
+        [walletId, entryType, amount, balanceAfter, refId ?? null, refType ?? null, JSON.stringify(metadata)]
+    );
+}
+
+export async function debitAvailableTx(
+    client: PoolClient,
+    walletId: string,
+    amount: string,
+    entryType: string,
+    refId?: string,
+    refType?: string,
+    metadata: any = {}
+): Promise<void> {
+    const result = await client.query<{ balance: string; reserved: string }>(
+        `
+        SELECT balance, reserved FROM wallets WHERE id = $1
+        `,
+        [walletId]
+    );
+
+    const wallet = result.rows[0];
+    const available = parseFloat(wallet.balance) - parseFloat(wallet.reserved);
+    if (available < parseFloat(amount)) {
+        throw new Error("insufficient_balance");
+    }
+
+    const newBalance = await client.query<{ balance: string }>(
+        `
+        UPDATE wallets SET balance = balance - $1
+        WHERE id = $2
+        RETURNING balance
+        `,
+        [amount, walletId]
+    );
+
+    const balanceAfter = newBalance.rows[0].balance;
+
+    await client.query(
+        `
+        INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        `,
+        [walletId, entryType, `-${amount}`, balanceAfter, refId ?? null, refType ?? null, JSON.stringify(metadata)]
+    );
+}
+
+export async function consumeReservedAndDebitTx(
+    client: PoolClient,
+    walletId: string,
+    amount: string,
+    entryType: string,
+    refId?: string,
+    refType?: string,
+    metadata: any = {}
+): Promise<void> {
+    const newBalance = await client.query<{ balance: string }>(
+        `
+        UPDATE wallets SET reserved = reserved - $1, balance = balance - $1
+        WHERE id = $2
+        RETURNING balance
+        `,
+        [amount, walletId]
+    );
+
+    const balanceAfter = newBalance.rows[0].balance;
+
+    await client.query(
+        `
+        INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        `,
+        [walletId, entryType, `-${amount}`, balanceAfter, refId ?? null, refType ?? null, JSON.stringify(metadata)]
+    );
 }
 
 

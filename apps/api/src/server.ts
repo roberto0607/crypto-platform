@@ -34,6 +34,11 @@ import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions
 import { createAsset, findAssetById, listActiveAssets } from "./assets/assetRepo";
 import {createWallet, listWalletsByUserId, findWalletById, creditWallet, debitWallet} from "./wallets/walletRepo";
 import { listLedgerEntries } from "./wallets/ledgerRepo";
+import { createPair, findPairById, listActivePairs, setLastPrice } from "./trading/pairRepo";
+import { findOrderById, listOrdersByUserId } from "./trading/orderRepo";
+import { listTradesByOrderId } from "./trading/tradeRepo";
+import { placeOrder, cancelOrder } from "./trading/matchingEngine";
+
 
 async function start() {
   const app = Fastify({ logger: true });
@@ -419,7 +424,7 @@ async function start() {
             return reply.code(409).send({ ok: false, error: "wallet_already_exists" });
         }
         req.log.error({ err }, "create_wallet_failed");
-        return reply.code(500).send({ ok: false, error: "server_error "});
+        return reply.code(500).send({ ok: false, error: "server_error" });
     }
   });
 
@@ -527,6 +532,301 @@ async function start() {
         throw err;
     }
   });
+
+  // -------- Phase 4: Trading Engine --------
+  const createPairBody = z.object({
+    baseAssetId: z.string().uuid(),
+    quoteAssetId: z.string().uuid(),
+    symbol: z.string().min(1).max(20),
+    feeBps: z.number().int().min(0).max(10000).default(30),
+  });
+
+  const pairIdParams = z.object({ id: z.string().uuid() });
+
+  const setPriceBody = z.object({
+    price: z.string().regex(/^\d+(\.\d{1,8})?$/),
+  });
+
+  const placeOrderBody = z.object({
+    pairId: z.string().uuid(),
+    side: z.enum(["BUY", "SELL"]),
+    type: z.enum(["MARKET", "LIMIT"]),
+    qty: z.string().regex(/^\d+(\.\d{1,8})?$/),
+    limitPrice: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+  }).refine(
+    (data) => {
+      if (data.type === "LIMIT" && !data.limitPrice) return false;
+      if (data.type === "MARKET" && data.limitPrice) return false;
+      return true;
+    },
+    { message: "limitPrice required for LIMIT orders, forbidden for MARKET orders" }
+  );
+
+  const orderIdParams = z.object({ id: z.string().uuid() });
+
+  const listOrdersQuery = z.object({
+    pairId: z.string().uuid().optional(),
+    status: z.string().optional(),
+  });
+
+  const bookQuery = z.object({
+    levels: z.coerce.number().int().min(1).max(100).default(20),
+  });
+
+  // POST /admin/pairs — Create trading pair
+  app.post("/admin/pairs", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const parsed = createPairBody.safeParse(req.body);
+    if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const baseAsset = await findAssetById(parsed.data.baseAssetId);
+    if (!baseAsset) {
+        return reply.code(404).send({ ok: false, error: "asset_not_found" });
+    }
+
+    const quoteAsset = await findAssetById(parsed.data.quoteAssetId);
+    if (!quoteAsset) {
+        return reply.code(404).send({ ok: false, error: "asset_not_found" });
+    }
+
+    try {
+        const pair = await createPair(parsed.data);
+
+        const actor = (req as any).user as { id: string; role: string };
+        await auditLog({
+            actorUserId: actor.id,
+            action: "pair.create",
+            targetType: "trading_pair",
+            targetId: pair.id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, feeBps: parsed.data.feeBps },
+        });
+
+        return reply.code(201).send({ ok: true, pair });
+    } catch (err: any) {
+        if (err?.code === "23505") {
+            return reply.code(409).send({ ok: false, error: "pair_already_exists" });
+        }
+        throw err;
+    }
+  });
+
+  // PATCH /admin/pairs/:id/price — Set last_price
+  app.patch("/admin/pairs/:id/price", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const paramsParsed = pairIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const bodyParsed = setPriceBody.safeParse(req.body);
+    if (!bodyParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: bodyParsed.error.flatten() });
+    }
+
+    const existing = await findPairById(paramsParsed.data.id);
+    if (!existing) {
+        return reply.code(404).send({ ok: false, error: "pair_not_found" });
+    }
+
+    const pair = await setLastPrice(paramsParsed.data.id, bodyParsed.data.price);
+
+    const actor = (req as any).user as { id: string; role: string };
+    await auditLog({
+        actorUserId: actor.id,
+        action: "pair.price_update",
+        targetType: "trading_pair",
+        targetId: paramsParsed.data.id,
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { pairId: paramsParsed.data.id, oldPrice: existing.last_price, newPrice: bodyParsed.data.price },
+    });
+
+    return reply.send({ ok: true, pair });
+  });
+
+  // GET /pairs — List active pairs
+  app.get("/pairs", { preHandler: requireUser }, async (req, reply) => {
+    const pairs = await listActivePairs();
+    return reply.send({ ok: true, pairs });
+  });
+
+  // POST /orders — Place order (matching-lite)
+  app.post("/orders", { preHandler: requireUser }, async (req, reply) => {
+    const parsed = placeOrderBody.safeParse(req.body);
+    if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    try {
+        const result = await placeOrder(
+            actor.id,
+            parsed.data.pairId,
+            parsed.data.side,
+            parsed.data.type,
+            parsed.data.qty,
+            parsed.data.limitPrice
+        );
+
+        await auditLog({
+            actorUserId: actor.id,
+            action: "order.create",
+            targetType: "order",
+            targetId: result.order.id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: {
+                orderId: result.order.id,
+                pairId: parsed.data.pairId,
+                side: parsed.data.side,
+                type: parsed.data.type,
+                qty: parsed.data.qty,
+                limitPrice: parsed.data.limitPrice ?? null,
+                status: result.order.status,
+                fillCount: result.fills.length,
+            },
+        });
+
+        return reply.code(201).send({ ok: true, order: result.order, fills: result.fills });
+    } catch (err: any) {
+        const knownErrors = ["pair_not_found", "wallet_not_found", "no_price_available", "insufficient_balance"];
+        if (knownErrors.includes(err?.message)) {
+            const code = ["pair_not_found", "wallet_not_found"].includes(err.message) ? 404 : 400;
+            return reply.code(code).send({ ok: false, error: err.message });
+        }
+        throw err;
+    }
+  });
+
+  // GET /orders — List user's orders
+  app.get("/orders", { preHandler: requireUser }, async (req, reply) => {
+    const actor = (req as any).user as { id: string; role: string };
+    const queryParsed = listOrdersQuery.safeParse(req.query);
+    const filters = queryParsed.success ? queryParsed.data : {};
+    const orders = await listOrdersByUserId(actor.id, filters);
+    return reply.send({ ok: true, orders });
+  });
+
+  // GET /orders/:id — Order detail + fills
+  app.get("/orders/:id", { preHandler: requireUser }, async (req, reply) => {
+    const paramsParsed = orderIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const order = await findOrderById(paramsParsed.data.id);
+    if (!order) {
+        return reply.code(404).send({ ok: false, error: "order_not_found" });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+    if (order.user_id !== actor.id) {
+        return reply.code(403).send({ ok: false, error: "forbidden" });
+    }
+
+    const trades = await listTradesByOrderId(order.id);
+    return reply.send({ ok: true, order, trades });
+  });
+
+  // DELETE /orders/:id — Cancel open/partial order
+  app.delete("/orders/:id", { preHandler: requireUser }, async (req, reply) => {
+    const paramsParsed = orderIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const actor = (req as any).user as { id: string; role: string };
+
+    try {
+        const result = await cancelOrder(actor.id, paramsParsed.data.id);
+
+        await auditLog({
+            actorUserId: actor.id,
+            action: "order.cancel",
+            targetType: "order",
+            targetId: paramsParsed.data.id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: { orderId: paramsParsed.data.id, pairId: result.order.pair_id, releasedAmount: result.releasedAmount },
+        });
+
+        return reply.send({ ok: true, order: result.order, releasedAmount: result.releasedAmount });
+    } catch (err: any) {
+        if (err?.message === "order_not_found") {
+            return reply.code(404).send({ ok: false, error: "order_not_found" });
+        }
+        if (err?.message === "forbidden") {
+            return reply.code(403).send({ ok: false, error: "forbidden" });
+        }
+        if (err?.message === "order_not_cancelable") {
+            return reply.code(400).send({ ok: false, error: "order_not_cancelable" });
+        }
+        throw err;
+    }
+  });
+
+  // GET /pairs/:id/book — Aggregated order book
+  app.get("/pairs/:id/book", { preHandler: requireUser }, async (req, reply) => {
+    const paramsParsed = pairIdParams.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
+    }
+
+    const pair = await findPairById(paramsParsed.data.id);
+    if (!pair) {
+        return reply.code(404).send({ ok: false, error: "pair_not_found" });
+    }
+
+    const queryParsed = bookQuery.safeParse(req.query);
+    const levels = queryParsed.success ? queryParsed.data.levels : 20;
+
+    const bidsResult = await pool.query<{ price: string; qty: string; count: string }>(
+        `
+        SELECT limit_price AS price,
+               SUM(qty - qty_filled)::text AS qty,
+               COUNT(*)::text AS count
+        FROM orders
+        WHERE pair_id = $1
+          AND side = 'BUY'
+          AND type = 'LIMIT'
+          AND status IN ('OPEN', 'PARTIALLY_FILLED')
+        GROUP BY limit_price
+        ORDER BY limit_price DESC
+        LIMIT $2
+        `,
+        [paramsParsed.data.id, levels]
+    );
+
+    const asksResult = await pool.query<{ price: string; qty: string; count: string }>(
+        `
+        SELECT limit_price AS price,
+               SUM(qty - qty_filled)::text AS qty,
+               COUNT(*)::text AS count
+        FROM orders
+        WHERE pair_id = $1
+          AND side = 'SELL'
+          AND type = 'LIMIT'
+          AND status IN ('OPEN', 'PARTIALLY_FILLED')
+        GROUP BY limit_price
+        ORDER BY limit_price ASC
+        LIMIT $2
+        `,
+        [paramsParsed.data.id, levels]
+    );
+
+    return reply.send({
+        ok: true,
+        book: { bids: bidsResult.rows, asks: asksResult.rows },
+    });
+  });
+  // -----------------------------------------------
 
   const port = config.port;
   const host = config.host;
