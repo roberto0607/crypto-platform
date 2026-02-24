@@ -24,6 +24,7 @@ import jwt from "@fastify/jwt";
 import { config } from "./config";
 import { pool } from "./db/pool";
 
+import metricsPlugin from "./metrics";
 import healthRoutes from "./routes/healthRoutes";
 import authRoutes from "./routes/authRoutes";
 import adminRoutes from "./routes/adminRoutes";
@@ -62,6 +63,9 @@ async function start() {
   await app.register(jwt, {
     secret: config.jwtAccessSecret,
   });
+
+  // ── Observability ──
+  await app.register(metricsPlugin);
 
   // ── Route modules ──
   await app.register(healthRoutes);
