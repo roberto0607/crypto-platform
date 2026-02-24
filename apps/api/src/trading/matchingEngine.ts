@@ -1,3 +1,66 @@
+/**
+ * Matching Engine — core order placement and cancellation logic.
+ *
+ * ════════════════════════════════════════════════════════════════════
+ * TRANSACTION ISOLATION & LOCKING STRATEGY
+ * ════════════════════════════════════════════════════════════════════
+ *
+ * Every placeOrder / cancelOrder call runs inside a single PostgreSQL
+ * transaction.  Two levels of row-level locks provide isolation:
+ *
+ *   Level 1 — Pair lock  (`SELECT ... FOR UPDATE` on `trading_pairs`)
+ *     Acquired first in every transaction.  Serializes all matching
+ *     and cancel activity for a given pair, preventing two transactions
+ *     from reading the same resting order simultaneously.  Different
+ *     pairs are fully independent and never contend.
+ *
+ *   Level 2 — Wallet locks  (`SELECT ... FOR UPDATE` on `wallets`)
+ *     Acquired after the pair lock and always in deterministic UUID
+ *     sort order.  Prevents balance races when multiple fills touch
+ *     the same wallet (e.g. a maker with orders in several pairs).
+ *
+ * ── Deadlock prevention ──────────────────────────────────────────
+ *
+ * Deadlocks are prevented by a strict lock acquisition order:
+ *
+ *   1. Pair lock first   — one row per transaction, so no cycle is
+ *      possible between pairs.  All participants in a given pair
+ *      queue on the same row.
+ *
+ *   2. Wallet locks second — sorted by wallet UUID (ascending).
+ *      Two transactions that need the same set of wallets will
+ *      acquire them in the same order, satisfying the classic
+ *      ordered-resource deadlock-avoidance invariant.
+ *
+ * Because Level 1 fully serializes per-pair matching, Level 2 only
+ * comes into play for cross-pair contention on shared wallets —
+ * and the sort order guarantees those locks are also deadlock-free.
+ *
+ * ── Future: narrowing the pair lock ──────────────────────────────
+ *
+ * The pair-level `FOR UPDATE` lock is a coarse serialization point:
+ * it means only one order per pair can match at a time.  This is
+ * correct and simple but limits throughput for high-volume pairs.
+ *
+ * Possible narrower strategies (analysis only — not implemented):
+ *
+ *   • Advisory locks per price level — `pg_advisory_xact_lock(pair_id,
+ *     price_bucket)` would allow concurrent matching at non-overlapping
+ *     price levels.  Risk: two MARKET orders may still compete for the
+ *     same best-price resting order, so the innermost fill loop would
+ *     need `FOR UPDATE SKIP LOCKED` or optimistic-retry semantics.
+ *
+ *   • Row-level `FOR UPDATE SKIP LOCKED` on individual resting orders
+ *     — each matcher locks only the rows it fills.  Highly concurrent,
+ *     but requires careful handling of partial batches and retry on
+ *     skipped rows to preserve price-time priority.
+ *
+ * Both alternatives add complexity.  The current pair lock is the
+ * right choice until benchmarking shows per-pair throughput is a
+ * bottleneck (hundreds of orders/second on a single pair).
+ * ════════════════════════════════════════════════════════════════════
+ */
+
 import { pool } from "../db/pool";
 import { lockPairForUpdate } from "./pairRepo";
 import {
@@ -54,20 +117,23 @@ export async function placeOrder(
     try {
         await client.query("BEGIN");
 
-        // Phase A: Lock pair, validate
+        // ── Phase A: Lock pair (Level 1) ──
+        // Serializes all matching for this pair.  Every concurrent
+        // placeOrder/cancelOrder on the same pair_id will queue here.
         const pair = await lockPairForUpdate(client, pairId);
         if (!pair || !pair.is_active) throw new Error("pair_not_found");
         if (type === "MARKET" && !pair.last_price) throw new Error("no_price_available");
 
-        //Phase B: Find user's wallets (non-locking read)
+        // ── Phase B: Find user's wallets (non-locking read) ──
         const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id);
         const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id);
         if (!baseWallet || !quoteWallet) throw new Error("wallet_not_found");
 
-        //Phase C+D: Incrementally scan book and build execution plan
-        //  - Price filtering pushed into SQL (LIMIT taker orders only)
-        //  - Row count capped per batch (avoids loading entire book)
-        //  - Cursor-based keyset pagination for multi-batch iteration
+        // ── Phase C+D: Incrementally scan book and build execution plan ──
+        // Reads resting orders under the pair lock (no competing matcher
+        // can consume them).  Price filtering and self-trade prevention
+        // are pushed into SQL.  Cursor-based keyset pagination caps
+        // memory usage per batch.
         const plan: FillPlan[] = [];
         let remaining = D(qty);
         const bookSide: "BUY" | "SELL" = side === "BUY" ? "SELL" : "BUY";
@@ -115,7 +181,7 @@ export async function placeOrder(
             remaining = ZERO;
         }
 
-        //Phase E: Check affordability
+        // ── Phase E: Check affordability ──
         if (type === "MARKET") {
             if (side === "BUY") {
                 let totalCost = ZERO;
@@ -145,7 +211,12 @@ export async function placeOrder(
             }
         }
 
-        //Phase F: Collect all wallet IDs, lock in sorted order
+        // ── Phase F: Lock wallets (Level 2) ──
+        // Collect every wallet that will be debited/credited, then lock
+        // them all in a single `FOR UPDATE` sorted by UUID.  The sort
+        // order is critical: it guarantees that two concurrent
+        // transactions touching overlapping wallet sets will acquire
+        // locks in the same order, preventing deadlocks.
         const walletIdSet = new Set<string>([baseWallet.id, quoteWallet.id]);
 
         for (const entry of plan) {
@@ -160,13 +231,13 @@ export async function placeOrder(
 
         await lockWalletsForUpdate(client, [...walletIdSet].sort());
 
-        //Phase G: Reserve funds for LIMIT orders
+        // ── Phase G: Reserve funds for LIMIT orders ──
         let reservedConsumed = ZERO;
         if (type === "LIMIT") {
             await reserveFunds(client, reserveWalletId!, toFixed8(reserveAmount));
         }
 
-        //Phase H: Create the order row
+        // ── Phase H: Create the order row ──
         const order = await createOrder(client, {
             userId,
             pairId,
@@ -179,7 +250,8 @@ export async function placeOrder(
             reservedAmount: toFixed8(reserveAmount),
         });
 
-        //Phase I: Exectue book fills
+        // ── Phase I: Execute book fills ──
+        // All wallet locks are held — balance mutations are safe.
         const fills: TradeRow[] = [];
         let lastFillPrice: Decimal | null = null;
 
@@ -273,7 +345,7 @@ export async function placeOrder(
             lastFillPrice = fillPrice
         }
 
-        //Phase J: System fill (MARKET only)
+        // ── Phase J: System fill (MARKET only) ──
         if (systemFill) {
             const { fillQty, fillPrice, quoteAmt, feeAmt } = systemFill;
             const sysQtyStr = toFixed8(fillQty);
@@ -312,7 +384,7 @@ export async function placeOrder(
             lastFillPrice = fillPrice;
         }
 
-        //Phase K: Finalize order
+        // ── Phase K: Finalize order ──
         const totalFilled = D(qty).minus(remaining);
         let finalStatus: string;
         if (totalFilled.gte(D(qty))) {
@@ -334,7 +406,7 @@ export async function placeOrder(
             if (excess.gt(0)) await releaseReserved(client, reserveWalletId!, toFixed8(excess));
         }
 
-        //Phase L: update pair.last_price
+        // ── Phase L: Update pair.last_price ──
         if (lastFillPrice !== null) {
             await client.query(
                 `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
@@ -342,7 +414,7 @@ export async function placeOrder(
             );
         }
 
-        //Phase M: Post-trade financial integrity verification
+        // ── Phase M: Post-trade financial integrity verification ──
         if (fills.length > 0) {
             const involvedOrderIds = [order.id, ...plan.map((e) => e.resting.id)];
             await verifyPostTradeInvariants(
@@ -363,6 +435,18 @@ export async function placeOrder(
     }
 }
 
+/**
+ * Cancel a resting order, releasing any un-consumed reserved funds.
+ *
+ * Locking order mirrors placeOrder:
+ *   1. Pair lock (Level 1) — serializes with concurrent matches
+ *   2. Wallet lock (Level 2) — protects reserved-funds release
+ *
+ * Double-check pattern: a non-locking read validates basic eligibility
+ * before acquiring the pair lock, then the order is re-read under
+ * `FOR UPDATE` to guard against races (e.g. the order was filled
+ * between the two reads).
+ */
 export async function cancelOrder(
     userId: string,
     orderId: string
@@ -372,22 +456,26 @@ export async function cancelOrder(
     try{
         await client.query("BEGIN");
 
-        //Plain SELECT to get pair_id
+        // Non-locking read — fast-reject invalid/unauthorized requests
+        // before acquiring the pair lock.
         const order = await findOrderById(orderId);
         if (!order) throw new Error("order_not_found");
         if (order.user_id !== userId) throw new Error("forbidden");
         if (["FILLED", "CANCELED", "REJECTED"].includes(order.status)) throw new Error("order_not_cancelable");
 
-        //Lock pair to serialize with matching
+        // Level 1 — pair lock (same row placeOrder locks)
         await lockPairForUpdate(client, order.pair_id);
 
-        //Re-read under lock
+        // Re-read under FOR UPDATE — order may have been filled or
+        // canceled by a concurrent placeOrder that held the pair lock
+        // while we were waiting.
         const lockedOrder = await findOrderByIdForUpdate(client, orderId);
         if (!lockedOrder) throw new Error("order_not_found");
         if (["FILLED", "CANCELED", "REJECTED"].includes(lockedOrder.status)) {
             throw new Error("order_not_cancelable");
         }
 
+        // Level 2 — wallet lock (single wallet, so sort is trivial)
         const releasable = D(lockedOrder.reserved_amount).minus(D(lockedOrder.reserved_consumed));
         if (releasable.gt(0) && lockedOrder.reserved_wallet_id) {
             await lockWalletsForUpdate(client, [lockedOrder.reserved_wallet_id]);
