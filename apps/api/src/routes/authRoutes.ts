@@ -29,8 +29,8 @@ const loginBody = z.object({
 // ── Plugin (registered with prefix "/auth") ──
 const authRoutes: FastifyPluginAsync = async (app) => {
 
-  // POST /auth/register
-  app.post("/register", async (req, reply) => {
+  // POST /auth/register — rate limit: 3/min per IP
+  app.post("/register", { config: { rateLimit: { max: 3, timeWindow: 60_000 } } }, async (req, reply) => {
     const parsed = registerBody.safeParse(req.body);
 
     if (!parsed.success) {
@@ -69,8 +69,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  // POST /auth/login
-  app.post("/login", async (req, reply) => {
+  // POST /auth/login — rate limit: 5/min per IP
+  app.post("/login", { config: { rateLimit: { max: 5, timeWindow: 60_000 } } }, async (req, reply) => {
     const parsed = loginBody.safeParse(req.body);
 
     if (!parsed.success) {

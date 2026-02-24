@@ -48,8 +48,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ ok: true, pairs });
   });
 
-  // POST /orders — Place order (matching-lite)
-  app.post("/orders", { preHandler: requireUser }, async (req, reply) => {
+  // POST /orders — Place order (matching-lite) — rate limit: 60/min per IP
+  app.post("/orders", { preHandler: requireUser, config: { rateLimit: { max: 60, timeWindow: 60_000 } } }, async (req, reply) => {
     const parsed = placeOrderBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
