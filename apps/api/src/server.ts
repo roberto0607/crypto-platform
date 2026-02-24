@@ -22,6 +22,7 @@ import rateLimit from "@fastify/rate-limit";
 import jwt from "@fastify/jwt";
 
 import { config } from "./config";
+import { pool } from "./db/pool";
 
 import healthRoutes from "./routes/healthRoutes";
 import authRoutes from "./routes/authRoutes";
@@ -68,6 +69,27 @@ async function start() {
   await app.register(adminRoutes, { prefix: "/admin" });
   await app.register(walletRoutes);
   await app.register(tradingRoutes);
+
+  // ── Graceful shutdown ──
+  const shutdown = async (signal: string) => {
+    app.log.info({ signal }, "Shutdown signal received, closing server…");
+    try {
+      await app.close();
+      app.log.info("Fastify closed");
+    } catch (err) {
+      app.log.error({ err }, "Error closing Fastify");
+    }
+    try {
+      await pool.end();
+      app.log.info("PG pool drained");
+    } catch (err) {
+      app.log.error({ err }, "Error draining PG pool");
+    }
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 
   // ── Start ──
   const port = config.port;

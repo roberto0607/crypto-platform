@@ -12,6 +12,17 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
     return { ok: res.rows[0]?.ok === 1 };
   });
 
+  app.get("/health/pool", async () => {
+    return {
+      ok: true,
+      pool: {
+        totalCount: pool.totalCount,
+        idleCount: pool.idleCount,
+        waitingCount: pool.waitingCount,
+      },
+    };
+  });
+
   if (!config.isProd) {
     app.get("/dev/jwt-test", async () => {
       const token = app.jwt.sign(
