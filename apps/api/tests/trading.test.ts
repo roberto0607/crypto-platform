@@ -587,3 +587,237 @@ describe("Self-trade prevention", () => {
     await app.inject({ method: "DELETE", url: `/orders/${buyOrder.id}`, headers: { authorization: `Bearer ${stpToken}` } });
   });
 });
+
+describe("Financial integrity — precision & invariants", () => {
+  // Uses a pair with real fees (30 bps) to exercise invariant checks
+  let makerToken: string;
+  let takerToken: string;
+  let fiPairId: string;
+  let fiBaseId: string;
+  let fiQuoteId: string;
+  const fiUid = Math.random().toString(36).slice(2, 7);
+
+  /** Helper: get wallet for a token+asset */
+  async function walletFor(token: string, assetId: string) {
+    const res = await app.inject({
+      method: "GET", url: "/wallets",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return (res.json().wallets as Array<{ id: string; asset_id: string; balance: string; reserved: string }>)
+      .find((w) => w.asset_id === assetId)!;
+  }
+
+  beforeAll(async () => {
+    const maker = await registerAndLogin(app, "fi-maker");
+    makerToken = maker.accessToken;
+    const taker = await registerAndLogin(app, "fi-taker");
+    takerToken = taker.accessToken;
+
+    // Assets
+    const btcRes = await app.inject({
+      method: "POST", url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `F${fiUid}`, name: "BTC-FI", decimals: 8 },
+    });
+    fiBaseId = btcRes.json().asset.id;
+
+    const usdRes = await app.inject({
+      method: "POST", url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `G${fiUid}`, name: "USD-FI", decimals: 2 },
+    });
+    fiQuoteId = usdRes.json().asset.id;
+
+    // Pair with 30 bps fee
+    const pairRes = await app.inject({
+      method: "POST", url: "/admin/pairs",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { baseAssetId: fiBaseId, quoteAssetId: fiQuoteId, symbol: `H${fiUid}`, feeBps: 30 },
+    });
+    fiPairId = pairRes.json().pair.id;
+
+    await app.inject({
+      method: "PATCH", url: `/admin/pairs/${fiPairId}/price`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { price: "50000" },
+    });
+
+    // Create + fund wallets for both users
+    for (const { token, base, quote } of [
+      { token: makerToken, base: "1000", quote: "100000000" },
+      { token: takerToken, base: "1000", quote: "100000000" },
+    ]) {
+      const bw = await app.inject({
+        method: "POST", url: "/wallets",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { assetId: fiBaseId },
+      });
+      const qw = await app.inject({
+        method: "POST", url: "/wallets",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { assetId: fiQuoteId },
+      });
+      await app.inject({
+        method: "POST", url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { amount: base },
+      });
+      await app.inject({
+        method: "POST", url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { amount: quote },
+      });
+    }
+  });
+
+  it("8-decimal precision trade: invariants pass, balances correct", async () => {
+    // Maker SELL: 0.00000001 BTC (1 satoshi) @ $99999.99999999
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${makerToken}` },
+      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+
+    // Taker BUY: matches at edge precision
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${takerToken}` },
+      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order, fills } = buyRes.json();
+
+    // Should match — invariant checks run inside the transaction
+    expect(fills).toHaveLength(1);
+    expect(order.status).toBe("FILLED");
+    expect(fills[0].qty).toBe("0.00000001");
+    expect(fills[0].price).toBe("99999.99999999");
+
+    // Wallet balances should remain non-negative
+    const takerBase = await walletFor(takerToken, fiBaseId);
+    const takerQuote = await walletFor(takerToken, fiQuoteId);
+    expect(parseFloat(takerBase.balance)).toBeGreaterThanOrEqual(0);
+    expect(parseFloat(takerQuote.balance)).toBeGreaterThanOrEqual(0);
+    expect(parseFloat(takerBase.reserved)).toBeGreaterThanOrEqual(0);
+    expect(parseFloat(takerQuote.reserved)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("high-value trade with fees: debit/credit balance holds", async () => {
+    // Capture balances before
+    const makerBaseBefore = await walletFor(makerToken, fiBaseId);
+    const makerQuoteBefore = await walletFor(makerToken, fiQuoteId);
+    const takerBaseBefore = await walletFor(takerToken, fiBaseId);
+    const takerQuoteBefore = await walletFor(takerToken, fiQuoteId);
+
+    // Maker SELL: 10 BTC @ $50000 (quote = 500,000; fee = 500,000 * 30/10000 = 1500)
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${makerToken}` },
+      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "10", limitPrice: "50000" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+
+    // Taker BUY: 10 BTC @ $50000
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${takerToken}` },
+      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "10", limitPrice: "50000" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order, fills } = buyRes.json();
+
+    expect(fills).toHaveLength(1);
+    expect(order.status).toBe("FILLED");
+
+    // Verify trade amounts
+    const fill = fills[0];
+    expect(fill.qty).toBe("10.00000000");
+    expect(fill.price).toBe("50000.00000000");
+    expect(fill.quote_amount).toBe("500000.00000000");
+    expect(fill.fee_amount).toBe("1500.00000000");
+
+    // Verify balance changes
+    const makerBaseAfter = await walletFor(makerToken, fiBaseId);
+    const makerQuoteAfter = await walletFor(makerToken, fiQuoteId);
+    const takerBaseAfter = await walletFor(takerToken, fiBaseId);
+    const takerQuoteAfter = await walletFor(takerToken, fiQuoteId);
+
+    // Maker (seller): -10 base, +500000 quote
+    const makerBaseDelta = parseFloat(makerBaseAfter.balance) - parseFloat(makerBaseBefore.balance);
+    const makerQuoteDelta = parseFloat(makerQuoteAfter.balance) - parseFloat(makerQuoteBefore.balance);
+    expect(makerBaseDelta).toBeCloseTo(-10, 8);
+    expect(makerQuoteDelta).toBeCloseTo(500000, 2);
+
+    // Taker (buyer): +10 base, -(500000 + 1500) quote
+    const takerBaseDelta = parseFloat(takerBaseAfter.balance) - parseFloat(takerBaseBefore.balance);
+    const takerQuoteDelta = parseFloat(takerQuoteAfter.balance) - parseFloat(takerQuoteBefore.balance);
+    expect(takerBaseDelta).toBeCloseTo(10, 8);
+    expect(takerQuoteDelta).toBeCloseTo(-501500, 2);
+
+    // System-wide: base net = 0, quote net = -fee
+    expect(makerBaseDelta + takerBaseDelta).toBeCloseTo(0, 8);
+    expect(makerQuoteDelta + takerQuoteDelta).toBeCloseTo(-1500, 2);
+
+    // All wallets non-negative
+    for (const w of [makerBaseAfter, makerQuoteAfter, takerBaseAfter, takerQuoteAfter]) {
+      expect(parseFloat(w.balance)).toBeGreaterThanOrEqual(0);
+      expect(parseFloat(w.reserved)).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("partial fill at 8-decimal precision preserves invariants", async () => {
+    // Maker SELL: 0.12345678 BTC @ $67890.12345678
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${makerToken}` },
+      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.12345678", limitPrice: "67890.12345678" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+    const sellOrderId = sellRes.json().order.id;
+
+    // Taker BUY: only 0.05000000 BTC (partial fill)
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${takerToken}` },
+      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.05000000", limitPrice: "67890.12345678" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order: buyOrder, fills } = buyRes.json();
+
+    // Transaction succeeded (invariants passed inside)
+    expect(fills).toHaveLength(1);
+    expect(buyOrder.status).toBe("FILLED");
+    expect(fills[0].qty).toBe("0.05000000");
+
+    // Maker order partially filled
+    const sellState = await app.inject({
+      method: "GET", url: `/orders/${sellOrderId}`,
+      headers: { authorization: `Bearer ${makerToken}` },
+    });
+    const makerOrder = sellState.json().order;
+    expect(makerOrder.status).toBe("PARTIALLY_FILLED");
+    expect(makerOrder.qty_filled).toBe("0.05000000");
+
+    // reserved_consumed <= reserved_amount
+    expect(parseFloat(makerOrder.reserved_consumed)).toBeLessThanOrEqual(
+      parseFloat(makerOrder.reserved_amount),
+    );
+
+    // All wallets remain non-negative
+    for (const token of [makerToken, takerToken]) {
+      const base = await walletFor(token, fiBaseId);
+      const quote = await walletFor(token, fiQuoteId);
+      expect(parseFloat(base.balance)).toBeGreaterThanOrEqual(0);
+      expect(parseFloat(quote.balance)).toBeGreaterThanOrEqual(0);
+      expect(parseFloat(base.reserved)).toBeGreaterThanOrEqual(0);
+      expect(parseFloat(quote.reserved)).toBeGreaterThanOrEqual(0);
+    }
+
+    // Cleanup: cancel the remaining maker order
+    await app.inject({
+      method: "DELETE", url: `/orders/${sellOrderId}`,
+      headers: { authorization: `Bearer ${makerToken}` },
+    });
+  });
+});

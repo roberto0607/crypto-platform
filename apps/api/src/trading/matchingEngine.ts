@@ -20,6 +20,7 @@ import {
     debitAvailableTx,
     consumeReservedAndDebitTx,
 } from "../wallets/walletRepo";
+import { verifyPostTradeInvariants } from "./invariants";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
 
@@ -89,7 +90,7 @@ export async function placeOrder(
                 const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
                 const fillPrice = D(resting.limit_price!);
                 const quoteAmt = fillQty.mul(fillPrice);
-                const feeAmt = quoteAmt.mul(pair.fee_bps).div(BPS_DIVISOR);
+                const feeAmt = quoteAmt.mul(D(pair.fee_bps)).div(BPS_DIVISOR);
                 plan.push({
                     resting, fillQty, fillPrice, quoteAmt, feeAmt,
                     counterBaseId: "", counterQuoteId: "",
@@ -132,7 +133,7 @@ export async function placeOrder(
         let reserveWalletId: string | null = null;
         if (type === "LIMIT") {
             if (side === "BUY") {
-                reserveAmount = D(qty).mul(D(limitPrice!)).mul(D(10000 + pair.fee_bps)).div(BPS_DIVISOR);
+                reserveAmount = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(pair.fee_bps))).div(BPS_DIVISOR);
                 const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
                 if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
                 reserveWalletId = quoteWallet.id;
@@ -185,6 +186,12 @@ export async function placeOrder(
         for (const entry of plan) {
             const { resting, fillQty, fillPrice, quoteAmt, feeAmt } = entry;
 
+            // Pre-round financial amounts so derived values (debit = credit + fee)
+            // are computed from rounded operands, guaranteeing exact ledger balance.
+            const qtyStr = toFixed8(fillQty);
+            const quoteStr = toFixed8(quoteAmt);
+            const feeStr = toFixed8(feeAmt);
+
             const buyOrderId = side === "BUY" ? order.id : resting.id;
             const sellOrderId = side === "SELL" ? order.id : resting.id;
 
@@ -193,68 +200,70 @@ export async function placeOrder(
                 buyOrderId,
                 sellOrderId,
                 price: toFixed8(fillPrice),
-                qty: toFixed8(fillQty),
-                quoteAmount: toFixed8(quoteAmt),
-                feeAmount: toFixed8(feeAmt),
+                qty: qtyStr,
+                quoteAmount: quoteStr,
+                feeAmount: feeStr,
                 feeAssetId: pair.quote_asset_id,
                 isSystemFill: false,
             });
 
             if( side === "BUY") {
                 // Taker (buyer): debit quote (cost + fee), credit base
+                const costPlusFee = toFixed8(D(quoteStr).plus(D(feeStr)));
                 if (type === "MARKET") {
-                    await debitAvailableTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
-                        "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
+                    await debitAvailableTx(client, quoteWallet.id, costPlusFee,
+                        "TRADE_BUY", trade.id, "TRADE", { fee: feeStr });
                 } else{
-                    await consumeReservedAndDebitTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
-                        "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
-                    reservedConsumed = reservedConsumed.plus(quoteAmt).plus(feeAmt);
+                    await consumeReservedAndDebitTx(client, quoteWallet.id, costPlusFee,
+                        "TRADE_BUY", trade.id, "TRADE", { fee: feeStr });
+                    reservedConsumed = reservedConsumed.plus(D(costPlusFee));
                 }
-                await creditWalletTx(client, baseWallet.id, toFixed8(fillQty),
+                await creditWalletTx(client, baseWallet.id, qtyStr,
                     "TRADE_BUY", trade.id, "TRADE");
 
                 //Maker (seller): consume reserved base, credit quote
-                await consumeReservedAndDebitTx(client, entry.counterBaseId, toFixed8(fillQty),
+                await consumeReservedAndDebitTx(client, entry.counterBaseId, qtyStr,
                     "TRADE_SELL", trade.id, "TRADE");
-                await creditWalletTx(client, entry.counterQuoteId, toFixed8(quoteAmt),
+                await creditWalletTx(client, entry.counterQuoteId, quoteStr,
                     "TRADE_SELL", trade.id, "TRADE");
 
                 //update maker order (SELL maker: reserved in base, consumed = fillQty)
                 const newMakerFilled = D(resting.qty_filled).plus(fillQty);
                 const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
-                await updateOrderFill(client, resting.id, toFixed8(fillQty), toFixed8(fillQty), makerStatus);
+                await updateOrderFill(client, resting.id, qtyStr, qtyStr, makerStatus);
 
                 if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                    const newConsumed = D(resting.reserved_consumed).plus(fillQty);
+                    const newConsumed = D(resting.reserved_consumed).plus(D(qtyStr));
                     const excess = D(resting.reserved_amount).minus(newConsumed);
                     if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
                 }
             } else{
                 //Taker (seller): debit base, credit quote minus fee
+                const costMinusFee = toFixed8(D(quoteStr).minus(D(feeStr)));
                 if (type === "MARKET") {
-                    await debitAvailableTx(client, baseWallet.id, toFixed8(fillQty),
+                    await debitAvailableTx(client, baseWallet.id, qtyStr,
                         "TRADE_SELL", trade.id, "TRADE");
                 } else {
-                    await consumeReservedAndDebitTx(client, baseWallet.id, toFixed8(fillQty),
+                    await consumeReservedAndDebitTx(client, baseWallet.id, qtyStr,
                         "TRADE_SELL", trade.id, "TRADE");
-                    reservedConsumed = reservedConsumed.plus(fillQty);
+                    reservedConsumed = reservedConsumed.plus(D(qtyStr));
                 }
-                await creditWalletTx(client, quoteWallet.id, toFixed8(quoteAmt.minus(feeAmt)),
-                    "TRADE_SELL", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
+                await creditWalletTx(client, quoteWallet.id, costMinusFee,
+                    "TRADE_SELL", trade.id, "TRADE", { fee: feeStr });
 
                 //Maker (buyer): consume reserved quote, credit base
-                await consumeReservedAndDebitTx(client, entry.counterQuoteId, toFixed8(quoteAmt),
+                await consumeReservedAndDebitTx(client, entry.counterQuoteId, quoteStr,
                     "TRADE_BUY", trade.id, "TRADE");
-                await creditWalletTx(client, entry.counterBaseId, toFixed8(fillQty),
+                await creditWalletTx(client, entry.counterBaseId, qtyStr,
                     "TRADE_BUY", trade.id, "TRADE");
 
                 //Update maker order (BUY maker: reserved in quote, consumed = quoteAmt)
                 const newMakerFilled = D(resting.qty_filled).plus(fillQty);
                 const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
-                await updateOrderFill(client, resting.id, toFixed8(fillQty), toFixed8(quoteAmt), makerStatus);
+                await updateOrderFill(client, resting.id, qtyStr, quoteStr, makerStatus);
 
                 if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                    const newConsumed = D(resting.reserved_consumed).plus(quoteAmt);
+                    const newConsumed = D(resting.reserved_consumed).plus(D(quoteStr));
                     const excess = D(resting.reserved_amount).minus(newConsumed);
                     if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
                 }
@@ -267,6 +276,9 @@ export async function placeOrder(
         //Phase J: System fill (MARKET only)
         if (systemFill) {
             const { fillQty, fillPrice, quoteAmt, feeAmt } = systemFill;
+            const sysQtyStr = toFixed8(fillQty);
+            const sysQuoteStr = toFixed8(quoteAmt);
+            const sysFeeStr = toFixed8(feeAmt);
             const buyOrderId = side === "BUY" ? order.id : null;
             const sellOrderId = side === "SELL" ? order.id : null;
 
@@ -275,23 +287,25 @@ export async function placeOrder(
                 buyOrderId,
                 sellOrderId,
                 price: toFixed8(fillPrice),
-                qty: toFixed8(fillQty),
-                quoteAmount: toFixed8(quoteAmt),
-                feeAmount: toFixed8(feeAmt),
+                qty: sysQtyStr,
+                quoteAmount: sysQuoteStr,
+                feeAmount: sysFeeStr,
                 feeAssetId: pair.quote_asset_id,
                 isSystemFill: true,
             });
 
             if (side === "BUY") {
-                await debitAvailableTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
-                    "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
-                await creditWalletTx(client, baseWallet.id, toFixed8(fillQty),
+                const sysCostPlusFee = toFixed8(D(sysQuoteStr).plus(D(sysFeeStr)));
+                await debitAvailableTx(client, quoteWallet.id, sysCostPlusFee,
+                    "TRADE_BUY", trade.id, "TRADE", { fee: sysFeeStr });
+                await creditWalletTx(client, baseWallet.id, sysQtyStr,
                     "TRADE_BUY", trade.id, "TRADE");
             } else {
-                await debitAvailableTx(client, baseWallet.id, toFixed8(fillQty),
+                const sysCostMinusFee = toFixed8(D(sysQuoteStr).minus(D(sysFeeStr)));
+                await debitAvailableTx(client, baseWallet.id, sysQtyStr,
                     "TRADE_SELL", trade.id, "TRADE");
-                await creditWalletTx(client, quoteWallet.id, toFixed8(quoteAmt.minus(feeAmt)),
-                    "TRADE_SELL", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
+                await creditWalletTx(client, quoteWallet.id, sysCostMinusFee,
+                    "TRADE_SELL", trade.id, "TRADE", { fee: sysFeeStr });
             }
 
             fills.push(trade);
@@ -325,6 +339,17 @@ export async function placeOrder(
             await client.query(
                 `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
                 [toFixed8(lastFillPrice), pairId]
+            );
+        }
+
+        //Phase M: Post-trade financial integrity verification
+        if (fills.length > 0) {
+            const involvedOrderIds = [order.id, ...plan.map((e) => e.resting.id)];
+            await verifyPostTradeInvariants(
+                client,
+                [...walletIdSet],
+                involvedOrderIds,
+                fills.map((f) => f.id),
             );
         }
 
