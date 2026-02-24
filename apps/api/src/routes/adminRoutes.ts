@@ -88,7 +88,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const oldRole = targetUser.role;
     const updated = await updateUserRole(targetUser.id, bodyParsed.data.role);
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     await auditLog({
         actorUserId: actor.id,
@@ -117,7 +117,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     try {
         const asset = await createAsset(parsed.data);
 
-        const actor = (req as any).user as { id: string; role: string };
+        const actor = req.user!;
         await auditLog({
             actorUserId: actor.id,
             action: "admin.asset_create",
@@ -155,7 +155,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ ok: false, error: "wallet_not_found" });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     const result = await creditWallet(wallet.id, bodyParsed.data.amount, "ADMIN_CREDIT", { creditBy: actor.id });
 
@@ -190,7 +190,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ ok: false, error: "wallet_not_found" });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     try {
         const result = await debitWallet(wallet.id, bodyParsed.data.amount, "ADMIN_DEBIT", { debitedBy: actor.id });
@@ -235,7 +235,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     try {
         const pair = await createPair(parsed.data);
 
-        const actor = (req as any).user as { id: string; role: string };
+        const actor = req.user!;
         await auditLog({
             actorUserId: actor.id,
             action: "pair.create",
@@ -275,7 +275,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     const pair = await setLastPrice(paramsParsed.data.id, bodyParsed.data.price);
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
     await auditLog({
         actorUserId: actor.id,
         action: "pair.price_update",

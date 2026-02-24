@@ -54,7 +54,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     try {
         const result = await placeOrder(
@@ -99,7 +99,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /orders — List user's orders
   app.get("/orders", { preHandler: requireUser }, async (req, reply) => {
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
     const queryParsed = listOrdersQuery.safeParse(req.query);
     const filters = queryParsed.success ? queryParsed.data : {};
     const orders = await listOrdersByUserId(actor.id, filters);
@@ -118,7 +118,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ ok: false, error: "order_not_found" });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
     if (order.user_id !== actor.id) {
         return reply.code(403).send({ ok: false, error: "forbidden" });
     }
@@ -134,7 +134,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     try {
         const result = await cancelOrder(actor.id, paramsParsed.data.id);

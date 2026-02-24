@@ -7,11 +7,10 @@ type JwtPayload = {
 
 export async function requireUser(req: FastifyRequest, reply: FastifyReply) {
     try{
-        //
         const payload = (await req.jwtVerify()) as JwtPayload;
 
-        (req as any).user = {
-            id: payload.sub,
+        req.user = {
+            id: payload.sub!,
             role: payload.role ?? "USER",
         };
     }catch{

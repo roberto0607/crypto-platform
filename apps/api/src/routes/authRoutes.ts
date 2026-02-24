@@ -182,7 +182,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /auth/me
   app.get("/me", { preHandler: requireUser }, async (req, reply) => {
-    const user = (req as any).user as { id: string; role: string };
+    const user = req.user!;
 
     return reply.send({
       ok: true,

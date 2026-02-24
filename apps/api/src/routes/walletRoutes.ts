@@ -34,7 +34,7 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ ok: false, error: "asset_not_found" });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
 
     try {
         const wallet = await createWallet(actor.id, parsed.data.assetId);
@@ -50,7 +50,7 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /wallets — list user's wallets (authenticated)
   app.get("/wallets", { preHandler: requireUser }, async (req, reply) => {
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
     const wallets = await listWalletsByUserId(actor.id);
     return reply.send({ ok: true, wallets });
   });
@@ -67,7 +67,7 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ ok: false, error: "wallet_not_found" });
     }
 
-    const actor = (req as any).user as { id: string; role: string };
+    const actor = req.user!;
     if (wallet.user_id !== actor.id) {
         return reply.code(403).send({ ok: false, error: "forbidden" });
     }
