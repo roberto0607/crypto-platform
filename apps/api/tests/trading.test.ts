@@ -215,3 +215,236 @@ describe("MARKET order — does NOT reserve", () => {
     expect(parseFloat(walletAfter.reserved)).toBeCloseTo(parseFloat(walletBefore.reserved), 2);
   });
 });
+
+describe("Price-time priority — deterministic matching", () => {
+  // Independent fixtures for this suite: a seller (maker) and buyer (taker)
+  let sellerToken: string;
+  let buyerToken: string;
+  let ptPairId: string;
+  const ptUid = Math.random().toString(36).slice(2, 7);
+
+  beforeAll(async () => {
+    const pool = getPool();
+
+    // Create seller & buyer users
+    const seller = await registerAndLogin(app, "seller");
+    sellerToken = seller.accessToken;
+
+    const buyer = await registerAndLogin(app, "buyer");
+    buyerToken = buyer.accessToken;
+
+    // Create assets
+    const btcRes = await app.inject({
+      method: "POST",
+      url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `X${ptUid}`, name: "BTC-PT", decimals: 8 },
+    });
+    const ptBaseId = btcRes.json().asset.id;
+
+    const usdRes = await app.inject({
+      method: "POST",
+      url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `Y${ptUid}`, name: "USD-PT", decimals: 2 },
+    });
+    const ptQuoteId = usdRes.json().asset.id;
+
+    // Create pair (0 fee to simplify assertions)
+    const pairRes = await app.inject({
+      method: "POST",
+      url: "/admin/pairs",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { baseAssetId: ptBaseId, quoteAssetId: ptQuoteId, symbol: `T${ptUid}`, feeBps: 0 },
+    });
+    ptPairId = pairRes.json().pair.id;
+
+    // Set last price (required for MARKET orders, also useful as reference)
+    await app.inject({
+      method: "PATCH",
+      url: `/admin/pairs/${ptPairId}/price`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { price: "50000" },
+    });
+
+    // Create wallets and fund both users
+    for (const { token, base, quote } of [
+      { token: sellerToken, base: "100", quote: "0" },
+      { token: buyerToken, base: "0", quote: "10000000" },
+    ]) {
+      const bw = await app.inject({
+        method: "POST", url: "/wallets",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { assetId: ptBaseId },
+      });
+      const qw = await app.inject({
+        method: "POST", url: "/wallets",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { assetId: ptQuoteId },
+      });
+
+      if (parseFloat(base) > 0) {
+        await app.inject({
+          method: "POST",
+          url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+          headers: { authorization: `Bearer ${adminToken}` },
+          payload: { amount: base },
+        });
+      }
+      if (parseFloat(quote) > 0) {
+        await app.inject({
+          method: "POST",
+          url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+          headers: { authorization: `Bearer ${adminToken}` },
+          payload: { amount: quote },
+        });
+      }
+    }
+  });
+
+  it("matches SELL orders cheapest-first, then oldest-first at same price", async () => {
+    // Seller places 3 LIMIT SELL orders in this chronological order:
+    //   A: 1 BTC @ $48000  (placed first)
+    //   B: 1 BTC @ $47000  (cheapest — should match first)
+    //   C: 1 BTC @ $48000  (placed third, same price as A — should match after A)
+
+    const orderA = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+    });
+    expect(orderA.statusCode).toBe(201);
+    const orderAId = orderA.json().order.id;
+
+    const orderB = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "47000" },
+    });
+    expect(orderB.statusCode).toBe(201);
+    const orderBId = orderB.json().order.id;
+
+    const orderC = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+    });
+    expect(orderC.statusCode).toBe(201);
+    const orderCId = orderC.json().order.id;
+
+    // Buyer places LIMIT BUY for 2.5 BTC @ $48000
+    // Should match: B (1@47k) → A (1@48k) → C (0.5@48k)
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${buyerToken}` },
+      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "2.5", limitPrice: "48000" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order: buyOrder, fills } = buyRes.json();
+
+    // 3 fills in price-time priority order
+    expect(fills).toHaveLength(3);
+
+    // Fill 1: Order B @ $47000 — cheapest
+    expect(fills[0].price).toBe("47000.00000000");
+    expect(fills[0].qty).toBe("1.00000000");
+    expect(fills[0].sell_order_id).toBe(orderBId);
+
+    // Fill 2: Order A @ $48000 — older of the two $48k orders
+    expect(fills[1].price).toBe("48000.00000000");
+    expect(fills[1].qty).toBe("1.00000000");
+    expect(fills[1].sell_order_id).toBe(orderAId);
+
+    // Fill 3: Order C @ $48000 — partial fill (0.5 BTC remaining)
+    expect(fills[2].price).toBe("48000.00000000");
+    expect(fills[2].qty).toBe("0.50000000");
+    expect(fills[2].sell_order_id).toBe(orderCId);
+
+    // Buy order should be FILLED (2.5 total)
+    expect(buyOrder.status).toBe("FILLED");
+    expect(buyOrder.qty_filled).toBe("2.50000000");
+
+    // Verify maker order states
+    const orderBState = await app.inject({
+      method: "GET", url: `/orders/${orderBId}`,
+      headers: { authorization: `Bearer ${sellerToken}` },
+    });
+    expect(orderBState.json().order.status).toBe("FILLED");
+
+    const orderAState = await app.inject({
+      method: "GET", url: `/orders/${orderAId}`,
+      headers: { authorization: `Bearer ${sellerToken}` },
+    });
+    expect(orderAState.json().order.status).toBe("FILLED");
+
+    const orderCState = await app.inject({
+      method: "GET", url: `/orders/${orderCId}`,
+      headers: { authorization: `Bearer ${sellerToken}` },
+    });
+    expect(orderCState.json().order.status).toBe("PARTIALLY_FILLED");
+    expect(orderCState.json().order.qty_filled).toBe("0.50000000");
+  });
+
+  it("matches BUY orders most-expensive-first, then oldest-first at same price", async () => {
+    // Buyer places 3 LIMIT BUY orders:
+    //   D: 1 BTC @ $46000  (placed first)
+    //   E: 1 BTC @ $46500  (most expensive — should match first)
+    //   F: 1 BTC @ $46000  (placed third, same price as D — should match after D)
+
+    const orderD = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${buyerToken}` },
+      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
+    });
+    expect(orderD.statusCode).toBe(201);
+    const orderDId = orderD.json().order.id;
+
+    const orderE = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${buyerToken}` },
+      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46500" },
+    });
+    expect(orderE.statusCode).toBe(201);
+    const orderEId = orderE.json().order.id;
+
+    const orderF = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${buyerToken}` },
+      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
+    });
+    expect(orderF.statusCode).toBe(201);
+    const orderFId = orderF.json().order.id;
+
+    // Seller places LIMIT SELL for 2.5 BTC @ $46000
+    // Should match: E (1@46.5k) → D (1@46k) → F (0.5@46k)
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "2.5", limitPrice: "46000" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+    const { order: sellOrder, fills } = sellRes.json();
+
+    // 3 fills in price-time priority order
+    expect(fills).toHaveLength(3);
+
+    // Fill 1: Order E @ $46500 — most expensive
+    expect(fills[0].price).toBe("46500.00000000");
+    expect(fills[0].qty).toBe("1.00000000");
+    expect(fills[0].buy_order_id).toBe(orderEId);
+
+    // Fill 2: Order D @ $46000 — older of the two $46k orders
+    expect(fills[1].price).toBe("46000.00000000");
+    expect(fills[1].qty).toBe("1.00000000");
+    expect(fills[1].buy_order_id).toBe(orderDId);
+
+    // Fill 3: Order F @ $46000 — partial fill (0.5 BTC remaining)
+    expect(fills[2].price).toBe("46000.00000000");
+    expect(fills[2].qty).toBe("0.50000000");
+    expect(fills[2].buy_order_id).toBe(orderFId);
+
+    // Sell order should be FILLED (2.5 total)
+    expect(sellOrder.status).toBe("FILLED");
+    expect(sellOrder.qty_filled).toBe("2.50000000");
+  });
+});

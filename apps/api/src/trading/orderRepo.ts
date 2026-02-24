@@ -145,37 +145,85 @@ export async function updateOrderFill(
         return result.rows[0];
     }
 
-    export async function getRestingSellOrders(client: PoolClient, pairId: string): Promise<OrderRow[]> {
-        const result = await client.query<OrderRow>(
-            `
-            SELECT ${ORDER_COLUMNS}
-            FROM orders
-            WHERE pair_id = $1
-                AND side = 'SELL'
-                AND status IN ('OPEN', 'PARTIALLY_FILLED')
-                AND type = 'LIMIT'
-            ORDER BY limit_price ASC, created_at ASC
-            `,
-            [pairId]
-        );
+export type BookCursor = {
+    limitPrice: string;
+    createdAt: string;
+};
 
-        return result.rows;
+/**
+ * Fetch a batch of resting LIMIT orders from the book for matching.
+ *
+ * Pushes price filtering and row limits into SQL so the matching engine
+ * never loads the entire order book into memory.  Supports keyset-based
+ * cursor pagination for multi-batch iteration.
+ *
+ * @param bookSide   - Side of resting orders ('BUY' or 'SELL')
+ * @param priceBound - For LIMIT taker: max price for sells, min price for buys
+ * @param cursor     - Continue after (price, created_at) of last processed row
+ * @param batchSize  - Max rows to return (default 100)
+ */
+export async function fetchRestingOrdersBatch(
+    client: PoolClient,
+    pairId: string,
+    bookSide: "BUY" | "SELL",
+    options: {
+        priceBound?: string;
+        cursor?: BookCursor;
+        batchSize?: number;
+    } = {}
+): Promise<OrderRow[]> {
+    const batchSize = options.batchSize ?? 100;
+    const conditions: string[] = [
+        "pair_id = $1",
+        "side = $2",
+        "status IN ('OPEN', 'PARTIALLY_FILLED')",
+        "type = 'LIMIT'",
+    ];
+    const params: (string | number)[] = [pairId, bookSide];
+
+    // Price boundary — only fetch orders the taker can match against
+    if (options.priceBound !== undefined) {
+        params.push(options.priceBound);
+        if (bookSide === "SELL") {
+            // Taker is BUY: fetch sells at or below taker's limit price
+            conditions.push(`limit_price <= $${params.length}`);
+        } else {
+            // Taker is SELL: fetch buys at or above taker's limit price
+            conditions.push(`limit_price >= $${params.length}`);
+        }
     }
 
-    export async function getRestingBuyOrders(client: PoolClient, pairId: string): Promise<OrderRow[]> {
-        const result = await client.query<OrderRow>(
-            `
-            SELECT ${ORDER_COLUMNS}
-            FROM orders
-            WHERE pair_id = $1
-                AND side = 'BUY'
-                AND status IN ('OPEN', 'PARTIALLY_FILLED')
-                AND type = 'LIMIT'
-            ORDER BY limit_price DESC, created_at ASC
-            `,
-            [pairId]
-        );
-
-        return result.rows;
+    // Keyset cursor for pagination
+    if (options.cursor) {
+        params.push(options.cursor.limitPrice);
+        const priceIdx = params.length;
+        params.push(options.cursor.createdAt);
+        const timeIdx = params.length;
+        if (bookSide === "SELL") {
+            // SELL book (price ASC, time ASC) → next page: higher price or same price + later time
+            conditions.push(
+                `(limit_price > $${priceIdx} OR (limit_price = $${priceIdx} AND created_at > $${timeIdx}))`
+            );
+        } else {
+            // BUY book (price DESC, time ASC) → next page: lower price or same price + later time
+            conditions.push(
+                `(limit_price < $${priceIdx} OR (limit_price = $${priceIdx} AND created_at > $${timeIdx}))`
+            );
+        }
     }
+
+    const priceOrder = bookSide === "SELL" ? "ASC" : "DESC";
+    params.push(batchSize);
+
+    const query = `
+        SELECT ${ORDER_COLUMNS}
+        FROM orders
+        WHERE ${conditions.join("\n            AND ")}
+        ORDER BY limit_price ${priceOrder}, created_at ASC
+        LIMIT $${params.length}
+    `;
+
+    const result = await client.query<OrderRow>(query, params);
+    return result.rows;
+}
 

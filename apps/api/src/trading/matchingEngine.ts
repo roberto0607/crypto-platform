@@ -6,10 +6,9 @@ import {
     findOrderByIdForUpdate,
     updateOrderFill,
     setOrderStatus,
-    getRestingSellOrders,
-    getRestingBuyOrders,
+    fetchRestingOrdersBatch,
     } from "./orderRepo";
-import type { OrderRow } from "./orderRepo";
+import type { OrderRow, BookCursor } from "./orderRepo";
 import { createTrade } from "./tradeRepo";
 import type { TradeRow } from "./tradeRepo";
 import {
@@ -64,35 +63,45 @@ export async function placeOrder(
         const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id);
         if (!baseWallet || !quoteWallet) throw new Error("wallet_not_found");
 
-        //Phase C: Scan book for matchable resting orders
-        const restingOrders = side === "BUY"
-            ? await getRestingSellOrders(client, pairId)
-            : await getRestingBuyOrders(client, pairId);
-
-        const matchableOrders: OrderRow[] = [];
-        for (const resting of restingOrders) {
-            if (type === "LIMIT") {
-                if (side === "BUY" && D(resting.limit_price!).gt(D(limitPrice!))) break;
-                if (side === "SELL" && D(resting.limit_price!).lt(D(limitPrice!))) break;
-            }
-            matchableOrders.push(resting);
-        }
-
-        //Phase D: Build execution plan
+        //Phase C+D: Incrementally scan book and build execution plan
+        //  - Price filtering pushed into SQL (LIMIT taker orders only)
+        //  - Row count capped per batch (avoids loading entire book)
+        //  - Cursor-based keyset pagination for multi-batch iteration
         const plan: FillPlan[] = [];
         let remaining = D(qty);
+        const bookSide: "BUY" | "SELL" = side === "BUY" ? "SELL" : "BUY";
+        const priceBound = type === "LIMIT" ? limitPrice : undefined;
+        const BATCH_SIZE = 100;
+        let cursor: BookCursor | undefined;
 
-        for (const resting of matchableOrders) {
-            if (remaining.lte(0)) break;
-            const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
-            const fillPrice = D(resting.limit_price!);
-            const quoteAmt = fillQty.mul(fillPrice);
-            const feeAmt = quoteAmt.mul(pair.fee_bps).div(BPS_DIVISOR);
-            plan.push({
-                resting, fillQty, fillPrice, quoteAmt, feeAmt,
-                counterBaseId: "", counterQuoteId: "",
+        while (remaining.gt(0)) {
+            const batch = await fetchRestingOrdersBatch(client, pairId, bookSide, {
+                priceBound,
+                cursor,
+                batchSize: BATCH_SIZE,
             });
-            remaining = remaining.minus(fillQty);
+
+            if (batch.length === 0) break;
+
+            for (const resting of batch) {
+                if (remaining.lte(0)) break;
+                const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
+                const fillPrice = D(resting.limit_price!);
+                const quoteAmt = fillQty.mul(fillPrice);
+                const feeAmt = quoteAmt.mul(pair.fee_bps).div(BPS_DIVISOR);
+                plan.push({
+                    resting, fillQty, fillPrice, quoteAmt, feeAmt,
+                    counterBaseId: "", counterQuoteId: "",
+                });
+                remaining = remaining.minus(fillQty);
+            }
+
+            // No more resting orders in the book
+            if (batch.length < BATCH_SIZE) break;
+
+            // Advance cursor past the last processed row
+            const last = batch[batch.length - 1];
+            cursor = { limitPrice: last.limit_price!, createdAt: last.created_at };
         }
 
         let systemFill: SystemFillPlan | null = null;
