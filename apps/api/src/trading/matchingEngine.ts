@@ -77,6 +77,7 @@ export async function placeOrder(
         while (remaining.gt(0)) {
             const batch = await fetchRestingOrdersBatch(client, pairId, bookSide, {
                 priceBound,
+                excludeUserId: userId,
                 cursor,
                 batchSize: BATCH_SIZE,
             });

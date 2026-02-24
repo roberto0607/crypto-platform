@@ -157,10 +157,11 @@ export type BookCursor = {
  * never loads the entire order book into memory.  Supports keyset-based
  * cursor pagination for multi-batch iteration.
  *
- * @param bookSide   - Side of resting orders ('BUY' or 'SELL')
- * @param priceBound - For LIMIT taker: max price for sells, min price for buys
- * @param cursor     - Continue after (price, created_at) of last processed row
- * @param batchSize  - Max rows to return (default 100)
+ * @param bookSide       - Side of resting orders ('BUY' or 'SELL')
+ * @param priceBound     - For LIMIT taker: max price for sells, min price for buys
+ * @param excludeUserId  - Skip orders owned by this user (self-trade prevention)
+ * @param cursor         - Continue after (price, created_at) of last processed row
+ * @param batchSize      - Max rows to return (default 100)
  */
 export async function fetchRestingOrdersBatch(
     client: PoolClient,
@@ -168,6 +169,7 @@ export async function fetchRestingOrdersBatch(
     bookSide: "BUY" | "SELL",
     options: {
         priceBound?: string;
+        excludeUserId?: string;
         cursor?: BookCursor;
         batchSize?: number;
     } = {}
@@ -180,6 +182,12 @@ export async function fetchRestingOrdersBatch(
         "type = 'LIMIT'",
     ];
     const params: (string | number)[] = [pairId, bookSide];
+
+    // Self-trade prevention — exclude taker's own resting orders
+    if (options.excludeUserId) {
+        params.push(options.excludeUserId);
+        conditions.push(`user_id != $${params.length}`);
+    }
 
     // Price boundary — only fetch orders the taker can match against
     if (options.priceBound !== undefined) {

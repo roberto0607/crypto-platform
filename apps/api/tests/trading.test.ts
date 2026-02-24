@@ -448,3 +448,142 @@ describe("Price-time priority — deterministic matching", () => {
     expect(sellOrder.qty_filled).toBe("2.50000000");
   });
 });
+
+describe("Self-trade prevention", () => {
+  let stpToken: string;
+  let stpPairId: string;
+  const stpUid = Math.random().toString(36).slice(2, 7);
+
+  beforeAll(async () => {
+    // Single user who will try to trade against themselves
+    const user = await registerAndLogin(app, "stp-user");
+    stpToken = user.accessToken;
+
+    // Create assets + pair (0 fee)
+    const btcRes = await app.inject({
+      method: "POST", url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `S${stpUid}`, name: "BTC-STP", decimals: 8 },
+    });
+    const stpBaseId = btcRes.json().asset.id;
+
+    const usdRes = await app.inject({
+      method: "POST", url: "/admin/assets",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { symbol: `D${stpUid}`, name: "USD-STP", decimals: 2 },
+    });
+    const stpQuoteId = usdRes.json().asset.id;
+
+    const pairRes = await app.inject({
+      method: "POST", url: "/admin/pairs",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { baseAssetId: stpBaseId, quoteAssetId: stpQuoteId, symbol: `Q${stpUid}`, feeBps: 0 },
+    });
+    stpPairId = pairRes.json().pair.id;
+
+    await app.inject({
+      method: "PATCH",
+      url: `/admin/pairs/${stpPairId}/price`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { price: "50000" },
+    });
+
+    // Create + fund wallets for the user
+    const bw = await app.inject({
+      method: "POST", url: "/wallets",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { assetId: stpBaseId },
+    });
+    const qw = await app.inject({
+      method: "POST", url: "/wallets",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { assetId: stpQuoteId },
+    });
+
+    await app.inject({
+      method: "POST",
+      url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { amount: "100" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { amount: "10000000" },
+    });
+  });
+
+  it("MARKET BUY does not match user's own LIMIT SELL — system-fills instead", async () => {
+    // User places LIMIT SELL
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "49000" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+    const sellOrder = sellRes.json().order;
+    expect(sellOrder.status).toBe("OPEN");
+
+    // Same user places MARKET BUY — should NOT match the LIMIT SELL
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { pairId: stpPairId, side: "BUY", type: "MARKET", qty: "1" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order: buyOrder, fills } = buyRes.json();
+
+    // Should get a system-fill (no book match against own order)
+    expect(fills).toHaveLength(1);
+    expect(fills[0].is_system_fill).toBe(true);
+
+    // Buy order is FILLED via system fill
+    expect(buyOrder.status).toBe("FILLED");
+
+    // The original LIMIT SELL should still be OPEN (not matched)
+    const sellState = await app.inject({
+      method: "GET", url: `/orders/${sellOrder.id}`,
+      headers: { authorization: `Bearer ${stpToken}` },
+    });
+    expect(sellState.json().order.status).toBe("OPEN");
+    expect(sellState.json().order.qty_filled).toBe("0.00000000");
+  });
+
+  it("LIMIT BUY does not match user's own LIMIT SELL — rests on book", async () => {
+    // User places LIMIT SELL
+    const sellRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+    });
+    expect(sellRes.statusCode).toBe(201);
+    const sellOrder = sellRes.json().order;
+
+    // Same user places crossing LIMIT BUY — should NOT match
+    const buyRes = await app.inject({
+      method: "POST", url: "/orders",
+      headers: { authorization: `Bearer ${stpToken}` },
+      payload: { pairId: stpPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "48000" },
+    });
+    expect(buyRes.statusCode).toBe(201);
+    const { order: buyOrder, fills } = buyRes.json();
+
+    // No fills — buy order rests on the book
+    expect(fills).toHaveLength(0);
+    expect(buyOrder.status).toBe("OPEN");
+    expect(buyOrder.qty_filled).toBe("0.00000000");
+
+    // Sell order still untouched
+    const sellState = await app.inject({
+      method: "GET", url: `/orders/${sellOrder.id}`,
+      headers: { authorization: `Bearer ${stpToken}` },
+    });
+    expect(sellState.json().order.status).toBe("OPEN");
+    expect(sellState.json().order.qty_filled).toBe("0.00000000");
+
+    // Cleanup: cancel both orders to release reserves
+    await app.inject({ method: "DELETE", url: `/orders/${sellOrder.id}`, headers: { authorization: `Bearer ${stpToken}` } });
+    await app.inject({ method: "DELETE", url: `/orders/${buyOrder.id}`, headers: { authorization: `Bearer ${stpToken}` } });
+  });
+});
