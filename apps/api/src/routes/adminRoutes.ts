@@ -8,6 +8,8 @@ import { findUserById, updateUserRole, listUsers } from "../auth/userRepo";
 import { createAsset, findAssetById } from "../assets/assetRepo";
 import { findWalletById, creditWallet, debitWallet } from "../wallets/walletRepo";
 import { createPair, findPairById, setLastPrice } from "../trading/pairRepo";
+import { AppError } from "../errors/AppError";
+import { handleError } from "../http/handleError";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -131,9 +133,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
         return reply.code(201).send({ ok: true, asset });
     } catch (err: any) {
-        if (err?.code === "23505") {
-            return reply.code(409).send({ ok: false, error: "asset_already_exists" });
-        }
+        if (err?.code === "23505") return handleError(reply, new AppError("asset_already_exists"));
         throw err;
     }
   });
@@ -207,11 +207,8 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         });
 
         return reply.send({ ok: true, wallet: result.wallet, ledgerEntryId: result.ledgerEntryId });
-    } catch (err: any) {
-        if (err?.message === "insufficient_balance") {
-            return reply.code(400).send({ ok: false, error: "insufficient_balance" });
-        }
-        throw err;
+    } catch (err) {
+        return handleError(reply, err);
     }
   });
 
@@ -249,9 +246,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
         return reply.code(201).send({ ok: true, pair });
     } catch (err: any) {
-        if (err?.code === "23505") {
-            return reply.code(409).send({ ok: false, error: "pair_already_exists" });
-        }
+        if (err?.code === "23505") return handleError(reply, new AppError("pair_already_exists"));
         throw err;
     }
   });

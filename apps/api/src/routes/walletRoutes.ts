@@ -5,6 +5,8 @@ import { requireUser } from "../auth/requireUser";
 import { findAssetById, listActiveAssets } from "../assets/assetRepo";
 import { createWallet, listWalletsByUserId, findWalletById } from "../wallets/walletRepo";
 import { listLedgerEntries } from "../wallets/ledgerRepo";
+import { AppError } from "../errors/AppError";
+import { handleError } from "../http/handleError";
 
 // ── Zod schemas ──
 const createWalletBody = z.object({
@@ -40,11 +42,9 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
         const wallet = await createWallet(actor.id, parsed.data.assetId);
         return reply.code(201).send({ ok: true, wallet });
     } catch(err: any) {
-        if (err?.code === "23505") {
-            return reply.code(409).send({ ok: false, error: "wallet_already_exists" });
-        }
+        if (err?.code === "23505") return handleError(reply, new AppError("wallet_already_exists"));
         req.log.error({ err }, "create_wallet_failed");
-        return reply.code(500).send({ ok: false, error: "server_error" });
+        return handleError(reply, new AppError("server_error"));
     }
   });
 

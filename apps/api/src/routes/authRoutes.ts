@@ -12,6 +12,8 @@ import { requireUser } from "../auth/requireUser";
 import { newRefreshToken, storeRefreshToken } from "../auth/refreshTokens";
 import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "../auth/refreshRepo";
 import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "../auth/cookieOptions";
+import { AppError } from "../errors/AppError";
+import { handleError } from "../http/handleError";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -61,11 +63,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         user: { id: user.id, email: user.email, role: user.role },
       });
     } catch (err: any) {
-      if (err?.code === "23505") {
-        return reply.code(409).send({ ok: false, error: "email_taken" });
-      }
+      if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
       req.log.error({ err }, "register_failed");
-      return reply.code(500).send({ ok: false, error: "server_error" });
+      return handleError(reply, new AppError("server_error"));
     }
   });
 

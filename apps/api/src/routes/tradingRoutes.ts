@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { requireUser } from "../auth/requireUser";
 import { auditLog } from "../audit/log";
+import { handleError } from "../http/handleError";
 import { findPairById, listActivePairs } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
@@ -87,13 +88,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         });
 
         return reply.code(201).send({ ok: true, order: result.order, fills: result.fills });
-    } catch (err: any) {
-        const knownErrors = ["pair_not_found", "wallet_not_found", "no_price_available", "insufficient_balance"];
-        if (knownErrors.includes(err?.message)) {
-            const code = ["pair_not_found", "wallet_not_found"].includes(err.message) ? 404 : 400;
-            return reply.code(code).send({ ok: false, error: err.message });
-        }
-        throw err;
+    } catch (err) {
+        return handleError(reply, err);
     }
   });
 
@@ -151,17 +147,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         });
 
         return reply.send({ ok: true, order: result.order, releasedAmount: result.releasedAmount });
-    } catch (err: any) {
-        if (err?.message === "order_not_found") {
-            return reply.code(404).send({ ok: false, error: "order_not_found" });
-        }
-        if (err?.message === "forbidden") {
-            return reply.code(403).send({ ok: false, error: "forbidden" });
-        }
-        if (err?.message === "order_not_cancelable") {
-            return reply.code(400).send({ ok: false, error: "order_not_cancelable" });
-        }
-        throw err;
+    } catch (err) {
+        return handleError(reply, err);
     }
   });
 
