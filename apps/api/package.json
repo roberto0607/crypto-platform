@@ -18,6 +18,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/jwt": "^10.0.0",
     "argon2": "^0.44.0",
+    "decimal.js": "^10.6.0",
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
     "jsonwebtoken": "^9.0.3",

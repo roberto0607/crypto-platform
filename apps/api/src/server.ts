@@ -66,13 +66,15 @@ async function start() {
     return { ok: res.rows[0]?.ok === 1 };
   });
 
-  app.get("/dev/jwt-test", async () => {
-    const token = app.jwt.sign(
-      { sub: "dev-user-id", role: "USER" },
-      { expiresIn: config.jwtAccessTtlSeconds }
-    );
-    return { token };
-  });
+  if (!config.isProd) {
+    app.get("/dev/jwt-test", async () => {
+      const token = app.jwt.sign(
+        { sub: "dev-user-id", role: "USER" },
+        { expiresIn: config.jwtAccessTtlSeconds }
+      );
+      return { token };
+    });
+  }
 
   // -------- Phase 1.2: Register --------
   const registerBody = z.object({

@@ -21,22 +21,24 @@ import {
     debitAvailableTx,
     consumeReservedAndDebitTx,
 } from "../wallets/walletRepo";
+import Decimal from "decimal.js";
+import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
 
 type FillPlan = {
     resting: OrderRow;
-    fillQty: number;
-    fillPrice: number;
-    quoteAmt: number;
-    feeAmt: number;
+    fillQty: Decimal;
+    fillPrice: Decimal;
+    quoteAmt: Decimal;
+    feeAmt: Decimal;
     counterBaseId: string;
     counterQuoteId: string;
 };
 
 type SystemFillPlan = {
-    fillQty: number;
-    fillPrice: number;
-    quoteAmt: number;
-    feeAmt: number;
+    fillQty: Decimal;
+    fillPrice: Decimal;
+    quoteAmt: Decimal;
+    feeAmt: Decimal;
 };
 
 export async function placeOrder(
@@ -70,66 +72,64 @@ export async function placeOrder(
         const matchableOrders: OrderRow[] = [];
         for (const resting of restingOrders) {
             if (type === "LIMIT") {
-                if (side === "BUY" && parseFloat(resting.limit_price!) > parseFloat(limitPrice!)) break;
-                if (side === "SELL" && parseFloat(resting.limit_price!) < parseFloat(limitPrice!)) break;
+                if (side === "BUY" && D(resting.limit_price!).gt(D(limitPrice!))) break;
+                if (side === "SELL" && D(resting.limit_price!).lt(D(limitPrice!))) break;
             }
             matchableOrders.push(resting);
         }
 
         //Phase D: Build execution plan
         const plan: FillPlan[] = [];
-        let remaining = parseFloat(qty);
+        let remaining = D(qty);
 
         for (const resting of matchableOrders) {
-            if (remaining <= 0) break;
-            const fillQty = Math.min(remaining, parseFloat(resting.qty) - parseFloat(resting.qty_filled));
-            const fillPrice = parseFloat(resting.limit_price!);
-            const quoteAmt = parseFloat((fillQty * fillPrice).toFixed(8));
-            const feeAmt = parseFloat((quoteAmt * pair.fee_bps / 10000).toFixed(8));
+            if (remaining.lte(0)) break;
+            const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
+            const fillPrice = D(resting.limit_price!);
+            const quoteAmt = fillQty.mul(fillPrice);
+            const feeAmt = quoteAmt.mul(pair.fee_bps).div(BPS_DIVISOR);
             plan.push({
                 resting, fillQty, fillPrice, quoteAmt, feeAmt,
                 counterBaseId: "", counterQuoteId: "",
             });
-            remaining = parseFloat((remaining - fillQty).toFixed(8));
+            remaining = remaining.minus(fillQty);
         }
 
         let systemFill: SystemFillPlan | null = null;
-        if (type === "MARKET" && remaining > 0) {
-            const sysPrice = parseFloat(pair.last_price!);
-            const sysQuote = parseFloat((remaining * sysPrice).toFixed(8));
-            const sysFee = parseFloat((sysQuote * pair.fee_bps / 10000).toFixed(8));
+        if (type === "MARKET" && remaining.gt(0)) {
+            const sysPrice = D(pair.last_price!);
+            const sysQuote = remaining.mul(sysPrice);
+            const sysFee = sysQuote.mul(pair.fee_bps).div(BPS_DIVISOR);
             systemFill = { fillQty: remaining, fillPrice: sysPrice, quoteAmt: sysQuote, feeAmt: sysFee };
-            remaining = 0;
+            remaining = ZERO;
         }
 
         //Phase E: Check affordability
         if (type === "MARKET") {
             if (side === "BUY") {
-                let totalCost = 0;
-                for (const entry of plan) totalCost += entry.quoteAmt + entry.feeAmt;
-                if (systemFill) totalCost += systemFill.quoteAmt + systemFill.feeAmt;
-                const available = parseFloat(quoteWallet.balance) - parseFloat(quoteWallet.reserved);
-                if (available < totalCost) throw new Error("insufficient_balance");
+                let totalCost = ZERO;
+                for (const entry of plan) totalCost = totalCost.plus(entry.quoteAmt).plus(entry.feeAmt);
+                if (systemFill) totalCost = totalCost.plus(systemFill.quoteAmt).plus(systemFill.feeAmt);
+                const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
+                if (available.lt(totalCost)) throw new Error("insufficient_balance");
             } else {
-                const available = parseFloat(baseWallet.balance) - parseFloat(baseWallet.reserved);
-                if (available < parseFloat(qty)) throw new Error("insufficient_balance");
+                const available = D(baseWallet.balance).minus(D(baseWallet.reserved));
+                if (available.lt(D(qty))) throw new Error("insufficient_balance");
             }
         }
 
-        let reserveAmount = 0;
+        let reserveAmount = ZERO;
         let reserveWalletId: string | null = null;
         if (type === "LIMIT") {
             if (side === "BUY") {
-                reserveAmount = parseFloat(
-                    (parseFloat(qty) * parseFloat(limitPrice!) * (10000 + pair.fee_bps) / 10000).toFixed(8)
-                );
-                const available = parseFloat(quoteWallet.balance) - parseFloat(quoteWallet.reserved);
-                if (available < reserveAmount) throw new Error("insufficient_balance");
+                reserveAmount = D(qty).mul(D(limitPrice!)).mul(D(10000 + pair.fee_bps)).div(BPS_DIVISOR);
+                const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
+                if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
                 reserveWalletId = quoteWallet.id;
             } else {
-                reserveAmount = parseFloat(qty);
-                const available = parseFloat(baseWallet.balance) - parseFloat(baseWallet.reserved);
-                if (available < reserveAmount) throw new Error("insufficient_balance");
+                reserveAmount = D(qty);
+                const available = D(baseWallet.balance).minus(D(baseWallet.reserved));
+                if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
                 reserveWalletId = baseWallet.id;
             }
         }
@@ -150,9 +150,9 @@ export async function placeOrder(
         await lockWalletsForUpdate(client, [...walletIdSet].sort());
 
         //Phase G: Reserve funds for LIMIT orders
-        let reservedConsumed = 0;
+        let reservedConsumed = ZERO;
         if (type === "LIMIT") {
-            await reserveFunds(client, reserveWalletId!, reserveAmount.toFixed(8));
+            await reserveFunds(client, reserveWalletId!, toFixed8(reserveAmount));
         }
 
         //Phase H: Create the order row
@@ -165,12 +165,12 @@ export async function placeOrder(
             qty,
             status: "OPEN",
             reservedWalletId: reserveWalletId,
-            reservedAmount: reserveAmount.toFixed(8),
+            reservedAmount: toFixed8(reserveAmount),
         });
 
         //Phase I: Exectue book fills
         const fills: TradeRow[] = [];
-        let lastFillPrice: number | null = null;
+        let lastFillPrice: Decimal | null = null;
 
         for (const entry of plan) {
             const { resting, fillQty, fillPrice, quoteAmt, feeAmt } = entry;
@@ -182,10 +182,10 @@ export async function placeOrder(
                 pairId,
                 buyOrderId,
                 sellOrderId,
-                price: fillPrice.toFixed(8),
-                qty: fillQty.toFixed(8),
-                quoteAmount: quoteAmt.toFixed(8),
-                feeAmount: feeAmt.toFixed(8),
+                price: toFixed8(fillPrice),
+                qty: toFixed8(fillQty),
+                quoteAmount: toFixed8(quoteAmt),
+                feeAmount: toFixed8(feeAmt),
                 feeAssetId: pair.quote_asset_id,
                 isSystemFill: false,
             });
@@ -193,60 +193,60 @@ export async function placeOrder(
             if( side === "BUY") {
                 // Taker (buyer): debit quote (cost + fee), credit base
                 if (type === "MARKET") {
-                    await debitAvailableTx(client, quoteWallet.id, (quoteAmt + feeAmt).toFixed(8),
-                        "TRADE_BUY", trade.id, "TRADE", { fee: feeAmt.toFixed(8) });
+                    await debitAvailableTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
+                        "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
                 } else{
-                    await consumeReservedAndDebitTx(client, quoteWallet.id, (quoteAmt + feeAmt).toFixed(8),
-                        "TRADE_BUY", trade.id, "TRADE", { fee: feeAmt.toFixed(8) });
-                    reservedConsumed += quoteAmt + feeAmt;
+                    await consumeReservedAndDebitTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
+                        "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
+                    reservedConsumed = reservedConsumed.plus(quoteAmt).plus(feeAmt);
                 }
-                await creditWalletTx(client, baseWallet.id, fillQty.toFixed(8),
+                await creditWalletTx(client, baseWallet.id, toFixed8(fillQty),
                     "TRADE_BUY", trade.id, "TRADE");
 
                 //Maker (seller): consume reserved base, credit quote
-                await consumeReservedAndDebitTx(client, entry.counterBaseId, fillQty.toFixed(8),
+                await consumeReservedAndDebitTx(client, entry.counterBaseId, toFixed8(fillQty),
                     "TRADE_SELL", trade.id, "TRADE");
-                await creditWalletTx(client, entry.counterQuoteId, quoteAmt.toFixed(8),
+                await creditWalletTx(client, entry.counterQuoteId, toFixed8(quoteAmt),
                     "TRADE_SELL", trade.id, "TRADE");
 
                 //update maker order (SELL maker: reserved in base, consumed = fillQty)
-                const newMakerFilled = parseFloat(resting.qty_filled) + fillQty;
-                const makerStatus = newMakerFilled >= parseFloat(resting.qty) ? "FILLED" : "PARTIALLY_FILLED";
-                await updateOrderFill(client, resting.id, fillQty.toFixed(8), fillQty.toFixed(8), makerStatus);
+                const newMakerFilled = D(resting.qty_filled).plus(fillQty);
+                const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
+                await updateOrderFill(client, resting.id, toFixed8(fillQty), toFixed8(fillQty), makerStatus);
 
                 if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                    const newConsumed = parseFloat(resting.reserved_consumed) + fillQty;
-                    const excess = parseFloat(resting.reserved_amount) - newConsumed;
-                    if (excess > 0) await releaseReserved(client, resting.reserved_wallet_id, excess.toFixed(8));
+                    const newConsumed = D(resting.reserved_consumed).plus(fillQty);
+                    const excess = D(resting.reserved_amount).minus(newConsumed);
+                    if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
                 }
             } else{
                 //Taker (seller): debit base, credit quote minus fee
                 if (type === "MARKET") {
-                    await debitAvailableTx(client, baseWallet.id, fillQty.toFixed(8),
+                    await debitAvailableTx(client, baseWallet.id, toFixed8(fillQty),
                         "TRADE_SELL", trade.id, "TRADE");
                 } else {
-                    await consumeReservedAndDebitTx(client, baseWallet.id, fillQty.toFixed(8),
+                    await consumeReservedAndDebitTx(client, baseWallet.id, toFixed8(fillQty),
                         "TRADE_SELL", trade.id, "TRADE");
-                    reservedConsumed += fillQty;
+                    reservedConsumed = reservedConsumed.plus(fillQty);
                 }
-                await creditWalletTx(client, quoteWallet.id, (quoteAmt - feeAmt).toFixed(8),
-                    "TRADE_SELL", trade.id, "TRADE", { fee: feeAmt.toFixed(8) });
+                await creditWalletTx(client, quoteWallet.id, toFixed8(quoteAmt.minus(feeAmt)),
+                    "TRADE_SELL", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
 
                 //Maker (buyer): consume reserved quote, credit base
-                await consumeReservedAndDebitTx(client, entry.counterQuoteId, quoteAmt.toFixed(8),
+                await consumeReservedAndDebitTx(client, entry.counterQuoteId, toFixed8(quoteAmt),
                     "TRADE_BUY", trade.id, "TRADE");
-                await creditWalletTx(client, entry.counterBaseId, fillQty.toFixed(8),
+                await creditWalletTx(client, entry.counterBaseId, toFixed8(fillQty),
                     "TRADE_BUY", trade.id, "TRADE");
 
                 //Update maker order (BUY maker: reserved in quote, consumed = quoteAmt)
-                const newMakerFilled = parseFloat(resting.qty_filled) + fillQty;
-                const makerStatus = newMakerFilled >= parseFloat(resting.qty) ? "FILLED" : "PARTIALLY_FILLED";
-                await updateOrderFill(client, resting.id, fillQty.toFixed(8), quoteAmt.toFixed(8), makerStatus);
+                const newMakerFilled = D(resting.qty_filled).plus(fillQty);
+                const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
+                await updateOrderFill(client, resting.id, toFixed8(fillQty), toFixed8(quoteAmt), makerStatus);
 
                 if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                    const newConsumed = parseFloat(resting.reserved_consumed) + quoteAmt;
-                    const excess = parseFloat(resting.reserved_amount) - newConsumed;
-                    if (excess > 0) await releaseReserved(client, resting.reserved_wallet_id, excess.toFixed(8));
+                    const newConsumed = D(resting.reserved_consumed).plus(quoteAmt);
+                    const excess = D(resting.reserved_amount).minus(newConsumed);
+                    if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
                 }
             }
 
@@ -264,24 +264,24 @@ export async function placeOrder(
                 pairId,
                 buyOrderId,
                 sellOrderId,
-                price: fillPrice.toFixed(8),
-                qty: fillQty.toFixed(8),
-                quoteAmount: quoteAmt.toFixed(8),
-                feeAmount: feeAmt.toFixed(8),
+                price: toFixed8(fillPrice),
+                qty: toFixed8(fillQty),
+                quoteAmount: toFixed8(quoteAmt),
+                feeAmount: toFixed8(feeAmt),
                 feeAssetId: pair.quote_asset_id,
                 isSystemFill: true,
             });
 
             if (side === "BUY") {
-                await debitAvailableTx(client, quoteWallet.id, (quoteAmt + feeAmt).toFixed(8),
-                    "TRADE_BUY", trade.id, "TRADE", { fee: feeAmt.toFixed(8) });
-                await creditWalletTx(client, baseWallet.id, fillQty.toFixed(8),
+                await debitAvailableTx(client, quoteWallet.id, toFixed8(quoteAmt.plus(feeAmt)),
+                    "TRADE_BUY", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
+                await creditWalletTx(client, baseWallet.id, toFixed8(fillQty),
                     "TRADE_BUY", trade.id, "TRADE");
             } else {
-                await debitAvailableTx(client, baseWallet.id, fillQty.toFixed(8),
+                await debitAvailableTx(client, baseWallet.id, toFixed8(fillQty),
                     "TRADE_SELL", trade.id, "TRADE");
-                await creditWalletTx(client, quoteWallet.id, (quoteAmt - feeAmt).toFixed(8),
-                    "TRADE_SELL", trade.id, "TRADE", { fee: feeAmt.toFixed(8) });
+                await creditWalletTx(client, quoteWallet.id, toFixed8(quoteAmt.minus(feeAmt)),
+                    "TRADE_SELL", trade.id, "TRADE", { fee: toFixed8(feeAmt) });
             }
 
             fills.push(trade);
@@ -289,11 +289,11 @@ export async function placeOrder(
         }
 
         //Phase K: Finalize order
-        const totalFilled = parseFloat(qty) - remaining;
+        const totalFilled = D(qty).minus(remaining);
         let finalStatus: string;
-        if (totalFilled >= parseFloat(qty)) {
+        if (totalFilled.gte(D(qty))) {
             finalStatus = "FILLED";
-        } else if (totalFilled > 0) {
+        } else if (totalFilled.gt(0)) {
             finalStatus = "PARTIALLY_FILLED";
         } else if (type === "MARKET") {
             finalStatus = "REJECTED";
@@ -302,19 +302,19 @@ export async function placeOrder(
         }
 
         const updatedOrder = await updateOrderFill(
-            client, order.id, totalFilled.toFixed(8), reservedConsumed.toFixed(8), finalStatus
+            client, order.id, toFixed8(totalFilled), toFixed8(reservedConsumed), finalStatus
         );
 
         if (type === "LIMIT" && finalStatus === "FILLED") {
-            const excess = reserveAmount - reservedConsumed;
-            if (excess > 0) await releaseReserved(client, reserveWalletId!, excess.toFixed(8));
+            const excess = reserveAmount.minus(reservedConsumed);
+            if (excess.gt(0)) await releaseReserved(client, reserveWalletId!, toFixed8(excess));
         }
 
         //Phase L: update pair.last_price
         if (lastFillPrice !== null) {
             await client.query(
                 `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
-                [lastFillPrice?.toFixed(8), pairId]
+                [toFixed8(lastFillPrice), pairId]
             );
         }
 
@@ -353,16 +353,16 @@ export async function cancelOrder(
             throw new Error("order_not_cancelable");
         }
 
-        const releasable = parseFloat(lockedOrder.reserved_amount) - parseFloat(lockedOrder.reserved_consumed);
-        if (releasable > 0 && lockedOrder.reserved_wallet_id) {
+        const releasable = D(lockedOrder.reserved_amount).minus(D(lockedOrder.reserved_consumed));
+        if (releasable.gt(0) && lockedOrder.reserved_wallet_id) {
             await lockWalletsForUpdate(client, [lockedOrder.reserved_wallet_id]);
-            await releaseReserved(client, lockedOrder.reserved_wallet_id, releasable.toFixed(8));
+            await releaseReserved(client, lockedOrder.reserved_wallet_id, toFixed8(releasable));
         }
 
         const canceledOrder = await setOrderStatus(client, orderId, "CANCELED");
 
         await client.query("COMMIT");
-        return { order: canceledOrder, releasedAmount: releasable.toFixed(8) };
+        return { order: canceledOrder, releasedAmount: toFixed8(releasable) };
     } catch (err) {
         await client.query("ROLLBACK");
         throw err;

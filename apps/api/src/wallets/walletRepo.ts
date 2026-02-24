@@ -1,5 +1,6 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
+import { D, toFixed8 } from "../utils/decimal";
 
 export type WalletRow = {
     id: string;
@@ -83,7 +84,7 @@ export async function creditWallet(
             throw new Error("wallet_not_found");
         }
 
-        const newBalance = (parseFloat(wallet.balance) + parseFloat(amount)).toFixed(8);
+        const newBalance = toFixed8(D(wallet.balance).plus(D(amount)));
 
         await client.query(
             `UPDATE wallets SET balance = $1 WHERE id = $2`,
@@ -135,11 +136,11 @@ export async function debitWallet(
             throw new Error("wallet_not_found");
         }
 
-        if (parseFloat(wallet.balance) - parseFloat(wallet.reserved) < parseFloat(amount)) {
+        if (D(wallet.balance).minus(D(wallet.reserved)).lt(D(amount))) {
             throw new Error("insufficient_balance");
         }
 
-        const newBalance = (parseFloat(wallet.balance) - parseFloat(amount)).toFixed(8);
+        const newBalance = toFixed8(D(wallet.balance).minus(D(amount)));
 
         await client.query(
             `
@@ -280,8 +281,8 @@ export async function debitAvailableTx(
     );
 
     const wallet = result.rows[0];
-    const available = parseFloat(wallet.balance) - parseFloat(wallet.reserved);
-    if (available < parseFloat(amount)) {
+    const available = D(wallet.balance).minus(D(wallet.reserved));
+    if (available.lt(D(amount))) {
         throw new Error("insufficient_balance");
     }
 
