@@ -15,6 +15,7 @@
 import { config } from "./config";
 import { pool } from "./db/pool";
 import { buildApp } from "./app";
+import { stopKrakenFeed } from "./market/krakenWs";
 
 async function start() {
   const app = await buildApp();
@@ -22,6 +23,7 @@ async function start() {
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
+    stopKrakenFeed();
     try {
       await app.close();
       app.log.info("Fastify closed");

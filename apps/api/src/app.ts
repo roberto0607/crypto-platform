@@ -20,12 +20,17 @@ import authRoutes from "./routes/authRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import walletRoutes from "./routes/walletRoutes";
 import tradingRoutes from "./routes/tradingRoutes";
+import marketRoutes from "./routes/marketRoutes";
+import replayRoutes from "./routes/replayRoutes";
+import { startKrakenFeed } from "./market/krakenWs"
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
   disableRateLimit?: boolean;
   /** Suppress pino request logging. */
   logger?: boolean;
+  /** Skip starting Kraken WS feed (useful for tests). */
+  disableKrakenFeed?: boolean
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -72,6 +77,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(adminRoutes, { prefix: "/admin" });
   await app.register(walletRoutes);
   await app.register(tradingRoutes);
+  await app.register(marketRoutes);
+  await app.register(replayRoutes, { prefix: "/replay" });
+
+  // -- Kraken live feed --
+  if (!opts.disableKrakenFeed) {
+    app.addHook("onReady", () => { startKrakenFeed(); });
+  }
 
   return app;
 }

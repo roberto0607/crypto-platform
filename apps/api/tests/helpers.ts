@@ -14,7 +14,7 @@ let app: FastifyInstance | null = null;
 /** Get or create a shared Fastify app instance for tests. */
 export async function getTestApp(): Promise<FastifyInstance> {
   if (!app) {
-    app = await buildApp({ disableRateLimit: true, logger: false });
+    app = await buildApp({ disableRateLimit: true, logger: false, disableKrakenFeed: true });
     await app.ready();
   }
   return app;

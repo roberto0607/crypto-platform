@@ -24,6 +24,9 @@ const ERROR_STATUS: Record<string, number> = {
   wallet_not_found: 404,
   order_not_found: 404,
   pair_not_found: 404,
+  replay_not_found: 404,
+  replay_not_active: 400,
+  replay_already_stopped: 400,
   // 409
   email_taken: 409,
   wallet_already_exists: 409,
