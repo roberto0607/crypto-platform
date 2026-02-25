@@ -9,25 +9,29 @@ export type PairRow = {
     is_active: boolean;
     last_price: string | null;
     fee_bps: number;
+    maker_fee_bps: number;
+    taker_fee_bps: number;
     created_at: string;
     updated_at: string;
 };
 
-const PAIR_COLUMNS = `id, base_asset_id, quote_asset_id, symbol, is_active, last_price, fee_bps, created_at, updated_at`;
+const PAIR_COLUMNS = `id, base_asset_id, quote_asset_id, symbol, is_active, last_price, fee_bps, maker_fee_bps, taker_fee_bps, created_at, updated_at`;
 
 export async function createPair(params: {
     baseAssetId: string;
     quoteAssetId: string;
     symbol: string;
     feeBps: number;
+    makerFeeBps?: number;
+    takerFeeBps?: number;
 }): Promise<PairRow> {
     const result = await pool.query<PairRow>(
         `
-        INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, fee_bps)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING ${PAIR_COLUMNS}
         `,
-        [params.baseAssetId, params.quoteAssetId, params.symbol, params.feeBps]
+        [params.baseAssetId, params.quoteAssetId, params.symbol, params.feeBps, params.makerFeeBps ?? 2, params.takerFeeBps ?? 5]
     );
 
     return result.rows[0];

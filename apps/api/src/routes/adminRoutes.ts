@@ -32,6 +32,8 @@ const createPairBody = z.object({
   quoteAssetId: z.string().uuid(),
   symbol: z.string().min(1).max(20),
   feeBps: z.number().int().min(0).max(10000).default(30),
+  makerFeeBps: z.number().int().min(0).max(10000).default(2),
+  takerFeeBps: z.number().int().min(0).max(10000).default(5),
 });
 
 const pairIdParams = z.object({ id: z.string().uuid() });
@@ -230,7 +232,14 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-        const pair = await createPair(parsed.data);
+        const pair = await createPair({
+            baseAssetId: parsed.data.baseAssetId,
+            quoteAssetId: parsed.data.quoteAssetId,
+            symbol: parsed.data.symbol,
+            feeBps: parsed.data.feeBps,
+            makerFeeBps: parsed.data.makerFeeBps,
+            takerFeeBps: parsed.data.takerFeeBps,
+        });
 
         const actor = req.user!;
         await auditLog({
@@ -241,7 +250,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             requestId: req.id,
             ip: req.ip,
             userAgent: req.headers["user-agent"] ?? null,
-            metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, feeBps: parsed.data.feeBps },
+            metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, feeBps: parsed.data.feeBps, makerFeeBps: parsed.data.makerFeeBps, takerFeeBps: parsed.data.takerFeeBps },
         });
 
         return reply.code(201).send({ ok: true, pair });
