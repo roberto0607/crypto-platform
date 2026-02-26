@@ -9,6 +9,8 @@ import { findPairById, listActivePairs } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { placeOrder, cancelOrder } from "../trading/matchingEngine";
+import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
+
 
 // ── Zod schemas ──
 const placeOrderBody = z.object({
@@ -57,40 +59,49 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
 
     const actor = req.user!;
 
-    try {
-        const result = await placeOrder(
-            actor.id,
-            parsed.data.pairId,
-            parsed.data.side,
-            parsed.data.type,
-            parsed.data.qty,
-            parsed.data.limitPrice
-        );
+        try {
+        const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
 
-        await auditLog({
-            actorUserId: actor.id,
-            action: "order.create",
-            targetType: "order",
-            targetId: result.order.id,
-            requestId: req.id,
-            ip: req.ip,
-            userAgent: req.headers["user-agent"] ?? null,
-            metadata: {
-                orderId: result.order.id,
+        const result = await placeOrderWithSnapshot(
+            actor.id,
+            {
                 pairId: parsed.data.pairId,
                 side: parsed.data.side,
                 type: parsed.data.type,
                 qty: parsed.data.qty,
-                limitPrice: parsed.data.limitPrice ?? null,
-                status: result.order.status,
-                fillCount: result.fills.length,
+                limitPrice: parsed.data.limitPrice,
             },
-        });
+            idempotencyKey
+        );
+
+        if (!result.fromIdempotencyCache) {
+            await auditLog({
+                actorUserId: actor.id,
+                action: "order.create",
+                targetType: "order",
+                targetId: result.order.id,
+                requestId: req.id,
+                ip: req.ip,
+                userAgent: req.headers["user-agent"] ?? null,
+                metadata: {
+                    orderId: result.order.id,
+                    pairId: parsed.data.pairId,
+                    side: parsed.data.side,
+                    type: parsed.data.type,
+                    qty: parsed.data.qty,
+                    limitPrice: parsed.data.limitPrice ?? null,
+                    status: result.order.status,
+                    fillCount: result.fills.length,
+                },
+            });
+        }
 
         return reply.code(201).send({ ok: true, order: result.order, fills: result.fills });
     } catch (err) {
         return handleError(reply, err);
     }
+
+           
   });
 
   // GET /orders — List user's orders

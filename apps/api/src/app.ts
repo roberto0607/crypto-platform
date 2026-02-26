@@ -22,6 +22,7 @@ import walletRoutes from "./routes/walletRoutes";
 import tradingRoutes from "./routes/tradingRoutes";
 import marketRoutes from "./routes/marketRoutes";
 import replayRoutes from "./routes/replayRoutes";
+import analyticsRoutes from "./routes/analyticsRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 
 export interface BuildAppOptions {
@@ -53,7 +54,8 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+
   });
 
   // Rate limiting: global defaults + per-route overrides in route modules
@@ -79,6 +81,8 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(tradingRoutes);
   await app.register(marketRoutes);
   await app.register(replayRoutes, { prefix: "/replay" });
+  await app.register(analyticsRoutes);
+
 
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {

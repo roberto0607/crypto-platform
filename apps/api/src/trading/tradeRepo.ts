@@ -29,27 +29,40 @@ export async function createTrade(
         feeAmount: string;
         feeAssetId: string | null;
         isSystemFill: boolean;
+        executedAt?: string;
     }
 ): Promise<TradeRow> {
-    const result = await client.query<TradeRow>(
+    const hasExecutedAt = params.executedAt !== undefined;
+
+    const sql = hasExecutedAt
+        ? `
+        INSERT INTO trades (pair_id, buy_order_id, sell_order_id, price, qty, quote_amount, fee_amount, fee_asset_id, is_system_fill, executed_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING ${TRADE_COLUMNS}
         `
+        : `
         INSERT INTO trades (pair_id, buy_order_id, sell_order_id, price, qty, quote_amount, fee_amount, fee_asset_id, is_system_fill)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING ${TRADE_COLUMNS}
-        `,
-        [
-            params.pairId,
-            params.buyOrderId,
-            params.sellOrderId,
-            params.price,
-            params.qty,
-            params.quoteAmount,
-            params.feeAmount,
-            params.feeAssetId,
-            params.isSystemFill,
-        ]
-    );
+        `;
 
+    const values = [
+        params.pairId,
+        params.buyOrderId,
+        params.sellOrderId,
+        params.price,
+        params.qty,
+        params.quoteAmount,
+        params.feeAmount,
+        params.feeAssetId,
+        params.isSystemFill,
+    ];
+
+    if (hasExecutedAt) {
+        values.push(params.executedAt!);
+    }
+
+    const result = await client.query<TradeRow>(sql, values);
     return result.rows[0];
 }
 
