@@ -64,7 +64,7 @@ export async function placeOrderWithSnapshot(
         if (existing) {
             const order = await findOrderById(existing.order_id);
             const fills = order ? await listTradesByOrderId(order.id) : [];
-            const snapshot = await resolveSnapshot(userId, body.pairId);
+            const snapshot = existing.snapshot_json as Snapshot;
             return {
                 order: order!,
                 fills,
@@ -92,6 +92,7 @@ export async function placeOrderWithSnapshot(
         const pair = await findPairById(body.pairId);
         if (pair) {
             const client = await pool.connect();
+            let idempotencyRowCount = 1;
             try {
                 await client.query("BEGIN");
 
@@ -160,7 +161,8 @@ export async function placeOrderWithSnapshot(
 
                 // ── 6. Insert idempotency key ──
                 if (idempotencyKey) {
-                    await putIdempotencyKeyTx(client, userId, idempotencyKey, result.order.id);
+                    idempotencyRowCount = await putIdempotencyKeyTx(client, userId, idempotencyKey, result.order.id, snapshot);
+
                 }
 
                 await client.query("COMMIT");
@@ -170,19 +172,50 @@ export async function placeOrderWithSnapshot(
             } finally {
                 client.release();
             }
+                        // ── 6b. Race recovery: another request won the idempotency insert ──
+            if (idempotencyKey && idempotencyRowCount === 0) {
+                const winner = await getIdempotencyKey(userId, idempotencyKey);
+                if (winner) {
+                    const winnerOrder = await findOrderById(winner.order_id);
+                    const winnerFills = winnerOrder ? await listTradesByOrderId(winnerOrder.id) : [];
+                    return {
+                        order: winnerOrder!,
+                        fills: winnerFills,
+                        snapshot: winner.snapshot_json as Snapshot,
+                        fromIdempotencyCache: true,
+                    };
+                }
+            }
+
         }
     } else if (idempotencyKey) {
         // No fills but still need to store idempotency key
         const client = await pool.connect();
+        let noFillRowCount = 1;
         try {
             await client.query("BEGIN");
-            await putIdempotencyKeyTx(client, userId, idempotencyKey, result.order.id);
+            noFillRowCount = await putIdempotencyKeyTx(client, userId, idempotencyKey, result.order.id, snapshot);
             await client.query("COMMIT");
         } catch (err) {
             await client.query("ROLLBACK");
             throw err;
         } finally {
             client.release();
+        }
+
+        // ── Race recovery for no-fills path ──
+        if (noFillRowCount === 0) {
+            const winner = await getIdempotencyKey(userId, idempotencyKey);
+            if (winner) {
+                const winnerOrder = await findOrderById(winner.order_id);
+                const winnerFills = winnerOrder ? await listTradesByOrderId(winnerOrder.id) : [];
+                return {
+                    order: winnerOrder!,
+                    fills: winnerFills,
+                    snapshot: winner.snapshot_json as Snapshot,
+                    fromIdempotencyCache: true,
+                };
+            }
         }
     }
 
