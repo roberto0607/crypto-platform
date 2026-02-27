@@ -129,3 +129,40 @@ export async function getEquitySeries(
     const result = await pool.query<{ ts: string; equity_quote: string }>(sql, params);
     return result.rows;
 }
+
+/**
+ * Paginated equity series for /v1 — keyset on (ts ASC).
+ * equity_snapshots PK is (user_id, ts), so ts is unique per user.
+ * Fetches limit + 1 rows; caller uses slicePage() to detect next page.
+ */
+export async function getEquitySeriesPaginated(
+    userId: string,
+    from: number | undefined,
+    to: number | undefined,
+    limit: number,
+    cursor: { ts: number } | null,
+): Promise<EquityPoint[]> {
+    let sql = `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1`;
+    const params: (string | number)[] = [userId];
+
+    if (from !== undefined) {
+        params.push(from);
+        sql += ` AND ts >= $${params.length}`;
+    }
+
+    if (to !== undefined) {
+        params.push(to);
+        sql += ` AND ts <= $${params.length}`;
+    }
+
+    if (cursor) {
+        params.push(cursor.ts);
+        sql += ` AND ts > $${params.length}`;
+    }
+
+    params.push(limit + 1);
+    sql += ` ORDER BY ts ASC LIMIT $${params.length}`;
+
+    const result = await pool.query<{ ts: string; equity_quote: string }>(sql, params);
+    return result.rows;
+}

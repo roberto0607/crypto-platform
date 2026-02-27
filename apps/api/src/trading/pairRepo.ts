@@ -90,3 +90,21 @@ export async function lockPairForUpdate(client: PoolClient, id: string): Promise
 
     return result.rows[0] ?? null;
 }
+
+/**
+ * Limited pairs list for /v1 — no cursor (small bounded set).
+ */
+export async function listActivePairsLimited(limit: number): Promise<PairRow[]> {
+    const result = await pool.query<PairRow>(
+        `
+        SELECT ${PAIR_COLUMNS}
+        FROM trading_pairs
+        WHERE is_active = true
+        ORDER BY symbol ASC
+        LIMIT $1
+        `,
+        [limit]
+    );
+
+    return result.rows;
+}

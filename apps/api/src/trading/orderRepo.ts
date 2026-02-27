@@ -235,3 +235,41 @@ export async function fetchRestingOrdersBatch(
     return result.rows;
 }
 
+/**
+ * Paginated order list for /v1 — keyset on (created_at DESC, id DESC).
+ * Fetches limit + 1 rows; caller uses slicePage() to detect next page.
+ */
+export async function listOrdersByUserIdPaginated(
+    userId: string,
+    filters: { pairId?: string; status?: string },
+    limit: number,
+    cursor: { ca: string; id: string } | null,
+): Promise<OrderRow[]> {
+    let query = `SELECT ${ORDER_COLUMNS} FROM orders WHERE user_id = $1`;
+    const params: (string | number)[] = [userId];
+
+    if (filters.pairId) {
+        params.push(filters.pairId);
+        query += ` AND pair_id = $${params.length}`;
+    }
+
+    if (filters.status) {
+        params.push(filters.status);
+        query += ` AND status = $${params.length}`;
+    }
+
+    if (cursor) {
+        params.push(cursor.ca);
+        const caIdx = params.length;
+        params.push(cursor.id);
+        const idIdx = params.length;
+        query += ` AND (created_at, id) < ($${caIdx}, $${idIdx})`;
+    }
+
+    params.push(limit + 1);
+    query += ` ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
+
+    const result = await pool.query<OrderRow>(query, params);
+    return result.rows;
+}
+

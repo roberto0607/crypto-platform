@@ -24,6 +24,7 @@ import marketRoutes from "./routes/marketRoutes";
 import replayRoutes from "./routes/replayRoutes";
 import analyticsRoutes from "./routes/analyticsRoutes";
 import riskRoutes from "./routes/riskRoutes";
+import v1Routes from "./routes/v1/index";
 import { startKrakenFeed } from "./market/krakenWs"
 
 export interface BuildAppOptions {
@@ -84,6 +85,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(replayRoutes, { prefix: "/replay" });
   await app.register(analyticsRoutes);
   await app.register(riskRoutes, { prefix: "/risk" });
+  await app.register(v1Routes, { prefix: "/v1" });
 
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {
