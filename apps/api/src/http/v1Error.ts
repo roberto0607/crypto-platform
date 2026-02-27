@@ -18,6 +18,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   insufficient_balance: "Insufficient wallet balance.",
   no_price_available: "No market price is currently available.",
   order_not_cancelable: "This order cannot be canceled.",
+  trigger_not_cancelable: "This trigger order cannot be canceled.",
   // 401
   invalid_credentials: "Invalid email or password.",
   unauthorized: "Authentication is required.",
@@ -30,6 +31,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   order_not_found: "The requested order was not found.",
   pair_not_found: "The requested trading pair was not found.",
   replay_not_found: "The requested replay was not found.",
+  trigger_not_found: "The requested trigger order was not found.",
   // 409
   email_taken: "This email address is already registered.",
   wallet_already_exists: "A wallet for this asset already exists.",

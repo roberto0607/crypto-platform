@@ -54,13 +54,38 @@ export interface ReplayTickData {
   sessionTs: number;
 }
 
+export interface PriceTickData {
+  pairId: string;
+  symbol: string;
+  bid: string | null;
+  ask: string | null;
+  last: string;
+}
+
+export interface TriggerFiredData {
+  triggerId: string;
+  pairId: string;
+  kind: string;
+  side: "BUY" | "SELL";
+  derivedOrderId: string | null;
+}
+
+export interface TriggerCanceledData {
+  triggerId: string;
+  pairId: string;
+  reason: string;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
   | EventEnvelope<"order.updated", OrderUpdatedData>
   | EventEnvelope<"trade.created", TradeCreatedData>
   | EventEnvelope<"wallet.updated", WalletUpdatedData>
-  | EventEnvelope<"replay.tick", ReplayTickData>;
+  | EventEnvelope<"replay.tick", ReplayTickData>
+  | EventEnvelope<"price.tick", PriceTickData>
+  | EventEnvelope<"trigger.fired", TriggerFiredData>
+  | EventEnvelope<"trigger.canceled", TriggerCanceledData>;
 
 // ── Helper to create events ──
 

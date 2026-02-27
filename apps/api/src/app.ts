@@ -27,6 +27,7 @@ import analyticsRoutes from "./routes/analyticsRoutes";
 import riskRoutes from "./routes/riskRoutes";
 import v1Routes from "./routes/v1/index";
 import { startKrakenFeed } from "./market/krakenWs"
+import { startTriggerEngine } from "./triggers/triggerEngine";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -34,7 +35,9 @@ export interface BuildAppOptions {
   /** Suppress pino request logging. */
   logger?: boolean;
   /** Skip starting Kraken WS feed (useful for tests). */
-  disableKrakenFeed?: boolean
+  disableKrakenFeed?: boolean;
+  /** Skip starting trigger engine (useful for tests). */
+  disableTriggerEngine?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -99,6 +102,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {
     app.addHook("onReady", () => { startKrakenFeed(); });
+  }
+
+  // -- Trigger engine --
+  if (!opts.disableTriggerEngine) {
+    app.addHook("onReady", () => { startTriggerEngine(); });
   }
 
   return app;

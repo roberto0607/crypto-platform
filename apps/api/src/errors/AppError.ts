@@ -13,6 +13,7 @@ const ERROR_STATUS: Record<string, number> = {
   insufficient_balance: 400,
   no_price_available: 400,
   order_not_cancelable: 400,
+  trigger_not_cancelable: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,
@@ -25,6 +26,7 @@ const ERROR_STATUS: Record<string, number> = {
   order_not_found: 404,
   pair_not_found: 404,
   replay_not_found: 404,
+  trigger_not_found: 404,
   replay_not_active: 400,
   replay_already_stopped: 400,
   // 409

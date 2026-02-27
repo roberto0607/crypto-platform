@@ -5,6 +5,7 @@ import v1Transactions from "./v1Transactions";
 import v1Equity from "./v1Equity";
 import v1Pairs from "./v1Pairs";
 import v1Events from "./v1Events";
+import v1Triggers from "./v1Triggers";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -12,6 +13,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Equity);
     await app.register(v1Pairs);
     await app.register(v1Events);
+    await app.register(v1Triggers);
 };
 
 export default v1Routes;

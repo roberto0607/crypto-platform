@@ -1,5 +1,8 @@
 import WebSocket from "ws";
 import { setSnapshot } from "./snapshotStore";
+import { publish } from "../events/eventBus";
+import { createEvent } from "../events/eventTypes";
+import { listActivePairs } from "../trading/pairRepo";
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 
@@ -13,6 +16,24 @@ const SYMBOL_MAP: Record<string, string> = {
 const REVERSE_MAP: Record<string, string> = {};
 for (const [ours, kraken] of Object.entries(SYMBOL_MAP)) {
     REVERSE_MAP[kraken] = ours;
+}
+
+// Lazy cache: our symbol → pair UUID (populated on first connect)
+let symbolToPairId: Record<string, string> = {};
+let pairCacheReady = false;
+
+async function loadPairCache(): Promise<void> {
+    try {
+        const pairs = await listActivePairs();
+        const map: Record<string, string> = {};
+        for (const p of pairs) {
+            map[p.symbol] = p.id;
+        }
+        symbolToPairId = map;
+        pairCacheReady = true;
+    } catch {
+        // Will retry on next connect
+    }
 }
 
 let ws: WebSocket | null = null;
@@ -43,12 +64,32 @@ function handleMessage(raw: WebSocket.Data): void {
             const ourSymbol = REVERSE_MAP[krakenSymbol];
             if (!ourSymbol) continue;
 
+            const last = String(tick.last);
+            const bid = tick.bid != null ? String(tick.bid) : null;
+            const ask = tick.ask != null ? String(tick.ask) : null;
+
             setSnapshot(ourSymbol, {
-                bid: tick.bid != null ? String(tick.bid) : null,
-                ask: tick.ask != null ? String(tick.ask) : null,
-                last: String(tick.last),
+                bid,
+                ask,
+                last,
                 ts: new Date().toISOString(),
             });
+
+            // Publish price.tick for trigger engine
+            const pairId = symbolToPairId[ourSymbol];
+            if (pairId) {
+                try {
+                    publish(createEvent("price.tick", {
+                        pairId,
+                        symbol: ourSymbol,
+                        bid,
+                        ask,
+                        last,
+                    }));
+                } catch {
+                    // Events must never break the feed
+                }
+            }
         }
     } catch {
         // Ignore unparseable messages (heartbeats, etc.)
@@ -60,10 +101,17 @@ function connect(): void {
 
     ws = new WebSocket(KRAKEN_WS_URL);
 
-    ws.on("open", () => {
+    ws.on("open", async () => {
         console.log("[krakenWs] connected");
         reconnectDelay = 1000;
+        if (!pairCacheReady) await loadPairCache();
         subscribe(ws!);
+    });
+
+    ws.on("message", handleMessage);
+
+    ws.on("close", () => {
+        scheduleReconnect();
     });
 
     ws.on("error", (err) => {

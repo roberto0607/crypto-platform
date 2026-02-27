@@ -16,6 +16,7 @@ import { config } from "./config";
 import { pool } from "./db/pool";
 import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
+import { stopTriggerEngine } from "./triggers/triggerEngine";
 
 async function start() {
   const app = await buildApp();
@@ -23,6 +24,7 @@ async function start() {
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
+    stopTriggerEngine();
     stopKrakenFeed();
     try {
       await app.close();
