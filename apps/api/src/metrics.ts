@@ -93,6 +93,24 @@ export const breakerBlocksTotal = new client.Counter({
   labelNames: ["breaker"] as const,
 });
 
+// ── Event backbone metrics ──
+
+export const eventConnectionsActive = new client.Gauge({
+  name: "event_connections_active",
+  help: "Number of active SSE connections",
+});
+
+export const eventsPublishedTotal = new client.Counter({
+  name: "events_published_total",
+  help: "Total events published",
+  labelNames: ["type"] as const,
+});
+
+export const eventsDeliveryFailuresTotal = new client.Counter({
+  name: "event_delivery_failures_total",
+  help: "Total event delivery failures",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

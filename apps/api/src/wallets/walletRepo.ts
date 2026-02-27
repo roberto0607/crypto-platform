@@ -1,6 +1,9 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
 import { D, toFixed8 } from "../utils/decimal";
+import { publish } from "../events/eventBus";
+import { createEvent } from "../events/eventTypes";
+import { eventsPublishedTotal } from "../metrics";
 
 export type WalletRow = {
     id: string;
@@ -101,6 +104,20 @@ export async function creditWallet(
 
         await client.query("COMMIT");
 
+        // Emit wallet.updated (after commit)
+        try {
+            publish(createEvent("wallet.updated", {
+                walletId,
+                assetId: wallet.asset_id,
+                balance: newBalance,
+                reserved: wallet.reserved,
+                entryType,
+            }, { userId: wallet.user_id }));
+            eventsPublishedTotal.inc({ type: "wallet.updated" });
+        } catch {
+            // Events must never break wallet operations
+        }
+
         return {
             wallet: { ...wallet, balance: newBalance },
             ledgerEntryId: ledgerResult.rows[0].id,
@@ -157,6 +174,20 @@ export async function debitWallet(
         );
 
         await client.query("COMMIT");
+
+        // Emit wallet.updated (after commit)
+        try {
+            publish(createEvent("wallet.updated", {
+                walletId,
+                assetId: wallet.asset_id,
+                balance: newBalance,
+                reserved: wallet.reserved,
+                entryType,
+            }, { userId: wallet.user_id }));
+            eventsPublishedTotal.inc({ type: "wallet.updated" });
+        } catch {
+            // Events must never break wallet operations
+        }
 
         return {
             wallet: {...wallet, balance: newBalance },

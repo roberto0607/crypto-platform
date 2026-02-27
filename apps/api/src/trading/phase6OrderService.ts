@@ -16,6 +16,9 @@ import { findWalletByUserAndAsset } from "../wallets/walletRepo";
 import { evaluateOrderRisk } from "../risk/riskEngine";
 import { recordOrderAttempt, checkPriceDislocation } from "../risk/breakerService";
 import { AppError } from "../errors/AppError";
+import { publish } from "../events/eventBus";
+import { createEvent } from "../events/eventTypes";
+import { eventsPublishedTotal } from "../metrics";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -226,6 +229,35 @@ export async function placeOrderWithSnapshot(
             } finally {
                 client.release();
             }
+            // ── Emit events (after commit, fire-and-forget) ──
+            try {
+                publish(createEvent("order.updated", {
+                    orderId: result.order.id,
+                    pairId: body.pairId,
+                    side: body.side,
+                    type: body.type,
+                    status: result.order.status,
+                    qty: body.qty,
+                    filledQty: result.order.qty_filled,
+                    limitPrice: body.limitPrice ?? null,
+                }, { userId }));
+                eventsPublishedTotal.inc({ type: "order.updated" });
+
+                for (const fill of result.fills) {
+                    publish(createEvent("trade.created", {
+                        tradeId: fill.id,
+                        orderId: result.order.id,
+                        pairId: body.pairId,
+                        side: body.side,
+                        price: fill.price,
+                        qty: fill.qty,
+                        quoteAmount: fill.quote_amount,
+                    }, { userId }));
+                    eventsPublishedTotal.inc({ type: "trade.created" });
+                }
+            } catch {
+                // Events must never break the order flow
+            }
                         // ── 6b. Race recovery: another request won the idempotency insert ──
             if (idempotencyKey && idempotencyRowCount === 0) {
                 const winner = await getIdempotencyKey(userId, idempotencyKey);
@@ -257,6 +289,23 @@ export async function placeOrderWithSnapshot(
             client.release();
         }
 
+        // ── Emit order.updated (no fills, with idempotency) ──
+        try {
+            publish(createEvent("order.updated", {
+                orderId: result.order.id,
+                pairId: body.pairId,
+                side: body.side,
+                type: body.type,
+                status: result.order.status,
+                qty: body.qty,
+                filledQty: result.order.qty_filled,
+                limitPrice: body.limitPrice ?? null,
+            }, { userId }));
+            eventsPublishedTotal.inc({ type: "order.updated" });
+        } catch {
+            // Events must never break the order flow
+        }
+
         // ── Race recovery for no-fills path ──
         if (noFillRowCount === 0) {
             const winner = await getIdempotencyKey(userId, idempotencyKey);
@@ -270,6 +319,25 @@ export async function placeOrderWithSnapshot(
                     fromIdempotencyCache: true,
                 };
             }
+        }
+    }
+
+    // ── Emit order.updated for no-fills, no-idempotency path ──
+    if (result.fills.length === 0 && !idempotencyKey) {
+        try {
+            publish(createEvent("order.updated", {
+                orderId: result.order.id,
+                pairId: body.pairId,
+                side: body.side,
+                type: body.type,
+                status: result.order.status,
+                qty: body.qty,
+                filledQty: result.order.qty_filled,
+                limitPrice: body.limitPrice ?? null,
+            }, { userId }));
+            eventsPublishedTotal.inc({ type: "order.updated" });
+        } catch {
+            // Events must never break the order flow
         }
     }
 

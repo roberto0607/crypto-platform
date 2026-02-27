@@ -5,6 +5,9 @@ import { findPairById } from "../trading/pairRepo";
 import type { Snapshot } from "../market/snapshotStore";
 import { generateMicroTicks } from "./tickGenerator";
 import type { Tick, CandleInput } from "./tickGenerator";
+import { publish } from "../events/eventBus";
+import { createEvent } from "../events/eventTypes";
+import { eventsPublishedTotal } from "../metrics";
 
 export type ReplayTick = {
     bid: string;
@@ -142,6 +145,20 @@ export async function advanceReplayLoop(
         `,
         [userId, pairId, newTs]
     );
+
+    // Emit replay.tick (fire-and-forget)
+    try {
+        publish(createEvent("replay.tick", {
+            pairId,
+            bid: bestTick.bid,
+            ask: bestTick.ask,
+            last: bestTick.last,
+            sessionTs: bestTick.ts,
+        }, { userId }));
+        eventsPublishedTotal.inc({ type: "replay.tick" });
+    } catch {
+        // Events must never break replay
+    }
 
     return {
         bid: bestTick.bid,
