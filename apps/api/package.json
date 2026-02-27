@@ -10,7 +10,11 @@
     "auth:smoke": "bash scripts/auth-smoke.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "cleanup:tokens": "tsx src/scripts/cleanupRefreshTokens.ts"
+    "cleanup:tokens": "tsx src/scripts/cleanupRefreshTokens.ts",
+    "dev:seed": "bash scripts/seed.sh",
+    "dev:reset": "bash scripts/reset.sh --force",
+    "dev:demo": "bash scripts/demo.sh",
+    "dev:sandbox": "bash scripts/reset.sh --force && bash scripts/seed.sh && bash scripts/demo.sh"
   },
   "keywords": [],
   "author": "",
