@@ -46,6 +46,28 @@ new client.Gauge({
   collect() { this.set(pool.waitingCount); },
 });
 
+// ── Reconciliation counters ──
+
+export const reconciliationRunsTotal = new client.Counter({
+  name: "reconciliation_runs_total",
+  help: "Total number of reconciliation runs",
+});
+
+export const reconciliationFailuresTotal = new client.Counter({
+  name: "reconciliation_failures_total",
+  help: "Total number of reconciliation runs that encountered errors",
+});
+
+export const reconciliationWalletMismatches = new client.Counter({
+  name: "reconciliation_wallet_mismatches",
+  help: "Total number of wallet balance mismatches detected",
+});
+
+export const reconciliationPositionMismatches = new client.Counter({
+  name: "reconciliation_position_mismatches",
+  help: "Total number of position mismatches detected",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

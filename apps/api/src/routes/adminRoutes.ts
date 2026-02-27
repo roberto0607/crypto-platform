@@ -10,6 +10,7 @@ import { findWalletById, creditWallet, debitWallet } from "../wallets/walletRepo
 import { createPair, findPairById, setLastPrice } from "../trading/pairRepo";
 import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
+import { runFullReconciliation } from "../reconciliation/reconciliationService";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -292,6 +293,12 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send({ ok: true, pair });
+  });
+
+  // GET /admin/reconcile
+  app.get("/reconcile", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+    const report = await runFullReconciliation();
+    return reply.send({ ok: true, report });
   });
 };
 
