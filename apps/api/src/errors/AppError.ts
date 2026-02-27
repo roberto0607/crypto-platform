@@ -29,6 +29,11 @@ const ERROR_STATUS: Record<string, number> = {
   trigger_not_found: 404,
   replay_not_active: 400,
   replay_already_stopped: 400,
+  run_not_found: 404,
+  run_not_running: 400,
+  run_not_paused: 400,
+  run_not_active: 400,
+  no_active_replay: 400,
   // 409
   email_taken: 409,
   wallet_already_exists: 409,

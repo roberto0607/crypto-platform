@@ -28,6 +28,7 @@ import riskRoutes from "./routes/riskRoutes";
 import v1Routes from "./routes/v1/index";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startTriggerEngine } from "./triggers/triggerEngine";
+import { initBotRunner } from "./bot/botRunner";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -38,6 +39,8 @@ export interface BuildAppOptions {
   disableKrakenFeed?: boolean;
   /** Skip starting trigger engine (useful for tests). */
   disableTriggerEngine?: boolean;
+  /** Skip starting bot runner (useful for tests). */
+  disableBotRunner?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -107,6 +110,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Trigger engine --
   if (!opts.disableTriggerEngine) {
     app.addHook("onReady", () => { startTriggerEngine(); });
+  }
+
+  // -- Bot runner --
+  if (!opts.disableBotRunner) {
+    app.addHook("onReady", () => { initBotRunner(); });
   }
 
   return app;
