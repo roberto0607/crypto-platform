@@ -19,6 +19,12 @@ import { AppError } from "../errors/AppError";
 import { publish } from "../events/eventBus";
 import { createEvent } from "../events/eventTypes";
 import { eventsPublishedTotal } from "../metrics";
+import { buildLogContext, logger } from "../observability/logContext";
+import {
+  orderPlacementLatency,
+  ordersCreatedTotal,
+  ordersRejectedTotal,
+} from "../metrics";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -62,8 +68,18 @@ export async function placeOrderWithSnapshot(
         qty: string;
         limitPrice?: string;
     },
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    requestId?: string
 ): Promise<PlaceOrderResult> {
+    const startMs = performance.now();
+    const logCtx = buildLogContext({
+      requestId: requestId ?? "no-request",
+      userId,
+      pairId: body.pairId,
+      idempotencyKey,
+    });
+    logger.info({ ...logCtx, eventType: "order.placement_started" }, "Order placement started");
+
     // ── 1. Idempotency check ──
     if (idempotencyKey) {
         const existing = await getIdempotencyKey(userId, idempotencyKey);
@@ -71,6 +87,8 @@ export async function placeOrderWithSnapshot(
             const order = await findOrderById(existing.order_id);
             const fills = order ? await listTradesByOrderId(order.id) : [];
             const snapshot = existing.snapshot_json as Snapshot;
+            logger.info({ ...logCtx, eventType: "order.idempotency_hit" }, "Idempotency cache hit");
+            orderPlacementLatency.observe(performance.now() - startMs);
             return {
                 order: order!,
                 fills,
@@ -121,6 +139,9 @@ export async function placeOrderWithSnapshot(
         await riskClient.query("COMMIT");
 
         if (!decision.ok) {
+            ordersRejectedTotal.inc({ reason: decision.code ?? "unknown" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: decision.code }, "Order rejected by risk controls");
+            orderPlacementLatency.observe(performance.now() - startMs);
             throw new AppError("risk_check_failed", {
                 code: decision.code,
                 reason: decision.reason,
@@ -240,7 +261,7 @@ export async function placeOrderWithSnapshot(
                     qty: body.qty,
                     filledQty: result.order.qty_filled,
                     limitPrice: body.limitPrice ?? null,
-                }, { userId }));
+                }, { userId, requestId }));
                 eventsPublishedTotal.inc({ type: "order.updated" });
 
                 for (const fill of result.fills) {
@@ -252,7 +273,7 @@ export async function placeOrderWithSnapshot(
                         price: fill.price,
                         qty: fill.qty,
                         quoteAmount: fill.quote_amount,
-                    }, { userId }));
+                    }, { userId, requestId }));
                     eventsPublishedTotal.inc({ type: "trade.created" });
                 }
             } catch {
@@ -300,7 +321,7 @@ export async function placeOrderWithSnapshot(
                 qty: body.qty,
                 filledQty: result.order.qty_filled,
                 limitPrice: body.limitPrice ?? null,
-            }, { userId }));
+            }, { userId, requestId }));
             eventsPublishedTotal.inc({ type: "order.updated" });
         } catch {
             // Events must never break the order flow
@@ -334,12 +355,16 @@ export async function placeOrderWithSnapshot(
                 qty: body.qty,
                 filledQty: result.order.qty_filled,
                 limitPrice: body.limitPrice ?? null,
-            }, { userId }));
+            }, { userId, requestId }));
             eventsPublishedTotal.inc({ type: "order.updated" });
         } catch {
             // Events must never break the order flow
         }
     }
+
+    ordersCreatedTotal.inc();
+    orderPlacementLatency.observe(performance.now() - startMs);
+    logger.info({ ...logCtx, orderId: result.order.id, eventType: "order.placement_complete", fills: result.fills.length }, "Order placement complete");
 
     return {
         order: result.order,
@@ -348,3 +373,4 @@ export async function placeOrderWithSnapshot(
         fromIdempotencyCache: false,
     };
 }
+

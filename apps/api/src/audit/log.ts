@@ -1,4 +1,5 @@
 import { pool } from "../db/pool";
+import { logger } from "../observability/logContext";
 
 export async function auditLog(entry: {
     actorUserId: string | null;
@@ -32,6 +33,6 @@ export async function auditLog(entry: {
             [actorUserId, action, targetType, targetId, requestId, ip, userAgent, JSON.stringify(metadata)]
         );
     } catch (err) {
-        console.error("auditLog failed", { action, requestId, err });
+        logger.error({ eventType: "audit.write_failed", action, requestId, err }, "auditLog failed");
     }
 }

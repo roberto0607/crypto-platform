@@ -6,9 +6,13 @@ import {
   reconciliationFailuresTotal,
   reconciliationWalletMismatches,
   reconciliationPositionMismatches,
+  reconciliationRunLatency,
+  reconciliationStatusGauge,
 } from "../metrics";
 import { pool } from "../db/pool";
 import { checkReconciliationBreaker } from "../risk/breakerService";
+import { auditLog } from "../audit/log";
+import { logger } from "../observability/logContext";
 
 // ── Types ──
 
@@ -56,7 +60,9 @@ function deriveStatus(
 // ── Orchestrator ──
 
 export async function runFullReconciliation(): Promise<FullReconciliationReport> {
+  const startMs = performance.now();
   reconciliationRunsTotal.inc();
+  logger.info({ eventType: "reconciliation.started" }, "Reconciliation run started");
 
   try {
     const [walletReport, feeReport, positionReport] = await Promise.all([
@@ -75,6 +81,11 @@ export async function runFullReconciliation(): Promise<FullReconciliationReport>
 
     const overallStatus = deriveStatus(walletReport, feeReport, positionReport);
 
+    // Update status gauge (set current to 1, others to 0)
+    for (const s of ["OK", "WARNING", "CRITICAL"] as const) {
+      reconciliationStatusGauge.set({ status: s }, s === overallStatus ? 1 : 0);
+    }
+
     // Trip circuit breaker if CRITICAL
     if (overallStatus === "CRITICAL") {
       const client = await pool.connect();
@@ -84,11 +95,23 @@ export async function runFullReconciliation(): Promise<FullReconciliationReport>
         await client.query("COMMIT");
       } catch (breakerErr) {
         await client.query("ROLLBACK").catch(() => {});
-        console.error("Failed to trip reconciliation breaker:", breakerErr);
+        logger.error({ eventType: "reconciliation.breaker_error", err: breakerErr }, "Failed to trip reconciliation breaker");
       } finally {
         client.release();
       }
     }
+
+    const latencyMs = performance.now() - startMs;
+    reconciliationRunLatency.observe(latencyMs);
+    logger.info({ eventType: "reconciliation.complete", overallStatus, latencyMs: Math.round(latencyMs) }, "Reconciliation run complete");
+
+    // Write audit entry so /health/deep can query last status
+    await auditLog({
+      actorUserId: null,
+      action: "reconciliation.run",
+      targetType: "reconciliation",
+      metadata: { overallStatus, latencyMs: Math.round(latencyMs) },
+    });
 
     return {
       timestamp: new Date().toISOString(),
@@ -99,6 +122,9 @@ export async function runFullReconciliation(): Promise<FullReconciliationReport>
     };
   } catch (err) {
     reconciliationFailuresTotal.inc();
+    reconciliationRunLatency.observe(performance.now() - startMs);
+    logger.error({ eventType: "reconciliation.failed", err }, "Reconciliation run failed");
     throw err;
   }
 }
+

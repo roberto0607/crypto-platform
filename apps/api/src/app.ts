@@ -5,6 +5,7 @@
  * without listening. Used by server.ts (production) and tests.
  */
 
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -37,7 +38,15 @@ export interface BuildAppOptions {
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
-  const app = Fastify({ logger: opts.logger ?? true });
+  const app = Fastify({
+    logger: opts.logger ?? true,
+    genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
+  });
+
+  // ── Echo X-Request-Id on every response ──
+  app.addHook("onSend", async (req, reply) => {
+    reply.header("X-Request-Id", req.id);
+  });
 
   // ── Shared plugins ──
   await app.register(cookie);
@@ -56,7 +65,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id"],
 
   });
 

@@ -2,6 +2,8 @@ import type { PoolClient } from "pg";
 import { tripBreaker, getOpenBreakers } from "./breakerRepo";
 import { recordAttempt, isAboveThreshold } from "./rateLimiterWindow";
 import { auditLog } from "../audit/log";
+import { breakerTripsTotal } from "../metrics";
+import { logger } from "../observability/logContext";
 
 // ── Configurable thresholds ──
 
@@ -68,6 +70,8 @@ export async function checkPriceDislocation(
       cooldownSeconds: PRICE_DISLOCATION_COOLDOWN_S,
       metadata: { snapshotLast, dbLastPrice, deviationBps: Math.round(deviationBps) },
     });
+    breakerTripsTotal.inc({ breaker: "PRICE_DISLOCATION" });
+    logger.warn({ eventType: "breaker.trip", breakerKey: key, deviationBps: Math.round(deviationBps) }, "Price dislocation breaker tripped");
     await auditLog({
       actorUserId: null,
       action: "breaker.trip",
@@ -96,6 +100,8 @@ export async function checkReconciliationBreaker(
     cooldownSeconds: RECONCILIATION_COOLDOWN_S,
     metadata: { status: reconciliationStatus },
   });
+  breakerTripsTotal.inc({ breaker: "RECONCILIATION_CRITICAL" });
+  logger.warn({ eventType: "breaker.trip", breakerKey: RECONCILIATION_KEY, status: reconciliationStatus }, "Reconciliation breaker tripped");
   await auditLog({
     actorUserId: null,
     action: "breaker.trip",
@@ -128,6 +134,8 @@ export async function recordOrderAttempt(
         cooldownSeconds: RATE_ABUSE_COOLDOWN_S,
         metadata: { userId },
       });
+      breakerTripsTotal.inc({ breaker: "RATE_ABUSE" });
+      logger.warn({ eventType: "breaker.trip", breakerKey: key, userId }, "Rate abuse breaker tripped");
       await auditLog({
         actorUserId: userId,
         action: "breaker.trip",

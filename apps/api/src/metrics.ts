@@ -111,6 +111,57 @@ export const eventsDeliveryFailuresTotal = new client.Counter({
   help: "Total event delivery failures",
 });
 
+// ── Phase 7 PR3: Latency histograms ──
+
+export const orderPlacementLatency = new client.Histogram({
+  name: "order_placement_latency_ms",
+  help: "Order placement end-to-end latency in milliseconds",
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500],
+});
+
+export const riskEvaluationLatency = new client.Histogram({
+  name: "risk_evaluation_latency_ms",
+  help: "Risk evaluation latency in milliseconds",
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500],
+});
+
+export const reconciliationRunLatency = new client.Histogram({
+  name: "reconciliation_run_latency_ms",
+  help: "Reconciliation run latency in milliseconds",
+  buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+});
+
+export const eventDeliveryLatency = new client.Histogram({
+  name: "event_delivery_latency_ms",
+  help: "Event delivery latency in milliseconds",
+  buckets: [0.1, 0.5, 1, 5, 10, 25, 50],
+});
+
+// ── Phase 7 PR3: Domain counters/gauges ──
+
+export const ordersCreatedTotal = new client.Counter({
+  name: "orders_created_total",
+  help: "Total orders successfully created",
+});
+
+export const ordersRejectedTotal = new client.Counter({
+  name: "orders_rejected_total",
+  help: "Total orders rejected",
+  labelNames: ["reason"] as const,
+});
+
+export const reconciliationStatusGauge = new client.Gauge({
+  name: "reconciliation_status",
+  help: "Last reconciliation status (1 = current)",
+  labelNames: ["status"] as const,
+});
+
+new client.Gauge({
+  name: "db_pool_in_use",
+  help: "Number of PG pool clients currently in use",
+  collect() { this.set(pool.totalCount - pool.idleCount); },
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

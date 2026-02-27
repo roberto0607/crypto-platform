@@ -11,6 +11,9 @@
 
 import { Pool } from "pg";
 import { requireEnv } from "../config";
+import pino from "pino";
+
+const poolLogger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
 const connectionString = requireEnv("DATABASE_URL");
 
@@ -23,5 +26,5 @@ export const pool = new Pool({
 // Catch unexpected backend disconnections (e.g. PG restart) so they surface
 // as logged errors instead of crashing the process as unhandled exceptions.
 pool.on("error", (err) => {
-    console.error("Unexpected PostgreSQL pool error:", err);
+    poolLogger.error({ eventType: "pg.pool_error", err }, "Unexpected PostgreSQL pool error");
 })

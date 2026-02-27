@@ -71,7 +71,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
                 qty: parsed.data.qty,
                 limitPrice: parsed.data.limitPrice,
             },
-            idempotencyKey
+            idempotencyKey,
+            req.id as string
         );
 
         if (!result.fromIdempotencyCache) {

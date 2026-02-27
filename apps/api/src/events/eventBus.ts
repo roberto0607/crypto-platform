@@ -8,6 +8,8 @@
  */
 
 import type { AppEvent } from "./eventTypes";
+import { logger } from "../observability/logContext";
+import { eventDeliveryLatency, eventsDeliveryFailuresTotal } from "../metrics";
 
 export type EventHandler = (event: AppEvent) => void;
 
@@ -62,6 +64,8 @@ export function unsubscribe(handler: EventHandler): void {
  * Errors in handlers are caught and logged (never propagate).
  */
 export function publish(event: AppEvent): void {
+  const deliveryStart = performance.now();
+
   // Deliver to user-scoped handlers
   if (event.userId) {
     const handlers = userHandlers.get(event.userId);
@@ -69,8 +73,9 @@ export function publish(event: AppEvent): void {
       for (const handler of handlers) {
         try {
           handler(event);
-        } catch {
-          // Swallow — event delivery must not break callers
+        } catch (err) {
+          eventsDeliveryFailuresTotal.inc();
+          logger.error({ eventType: "event.delivery_error", eventKind: event.type, userId: event.userId, err }, "Event handler error");
         }
       }
     }
@@ -80,10 +85,13 @@ export function publish(event: AppEvent): void {
   for (const handler of globalHandlers) {
     try {
       handler(event);
-    } catch {
-      // Swallow
+    } catch (err) {
+      eventsDeliveryFailuresTotal.inc();
+      logger.error({ eventType: "event.delivery_error", eventKind: event.type, err }, "Global event handler error");
     }
   }
+
+  eventDeliveryLatency.observe(performance.now() - deliveryStart);
 }
 
 /**
@@ -108,3 +116,5 @@ export function getStats(): { userCount: number; handlerCount: number; globalCou
     globalCount: globalHandlers.size,
   };
 }
+
+
