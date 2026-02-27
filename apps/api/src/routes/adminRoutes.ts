@@ -11,6 +11,9 @@ import { createPair, findPairById, setLastPrice } from "../trading/pairRepo";
 import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
 import { runFullReconciliation } from "../reconciliation/reconciliationService";
+import { pool } from "../db/pool";
+import { listRiskLimits, upsertRiskLimit } from "../risk/riskLimitRepo";
+import { listBreakers, resetBreaker } from "../risk/breakerRepo";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -41,6 +44,19 @@ const pairIdParams = z.object({ id: z.string().uuid() });
 
 const setPriceBody = z.object({
   price: z.string().regex(/^\d+(\.\d{1,8})?$/),
+});
+
+const upsertRiskLimitBody = z.object({
+  user_id: z.string().uuid().nullable().default(null),
+  pair_id: z.string().uuid().nullable().default(null),
+  max_order_notional_quote: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+  max_position_base_qty: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+  max_open_orders_per_pair: z.number().int().min(1).optional(),
+  max_price_deviation_bps: z.number().int().min(1).optional(),
+});
+
+const resetBreakerBody = z.object({
+  breaker_key: z.string().optional(),
 });
 
 // ── Plugin (registered with prefix "/admin") ──
@@ -299,6 +315,103 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get("/reconcile", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const report = await runFullReconciliation();
     return reply.send({ ok: true, report });
+  });
+
+  // GET /admin/risk-limits
+  app.get("/risk-limits", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+    const client = await pool.connect();
+    try {
+      const limits = await listRiskLimits(client);
+      return reply.send({ ok: true, limits });
+    } finally {
+      client.release();
+    }
+  });
+
+  // PUT /admin/risk-limits
+  app.put("/risk-limits", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const parsed = upsertRiskLimitBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const actor = req.user!;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const limit = await upsertRiskLimit(client, {
+        userId: parsed.data.user_id,
+        pairId: parsed.data.pair_id,
+        maxOrderNotionalQuote: parsed.data.max_order_notional_quote,
+        maxPositionBaseQty: parsed.data.max_position_base_qty,
+        maxOpenOrdersPerPair: parsed.data.max_open_orders_per_pair,
+        maxPriceDeviationBps: parsed.data.max_price_deviation_bps,
+      });
+      await client.query("COMMIT");
+
+      await auditLog({
+        actorUserId: actor.id,
+        action: "admin.risk_limit_update",
+        targetType: "risk_limit",
+        targetId: limit.id,
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { userId: parsed.data.user_id, pairId: parsed.data.pair_id, ...parsed.data },
+      });
+
+      return reply.send({ ok: true, limit });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
+  // GET /admin/breakers
+  app.get("/breakers", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+    const client = await pool.connect();
+    try {
+      const breakers = await listBreakers(client);
+      return reply.send({ ok: true, breakers });
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /admin/breakers/reset
+  app.post("/breakers/reset", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+    const parsed = resetBreakerBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const actor = req.user!;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const resetCount = await resetBreaker(client, parsed.data.breaker_key ?? null);
+      await client.query("COMMIT");
+
+      await auditLog({
+        actorUserId: actor.id,
+        action: "admin.breaker_reset",
+        targetType: "circuit_breaker",
+        targetId: parsed.data.breaker_key ?? "ALL",
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { breakerKey: parsed.data.breaker_key ?? null, resetCount },
+      });
+
+      return reply.send({ ok: true, reset_count: resetCount });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 };
 

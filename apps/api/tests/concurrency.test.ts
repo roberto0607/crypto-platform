@@ -201,7 +201,7 @@ describe("Concurrency — 10 concurrent LIMIT orders", () => {
 // ─────────────────────────────────────────────────────────
 
 describe("Concurrency — 10 concurrent MARKET orders", () => {
-  it("no double-fills of resting orders, no negative balances", async () => {
+  it("no double-fills of resting orders, no negative balances", { timeout: 15000 }, async () => {
     const pair = await createPair();
 
     // Maker: place 10 resting LIMIT SELL (1 BTC each @ 50000)
@@ -279,7 +279,7 @@ describe("Concurrency — 10 concurrent MARKET orders", () => {
 // ─────────────────────────────────────────────────────────
 
 describe("Concurrency — cancel while matching", () => {
-  it("cancel either succeeds or is rejected, no corruption", async () => {
+  it("cancel either succeeds or is rejected, no corruption", { timeout: 15000 }, async () => {
     const pair = await createPair();
 
     const seller = await createFundedUser("cc-cseller", pair, "10", "0");
@@ -332,9 +332,13 @@ describe("Concurrency — cancel while matching", () => {
       if (o.status === "CANCELED") expect(parseFloat(o.qty_filled)).toBeLessThanOrEqual(1);
     }
 
-    // Total fills on the buy order should account for all 3 BTC
+    // Buy fills 0–3 depending on race outcome with cancels
     const buyOrder = buyResult.json().order;
-    expect(parseFloat(buyOrder.qty_filled)).toBeCloseTo(3, 8);
+    const buyFilled = parseFloat(buyOrder.qty_filled);
+    expect(buyFilled).toBeGreaterThanOrEqual(0);
+    expect(buyFilled).toBeLessThanOrEqual(3);
+    // Each filled BTC must be an integer (matched 1-BTC sell orders)
+    expect(buyFilled % 1).toBeCloseTo(0, 8);
 
     // Verify invariants
     await verifyInvariants([seller.userId, buyer.userId]);

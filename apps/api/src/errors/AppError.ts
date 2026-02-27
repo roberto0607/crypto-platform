@@ -33,6 +33,7 @@ const ERROR_STATUS: Record<string, number> = {
   asset_already_exists: 409,
   pair_already_exists: 409,
   role_unchanged: 409,
+  risk_check_failed: 409,
   // 500
   server_error: 500,
 };

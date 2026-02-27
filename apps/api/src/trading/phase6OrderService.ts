@@ -13,6 +13,9 @@ import type { Snapshot } from "../market/snapshotStore";
 import { D, toFixed8 } from "../utils/decimal";
 import { debitAvailableTx } from "../wallets/walletRepo";
 import { findWalletByUserAndAsset } from "../wallets/walletRepo";
+import { evaluateOrderRisk } from "../risk/riskEngine";
+import { recordOrderAttempt, checkPriceDislocation } from "../risk/breakerService";
+import { AppError } from "../errors/AppError";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -76,6 +79,57 @@ export async function placeOrderWithSnapshot(
 
     // ── 2. Resolve snapshot ──
     const snapshot = await resolveSnapshot(userId, body.pairId);
+
+    // ── 2b. Pre-trade risk checks (Phase 6 PR3) ──
+    const riskClient = await pool.connect();
+    try {
+        await riskClient.query("BEGIN");
+
+        // Record order attempt (may trip rate abuse breaker)
+        await recordOrderAttempt(riskClient, userId);
+
+        // Check price dislocation (may trip price breaker)
+        // Query on riskClient to avoid acquiring a second pool connection
+        const { rows: pairRows } = await riskClient.query<{ last_price: string | null }>(
+            `SELECT last_price FROM trading_pairs WHERE id = $1`,
+            [body.pairId],
+        );
+        const dbLastPrice = pairRows[0]?.last_price;
+        if (dbLastPrice) {
+            await checkPriceDislocation(
+                riskClient,
+                body.pairId,
+                snapshot.last,
+                dbLastPrice
+            );
+        }
+
+        // Evaluate all risk checks
+        const decision = await evaluateOrderRisk(riskClient, {
+            userId,
+            pairId: body.pairId,
+            side: body.side,
+            type: body.type,
+            qty: body.qty,
+            limitPrice: body.limitPrice,
+            snapshot,
+        });
+
+        await riskClient.query("COMMIT");
+
+        if (!decision.ok) {
+            throw new AppError("risk_check_failed", {
+                code: decision.code,
+                reason: decision.reason,
+                ...decision.details,
+            });
+        }
+    } catch (err) {
+        await riskClient.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        riskClient.release();
+    }
 
     // ── 3. Delegate to matching engine ──
     const result = await placeOrder(

@@ -7,6 +7,8 @@ import {
   reconciliationWalletMismatches,
   reconciliationPositionMismatches,
 } from "../metrics";
+import { pool } from "../db/pool";
+import { checkReconciliationBreaker } from "../risk/breakerService";
 
 // ── Types ──
 
@@ -72,6 +74,21 @@ export async function runFullReconciliation(): Promise<FullReconciliationReport>
     }
 
     const overallStatus = deriveStatus(walletReport, feeReport, positionReport);
+
+    // Trip circuit breaker if CRITICAL
+    if (overallStatus === "CRITICAL") {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await checkReconciliationBreaker(client, overallStatus);
+        await client.query("COMMIT");
+      } catch (breakerErr) {
+        await client.query("ROLLBACK").catch(() => {});
+        console.error("Failed to trip reconciliation breaker:", breakerErr);
+      } finally {
+        client.release();
+      }
+    }
 
     return {
       timestamp: new Date().toISOString(),

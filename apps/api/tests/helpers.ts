@@ -16,6 +16,16 @@ export async function getTestApp(): Promise<FastifyInstance> {
   if (!app) {
     app = await buildApp({ disableRateLimit: true, logger: false, disableKrakenFeed: true });
     await app.ready();
+
+    // Widen global risk limits so integration tests aren't blocked
+    await pool.query(`
+      UPDATE risk_limits
+      SET max_price_deviation_bps = 99999,
+          max_order_notional_quote = '999999999.00000000',
+          max_position_base_qty   = '999999999.00000000',
+          max_open_orders_per_pair = 9999
+      WHERE user_id IS NULL AND pair_id IS NULL
+    `);
   }
   return app;
 }

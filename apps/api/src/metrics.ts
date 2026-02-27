@@ -68,6 +68,31 @@ export const reconciliationPositionMismatches = new client.Counter({
   help: "Total number of position mismatches detected",
 });
 
+// ── Risk control counters ──
+
+export const riskChecksTotal = new client.Counter({
+  name: "risk_checks_total",
+  help: "Total pre-trade risk evaluations",
+});
+
+export const riskRejectionsTotal = new client.Counter({
+  name: "risk_rejections_total",
+  help: "Risk-rejected orders",
+  labelNames: ["code"] as const,
+});
+
+export const breakerTripsTotal = new client.Counter({
+  name: "breaker_trips_total",
+  help: "Circuit breaker trip events",
+  labelNames: ["breaker"] as const,
+});
+
+export const breakerBlocksTotal = new client.Counter({
+  name: "breaker_blocks_total",
+  help: "Orders blocked by circuit breakers",
+  labelNames: ["breaker"] as const,
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
