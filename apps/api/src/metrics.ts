@@ -150,6 +150,24 @@ export const ordersRejectedTotal = new client.Counter({
   labelNames: ["reason"] as const,
 });
 
+// ── Phase 9 PR1: Governance counters ──
+
+export const governanceRejectionsTotal = new client.Counter({
+  name: "governance_rejections_total",
+  help: "Orders rejected by account governance",
+  labelNames: ["code"] as const,
+});
+
+export const accountLocksTotal = new client.Counter({
+  name: "account_locks_total",
+  help: "Total account lock/suspend events",
+});
+
+export const dailyLimitHitsTotal = new client.Counter({
+  name: "daily_limit_hits_total",
+  help: "Total daily limit hits (notional or loss)",
+});
+
 export const reconciliationStatusGauge = new client.Gauge({
   name: "reconciliation_status",
   help: "Last reconciliation status (1 = current)",

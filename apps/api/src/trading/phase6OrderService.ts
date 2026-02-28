@@ -14,6 +14,7 @@ import { D, toFixed8 } from "../utils/decimal";
 import { debitAvailableTx } from "../wallets/walletRepo";
 import { findWalletByUserAndAsset } from "../wallets/walletRepo";
 import { evaluateOrderRisk } from "../risk/riskEngine";
+import { evaluateAccountGovernance } from "../governance/governanceEngine";
 import { recordOrderAttempt, checkPriceDislocation } from "../risk/breakerService";
 import { AppError } from "../errors/AppError";
 import { publish } from "../events/eventBus";
@@ -105,10 +106,34 @@ export async function placeOrderWithSnapshot(
     // ── 2. Resolve snapshot ──
     const snapshot = await resolveSnapshot(userId, body.pairId);
 
+    // ── 2a. Estimate notional for governance ──
+    const estimatedNotional = D(body.qty).mul(D(snapshot.last)).toFixed(8);
+
     // ── 2b. Pre-trade risk checks (Phase 6 PR3) ──
     const riskClient = await pool.connect();
     try {
         await riskClient.query("BEGIN");
+
+        // ── 2b-gov. Account governance check (Phase 9 PR1) ──
+        const govDecision = await evaluateAccountGovernance(riskClient, {
+            userId,
+            pairId: body.pairId,
+            side: body.side,
+            qty: body.qty,
+            estimatedNotional,
+            snapshotTs: snapshot.ts,
+        });
+
+        if (!govDecision.ok) {
+            ordersRejectedTotal.inc({ reason: govDecision.code ?? "governance" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: govDecision.code }, "Order rejected by governance");
+            orderPlacementLatency.observe(performance.now() - startMs);
+            throw new AppError("governance_check_failed", {
+                code: govDecision.code,
+                message: govDecision.message,
+                ...govDecision.details,
+            });
+        }
 
         // Record order attempt (may trip rate abuse breaker)
         await recordOrderAttempt(riskClient, userId);

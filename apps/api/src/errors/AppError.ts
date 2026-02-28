@@ -42,6 +42,7 @@ const ERROR_STATUS: Record<string, number> = {
   pair_already_exists: 409,
   role_unchanged: 409,
   risk_check_failed: 409,
+  governance_check_failed: 403,
   // 500
   server_error: 500,
 };

@@ -9,6 +9,7 @@ import v1Triggers from "./v1Triggers";
 import v1Bot from "./v1Bot";
 import v1Portfolio from "./v1Portfolio";
 import v1Sim from "./v1Sim";
+import v1Governance from "./v1Governance";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -20,6 +21,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Bot);
     await app.register(v1Portfolio);
     await app.register(v1Sim);
+    await app.register(v1Governance);
 };
 
 export default v1Routes;

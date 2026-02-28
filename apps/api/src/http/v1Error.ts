@@ -40,6 +40,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   pair_already_exists: "This trading pair already exists.",
   role_unchanged: "The user already has the requested role.",
   risk_check_failed: "The order was rejected by risk controls.",
+  governance_check_failed: "The order was rejected by account governance controls.",
   // misc 400
   replay_not_active: "The replay session is not active.",
   replay_already_stopped: "The replay session has already stopped.",
