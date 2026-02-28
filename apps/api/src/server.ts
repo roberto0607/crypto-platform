@@ -17,6 +17,7 @@ import { pool } from "./db/pool";
 import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
+import { stop as stopJobRunner } from "./jobs/jobRunner";
 
 async function start() {
   const app = await buildApp();
@@ -26,6 +27,7 @@ async function start() {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
     stopTriggerEngine();
     stopKrakenFeed();
+    await stopJobRunner();
     try {
       await app.close();
       app.log.info("Fastify closed");

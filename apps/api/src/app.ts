@@ -29,6 +29,8 @@ import v1Routes from "./routes/v1/index";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
+import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
+import { allJobs } from "./jobs/definitions/index";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -41,6 +43,8 @@ export interface BuildAppOptions {
   disableTriggerEngine?: boolean;
   /** Skip starting bot runner (useful for tests). */
   disableBotRunner?: boolean;
+  /** Skip starting job runner (useful for tests). */
+  disableJobRunner?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -115,6 +119,14 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Bot runner --
   if (!opts.disableBotRunner) {
     app.addHook("onReady", () => { initBotRunner(); });
+  }
+
+  // -- Job runner --
+  if (!opts.disableJobRunner) {
+    app.addHook("onReady", async () => {
+        registerJobs(allJobs);
+        await startJobRunner();
+    });
   }
 
   return app;

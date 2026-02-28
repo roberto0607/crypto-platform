@@ -180,6 +180,42 @@ new client.Gauge({
   collect() { this.set(pool.totalCount - pool.idleCount); },
 });
 
+// ── Phase 9 PR2: Job runner metrics ──
+
+export const jobRunsTotal = new client.Counter({
+  name: "job_runs_total",
+  help: "Total job executions",
+  labelNames: ["job", "status"] as const,
+});
+
+export const jobDurationMs = new client.Histogram({
+  name: "job_duration_ms",
+  help: "Job execution duration in milliseconds",
+  labelNames: ["job"] as const,
+  buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000],
+});
+
+export const jobLockContentionTotal = new client.Counter({
+  name: "job_lock_contention_total",
+  help: "Number of times a job was skipped due to lock contention",
+  labelNames: ["job"] as const,
+});
+
+export const cleanupTokensDeletedTotal = new client.Counter({
+  name: "cleanup_tokens_deleted_total",
+  help: "Total stale refresh tokens deleted by cleanup job",
+});
+
+export const replaySessionsCleanedTotal = new client.Counter({
+  name: "replay_sessions_cleaned_total",
+  help: "Total stale replay sessions cleaned",
+});
+
+export const idempotencyKeysDeletedTotal = new client.Counter({
+  name: "idempotency_keys_deleted_total",
+  help: "Total expired idempotency keys deleted",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
