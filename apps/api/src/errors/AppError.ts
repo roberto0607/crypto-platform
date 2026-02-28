@@ -20,6 +20,7 @@ const ERROR_STATUS: Record<string, number> = {
   unauthorized: 401,
   // 403
   forbidden: 403,
+  governance_check_failed: 403,
   // 404
   user_not_found: 404,
   asset_not_found: 404,
@@ -28,9 +29,10 @@ const ERROR_STATUS: Record<string, number> = {
   pair_not_found: 404,
   replay_not_found: 404,
   trigger_not_found: 404,
+  run_not_found: 404,
+  // 400 (state errors)
   replay_not_active: 400,
   replay_already_stopped: 400,
-  run_not_found: 404,
   run_not_running: 400,
   run_not_paused: 400,
   run_not_active: 400,
@@ -42,9 +44,12 @@ const ERROR_STATUS: Record<string, number> = {
   pair_already_exists: 409,
   role_unchanged: 409,
   risk_check_failed: 409,
-  governance_check_failed: 403,
   // 500
   server_error: 500,
+  // 503 — queue backpressure / timeout / shutdown
+  pair_queue_overloaded: 503,
+  queue_timeout: 503,
+  server_shutting_down: 503,
 };
 
 export class AppError extends Error {

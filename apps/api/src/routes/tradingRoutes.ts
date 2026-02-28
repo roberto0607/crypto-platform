@@ -8,8 +8,8 @@ import { handleError } from "../http/handleError";
 import { findPairById, listActivePairs } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
-import { placeOrder, cancelOrder } from "../trading/matchingEngine";
-import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
+import { cancelOrder } from "../trading/matchingEngine";
+import { enqueueOrder } from "../queue/queueManager";
 
 
 // ── Zod schemas ──
@@ -62,7 +62,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         try {
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
 
-        const result = await placeOrderWithSnapshot(
+        const result = await enqueueOrder(
+            parsed.data.pairId,
             actor.id,
             {
                 pairId: parsed.data.pairId,
@@ -72,7 +73,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
                 limitPrice: parsed.data.limitPrice,
             },
             idempotencyKey,
-            req.id as string
+            req.id as string,
         );
 
         if (!result.fromIdempotencyCache) {

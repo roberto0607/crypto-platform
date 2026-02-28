@@ -37,4 +37,7 @@ export const config = {
 
   jwtAccessTtlSeconds,
   jwtRefreshTtlSeconds,
+
+  maxQueueDepth: numberEnv("MAX_QUEUE_DEPTH", 100),
+  queueTimeoutMs: numberEnv("QUEUE_TIMEOUT_MS", 5000),
 };

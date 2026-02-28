@@ -18,6 +18,7 @@ import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { stop as stopJobRunner } from "./jobs/jobRunner";
+import { shutdownQueues } from "./queue/queueManager";
 
 async function start() {
   const app = await buildApp();
@@ -28,6 +29,7 @@ async function start() {
     stopTriggerEngine();
     stopKrakenFeed();
     await stopJobRunner();
+    await shutdownQueues(10_000);
     try {
       await app.close();
       app.log.info("Fastify closed");

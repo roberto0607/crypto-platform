@@ -14,6 +14,7 @@ import { runFullReconciliation } from "../reconciliation/reconciliationService";
 import { pool } from "../db/pool";
 import { listRiskLimits, upsertRiskLimit } from "../risk/riskLimitRepo";
 import { listBreakers, resetBreaker } from "../risk/breakerRepo";
+import { getQueueStats } from "../queue/queueManager";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -412,6 +413,12 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     } finally {
       client.release();
     }
+  });
+
+  // GET /admin/queue — Queue stats per trading pair
+  app.get("/queue", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+    const queues = getQueueStats();
+    return reply.send({ ok: true, queues });
   });
 };
 

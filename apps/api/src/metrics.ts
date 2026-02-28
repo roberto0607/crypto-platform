@@ -241,6 +241,34 @@ export const retentionFailuresTotal = new client.Counter({
     help: "Total retention job failures",
 });
 
+// ── Phase 9 PR4: Queue metrics ──
+
+export const pairQueueDepth = new client.Gauge({
+  name: "pair_queue_depth",
+  help: "Current queue depth per trading pair",
+  labelNames: ["pairId"] as const,
+});
+
+export const pairQueueRejectionsTotal = new client.Counter({
+  name: "pair_queue_rejections_total",
+  help: "Orders rejected due to queue backpressure",
+  labelNames: ["pairId"] as const,
+});
+
+export const pairQueueExecMs = new client.Histogram({
+  name: "pair_queue_exec_ms",
+  help: "Order execution time within queue worker (ms)",
+  labelNames: ["pairId"] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+});
+
+export const pairQueueWaitMs = new client.Histogram({
+  name: "pair_queue_wait_ms",
+  help: "Time spent waiting in queue before execution (ms)",
+  labelNames: ["pairId"] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
