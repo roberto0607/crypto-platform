@@ -25,6 +25,7 @@ import {
   ordersCreatedTotal,
   ordersRejectedTotal,
 } from "../metrics";
+import { writePortfolioSnapshot } from "../portfolio/portfolioService";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -279,6 +280,13 @@ export async function placeOrderWithSnapshot(
             } catch {
                 // Events must never break the order flow
             }
+
+                // ── Post-fill: write rich portfolio snapshot ──
+                const lastFill = result.fills[result.fills.length - 1];
+                const lastFillTs = new Date(lastFill.executed_at).getTime();
+                writePortfolioSnapshot(userId, lastFillTs, body.pairId, lastFill.price)
+                    .catch((err) => logger.warn({ err, userId }, "portfolio_snapshot_failed"));
+
                         // ── 6b. Race recovery: another request won the idempotency insert ──
             if (idempotencyKey && idempotencyRowCount === 0) {
                 const winner = await getIdempotencyKey(userId, idempotencyKey);
