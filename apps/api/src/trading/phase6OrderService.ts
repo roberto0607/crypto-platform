@@ -26,6 +26,9 @@ import {
   ordersRejectedTotal,
 } from "../metrics";
 import { writePortfolioSnapshot } from "../portfolio/portfolioService";
+import { resolveSimulationConfig } from "../sim/simConfigRepo";
+import { computeMarketExecution } from "../sim/slippageModel";
+import { computeAvailableLiquidity } from "../sim/liquidityModel";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -154,6 +157,52 @@ export async function placeOrderWithSnapshot(
         throw err;
     } finally {
         riskClient.release();
+    }
+
+    // ── 2c. Simulation: slippage + liquidity (MARKET only) ──
+    if (body.type === "MARKET") {
+        const simConfig = await resolveSimulationConfig(userId, body.pairId);
+
+        const { rows: candleRows } = await pool.query<{
+            volume: string; high: string; low: string;
+        }>(
+            `SELECT volume, high, low FROM candles
+             WHERE pair_id = $1 AND ts <= $2
+             ORDER BY ts DESC LIMIT 1`,
+            [body.pairId, snapshot.ts]
+        );
+        const candle = candleRows[0] ?? null;
+
+        const simResult = computeMarketExecution(
+            snapshot,
+            body.side,
+            body.qty,
+            simConfig,
+            candle?.volume ?? null,
+            candle?.high ?? null,
+            candle?.low ?? null
+        );
+
+        if (!simResult) {
+            const reqNotional = D(body.qty).mul(D(snapshot.last));
+            const availLiq = computeAvailableLiquidity(
+                simConfig, candle?.volume ?? null, snapshot.last
+            );
+            ordersRejectedTotal.inc({ reason: "insufficient_liquidity" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: "insufficient_liquidity" },
+                "Order rejected: insufficient liquidity");
+            orderPlacementLatency.observe(performance.now() - startMs);
+            throw new AppError("insufficient_liquidity", {
+                requestedNotional: toFixed8(reqNotional),
+                availableLiquidity: availLiq,
+            });
+        }
+
+        // Override last_price so matching engine system fill uses slippage-adjusted price
+        await pool.query(
+            `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
+            [simResult.execPrice, body.pairId]
+        );
     }
 
     // ── 3. Delegate to matching engine ──

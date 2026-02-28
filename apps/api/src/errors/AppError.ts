@@ -13,6 +13,7 @@ const ERROR_STATUS: Record<string, number> = {
   insufficient_balance: 400,
   no_price_available: 400,
   order_not_cancelable: 400,
+  insufficient_liquidity: 400,
   trigger_not_cancelable: 400,
   // 401
   invalid_credentials: 401,

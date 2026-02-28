@@ -18,6 +18,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   insufficient_balance: "Insufficient wallet balance.",
   no_price_available: "No market price is currently available.",
   order_not_cancelable: "This order cannot be canceled.",
+  insufficient_liquidity: "Market liquidity insufficient for requested size.",
   trigger_not_cancelable: "This trigger order cannot be canceled.",
   // 401
   invalid_credentials: "Invalid email or password.",
