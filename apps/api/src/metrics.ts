@@ -216,6 +216,31 @@ export const idempotencyKeysDeletedTotal = new client.Counter({
   help: "Total expired idempotency keys deleted",
 });
 
+// ── Phase 9 PR3: Retention metrics ──
+
+export const retentionRowsDeletedTotal = new client.Counter({
+    name: "retention_rows_deleted_total",
+    help: "Total rows deleted by retention job",
+    labelNames: ["table"] as const,
+});
+
+export const retentionRollupsTotal = new client.Counter({
+    name: "retention_rollups_total",
+    help: "Total rows rolled up by retention job",
+    labelNames: ["type"] as const,
+});
+
+export const retentionDurationMs = new client.Histogram({
+    name: "retention_duration_ms",
+    help: "Retention job total duration in milliseconds",
+    buckets: [100, 500, 1000, 2500, 5000, 10000, 30000, 60000],
+});
+
+export const retentionFailuresTotal = new client.Counter({
+    name: "retention_failures_total",
+    help: "Total retention job failures",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
