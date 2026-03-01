@@ -25,6 +25,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   unauthorized: "Authentication is required.",
   // 403
   forbidden: "You do not have permission to access this resource.",
+  // 404 (repair)
+  no_recon_data: "No reconciliation data found for this user.",
+  // 409 (repair)
+  repair_has_high_findings: "Cannot unquarantine: reconciliation has HIGH findings for this user.",
   account_quarantined: "Account quarantined due to reconciliation mismatch.",
   // 404
   user_not_found: "The requested user was not found.",

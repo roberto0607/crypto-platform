@@ -45,6 +45,10 @@ const ERROR_STATUS: Record<string, number> = {
   pair_already_exists: 409,
   role_unchanged: 409,
   risk_check_failed: 409,
+  // 409 (repair)
+  repair_has_high_findings: 409,
+  // 404 (repair)
+  no_recon_data: 404,
   // 500
   server_error: 500,
   // 503 — queue backpressure / timeout / shutdown

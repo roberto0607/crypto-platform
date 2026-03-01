@@ -282,6 +282,25 @@ export const reconQuarantinesTotal = new client.Counter({
   help: "Total users quarantined by reconciliation",
 });
 
+// ── Phase 9 PR6: Repair metrics ──
+
+export const repairsTotal = new client.Counter({
+  name: "repairs_total",
+  help: "Total repair runs by mode and status",
+  labelNames: ["mode", "status"] as const,
+});
+
+export const repairsPositionsUpdatedTotal = new client.Counter({
+  name: "repairs_positions_updated_total",
+  help: "Total positions updated by repair",
+});
+
+export const repairsDurationMs = new client.Histogram({
+  name: "repairs_duration_ms",
+  help: "Repair run duration in milliseconds",
+  buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000],
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
