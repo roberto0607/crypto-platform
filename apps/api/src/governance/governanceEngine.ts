@@ -49,7 +49,11 @@ export async function evaluateAccountGovernance(
     return { ok: true };
   }
 
-  // ── 1. Account status check ──
+  // ── 1. Account status check (quarantine is fail-closed, BEFORE risk) ──
+  if (limits.account_status === "QUARANTINED") {
+    return reject(GOVERNANCE_CODES.ACCOUNT_QUARANTINED,
+      "Account quarantined due to reconciliation mismatch.");
+  }
   if (limits.account_status === "SUSPENDED") {
     return reject(GOVERNANCE_CODES.ACCOUNT_SUSPENDED, "Account is suspended");
   }

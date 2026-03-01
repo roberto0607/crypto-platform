@@ -12,6 +12,7 @@ import v1Sim from "./v1Sim";
 import v1Governance from "./v1Governance";
 import v1Jobs from "./v1Jobs";
 import v1Retention from "./v1Retention";
+import v1Reconciliation from "./v1Reconciliation";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -26,6 +27,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Governance);
     await app.register(v1Jobs);
     await app.register(v1Retention);
+    await app.register(v1Reconciliation);
 };
 
 export default v1Routes;

@@ -25,6 +25,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   unauthorized: "Authentication is required.",
   // 403
   forbidden: "You do not have permission to access this resource.",
+  account_quarantined: "Account quarantined due to reconciliation mismatch.",
   // 404
   user_not_found: "The requested user was not found.",
   asset_not_found: "The requested asset was not found.",

@@ -269,6 +269,19 @@ export const pairQueueWaitMs = new client.Histogram({
   buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
 });
 
+// ── Phase 9 PR5: Reconciliation findings metrics ──
+
+export const reconFindingsTotal = new client.Counter({
+  name: "reconciliation_findings_total",
+  help: "Total reconciliation findings by check and severity",
+  labelNames: ["check", "severity"] as const,
+});
+
+export const reconQuarantinesTotal = new client.Counter({
+  name: "reconciliation_quarantines_total",
+  help: "Total users quarantined by reconciliation",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

@@ -29,7 +29,7 @@ const upsertAccountLimitsBody = z.object({
 
 const patchAccountStatusBody = z.object({
   userId: z.string().uuid(),
-  status: z.enum(["ACTIVE", "SUSPENDED", "LOCKED"]),
+  status: z.enum(["ACTIVE", "SUSPENDED", "LOCKED", "QUARANTINED"]),
 });
 
 // ── Routes ──

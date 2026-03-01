@@ -21,6 +21,7 @@ const ERROR_STATUS: Record<string, number> = {
   // 403
   forbidden: 403,
   governance_check_failed: 403,
+  account_quarantined: 403,
   // 404
   user_not_found: 404,
   asset_not_found: 404,
