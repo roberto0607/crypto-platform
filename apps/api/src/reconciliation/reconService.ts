@@ -10,8 +10,7 @@ import { tradeConservationCheck } from "./checks/tradeConservationCheck";
 import { idempotencyIntegrityCheck } from "./checks/idempotencyIntegrityCheck";
 import { positionsVsTradesCheck } from "./checks/positionsVsTradesCheck";
 import type { ReconFinding, ReconRunResult } from "./reconTypes";
-import { openIncidentsForQuarantinedUsers } from "../incidents/incidentService";
-import { recordEvent } from "../eventStream/eventService";
+import { insertOutboxEventTx } from "../outbox/outboxRepo";
 
 /**
  * Run all reconciliation checks, persist findings, quarantine users with HIGH findings.
@@ -82,6 +81,31 @@ export async function runReconciliation(): Promise<ReconRunResult> {
       reconQuarantinesTotal.inc(userIdsToQuarantine.length);
     }
 
+    // ── Outbox: RECON_RUN_COMPLETED (event stream append) ──
+    await insertOutboxEventTx(client, {
+      event_type: "EVENT_STREAM_APPEND",
+      aggregate_type: "RECON",
+      payload: {
+        eventInput: {
+          eventType: "RECON_RUN_COMPLETED",
+          entityType: "RECON",
+          payload: { runId, findingsCount: findings.length, highCount, warnCount, quarantinedUserIds: userIdsToQuarantine },
+        },
+      },
+    });
+
+    // ── Outbox: INCIDENT_OPEN_BATCH (if quarantined users exist) ──
+    if (userIdsToQuarantine.length > 0) {
+      await insertOutboxEventTx(client, {
+        event_type: "INCIDENT_OPEN_BATCH",
+        aggregate_type: "INCIDENT",
+        payload: {
+          reconRunId: runId,
+          userIds: userIdsToQuarantine,
+        },
+      });
+    }
+
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -90,25 +114,6 @@ export async function runReconciliation(): Promise<ReconRunResult> {
   } finally {
     client.release();
   }
-
-  // PR7: Open incidents for quarantined users (after commit, best-effort)
-  if (userIdsToQuarantine.length > 0) {
-    try {
-      await openIncidentsForQuarantinedUsers(runId, userIdsToQuarantine);
-    } catch (err) {
-      logger.error(
-        { eventType: "incident.open_after_recon_failed", runId, err },
-        "Failed to open incidents after quarantine",
-      );
-    }
-  }
-
-  // ── Event stream: recon run completed (fire-and-forget) ──
-  recordEvent({
-    eventType: "RECON_RUN_COMPLETED",
-    entityType: "RECON",
-    payload: { runId, findingsCount: findings.length, highCount, warnCount, quarantinedUserIds: userIdsToQuarantine },
-  }).catch(() => {});
 
   const latencyMs = performance.now() - startMs;
 

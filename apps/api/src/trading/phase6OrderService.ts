@@ -30,7 +30,7 @@ import { writePortfolioSnapshot } from "../portfolio/portfolioService";
 import { resolveSimulationConfig } from "../sim/simConfigRepo";
 import { computeMarketExecution } from "../sim/slippageModel";
 import { computeAvailableLiquidity } from "../sim/liquidityModel";
-import { recordEvent } from "../eventStream/eventService";
+import { insertOutboxEventTx } from "../outbox/outboxRepo";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -319,6 +319,40 @@ export async function placeOrderWithSnapshot(
 
                 }
 
+                // ── Outbox: ORDER_PLACED ──
+                await insertOutboxEventTx(client, {
+                    event_type: "EVENT_STREAM_APPEND",
+                    aggregate_type: "ORDER",
+                    aggregate_id: result.order.id,
+                    payload: {
+                        eventInput: {
+                            eventType: "ORDER_PLACED",
+                            entityType: "ORDER",
+                            entityId: result.order.id,
+                            actorUserId: userId,
+                            payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
+                        },
+                    },
+                });
+
+                // ── Outbox: TRADE_EXECUTED per fill ──
+                for (const fill of result.fills) {
+                    await insertOutboxEventTx(client, {
+                        event_type: "EVENT_STREAM_APPEND",
+                        aggregate_type: "TRADE",
+                        aggregate_id: fill.id,
+                        payload: {
+                            eventInput: {
+                                eventType: "TRADE_EXECUTED",
+                                entityType: "TRADE",
+                                entityId: fill.id,
+                                actorUserId: userId,
+                                payload: { price: fill.price, qty: fill.qty, fee: fill.fee_amount, executedAt: fill.executed_at },
+                            },
+                        },
+                    });
+                }
+
                 await client.query("COMMIT");
             } catch (err) {
                 await client.query("ROLLBACK");
@@ -356,25 +390,6 @@ export async function placeOrderWithSnapshot(
                 // Events must never break the order flow
             }
 
-            // ── Event stream: order placed + trades (fire-and-forget) ──
-            recordEvent({
-                eventType: "ORDER_PLACED",
-                entityType: "ORDER",
-                entityId: result.order.id,
-                actorUserId: userId,
-                payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
-            }).catch(() => {});
-
-            for (const fill of result.fills) {
-                recordEvent({
-                    eventType: "TRADE_EXECUTED",
-                    entityType: "TRADE",
-                    entityId: fill.id,
-                    actorUserId: userId,
-                    payload: { price: fill.price, qty: fill.qty, fee: fill.fee_amount, executedAt: fill.executed_at },
-                }).catch(() => {});
-            }
-
                 // ── Post-fill: write rich portfolio snapshot ──
                 const lastFill = result.fills[result.fills.length - 1];
                 const lastFillTs = new Date(lastFill.executed_at).getTime();
@@ -404,6 +419,23 @@ export async function placeOrderWithSnapshot(
         try {
             await client.query("BEGIN");
             noFillRowCount = await putIdempotencyKeyTx(client, userId, idempotencyKey, result.order.id, snapshot);
+
+            // ── Outbox: ORDER_PLACED (no fills) ──
+            await insertOutboxEventTx(client, {
+                event_type: "EVENT_STREAM_APPEND",
+                aggregate_type: "ORDER",
+                aggregate_id: result.order.id,
+                payload: {
+                    eventInput: {
+                        eventType: "ORDER_PLACED",
+                        entityType: "ORDER",
+                        entityId: result.order.id,
+                        actorUserId: userId,
+                        payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
+                    },
+                },
+            });
+
             await client.query("COMMIT");
         } catch (err) {
             await client.query("ROLLBACK");
@@ -428,15 +460,6 @@ export async function placeOrderWithSnapshot(
         } catch {
             // Events must never break the order flow
         }
-
-        // ── Event stream: order placed (fire-and-forget) ──
-        recordEvent({
-            eventType: "ORDER_PLACED",
-            entityType: "ORDER",
-            entityId: result.order.id,
-            actorUserId: userId,
-            payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
-        }).catch(() => {});
 
         // ── Race recovery for no-fills path ──
         if (noFillRowCount === 0) {
@@ -472,14 +495,31 @@ export async function placeOrderWithSnapshot(
             // Events must never break the order flow
         }
 
-        // ── Event stream: order placed (fire-and-forget) ──
-        recordEvent({
-            eventType: "ORDER_PLACED",
-            entityType: "ORDER",
-            entityId: result.order.id,
-            actorUserId: userId,
-            payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
-        }).catch(() => {});
+        // ── Outbox: ORDER_PLACED (no fills, no idempotency) ──
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+            await insertOutboxEventTx(client, {
+                event_type: "EVENT_STREAM_APPEND",
+                aggregate_type: "ORDER",
+                aggregate_id: result.order.id,
+                payload: {
+                    eventInput: {
+                        eventType: "ORDER_PLACED",
+                        entityType: "ORDER",
+                        entityId: result.order.id,
+                        actorUserId: userId,
+                        payload: { side: body.side, type: body.type, qty: body.qty, price: body.limitPrice ?? null, snapshotTs: snapshot.ts },
+                    },
+                },
+            });
+            await client.query("COMMIT");
+        } catch (err) {
+            await client.query("ROLLBACK").catch(() => {});
+            logger.warn({ err, orderId: result.order.id }, "Failed to insert outbox event for ORDER_PLACED");
+        } finally {
+            client.release();
+        }
     }
 
     ordersCreatedTotal.inc();

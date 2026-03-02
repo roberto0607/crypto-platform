@@ -4,7 +4,7 @@ import { repairsTotal, repairsPositionsUpdatedTotal, repairsDurationMs } from ".
 import { createRepairRunTx, markRepairRunSuccessTx, markRepairRunFailedTx } from "./repairRepo";
 import { computePositionFromTrades, applyPositionRebuildTx } from "./positionRebuildService";
 import type { RepairPlan, RepairResult, PairRepairResult } from "./repairTypes";
-import { appendRepairEventsIfIncident } from "../incidents/incidentService";
+import { insertOutboxEventTx } from "../outbox/outboxRepo";
 
 /**
  * Discover all distinct pair_ids the user has traded.
@@ -89,19 +89,33 @@ export async function runRepair(
     };
 
     await markRepairRunSuccessTx(client, repairRunId, summary);
-    await client.query("COMMIT");
 
-    // PR7: Append repair events to incident (best-effort, after commit)
-    try {
-      await appendRepairEventsIfIncident(
-        plan.targetUserId, repairRunId, "REPAIR_STARTED",
-      );
-      await appendRepairEventsIfIncident(
-        plan.targetUserId, repairRunId, "REPAIR_APPLIED", summary,
-      );
-    } catch {
-      // best-effort — don't block repair result
-    }
+    // ── Outbox: REPAIR_STARTED ──
+    await insertOutboxEventTx(client, {
+      event_type: "REPAIR_EVENT",
+      aggregate_type: "REPAIR",
+      aggregate_id: repairRunId,
+      payload: {
+        userId: plan.targetUserId,
+        repairRunId,
+        repairEventType: "REPAIR_STARTED",
+      },
+    });
+
+    // ── Outbox: REPAIR_APPLIED ──
+    await insertOutboxEventTx(client, {
+      event_type: "REPAIR_EVENT",
+      aggregate_type: "REPAIR",
+      aggregate_id: repairRunId,
+      payload: {
+        userId: plan.targetUserId,
+        repairRunId,
+        repairEventType: "REPAIR_APPLIED",
+        metadata: summary,
+      },
+    });
+
+    await client.query("COMMIT");
 
     // Metrics
     const durationMs = performance.now() - startMs;

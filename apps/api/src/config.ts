@@ -14,6 +14,12 @@ function numberEnv(name: string, fallback: number): number {
   return n;
 }
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const v = process.env[name];
+  if (!v) return fallback;
+  return v === "true" || v === "1";
+}
+
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProd = nodeEnv === "production";
 
@@ -40,4 +46,9 @@ export const config = {
 
   maxQueueDepth: numberEnv("MAX_QUEUE_DEPTH", 100),
   queueTimeoutMs: numberEnv("QUEUE_TIMEOUT_MS", 5000),
+
+  outboxWorkerEnabled: booleanEnv("OUTBOX_WORKER_ENABLED", true),
+  outboxBatchSize: numberEnv("OUTBOX_BATCH_SIZE", 50),
+  outboxPollIntervalMs: numberEnv("OUTBOX_POLL_INTERVAL_MS", 1000),
+  outboxProcessingTimeoutMs: numberEnv("OUTBOX_PROCESSING_TIMEOUT_MS", 60000),
 };

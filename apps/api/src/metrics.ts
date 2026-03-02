@@ -353,6 +353,44 @@ export const eventStreamVerifyDurationMs = new client.Histogram({
   buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000],
 });
 
+// ── Phase 9 PR9: Outbox metrics ──
+
+export const outboxEventsTotal = new client.Counter({
+  name: "outbox_events_total",
+  help: "Total outbox events enqueued",
+  labelNames: ["event_type"] as const,
+});
+
+export const outboxProcessedTotal = new client.Counter({
+  name: "outbox_processed_total",
+  help: "Total outbox events successfully processed",
+  labelNames: ["event_type"] as const,
+});
+
+export const outboxFailuresTotal = new client.Counter({
+  name: "outbox_failures_total",
+  help: "Total outbox event processing failures",
+  labelNames: ["event_type"] as const,
+});
+
+export const outboxRetriesTotal = new client.Counter({
+  name: "outbox_retries_total",
+  help: "Total outbox event retries",
+  labelNames: ["event_type"] as const,
+});
+
+export const outboxProcessingDurationMs = new client.Histogram({
+  name: "outbox_processing_duration_ms",
+  help: "Outbox event processing duration in milliseconds",
+  labelNames: ["event_type"] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+});
+
+export const outboxQueueDepth = new client.Gauge({
+  name: "outbox_queue_depth",
+  help: "Current number of pending outbox events",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

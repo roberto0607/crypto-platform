@@ -31,6 +31,7 @@ import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
+import { startOutboxWorker } from "./outbox/outboxWorker";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -45,6 +46,8 @@ export interface BuildAppOptions {
   disableBotRunner?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
+  /** Skip starting outbox worker (useful for tests). */
+  disableOutboxWorker?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -127,6 +130,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         registerJobs(allJobs);
         await startJobRunner();
     });
+  }
+
+  // -- Outbox worker --
+  if (!opts.disableOutboxWorker) {
+    app.addHook("onReady", () => { startOutboxWorker(); });
   }
 
   return app;
