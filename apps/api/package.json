@@ -14,7 +14,8 @@
     "dev:seed": "bash scripts/seed.sh",
     "dev:reset": "bash scripts/reset.sh --force",
     "dev:demo": "bash scripts/demo.sh",
-    "dev:sandbox": "bash scripts/reset.sh --force && bash scripts/seed.sh && bash scripts/demo.sh"
+    "dev:sandbox": "bash scripts/reset.sh --force && bash scripts/seed.sh && bash scripts/demo.sh",
+    "restore:drill": "bash scripts/restore-drill.sh"
   },
   "keywords": [],
   "author": "",

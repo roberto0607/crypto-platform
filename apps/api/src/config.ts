@@ -51,4 +51,9 @@ export const config = {
   outboxBatchSize: numberEnv("OUTBOX_BATCH_SIZE", 50),
   outboxPollIntervalMs: numberEnv("OUTBOX_POLL_INTERVAL_MS", 1000),
   outboxProcessingTimeoutMs: numberEnv("OUTBOX_PROCESSING_TIMEOUT_MS", 60000),
+
+  // ── Phase 9 PR10: Disaster Recovery ──
+  backupDir: process.env.BACKUP_DIR ?? "./backups",
+  backupRetentionDays: numberEnv("BACKUP_RETENTION_DAYS", 14),
+  restoreDbName: process.env.RESTORE_DB_NAME ?? "cp_restore_test",
 };

@@ -1,17 +1,17 @@
 /**
  * server.ts — Fastify API Entry Point
  *
- * Imports buildApp() from app.ts, adds graceful shutdown handlers,
- * and starts listening on the configured host/port.
- *
  * Startup order:
  *   1. dotenv/config loads .env into process.env (via config import)
  *   2. pool.ts is imported → PG connection pool reads DATABASE_URL
- *   3. buildApp() creates Fastify with all plugins + routes
- *   4. Signal handlers registered for graceful shutdown
- *   5. Server listens; on failure, logs and exits with code 1
+ *   3. runMigrationGuard() — exits if DB/code schema mismatch
+ *   4. buildApp() creates Fastify with all plugins + routes
+ *   5. Startup banner logged (version, migration, git commit, DB host)
+ *   6. Signal handlers registered for graceful shutdown
+ *   7. Server listens; on failure, logs and exits with code 1
  */
 
+import { execSync } from "node:child_process";
 import { config } from "./config";
 import { pool } from "./db/pool";
 import { buildApp } from "./app";
@@ -19,9 +19,37 @@ import { stopKrakenFeed } from "./market/krakenWs";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { stop as stopJobRunner } from "./jobs/jobRunner";
 import { shutdownQueues } from "./queue/queueManager";
+import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
+
+function getGitCommit(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 async function start() {
+  // ── Migration guard — fail fast if schema mismatch ──
+  await runMigrationGuard(pool);
+
   const app = await buildApp();
+
+  // ── Startup banner ──
+  const dbVersion = await getDbVersion(pool);
+  const gitCommit = getGitCommit();
+  const dbHost = (process.env.DATABASE_URL ?? "")
+    .replace(/:[^:@]*@/, ":***@")
+    .replace(/\/[^/]*$/, "");
+
+  app.log.info({
+    msg: "Server starting",
+    appVersion: "1.0.0",
+    migrationVersion: dbVersion ?? "(empty)",
+    gitCommit,
+    dbHost,
+    nodeEnv: config.nodeEnv,
+  });
 
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {

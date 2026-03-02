@@ -4,14 +4,16 @@
  * Forward-only migration system that applies .sql files from the migrations/
  * directory in alphabetical order. Each migration runs inside a transaction
  * so a failure rolls back cleanly without leaving the schema in a partial state.
+ * An advisory lock prevents concurrent migration runs.
  *
  * How it works:
  *   1. Ensures the schema_migrations tracking table exists
- *   2. Reads which migrations have already been applied
- *   3. Scans migrations/ for .sql files, sorted alphabetically (001_, 002_, …)
- *   4. Applies each unapplied file inside a BEGIN/COMMIT transaction
- *   5. Records the filename in schema_migrations as the migration ID
- *   6. Drains the connection pool and exits
+ *   2. Acquires pg_advisory_lock to block concurrent runs
+ *   3. Reads which migrations have already been applied
+ *   4. Scans migrations/ for .sql files, sorted alphabetically (001_, 002_, …)
+ *   5. Applies each unapplied file inside a BEGIN/COMMIT transaction
+ *   6. Records the filename in schema_migrations as the migration ID
+ *   7. Releases advisory lock, drains the connection pool and exits
  *
  * Usage: pnpm migrate (runs this file via tsx)
  */
@@ -20,6 +22,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { pool } from "./pool";
+import { acquireMigrationLock } from "./migrationGuard";
 
 // Resolve from cwd so the script works when run from apps/api/.
 const MIGRATIONS_DIR = path.join(process.cwd(), "migrations");
@@ -81,21 +84,26 @@ async function applyMigration(id: string, sql: string) {
 async function main() {
     await ensureMigrationsTable();
 
-    const applied = await getAppliedMigrations();
-    const files = getMigrationFiles();
+    const releaseLock = await acquireMigrationLock(pool);
 
-    for(const file of files) {
-        // Skip migrations that have already been applied.
-        if (applied.has(file)) continue;
+    try {
+        const applied = await getAppliedMigrations();
+        const files = getMigrationFiles();
 
-        const fullPath = path.join(MIGRATIONS_DIR, file);
-        const sql = fs.readFileSync(fullPath, "utf8");
+        for (const file of files) {
+            // Skip migrations that have already been applied.
+            if (applied.has(file)) continue;
 
-        await applyMigration(file, sql);
+            const fullPath = path.join(MIGRATIONS_DIR, file);
+            const sql = fs.readFileSync(fullPath, "utf8");
+
+            await applyMigration(file, sql);
+        }
+    } finally {
+        releaseLock();
+        // Drain all connections so the process can exit cleanly.
+        await pool.end();
     }
-
-    // Drain all connections so the process can exit cleanly.
-    await pool.end();
 }
 
 main().catch((err) => {

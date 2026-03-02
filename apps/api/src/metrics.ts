@@ -391,6 +391,34 @@ export const outboxQueueDepth = new client.Gauge({
   help: "Current number of pending outbox events",
 });
 
+// ── Phase 9 PR10: Backup + disaster recovery metrics ──
+
+export const backupsCreatedTotal = new client.Counter({
+  name: "backups_created_total",
+  help: "Total backup files created by backup.sh",
+});
+
+export const backupRestoreDrillsTotal = new client.Counter({
+  name: "backup_restore_drills_total",
+  help: "Total restore drills executed",
+});
+
+export const backupRestoreFailuresTotal = new client.Counter({
+  name: "backup_restore_failures_total",
+  help: "Total restore drill failures",
+});
+
+export const migrationGuardFailuresTotal = new client.Counter({
+  name: "migration_guard_failures_total",
+  help: "Total migration guard failures at startup (DB/code version mismatch)",
+});
+
+export const restoreDurationMs = new client.Histogram({
+  name: "restore_duration_ms",
+  help: "Restore drill duration in milliseconds",
+  buckets: [1000, 5000, 10000, 30000, 60000, 120000, 300000],
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
