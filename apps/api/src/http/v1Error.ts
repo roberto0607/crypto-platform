@@ -30,6 +30,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   // 409 (repair)
   repair_has_high_findings: "Cannot unquarantine: reconciliation has HIGH findings for this user.",
   account_quarantined: "Account quarantined due to reconciliation mismatch.",
+  unquarantine_not_allowed: "Cannot unquarantine: incident gating requirements not met.",
+  incident_not_found: "The requested incident was not found.",
   // 404
   user_not_found: "The requested user was not found.",
   asset_not_found: "The requested asset was not found.",

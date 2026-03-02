@@ -49,6 +49,10 @@ const ERROR_STATUS: Record<string, number> = {
   repair_has_high_findings: 409,
   // 404 (repair)
   no_recon_data: 404,
+  // 409 (incidents)
+  unquarantine_not_allowed: 409,
+  // 404 (incidents)
+  incident_not_found: 404,
   // 500
   server_error: 500,
   // 503 — queue backpressure / timeout / shutdown

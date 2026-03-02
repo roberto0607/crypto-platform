@@ -4,6 +4,7 @@ import { repairsTotal, repairsPositionsUpdatedTotal, repairsDurationMs } from ".
 import { createRepairRunTx, markRepairRunSuccessTx, markRepairRunFailedTx } from "./repairRepo";
 import { computePositionFromTrades, applyPositionRebuildTx } from "./positionRebuildService";
 import type { RepairPlan, RepairResult, PairRepairResult } from "./repairTypes";
+import { appendRepairEventsIfIncident } from "../incidents/incidentService";
 
 /**
  * Discover all distinct pair_ids the user has traded.
@@ -89,6 +90,18 @@ export async function runRepair(
 
     await markRepairRunSuccessTx(client, repairRunId, summary);
     await client.query("COMMIT");
+
+    // PR7: Append repair events to incident (best-effort, after commit)
+    try {
+      await appendRepairEventsIfIncident(
+        plan.targetUserId, repairRunId, "REPAIR_STARTED",
+      );
+      await appendRepairEventsIfIncident(
+        plan.targetUserId, repairRunId, "REPAIR_APPLIED", summary,
+      );
+    } catch {
+      // best-effort — don't block repair result
+    }
 
     // Metrics
     const durationMs = performance.now() - startMs;

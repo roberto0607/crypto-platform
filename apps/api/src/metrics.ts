@@ -301,6 +301,34 @@ export const repairsDurationMs = new client.Histogram({
   buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000],
 });
 
+// ── Phase 9 PR7: Incident metrics ──
+
+export const incidentsOpenTotal = new client.Counter({
+  name: "incidents_open_total",
+  help: "Total incidents opened",
+});
+
+export const incidentsResolvedTotal = new client.Counter({
+  name: "incidents_resolved_total",
+  help: "Total incidents resolved",
+});
+
+export const incidentsAckTotal = new client.Counter({
+  name: "incidents_ack_total",
+  help: "Total incidents acknowledged",
+});
+
+export const proofPacksGeneratedTotal = new client.Counter({
+  name: "proof_packs_generated_total",
+  help: "Total proof packs generated",
+});
+
+export const proofPackBuildMs = new client.Histogram({
+  name: "proof_pack_build_ms",
+  help: "Proof pack build duration in milliseconds",
+  buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000],
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

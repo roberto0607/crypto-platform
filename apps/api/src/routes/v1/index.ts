@@ -14,6 +14,7 @@ import v1Jobs from "./v1Jobs";
 import v1Retention from "./v1Retention";
 import v1Reconciliation from "./v1Reconciliation";
 import v1Repair from "./v1Repair";
+import v1Incidents from "./v1Incidents";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -30,6 +31,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Retention);
     await app.register(v1Reconciliation);
     await app.register(v1Repair);
+    await app.register(v1Incidents);
 };
 
 export default v1Routes;

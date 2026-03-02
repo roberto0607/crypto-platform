@@ -10,6 +10,7 @@ import { tradeConservationCheck } from "./checks/tradeConservationCheck";
 import { idempotencyIntegrityCheck } from "./checks/idempotencyIntegrityCheck";
 import { positionsVsTradesCheck } from "./checks/positionsVsTradesCheck";
 import type { ReconFinding, ReconRunResult } from "./reconTypes";
+import { openIncidentsForQuarantinedUsers } from "../incidents/incidentService";
 
 /**
  * Run all reconciliation checks, persist findings, quarantine users with HIGH findings.
@@ -87,6 +88,18 @@ export async function runReconciliation(): Promise<ReconRunResult> {
     throw err;
   } finally {
     client.release();
+  }
+
+  // PR7: Open incidents for quarantined users (after commit, best-effort)
+  if (userIdsToQuarantine.length > 0) {
+    try {
+      await openIncidentsForQuarantinedUsers(runId, userIdsToQuarantine);
+    } catch (err) {
+      logger.error(
+        { eventType: "incident.open_after_recon_failed", runId, err },
+        "Failed to open incidents after quarantine",
+      );
+    }
   }
 
   const latencyMs = performance.now() - startMs;

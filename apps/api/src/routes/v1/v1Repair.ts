@@ -11,6 +11,8 @@ import { runRepair } from "../../repair/repairOrchestrator";
 import { listRepairRuns } from "../../repair/repairRepo";
 import { runReconciliation } from "../../reconciliation/reconService";
 import { unquarantineUserTx } from "../../reconciliation/quarantineService";
+import { requireIncidentGateForUnquarantine } from "../../incidents/incidentService";
+import { findOpenIncidentForUser, appendEventTx } from "../../incidents/incidentRepo";
 
 // ── Zod schemas ──
 
@@ -166,39 +168,47 @@ const v1Repair: FastifyPluginAsync = async (app) => {
       try {
         const { id } = userIdParams.parse(req.params);
 
-        // Find latest run_id from reconciliation_reports
-        const latestRun = await pool.query<{ run_id: string }>(
-          `SELECT run_id
-           FROM reconciliation_reports
-           ORDER BY created_at DESC
-           LIMIT 1`,
-        );
+        // PR7: Incident gating — check all conditions before unquarantine
+        const gate = await requireIncidentGateForUnquarantine(id);
 
-        if (latestRun.rows.length === 0) {
-          throw new AppError("no_recon_data");
+        // Append UNQUARANTINE_ATTEMPT event to incident timeline
+        const incident = await findOpenIncidentForUser(id);
+        if (incident) {
+          const client = await pool.connect();
+          try {
+            await client.query("BEGIN");
+            await appendEventTx(client, {
+              incidentId: incident.id,
+              eventType: "UNQUARANTINE_ATTEMPT",
+              actorUserId: req.user.id,
+              metadata: { allowed: gate.allowed, missing: gate.missing },
+            });
+            await client.query("COMMIT");
+          } catch {
+            await client.query("ROLLBACK").catch(() => {});
+          } finally {
+            client.release();
+          }
         }
 
-        const latestRunId = latestRun.rows[0].run_id;
+        if (!gate.allowed) {
+          auditLog({
+            actorUserId: req.user.id,
+            action: "UNQUARANTINE_DENIED",
+            targetType: "user",
+            targetId: id,
+            requestId: req.id,
+            ip: req.ip,
+            userAgent: req.headers["user-agent"] ?? null,
+            metadata: { userId: id, missing: gate.missing },
+          });
 
-        // Check for HIGH findings for this user in that run
-        const highResult = await pool.query<{ cnt: string }>(
-          `SELECT COUNT(*) AS cnt
-           FROM reconciliation_reports
-           WHERE run_id = $1 AND user_id = $2 AND severity = 'HIGH'`,
-          [latestRunId, id],
-        );
-
-        const highCount = parseInt(highResult.rows[0].cnt, 10);
-
-        if (highCount > 0) {
-          throw new AppError("repair_has_high_findings", {
-            userId: id,
-            latestRunId,
-            highCount,
+          throw new AppError("unquarantine_not_allowed", {
+            missing: gate.missing,
           });
         }
 
-        // Clean — unquarantine
+        // All gates passed — unquarantine
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
@@ -213,20 +223,19 @@ const v1Repair: FastifyPluginAsync = async (app) => {
 
         auditLog({
           actorUserId: req.user.id,
-          action: "USER_UNQUARANTINED_IF_CLEAN",
+          action: "UNQUARANTINE_APPROVED",
           targetType: "user",
           targetId: id,
           requestId: req.id,
           ip: req.ip,
           userAgent: req.headers["user-agent"] ?? null,
-          metadata: { userId: id, latestRunId },
+          metadata: { userId: id },
         });
 
         reply.send({
           data: {
             userId: id,
             accountStatus: "ACTIVE",
-            latestRunId,
           },
         });
       } catch (err) {
