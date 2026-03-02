@@ -1,6 +1,7 @@
 import { pool } from "../db/pool";
 import { logger } from "../observability/logContext";
 import { auditLog } from "../audit/log";
+import { recordEventTx } from "../eventStream/eventService";
 import {
   incidentsOpenTotal,
   incidentsAckTotal,
@@ -51,6 +52,13 @@ export async function openIncidentsForQuarantinedUsers(
       });
 
       incidentsOpenTotal.inc();
+
+      await recordEventTx(client, {
+        eventType: "INCIDENT_OPENED",
+        entityType: "INCIDENT",
+        entityId: incidentId,
+        payload: { userId, reconRunId },
+      });
     }
 
     await client.query("COMMIT");
@@ -85,6 +93,14 @@ export async function acknowledgeIncident(
       eventType: "ACKNOWLEDGED",
       actorUserId: adminId,
       metadata: note ? { note } : {},
+    });
+
+    await recordEventTx(client, {
+      eventType: "INCIDENT_ACKNOWLEDGED",
+      entityType: "INCIDENT",
+      entityId: incidentId,
+      actorUserId: adminId,
+      payload: { note: note ?? null },
     });
 
     await client.query("COMMIT");
@@ -161,6 +177,14 @@ export async function resolveIncident(
       eventType: "RESOLVED",
       actorUserId: adminId,
       metadata: { resolutionSummary },
+    });
+
+    await recordEventTx(client, {
+      eventType: "INCIDENT_RESOLVED",
+      entityType: "INCIDENT",
+      entityId: incidentId,
+      actorUserId: adminId,
+      payload: { resolutionSummary },
     });
 
     await client.query("COMMIT");
@@ -254,6 +278,13 @@ export async function appendRepairEventsIfIncident(
       incidentId: incident.id,
       eventType,
       metadata: { repairRunId, ...metadata },
+    });
+
+    await recordEventTx(client, {
+      eventType: eventType === "REPAIR_STARTED" ? "REPAIR_STARTED" : "REPAIR_APPLIED",
+      entityType: "REPAIR",
+      entityId: repairRunId,
+      payload: { userId, incidentId: incident.id, ...metadata },
     });
 
     await client.query("COMMIT");

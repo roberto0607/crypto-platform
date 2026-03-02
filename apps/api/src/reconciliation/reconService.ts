@@ -11,6 +11,7 @@ import { idempotencyIntegrityCheck } from "./checks/idempotencyIntegrityCheck";
 import { positionsVsTradesCheck } from "./checks/positionsVsTradesCheck";
 import type { ReconFinding, ReconRunResult } from "./reconTypes";
 import { openIncidentsForQuarantinedUsers } from "../incidents/incidentService";
+import { recordEvent } from "../eventStream/eventService";
 
 /**
  * Run all reconciliation checks, persist findings, quarantine users with HIGH findings.
@@ -101,6 +102,13 @@ export async function runReconciliation(): Promise<ReconRunResult> {
       );
     }
   }
+
+  // ── Event stream: recon run completed (fire-and-forget) ──
+  recordEvent({
+    eventType: "RECON_RUN_COMPLETED",
+    entityType: "RECON",
+    payload: { runId, findingsCount: findings.length, highCount, warnCount, quarantinedUserIds: userIdsToQuarantine },
+  }).catch(() => {});
 
   const latencyMs = performance.now() - startMs;
 

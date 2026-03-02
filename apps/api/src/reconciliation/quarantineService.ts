@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { auditLog } from "../audit/log";
+import { recordEventTx } from "../eventStream/eventService";
 
 /**
  * Mark users as QUARANTINED in account_limits (upsert).
@@ -30,6 +31,13 @@ export async function quarantineUsersTx(
       targetId: userId,
       metadata: { runId, reason },
     });
+
+    await recordEventTx(client, {
+      eventType: "USER_QUARANTINED",
+      entityType: "USER",
+      entityId: userId,
+      payload: { runId, reason },
+    });
   }
 }
 
@@ -54,5 +62,13 @@ export async function unquarantineUserTx(
     action: "USER_UNQUARANTINED",
     targetType: "user",
     targetId: userId,
+  });
+
+  await recordEventTx(client, {
+    eventType: "USER_UNQUARANTINED",
+    entityType: "USER",
+    entityId: userId,
+    actorUserId,
+    payload: {},
   });
 }

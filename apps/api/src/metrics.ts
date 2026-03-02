@@ -329,6 +329,30 @@ export const proofPackBuildMs = new client.Histogram({
   buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000],
 });
 
+// ── Phase 9 PR8: Event stream metrics ──
+
+export const eventStreamTotal = new client.Counter({
+  name: "event_stream_total",
+  help: "Total events appended to the hash-linked event stream",
+  labelNames: ["event_type"] as const,
+});
+
+export const eventStreamVerifyRunsTotal = new client.Counter({
+  name: "event_stream_verify_runs_total",
+  help: "Total chain verification runs",
+});
+
+export const eventStreamVerifyFailuresTotal = new client.Counter({
+  name: "event_stream_verify_failures_total",
+  help: "Total chain verification failures (tamper detected)",
+});
+
+export const eventStreamVerifyDurationMs = new client.Histogram({
+  name: "event_stream_verify_duration_ms",
+  help: "Chain verification duration in milliseconds",
+  buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000],
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
