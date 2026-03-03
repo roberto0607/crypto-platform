@@ -523,6 +523,33 @@ export const userTradingDisabledTotal = new client.Counter({
   help: "Orders rejected because user trading is disabled",
 });
 
+// ── Phase 10 PR7: Security hardening metrics ──
+
+export const apiKeyCreatedTotal = new client.Counter({
+  name: "api_key_created_total",
+  help: "Total API keys created",
+});
+
+export const apiKeyRevokedTotal = new client.Counter({
+  name: "api_key_revoked_total",
+  help: "Total API keys revoked",
+});
+
+export const apiKeyAuthTotal = new client.Counter({
+  name: "api_key_auth_total",
+  help: "Total successful API key authentications",
+});
+
+export const loginBlockedTotal = new client.Counter({
+  name: "login_blocked_total",
+  help: "Total login attempts blocked by abuse protection",
+});
+
+export const apiKeyRateLimitedTotal = new client.Counter({
+  name: "api_key_rate_limited_total",
+  help: "Total requests rejected by API key rate limiter",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

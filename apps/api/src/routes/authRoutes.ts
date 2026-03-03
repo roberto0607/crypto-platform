@@ -16,6 +16,7 @@ import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
 import { validateInvite, consumeInviteTx } from "../beta/inviteRepo";
 import { inviteConsumedTotal } from "../metrics";
+import { isLoginBlocked, recordLoginAttempt } from "../security/loginProtectionService";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -145,16 +146,29 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     const { emailNormalized } = normalizeEmail(parsed.data.email);
 
+    // ── Login abuse protection: check before attempting ──
+    const blocked = await isLoginBlocked({ emailNormalized, ipAddress: req.ip });
+    if (blocked) {
+      return reply.code(429).send({
+        error: { code: "LOGIN_BLOCKED", message: "Too many failed login attempts." },
+      });
+    }
+
     const user = await findUserByEmailNormalized(emailNormalized);
 
     if (!user) {
+      await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: false });
       return reply.code(401).send({ ok: false, error: "invalid_credentials" });
     }
 
     const ok = await verifyPassword(parsed.data.password, user.password_hash);
     if (!ok) {
+      await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: false });
       return reply.code(401).send({ ok: false, error: "invalid_credentials" });
     }
+
+    // Record successful login (resets effective window)
+    await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: true });
 
     // Issue access token
     const accessToken = app.jwt.sign(

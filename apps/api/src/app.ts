@@ -28,6 +28,7 @@ import riskRoutes from "./routes/riskRoutes";
 import v1Routes from "./routes/v1/index";
 import betaAdminRoutes from "./routes/betaAdminRoutes";
 import statusRoutes from "./routes/statusRoutes";
+import apiKeyRoutes from "./routes/apiKeyRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
@@ -84,6 +85,8 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // Helmet: security headers (register before CORS so both coexist)
   await app.register(helmet, {
     contentSecurityPolicy: false, // API-only server; no HTML to protect
+    frameguard: { action: "deny" }, // X-Frame-Options: DENY
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   });
 
   // CORS: env-based origins for production, localhost defaults for dev
@@ -95,7 +98,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id", "X-Api-Key"],
 
   });
 
@@ -178,6 +181,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(v1Routes, { prefix: "/v1" });
   await app.register(betaAdminRoutes, { prefix: "/v1/admin" });
   await app.register(statusRoutes, { prefix: "/status" });
+  await app.register(apiKeyRoutes, { prefix: "/api-keys" });
 
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {

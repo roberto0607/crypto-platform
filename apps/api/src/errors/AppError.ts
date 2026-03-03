@@ -25,6 +25,7 @@ const ERROR_STATUS: Record<string, number> = {
   governance_check_failed: 403,
   account_quarantined: 403,
   user_trading_disabled: 403,
+  insufficient_scope: 403,
   // 404
   user_not_found: 404,
   asset_not_found: 404,
@@ -34,6 +35,7 @@ const ERROR_STATUS: Record<string, number> = {
   replay_not_found: 404,
   trigger_not_found: 404,
   run_not_found: 404,
+  api_key_not_found: 404,
   // 400 (state errors)
   replay_not_active: 400,
   replay_already_stopped: 400,
@@ -59,6 +61,8 @@ const ERROR_STATUS: Record<string, number> = {
   // 429
   quota_exceeded: 429,
   suspicious_activity: 429,
+  login_blocked: 429,
+  api_key_rate_limit: 429,
   // 500
   server_error: 500,
   // 503 — queue backpressure / timeout / shutdown / load shedding / kill switches

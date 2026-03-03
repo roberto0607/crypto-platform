@@ -96,4 +96,12 @@ export const config = {
   betaMode: booleanEnv("BETA_MODE", false),
   maxOrderBurst: numberEnv("MAX_ORDER_BURST", 20),
   orderBurstWindowMs: numberEnv("ORDER_BURST_WINDOW_MS", 5000),
+
+  // ── Phase 10 PR7: Security hardening ──
+  maxLoginAttemptsPerEmail: numberEnv("MAX_LOGIN_ATTEMPTS_PER_EMAIL", 5),
+  maxLoginAttemptsPerIp: numberEnv("MAX_LOGIN_ATTEMPTS_PER_IP", 20),
+  loginBlockWindowMinutes: numberEnv("LOGIN_BLOCK_WINDOW_MINUTES", 15),
+  maxApiKeyReqPerMin: numberEnv("MAX_API_KEY_REQ_PER_MIN", 120),
+  suspiciousCancelBurstThreshold: numberEnv("SUSPICIOUS_CANCEL_BURST_THRESHOLD", 15),
+  suspiciousOrderWindowMs: numberEnv("SUSPICIOUS_ORDER_WINDOW_MS", 10000),
 };
