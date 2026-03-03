@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { config } from "../config";
 import { pool } from "../db/pool";
 import { getStats } from "../events/eventBus";
+import { getLeadershipStatus } from "../coordination/leaderElection";
 
 type CheckStatus = "OK" | "DEGRADED" | "CRITICAL" | "WARNING" | "UNKNOWN";
 
@@ -121,6 +122,19 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return result;
+  });
+
+  // ── Phase 10 PR5: Instance identity + leader status ──
+  const startedAt = new Date().toISOString();
+
+  app.get("/health/instance", async () => {
+    return {
+      instanceId: config.instanceId,
+      role: config.instanceRole,
+      leader: getLeadershipStatus(),
+      startedAt,
+      version: "1.0.0",
+    };
   });
 
   if (!config.isProd) {

@@ -13,7 +13,7 @@ const COLUMNS = `id::text, event_type, entity_type, entity_id, actor_user_id,
  */
 export async function getLatestEventHash(client: PoolClient): Promise<string> {
   const { rows } = await timedQuery<{ event_hash: string }>(client, "eventRepo.getLatestEventHash",
-    `SELECT event_hash FROM event_stream ORDER BY id DESC LIMIT 1`,
+    `SELECT event_hash FROM event_stream ORDER BY id DESC LIMIT 1 FOR UPDATE`,
   );
   return rows.length > 0 ? rows[0].event_hash : "GENESIS";
 }

@@ -15,21 +15,23 @@
  *   6. Records the filename in schema_migrations as the migration ID
  *   7. Releases advisory lock, drains the connection pool and exits
  *
- * Usage: pnpm migrate (runs this file via tsx)
+ * Usage: pnpm migrate          (runs this file via tsx)
+ *        runPendingMigrations() (called at boot when RUN_MIGRATIONS_ON_BOOT=true)
  */
 
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
-import { pool } from "./pool";
+import type { Pool } from "pg";
+import { pool as defaultPool } from "./pool";
 import { acquireMigrationLock } from "./migrationGuard";
 
 // Resolve from cwd so the script works when run from apps/api/.
 const MIGRATIONS_DIR = path.join(process.cwd(), "migrations");
 
 // Bootstrap: create the tracking table if this is a fresh database.
-async function ensureMigrationsTable() {
-  await pool.query(`
+async function ensureMigrationsTable(p: Pool) {
+  await p.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -38,8 +40,8 @@ async function ensureMigrationsTable() {
 }
 
 // Return the set of migration filenames that have already been applied.
-async function getAppliedMigrations(): Promise<Set<string>> {
-    const res = await pool.query<{ id: string }>(
+async function getAppliedMigrations(p: Pool): Promise<Set<string>> {
+    const res = await p.query<{ id: string }>(
         "SELECT id FROM schema_migrations;"
     );
     return new Set(res.rows.map((r) => r.id));
@@ -54,9 +56,9 @@ function getMigrationFiles(): string[] {
 }
 
 // Run a single migration inside a transaction. If any statement fails,
-// the entire migration is rolled back and the error propagates to main().
-async function applyMigration(id: string, sql: string) {
-    const client = await pool.connect();   // 👈 Acquire single connection
+// the entire migration is rolled back and the error propagates.
+async function applyMigration(p: Pool, id: string, sql: string) {
+    const client = await p.connect();   // 👈 Acquire single connection
 
     try {
         await client.query("BEGIN");
@@ -80,33 +82,46 @@ async function applyMigration(id: string, sql: string) {
     }
 }
 
+/**
+ * Run all pending migrations with an advisory lock.
+ * Safe to call from server.ts at boot — does NOT drain pool or exit.
+ */
+export async function runPendingMigrations(p: Pool): Promise<void> {
+    await ensureMigrationsTable(p);
 
-async function main() {
-    await ensureMigrationsTable();
-
-    const releaseLock = await acquireMigrationLock(pool);
+    const releaseLock = await acquireMigrationLock(p);
 
     try {
-        const applied = await getAppliedMigrations();
+        const applied = await getAppliedMigrations(p);
         const files = getMigrationFiles();
 
         for (const file of files) {
-            // Skip migrations that have already been applied.
             if (applied.has(file)) continue;
 
             const fullPath = path.join(MIGRATIONS_DIR, file);
             const sql = fs.readFileSync(fullPath, "utf8");
 
-            await applyMigration(file, sql);
+            await applyMigration(p, file, sql);
         }
     } finally {
         releaseLock();
-        // Drain all connections so the process can exit cleanly.
-        await pool.end();
     }
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+
+async function main() {
+    await runPendingMigrations(defaultPool);
+
+    // Drain all connections so the process can exit cleanly.
+    await defaultPool.end();
+}
+
+// Only run main() when executed directly (not imported)
+const isDirectRun = process.argv[1]?.endsWith("migrate.ts") ||
+                    process.argv[1]?.endsWith("migrate.js");
+if (isDirectRun) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}

@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 
 export function requireEnv(name: string): string {
   const v = process.env[name];
@@ -30,6 +32,15 @@ const jwtRefreshTtlSeconds =
   process.env.JWT_REFRESH_TTL_SECONDS
     ? numberEnv("JWT_REFRESH_TTL_SECONDS", 60 * 60 * 24 * 30)
     : numberEnv("JWT_REFRESH_TTL_DAYS", 30) * 24 * 60 * 60;
+
+// ── Instance identity (Phase 10 PR5) ──
+type InstanceRole = "API" | "WORKER" | "ALL";
+
+function instanceRoleEnv(): InstanceRole {
+  const v = (process.env.INSTANCE_ROLE ?? "ALL").toUpperCase();
+  if (v === "API" || v === "WORKER" || v === "ALL") return v;
+  throw new Error(`Invalid INSTANCE_ROLE: ${v}. Must be API | WORKER | ALL`);
+}
 
 export const config = {
   port: numberEnv("PORT", 3001),
@@ -75,4 +86,9 @@ export const config = {
   maxLockWaiting: numberEnv("MAX_LOCK_WAITING", 10),
   maxInflightRequests: numberEnv("MAX_INFLIGHT_REQUESTS", 500),
   loadSheddingEnabled: booleanEnv("LOAD_SHEDDING_ENABLED", true),
+
+  // ── Phase 10 PR5: Instance identity ──
+  instanceId: process.env.INSTANCE_ID || `${hostname()}-${randomUUID().slice(0, 8)}`,
+  instanceRole: instanceRoleEnv(),
+  runMigrationsOnBoot: booleanEnv("RUN_MIGRATIONS_ON_BOOT", false),
 };

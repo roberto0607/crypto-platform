@@ -59,6 +59,8 @@ export interface BuildAppOptions {
   disableOutboxWorker?: boolean;
   /** Disable load shedding (useful for tests). */
   disableLoadShedding?: boolean;
+  /** Skip starting lock sampler (orchestrator manages it). */
+  disableLockSampler?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -184,8 +186,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     app.addHook("onReady", () => { startOutboxWorker(); });
   }
 
-  // -- Lock contention sampler --
-  app.addHook("onReady", () => { startLockSampler(); });
+  // -- Lock contention sampler (orchestrator manages this when roles are active) --
+  if (!opts.disableLockSampler) {
+    app.addHook("onReady", () => { startLockSampler(); });
+  }
 
   return app;
 }

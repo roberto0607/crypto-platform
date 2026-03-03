@@ -17,10 +17,9 @@ import { pool } from "./db/pool";
 import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
-import { stop as stopJobRunner } from "./jobs/jobRunner";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
-import { stopLockSampler } from "./observability/lockSampler";
+import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
 
 function getGitCommit(): string {
   try {
@@ -31,12 +30,18 @@ function getGitCommit(): string {
 }
 
 async function start() {
+  // ── Optional boot-time migrations (single designated instance) ──
+  if (config.runMigrationsOnBoot) {
+    const { runPendingMigrations } = await import("./db/migrate");
+    await runPendingMigrations(pool);
+  }
+
   // ── Migration guard — fail fast if schema mismatch ──
   await runMigrationGuard(pool);
 
   const app = await buildApp({
     disableRateLimit: config.disableRateLimit,
-    disableJobRunner: config.disableJobRunner,
+    ...getWorkerDisableFlags(),
   });
 
   // ── Startup banner ──
@@ -53,15 +58,19 @@ async function start() {
     gitCommit,
     dbHost,
     nodeEnv: config.nodeEnv,
+    instanceId: config.instanceId,
+    instanceRole: config.instanceRole,
   });
+
+  // ── Start orchestrator (leader election for background jobs) ──
+  await startOrchestrator();
 
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
-    stopLockSampler();
+    await stopOrchestrator();
     stopTriggerEngine();
     stopKrakenFeed();
-    await stopJobRunner();
     await shutdownQueues(10_000);
     try {
       await app.close();
