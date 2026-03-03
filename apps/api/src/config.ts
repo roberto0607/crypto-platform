@@ -59,6 +59,9 @@ export const config = {
   disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
   disableJobRunner: booleanEnv("DISABLE_JOB_RUNNER", false),
 
+  // ── Phase 10 PR3: Pool tuning ──
+  dbPoolMax: numberEnv("DB_POOL_MAX", 20),
+
   // ── Phase 10 PR2: Observability ──
   dbSlowQueryMs: numberEnv("DB_SLOW_QUERY_MS", 200),
   dbLogSqlOnSlow: booleanEnv("DB_LOG_SQL_ON_SLOW", false),

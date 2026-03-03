@@ -11,7 +11,7 @@
 
 import { Pool, type PoolClient } from "pg";
 import { performance } from "node:perf_hooks";
-import { requireEnv } from "../config";
+import { requireEnv, config } from "../config";
 import { dbPoolAcquireDurationMs } from "../metrics";
 import pino from "pino";
 
@@ -21,7 +21,7 @@ const connectionString = requireEnv("DATABASE_URL");
 
 export const pool = new Pool({
     connectionString,
-    max: 10,              // max concurrent clients — tune for production concurrency
+    max: config.dbPoolMax, // env DB_POOL_MAX, default 20
     idleTimeoutMillis: 30_000,  // release idle clients after 30s to free PG slots
 });
 

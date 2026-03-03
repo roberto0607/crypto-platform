@@ -209,13 +209,13 @@ export async function findWalletByUserAndAsset(
     userId: string,
     assetId: string,
 ): Promise<WalletRow | null> {
-    const result = await client.query<WalletRow>(
-        `
-        SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-        FROM wallets
-        WHERE user_id = $1 AND asset_id = $2
-        LIMIT 1
-        `,
+    const result = await timedQuery<WalletRow>(
+        client,
+        "walletRepo.findWalletByUserAndAsset",
+        `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+         FROM wallets
+         WHERE user_id = $1 AND asset_id = $2
+         LIMIT 1`,
         [userId, assetId]
     );
 
@@ -305,35 +305,26 @@ export async function debitAvailableTx(
     refType?: string,
     metadata: any = {}
 ): Promise<void> {
-    const result = await timedQuery<{ balance: string; reserved: string }>(client, "walletRepo.debitAvailableTx.select",
-        `
-        SELECT balance, reserved FROM wallets WHERE id = $1
-        `,
-        [walletId]
-    );
-
-    const wallet = result.rows[0];
-    const available = D(wallet.balance).minus(D(wallet.reserved));
-    if (available.lt(D(amount))) {
-        throw new Error("insufficient_balance");
-    }
-
-    const newBalance = await timedQuery<{ balance: string }>(client, "walletRepo.debitAvailableTx.update",
-        `
-        UPDATE wallets SET balance = balance - $1
-        WHERE id = $2
-        RETURNING balance
-        `,
+    const result = await timedQuery<{ balance: string }>(
+        client,
+        "walletRepo.debitAvailableTx.update",
+        `UPDATE wallets
+         SET balance = balance - $1
+         WHERE id = $2
+           AND (balance - reserved) >= $1
+         RETURNING balance`,
         [amount, walletId]
     );
 
-    const balanceAfter = newBalance.rows[0].balance;
+    if (result.rowCount === 0) {
+        throw new Error("insufficient_balance");
+    }
+
+    const balanceAfter = result.rows[0].balance;
 
     await timedQuery(client, "walletRepo.debitAvailableTx.ledger",
-        `
-        INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        `,
+        `INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
         [walletId, entryType, `-${amount}`, balanceAfter, refId ?? null, refType ?? null, JSON.stringify(metadata)]
     );
 }

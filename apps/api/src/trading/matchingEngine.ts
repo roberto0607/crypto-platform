@@ -62,6 +62,7 @@
  */
 
 import { pool } from "../db/pool";
+import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
 import {
     createOrder,
@@ -83,6 +84,7 @@ import {
     debitAvailableTx,
     consumeReservedAndDebitTx,
 } from "../wallets/walletRepo";
+import type { WalletRow } from "../wallets/walletRepo";
 import { verifyPostTradeInvariants } from "./invariants";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
@@ -219,14 +221,34 @@ export async function placeOrder(
         // locks in the same order, preventing deadlocks.
         const walletIdSet = new Set<string>([baseWallet.id, quoteWallet.id]);
 
-        for (const entry of plan) {
-            const counterBase = await findWalletByUserAndAsset(client, entry.resting.user_id, pair.base_asset_id);
-            const counterQuote = await findWalletByUserAndAsset(client, entry.resting.user_id, pair.quote_asset_id);
-            if (!counterBase || !counterQuote) throw new Error("wallet_not_found");
-            entry.counterBaseId = counterBase.id;
-            entry.counterQuoteId = counterQuote.id;
-            walletIdSet.add(counterBase.id);
-            walletIdSet.add(counterQuote.id);
+        // Batch-fetch all counter-party wallets in a single query (2N → 1)
+        const counterUserIds = [...new Set(plan.map((e) => e.resting.user_id))];
+
+        if (counterUserIds.length > 0) {
+            const counterWallets = await timedQuery<WalletRow>(
+                client,
+                "matchingEngine.batchCounterWallets",
+                `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+                 FROM wallets
+                 WHERE user_id = ANY($1)
+                   AND asset_id IN ($2, $3)`,
+                [counterUserIds, pair.base_asset_id, pair.quote_asset_id]
+            );
+
+            const walletMap = new Map<string, WalletRow>();
+            for (const w of counterWallets.rows) {
+                walletMap.set(`${w.user_id}:${w.asset_id}`, w);
+            }
+
+            for (const entry of plan) {
+                const counterBase = walletMap.get(`${entry.resting.user_id}:${pair.base_asset_id}`);
+                const counterQuote = walletMap.get(`${entry.resting.user_id}:${pair.quote_asset_id}`);
+                if (!counterBase || !counterQuote) throw new Error("wallet_not_found");
+                entry.counterBaseId = counterBase.id;
+                entry.counterQuoteId = counterQuote.id;
+                walletIdSet.add(counterBase.id);
+                walletIdSet.add(counterQuote.id);
+            }
         }
 
         await lockWalletsForUpdate(client, [...walletIdSet].sort());

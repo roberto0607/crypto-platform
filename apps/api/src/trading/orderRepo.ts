@@ -72,13 +72,13 @@ export async function findOrderById(id: string): Promise<OrderRow | null> {
 }
 
 export async function findOrderByIdForUpdate(client: PoolClient, id: string): Promise<OrderRow | null> {
-    const result = await client.query<OrderRow>(
-        `
-        SELECT ${ORDER_COLUMNS}
-        FROM orders
-        WHERE id = $1
-        FOR UPDATE
-        `,
+    const result = await timedQuery<OrderRow>(
+        client,
+        "orderRepo.findOrderByIdForUpdate",
+        `SELECT ${ORDER_COLUMNS}
+         FROM orders
+         WHERE id = $1
+         FOR UPDATE`,
         [id]
     );
 

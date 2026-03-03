@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import { pool } from "../db/pool";
+import { timedQuery } from "../observability/dbTiming";
 import { requireUser } from "../auth/requireUser";
 import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
@@ -180,39 +181,38 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     const queryParsed = bookQuery.safeParse(req.query);
     const levels = queryParsed.success ? queryParsed.data.levels : 20;
 
-    const bidsResult = await pool.query<{ price: string; qty: string; count: string }>(
-        `
-        SELECT limit_price AS price,
-               SUM(qty - qty_filled)::text AS qty,
-               COUNT(*)::text AS count
-        FROM orders
-        WHERE pair_id = $1
-          AND side = 'BUY'
-          AND type = 'LIMIT'
-          AND status IN ('OPEN', 'PARTIALLY_FILLED')
-        GROUP BY limit_price
-        ORDER BY limit_price DESC
-        LIMIT $2
-        `,
-        [paramsParsed.data.id, levels]
-    );
-
-    const asksResult = await pool.query<{ price: string; qty: string; count: string }>(
-        `
-        SELECT limit_price AS price,
-               SUM(qty - qty_filled)::text AS qty,
-               COUNT(*)::text AS count
-        FROM orders
-        WHERE pair_id = $1
-          AND side = 'SELL'
-          AND type = 'LIMIT'
-          AND status IN ('OPEN', 'PARTIALLY_FILLED')
-        GROUP BY limit_price
-        ORDER BY limit_price ASC
-        LIMIT $2
-        `,
-        [paramsParsed.data.id, levels]
-    );
+    const [bidsResult, asksResult] = await Promise.all([
+        timedQuery<{ price: string; qty: string; count: string }>(
+            pool, "book.bids",
+            `SELECT limit_price AS price,
+                    SUM(qty - qty_filled)::text AS qty,
+                    COUNT(*)::text AS count
+             FROM orders
+             WHERE pair_id = $1
+               AND side = 'BUY'
+               AND type = 'LIMIT'
+               AND status IN ('OPEN', 'PARTIALLY_FILLED')
+             GROUP BY limit_price
+             ORDER BY limit_price DESC
+             LIMIT $2`,
+            [paramsParsed.data.id, levels]
+        ),
+        timedQuery<{ price: string; qty: string; count: string }>(
+            pool, "book.asks",
+            `SELECT limit_price AS price,
+                    SUM(qty - qty_filled)::text AS qty,
+                    COUNT(*)::text AS count
+             FROM orders
+             WHERE pair_id = $1
+               AND side = 'SELL'
+               AND type = 'LIMIT'
+               AND status IN ('OPEN', 'PARTIALLY_FILLED')
+             GROUP BY limit_price
+             ORDER BY limit_price ASC
+             LIMIT $2`,
+            [paramsParsed.data.id, levels]
+        ),
+    ]);
 
     return reply.send({
         ok: true,
