@@ -55,10 +55,11 @@ const ERROR_STATUS: Record<string, number> = {
   incident_not_found: 404,
   // 500
   server_error: 500,
-  // 503 — queue backpressure / timeout / shutdown
+  // 503 — queue backpressure / timeout / shutdown / load shedding
   pair_queue_overloaded: 503,
   queue_timeout: 503,
   server_shutting_down: 503,
+  system_overloaded: 503,
 };
 
 export class AppError extends Error {

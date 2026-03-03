@@ -51,6 +51,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   // misc 400
   replay_not_active: "The replay session is not active.",
   replay_already_stopped: "The replay session has already stopped.",
+  // 503
+  system_overloaded: "System under high load. Please retry shortly.",
 };
 
 /**

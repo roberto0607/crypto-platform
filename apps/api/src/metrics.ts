@@ -465,6 +465,30 @@ export const httpInflightRequests = new client.Gauge({
   help: "Currently in-flight HTTP requests",
 });
 
+// ── Phase 10 PR4: Load shedding metrics ──
+
+export const loadSheddingRejectionsTotal = new client.Counter({
+  name: "load_shedding_rejections_total",
+  help: "Requests rejected by load shedding",
+  labelNames: ["reason"] as const,
+});
+
+export const loadStateOverloadedGauge = new client.Gauge({
+  name: "load_state_overloaded",
+  help: "Whether the system is currently in overloaded state (1 = yes)",
+});
+
+export const dbPoolWaitingGauge = new client.Gauge({
+  name: "db_pool_waiting_gauge",
+  help: "Current number of clients waiting for a PG connection (load shedding view)",
+});
+
+export const priorityRejectionTotal = new client.Counter({
+  name: "priority_rejection_total",
+  help: "Requests rejected by priority class",
+  labelNames: ["priority"] as const,
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

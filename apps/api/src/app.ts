@@ -33,6 +33,14 @@ import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
 import { startLockSampler } from "./observability/lockSampler";
+import { getCurrentLoadState } from "./governance/loadState";
+import { getRoutePriority } from "./governance/priorityClasses";
+import { evaluateRequestPolicy, PolicyDecision } from "./governance/loadShedding";
+import {
+  loadSheddingRejectionsTotal,
+  loadStateOverloadedGauge,
+  priorityRejectionTotal,
+} from "./metrics";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -49,6 +57,8 @@ export interface BuildAppOptions {
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
   disableOutboxWorker?: boolean;
+  /** Disable load shedding (useful for tests). */
+  disableLoadShedding?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -97,6 +107,42 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   // ── Observability ──
   await app.register(metricsPlugin);
+
+  // ── Load shedding hook (after metrics so inflight gauge is already incremented) ──
+  if (config.loadSheddingEnabled && !opts.disableLoadShedding) {
+    app.addHook("onRequest", async (req, reply) => {
+      const route = req.routeOptions?.url ?? req.url;
+      const state = getCurrentLoadState();
+
+      loadStateOverloadedGauge.set(state.isOverloaded ? 1 : 0);
+
+      const priority = getRoutePriority(req.method, route);
+      const result = evaluateRequestPolicy(req.method, priority, state);
+
+      if (result.decision === PolicyDecision.REJECT_TEMPORARILY) {
+        loadSheddingRejectionsTotal.inc({ reason: result.reason! });
+        priorityRejectionTotal.inc({ priority });
+        req.log.warn({
+          eventType: "load_shedding.reject",
+          reason: result.reason,
+          priority,
+          route,
+          method: req.method,
+          dbPoolWaiting: state.dbPoolWaitingCount,
+          inflightRequests: state.inflightRequests,
+        }, `Load shedding: rejected ${req.method} ${route} (${result.reason})`);
+
+        reply.code(503).send({
+          error: {
+            code: "SYSTEM_OVERLOADED",
+            message: "System under high load. Please retry shortly.",
+            details: { reason: result.reason },
+          },
+        });
+        return;
+      }
+    });
+  }
 
   // ── Route modules ──
   await app.register(healthRoutes);

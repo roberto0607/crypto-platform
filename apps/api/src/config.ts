@@ -68,4 +68,11 @@ export const config = {
   lockSamplerEnabled: booleanEnv("LOCK_SAMPLER_ENABLED", !isProd),
   lockSamplerIntervalMs: numberEnv("LOCK_SAMPLER_INTERVAL_MS", 5000),
   lockSamplerTopN: numberEnv("LOCK_SAMPLER_TOPN", 10),
+
+  // ── Phase 10 PR4: Capacity guardrails ──
+  maxDbPoolWaiting: numberEnv("MAX_DB_POOL_WAITING", 20),
+  maxOutboxQueueDepth: numberEnv("MAX_OUTBOX_QUEUE_DEPTH", 1000),
+  maxLockWaiting: numberEnv("MAX_LOCK_WAITING", 10),
+  maxInflightRequests: numberEnv("MAX_INFLIGHT_REQUESTS", 500),
+  loadSheddingEnabled: booleanEnv("LOAD_SHEDDING_ENABLED", true),
 };
