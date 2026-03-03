@@ -1,9 +1,10 @@
-import { pool } from "../db/pool";
+import { pool, acquireClient } from "../db/pool";
 import type { PoolClient } from "pg";
 import { D, toFixed8 } from "../utils/decimal";
 import { publish } from "../events/eventBus";
 import { createEvent } from "../events/eventTypes";
 import { eventsPublishedTotal } from "../metrics";
+import { timedQuery } from "../observability/dbTiming";
 
 export type WalletRow = {
     id: string;
@@ -71,12 +72,12 @@ export async function creditWallet(
     entryType: string,
     metadata: any = {}
 ): Promise<{ wallet: WalletRow; ledgerEntryId: string }> {
-    const client = await pool.connect();
+    const client = await acquireClient();
 
     try {
         await client.query("BEGIN");
 
-        const lockResult = await client.query<WalletRow>(
+        const lockResult = await timedQuery<WalletRow>(client, "walletRepo.creditWallet.lock",
             `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
              FROM wallets WHERE id = $1 FOR UPDATE `,
              [walletId]
@@ -89,12 +90,12 @@ export async function creditWallet(
 
         const newBalance = toFixed8(D(wallet.balance).plus(D(amount)));
 
-        await client.query(
+        await timedQuery(client, "walletRepo.creditWallet.update",
             `UPDATE wallets SET balance = $1 WHERE id = $2`,
             [newBalance, walletId]
         );
 
-        const ledgerResult = await client.query<{ id: string }>(
+        const ledgerResult = await timedQuery<{ id: string }>(client, "walletRepo.creditWallet.ledger",
             `
             INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, metadata)
             VALUES ($1, $2, $3, $4, $5::jsonb)
@@ -136,12 +137,12 @@ export async function debitWallet(
     entryType: string,
     metadata: any = {}
 ): Promise<{ wallet: WalletRow; ledgerEntryId: string }> {
-    const client = await pool.connect();
+    const client = await acquireClient();
 
     try {
         await client.query("BEGIN");
 
-        const lockResult = await client.query<WalletRow>(
+        const lockResult = await timedQuery<WalletRow>(client, "walletRepo.debitWallet.lock",
             `
             SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
             FROM wallets WHERE id = $1 FOR UPDATE`,
@@ -159,13 +160,13 @@ export async function debitWallet(
 
         const newBalance = toFixed8(D(wallet.balance).minus(D(amount)));
 
-        await client.query(
+        await timedQuery(client, "walletRepo.debitWallet.update",
             `
             UPDATE wallets SET balance = $1 WHERE id = $2`,
             [newBalance, walletId]
         );
 
-        const ledger = await client.query<{ id: string }>(
+        const ledger = await timedQuery<{ id: string }>(client, "walletRepo.debitWallet.ledger",
             `
             INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, metadata)
             VALUES ($1, $2, $3, $4, $5::jsonb)
@@ -226,7 +227,7 @@ export async function lockWalletsForUpdate(
     walletIds: string[]
 ): Promise<Map<string, WalletRow>> {
     const sorted = [...walletIds].sort();
-    const result = await client.query<WalletRow>(
+    const result = await timedQuery<WalletRow>(client, "walletRepo.lockWalletsForUpdate",
         `
         SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
         FROM wallets
@@ -249,7 +250,7 @@ export async function reserveFunds(
     walletId: string,
     amount: string
 ): Promise<void> {
-    await client.query(
+    await timedQuery(client, "walletRepo.reserveFunds",
         `UPDATE wallets SET reserved = reserved + $1 WHERE id = $2`,
         [amount, walletId]
     );
@@ -260,7 +261,7 @@ export async function releaseReserved(
     walletId: string,
     amount: string
 ): Promise<void> {
-    await client.query(
+    await timedQuery(client, "walletRepo.releaseReserved",
         `UPDATE wallets SET reserved = reserved - $1 WHERE id = $2`,
         [amount, walletId]
     );
@@ -275,7 +276,7 @@ export async function creditWalletTx(
     refType?: string,
     metadata: any = {}
 ): Promise<void> {
-    const newBalance = await client.query<{ balance: string }>(
+    const newBalance = await timedQuery<{ balance: string }>(client, "walletRepo.creditWalletTx.update",
         `
         UPDATE wallets SET balance = balance + $1
         WHERE id = $2
@@ -286,7 +287,7 @@ export async function creditWalletTx(
 
     const balanceAfter = newBalance.rows[0].balance;
 
-    await client.query(
+    await timedQuery(client, "walletRepo.creditWalletTx.ledger",
         `
         INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -304,7 +305,7 @@ export async function debitAvailableTx(
     refType?: string,
     metadata: any = {}
 ): Promise<void> {
-    const result = await client.query<{ balance: string; reserved: string }>(
+    const result = await timedQuery<{ balance: string; reserved: string }>(client, "walletRepo.debitAvailableTx.select",
         `
         SELECT balance, reserved FROM wallets WHERE id = $1
         `,
@@ -317,7 +318,7 @@ export async function debitAvailableTx(
         throw new Error("insufficient_balance");
     }
 
-    const newBalance = await client.query<{ balance: string }>(
+    const newBalance = await timedQuery<{ balance: string }>(client, "walletRepo.debitAvailableTx.update",
         `
         UPDATE wallets SET balance = balance - $1
         WHERE id = $2
@@ -328,7 +329,7 @@ export async function debitAvailableTx(
 
     const balanceAfter = newBalance.rows[0].balance;
 
-    await client.query(
+    await timedQuery(client, "walletRepo.debitAvailableTx.ledger",
         `
         INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
@@ -346,7 +347,7 @@ export async function consumeReservedAndDebitTx(
     refType?: string,
     metadata: any = {}
 ): Promise<void> {
-    const newBalance = await client.query<{ balance: string }>(
+    const newBalance = await timedQuery<{ balance: string }>(client, "walletRepo.consumeReservedAndDebitTx.update",
         `
         UPDATE wallets SET reserved = reserved - $1, balance = balance - $1
         WHERE id = $2
@@ -357,7 +358,7 @@ export async function consumeReservedAndDebitTx(
 
     const balanceAfter = newBalance.rows[0].balance;
 
-    await client.query(
+    await timedQuery(client, "walletRepo.consumeReservedAndDebitTx.ledger",
         `
         INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)

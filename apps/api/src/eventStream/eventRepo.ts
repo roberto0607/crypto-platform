@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { pool } from "../db/pool";
 import type { EventStreamRow } from "./eventTypes";
+import { timedQuery } from "../observability/dbTiming";
 
 const COLUMNS = `id::text, event_type, entity_type, entity_id, actor_user_id,
   payload, previous_event_hash, event_hash, created_at`;
@@ -11,7 +12,7 @@ const COLUMNS = `id::text, event_type, entity_type, entity_id, actor_user_id,
  * Must be called inside the caller's transaction for consistency.
  */
 export async function getLatestEventHash(client: PoolClient): Promise<string> {
-  const { rows } = await client.query<{ event_hash: string }>(
+  const { rows } = await timedQuery<{ event_hash: string }>(client, "eventRepo.getLatestEventHash",
     `SELECT event_hash FROM event_stream ORDER BY id DESC LIMIT 1`,
   );
   return rows.length > 0 ? rows[0].event_hash : "GENESIS";
@@ -33,7 +34,7 @@ export async function appendEventTx(
     createdAt: Date;
   },
 ): Promise<EventStreamRow> {
-  const { rows } = await client.query<EventStreamRow>(
+  const { rows } = await timedQuery<EventStreamRow>(client, "eventRepo.appendEventTx",
     `INSERT INTO event_stream
        (event_type, entity_type, entity_id, actor_user_id, payload,
         previous_event_hash, event_hash, created_at)

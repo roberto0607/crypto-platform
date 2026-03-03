@@ -1,5 +1,6 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
+import { timedQuery } from "../observability/dbTiming";
 
 export type TradeRow = {
     id: string;
@@ -62,12 +63,12 @@ export async function createTrade(
         values.push(params.executedAt!);
     }
 
-    const result = await client.query<TradeRow>(sql, values);
+    const result = await timedQuery<TradeRow>(client, "tradeRepo.createTrade", sql, values);
     return result.rows[0];
 }
 
 export async function listTradesByOrderId(orderId: string): Promise<TradeRow[]> {
-    const result = await pool.query<TradeRow>(
+    const result = await timedQuery<TradeRow>(pool, "tradeRepo.listTradesByOrderId",
         `
         SELECT ${TRADE_COLUMNS}
         FROM trades

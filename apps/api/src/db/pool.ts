@@ -9,8 +9,10 @@
  * fail fast at startup if it is missing.
  */
 
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
+import { performance } from "node:perf_hooks";
 import { requireEnv } from "../config";
+import { dbPoolAcquireDurationMs } from "../metrics";
 import pino from "pino";
 
 const poolLogger = pino({ level: process.env.LOG_LEVEL ?? "info" });
@@ -27,4 +29,15 @@ export const pool = new Pool({
 // as logged errors instead of crashing the process as unhandled exceptions.
 pool.on("error", (err) => {
     poolLogger.error({ eventType: "pg.pool_error", err }, "Unexpected PostgreSQL pool error");
-})
+});
+
+/**
+ * Acquire a client from the pool with acquire-latency tracking.
+ * Use this instead of pool.connect() in transaction code paths.
+ */
+export async function acquireClient(): Promise<PoolClient> {
+    const start = performance.now();
+    const client = await pool.connect();
+    dbPoolAcquireDurationMs.observe(performance.now() - start);
+    return client;
+}

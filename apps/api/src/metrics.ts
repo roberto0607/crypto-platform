@@ -419,6 +419,52 @@ export const restoreDurationMs = new client.Histogram({
   buckets: [1000, 5000, 10000, 30000, 60000, 120000, 300000],
 });
 
+// ── Phase 10 PR2: DB query timing metrics ──
+
+export const dbQueryTotal = new client.Counter({
+  name: "db_query_total",
+  help: "Total DB queries by operation name",
+  labelNames: ["name"] as const,
+});
+
+export const dbQueryDurationMs = new client.Histogram({
+  name: "db_query_duration_ms",
+  help: "DB query latency in milliseconds",
+  labelNames: ["name"] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 200, 500, 1000, 2500, 5000],
+});
+
+export const dbPoolAcquireDurationMs = new client.Histogram({
+  name: "db_pool_acquire_duration_ms",
+  help: "Time to acquire a client from the PG pool in milliseconds",
+  buckets: [0.1, 0.5, 1, 5, 10, 25, 50, 100, 250, 500],
+});
+
+// ── Phase 10 PR2: Lock sampler metrics ──
+
+export const pgLockWaitingTotal = new client.Gauge({
+  name: "pg_lock_waiting_total",
+  help: "Number of queries currently waiting on locks",
+});
+
+export const pgLockWaitDurationMaxSeconds = new client.Gauge({
+  name: "pg_lock_wait_duration_max_seconds",
+  help: "Longest current lock wait in seconds",
+});
+
+export const pgLockedRelationWaits = new client.Gauge({
+  name: "pg_locked_relation_waits",
+  help: "Per-relation lock wait count (top-N)",
+  labelNames: ["relname"] as const,
+});
+
+// ── Phase 10 PR2: HTTP inflight gauge ──
+
+export const httpInflightRequests = new client.Gauge({
+  name: "http_inflight_requests",
+  help: "Currently in-flight HTTP requests",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {
@@ -428,9 +474,10 @@ declare module "fastify" {
 }
 
 const metricsPlugin: FastifyPluginAsync = async (app) => {
-  // Stamp start time on every request
+  // Stamp start time on every request + track inflight
   app.addHook("onRequest", async (req) => {
     req.startTime = process.hrtime();
+    httpInflightRequests.inc();
   });
 
   // Record metrics after every response
@@ -442,6 +489,7 @@ const metricsPlugin: FastifyPluginAsync = async (app) => {
       status: String(reply.statusCode),
     };
 
+    httpInflightRequests.dec();
     httpRequestCount.inc(labels);
 
     if (req.startTime) {

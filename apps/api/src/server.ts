@@ -20,6 +20,7 @@ import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { stop as stopJobRunner } from "./jobs/jobRunner";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
+import { stopLockSampler } from "./observability/lockSampler";
 
 function getGitCommit(): string {
   try {
@@ -57,6 +58,7 @@ async function start() {
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
+    stopLockSampler();
     stopTriggerEngine();
     stopKrakenFeed();
     await stopJobRunner();

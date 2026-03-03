@@ -58,4 +58,11 @@ export const config = {
   restoreDbName: process.env.RESTORE_DB_NAME ?? "cp_restore_test",
   disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
   disableJobRunner: booleanEnv("DISABLE_JOB_RUNNER", false),
+
+  // ── Phase 10 PR2: Observability ──
+  dbSlowQueryMs: numberEnv("DB_SLOW_QUERY_MS", 200),
+  dbLogSqlOnSlow: booleanEnv("DB_LOG_SQL_ON_SLOW", false),
+  lockSamplerEnabled: booleanEnv("LOCK_SAMPLER_ENABLED", !isProd),
+  lockSamplerIntervalMs: numberEnv("LOCK_SAMPLER_INTERVAL_MS", 5000),
+  lockSamplerTopN: numberEnv("LOCK_SAMPLER_TOPN", 10),
 };

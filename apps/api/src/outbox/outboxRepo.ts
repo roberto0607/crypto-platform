@@ -2,13 +2,14 @@ import type { PoolClient } from "pg";
 import { pool } from "../db/pool";
 import type { OutboxEventRow, OutboxInsertInput } from "./outboxTypes";
 import { outboxEventsTotal } from "../metrics";
+import { timedQuery } from "../observability/dbTiming";
 
 /** Insert outbox event INSIDE a caller-managed transaction. */
 export async function insertOutboxEventTx(
   client: PoolClient,
   input: OutboxInsertInput,
 ): Promise<void> {
-  await client.query(
+  await timedQuery(client, "outboxRepo.insertOutboxEventTx",
     `INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload)
      VALUES ($1, $2, $3, $4)`,
     [input.event_type, input.aggregate_type, input.aggregate_id ?? null, JSON.stringify(input.payload)],
@@ -21,7 +22,7 @@ export async function insertOutboxEventTx(
  * Uses FOR UPDATE SKIP LOCKED for safe concurrent access.
  */
 export async function fetchNextBatch(limit: number): Promise<OutboxEventRow[]> {
-  const { rows } = await pool.query<OutboxEventRow>(
+  const { rows } = await timedQuery<OutboxEventRow>(pool, "outboxRepo.fetchNextBatch",
     `UPDATE outbox_events
      SET status = 'PROCESSING'
      WHERE id IN (
@@ -45,7 +46,7 @@ export async function fetchNextBatch(limit: number): Promise<OutboxEventRow[]> {
 
 /** Mark as DONE with processed_at = now(). */
 export async function markDone(id: string): Promise<void> {
-  await pool.query(
+  await timedQuery(pool, "outboxRepo.markDone",
     `UPDATE outbox_events
      SET status = 'DONE', processed_at = now()
      WHERE id = $1`,
@@ -59,7 +60,7 @@ export async function markFailed(
   error: string,
   nextAttemptAt: Date,
 ): Promise<void> {
-  await pool.query(
+  await timedQuery(pool, "outboxRepo.markFailed",
     `UPDATE outbox_events
      SET status = 'FAILED',
          attempts = attempts + 1,

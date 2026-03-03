@@ -32,6 +32,7 @@ import { initBotRunner } from "./bot/botRunner";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
+import { startLockSampler } from "./observability/lockSampler";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -136,6 +137,9 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   if (!opts.disableOutboxWorker) {
     app.addHook("onReady", () => { startOutboxWorker(); });
   }
+
+  // -- Lock contention sampler --
+  app.addHook("onReady", () => { startLockSampler(); });
 
   return app;
 }

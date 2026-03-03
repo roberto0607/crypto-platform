@@ -1,5 +1,6 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
+import { timedQuery } from "../observability/dbTiming";
 
 export type PairRow = {
     id: string,
@@ -78,7 +79,7 @@ export async function setLastPrice(id: string, price: string): Promise<PairRow |
 }
 
 export async function lockPairForUpdate(client: PoolClient, id: string): Promise<PairRow | null> {
-    const result = await client.query<PairRow>(
+    const result = await timedQuery<PairRow>(client, "pairRepo.lockPairForUpdate",
         `
         SELECT ${PAIR_COLUMNS}
         FROM trading_pairs

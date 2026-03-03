@@ -1,5 +1,6 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
+import { timedQuery } from "../observability/dbTiming";
 
 export type OrderRow = {
     id: string;
@@ -34,7 +35,7 @@ export async function createOrder(
         reservedAmount: string;
     }
 ): Promise<OrderRow> {
-    const result = await client.query<OrderRow>(
+    const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
         INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -114,7 +115,7 @@ export async function updateOrderFill(
     addReservedConsumed: string,
     newStatus: string
 ): Promise<OrderRow> {
-    const result = await client.query<OrderRow>(
+    const result = await timedQuery<OrderRow>(client, "orderRepo.updateOrderFill",
         `
         UPDATE orders
         SET qty_filled = qty_filled + $1,
@@ -231,7 +232,7 @@ export async function fetchRestingOrdersBatch(
         LIMIT $${params.length}
     `;
 
-    const result = await client.query<OrderRow>(query, params);
+    const result = await timedQuery<OrderRow>(client, "orderRepo.fetchRestingOrdersBatch", query, params);
     return result.rows;
 }
 
