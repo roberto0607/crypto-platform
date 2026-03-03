@@ -33,7 +33,10 @@ async function start() {
   // ── Migration guard — fail fast if schema mismatch ──
   await runMigrationGuard(pool);
 
-  const app = await buildApp();
+  const app = await buildApp({
+    disableRateLimit: config.disableRateLimit,
+    disableJobRunner: config.disableJobRunner,
+  });
 
   // ── Startup banner ──
   const dbVersion = await getDbVersion(pool);

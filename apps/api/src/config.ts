@@ -56,4 +56,6 @@ export const config = {
   backupDir: process.env.BACKUP_DIR ?? "./backups",
   backupRetentionDays: numberEnv("BACKUP_RETENTION_DAYS", 14),
   restoreDbName: process.env.RESTORE_DB_NAME ?? "cp_restore_test",
+  disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
+  disableJobRunner: booleanEnv("DISABLE_JOB_RUNNER", false),
 };

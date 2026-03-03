@@ -11,5 +11,9 @@ pnpm-lock.yaml
 # Test artifacts
 cookies.txt
 
+# Load test artifacts (contain credentials + large result files)
+apps/api/load/k6/seed-manifest.json
+apps/api/load/results/
+
 # OS
 .DS_Store

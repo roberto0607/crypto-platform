@@ -15,7 +15,14 @@
     "dev:reset": "bash scripts/reset.sh --force",
     "dev:demo": "bash scripts/demo.sh",
     "dev:sandbox": "bash scripts/reset.sh --force && bash scripts/seed.sh && bash scripts/demo.sh",
-    "restore:drill": "bash scripts/restore-drill.sh"
+    "restore:drill": "bash scripts/restore-drill.sh",
+    "seed:loadtest": "tsx scripts/seed-loadtest.ts",
+    "load:auth": "k6 run load/k6/scenario_auth_smoke.js",
+    "load:reads": "k6 run load/k6/scenario_read_heavy.js",
+    "load:writes": "k6 run load/k6/scenario_trade_burst.js",
+    "load:mixed": "k6 run load/k6/scenario_mixed_realistic.js",
+    "load:outbox": "k6 run load/k6/scenario_outbox_pressure.js",
+    "load:all": "pnpm load:auth && pnpm load:reads && pnpm load:writes && pnpm load:mixed && pnpm load:outbox"
   },
   "keywords": [],
   "author": "",
