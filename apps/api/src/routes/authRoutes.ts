@@ -14,11 +14,14 @@ import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "../auth/ref
 import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "../auth/cookieOptions";
 import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
+import { validateInvite, consumeInviteTx } from "../beta/inviteRepo";
+import { inviteConsumedTotal } from "../metrics";
 
 // ── Zod schemas ──
 const registerBody = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(72),
+  inviteCode: z.string().optional(),
 });
 
 const loginBody = z.object({
@@ -41,6 +44,65 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    // ── Beta invite gate ──
+    if (config.betaMode) {
+      if (!parsed.data.inviteCode) {
+        return handleError(reply, new AppError("invite_required"));
+      }
+
+      const invite = await validateInvite(parsed.data.inviteCode);
+      if (!invite) {
+        return handleError(reply, new AppError("invite_invalid"));
+      }
+
+      // Atomic: create user + consume invite in one transaction
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const { email, emailNormalized } = normalizeEmail(parsed.data.email);
+        const passwordHash = await hashPassword(parsed.data.password);
+
+        const userResult = await client.query<{ id: string; email: string; role: string }>(
+          `INSERT INTO users (email, email_normalized, password_hash)
+           VALUES ($1, $2, $3)
+           RETURNING id, email, role`,
+          [email, emailNormalized, passwordHash],
+        );
+        const user = userResult.rows[0];
+
+        await consumeInviteTx(client, invite.id);
+        await client.query("COMMIT");
+
+        inviteConsumedTotal.inc();
+
+        await auditLog({
+          actorUserId: user.id,
+          action: "auth.register",
+          targetType: "user",
+          targetId: user.id,
+          requestId: req.id,
+          ip: req.ip,
+          userAgent: req.headers["user-agent"] ?? null,
+          metadata: { emailNormalized, inviteCode: parsed.data.inviteCode },
+        });
+
+        return reply.code(201).send({
+          ok: true,
+          user: { id: user.id, email: user.email, role: user.role },
+        });
+      } catch (err: any) {
+        await client.query("ROLLBACK").catch(() => {});
+        if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
+        if (err?.message === "invite_invalid") return handleError(reply, new AppError("invite_invalid"));
+        req.log.error({ err }, "register_failed");
+        return handleError(reply, new AppError("server_error"));
+      } finally {
+        client.release();
+      }
+    }
+
+    // ── Open registration (BETA_MODE=false) ──
     const { email, emailNormalized } = normalizeEmail(parsed.data.email);
     const passwordHash = await hashPassword(parsed.data.password);
 

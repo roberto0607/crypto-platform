@@ -11,6 +11,7 @@ import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrder } from "../trading/matchingEngine";
 import { enqueueOrder } from "../queue/queueManager";
+import { enforcePreOrderChecks } from "../governance/quotaService";
 
 
 // ── Zod schemas ──
@@ -61,6 +62,9 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     const actor = req.user!;
 
         try {
+        // ── PR6: Pre-order enforcement layer ──
+        await enforcePreOrderChecks(actor.id, parsed.data.pairId);
+
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
 
         const result = await enqueueOrder(

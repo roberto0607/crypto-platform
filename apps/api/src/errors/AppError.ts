@@ -15,6 +15,8 @@ const ERROR_STATUS: Record<string, number> = {
   order_not_cancelable: 400,
   insufficient_liquidity: 400,
   trigger_not_cancelable: 400,
+  invite_required: 400,
+  invite_invalid: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,
@@ -22,6 +24,7 @@ const ERROR_STATUS: Record<string, number> = {
   forbidden: 403,
   governance_check_failed: 403,
   account_quarantined: 403,
+  user_trading_disabled: 403,
   // 404
   user_not_found: 404,
   asset_not_found: 404,
@@ -53,13 +56,19 @@ const ERROR_STATUS: Record<string, number> = {
   unquarantine_not_allowed: 409,
   // 404 (incidents)
   incident_not_found: 404,
+  // 429
+  quota_exceeded: 429,
+  suspicious_activity: 429,
   // 500
   server_error: 500,
-  // 503 — queue backpressure / timeout / shutdown / load shedding
+  // 503 — queue backpressure / timeout / shutdown / load shedding / kill switches
   pair_queue_overloaded: 503,
   queue_timeout: 503,
   server_shutting_down: 503,
   system_overloaded: 503,
+  trading_paused_global: 503,
+  trading_paused_pair: 503,
+  read_only_mode: 503,
 };
 
 export class AppError extends Error {

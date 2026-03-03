@@ -91,4 +91,9 @@ export const config = {
   instanceId: process.env.INSTANCE_ID || `${hostname()}-${randomUUID().slice(0, 8)}`,
   instanceRole: instanceRoleEnv(),
   runMigrationsOnBoot: booleanEnv("RUN_MIGRATIONS_ON_BOOT", false),
+
+  // ── Phase 10 PR6: Beta access layer ──
+  betaMode: booleanEnv("BETA_MODE", false),
+  maxOrderBurst: numberEnv("MAX_ORDER_BURST", 20),
+  orderBurstWindowMs: numberEnv("ORDER_BURST_WINDOW_MS", 5000),
 };

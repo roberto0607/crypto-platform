@@ -489,6 +489,40 @@ export const priorityRejectionTotal = new client.Counter({
   labelNames: ["priority"] as const,
 });
 
+// ── Phase 10 PR6: Beta access layer metrics ──
+
+export const quotaExceededTotal = new client.Counter({
+  name: "quota_exceeded_total",
+  help: "Orders rejected by per-user quota checks",
+  labelNames: ["type"] as const,
+});
+
+export const tradingPausedTotal = new client.Counter({
+  name: "trading_paused_total",
+  help: "Orders rejected by kill switches",
+  labelNames: ["scope"] as const,
+});
+
+export const inviteConsumedTotal = new client.Counter({
+  name: "invite_consumed_total",
+  help: "Total beta invites consumed during registration",
+});
+
+export const suspiciousActivityTotal = new client.Counter({
+  name: "suspicious_activity_total",
+  help: "Users flagged for suspicious order burst activity",
+});
+
+export const readOnlyRejectionsTotal = new client.Counter({
+  name: "read_only_rejections_total",
+  help: "Requests rejected due to read-only mode",
+});
+
+export const userTradingDisabledTotal = new client.Counter({
+  name: "user_trading_disabled_total",
+  help: "Orders rejected because user trading is disabled",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

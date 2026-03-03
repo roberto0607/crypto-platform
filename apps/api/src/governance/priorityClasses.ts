@@ -38,6 +38,9 @@ const IMPORTANT_ROUTES: readonly { method: string; pattern: string }[] = [
   { method: "GET", pattern: "/v1/portfolio/equity" },
   { method: "GET", pattern: "/v1/portfolio/pnl" },
   { method: "GET", pattern: "/v1/transactions" },
+  // PR6: status endpoints
+  { method: "GET", pattern: "/status/system" },
+  { method: "GET", pattern: "/status/user" },
 ];
 
 const LOW_ROUTE_PREFIXES: readonly string[] = [

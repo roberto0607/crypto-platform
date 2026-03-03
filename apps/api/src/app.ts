@@ -26,6 +26,8 @@ import replayRoutes from "./routes/replayRoutes";
 import analyticsRoutes from "./routes/analyticsRoutes";
 import riskRoutes from "./routes/riskRoutes";
 import v1Routes from "./routes/v1/index";
+import betaAdminRoutes from "./routes/betaAdminRoutes";
+import statusRoutes from "./routes/statusRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
@@ -40,7 +42,9 @@ import {
   loadSheddingRejectionsTotal,
   loadStateOverloadedGauge,
   priorityRejectionTotal,
+  readOnlyRejectionsTotal,
 } from "./metrics";
+import { isReadOnlyMode } from "./governance/systemFlagService";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -146,6 +150,21 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     });
   }
 
+  // ── Read-only mode hook (PR6) ──
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method !== "POST" && req.method !== "PUT" && req.method !== "DELETE") return;
+    const url = req.url;
+    if (url.startsWith("/auth") || url.startsWith("/admin") || url.startsWith("/v1/admin")) return;
+    const readOnly = await isReadOnlyMode();
+    if (readOnly) {
+      readOnlyRejectionsTotal.inc();
+      reply.code(503).send({
+        error: { code: "READ_ONLY_MODE", message: "System is in read-only mode." },
+      });
+      return;
+    }
+  });
+
   // ── Route modules ──
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/auth" });
@@ -157,6 +176,8 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(analyticsRoutes);
   await app.register(riskRoutes, { prefix: "/risk" });
   await app.register(v1Routes, { prefix: "/v1" });
+  await app.register(betaAdminRoutes, { prefix: "/v1/admin" });
+  await app.register(statusRoutes, { prefix: "/status" });
 
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {
