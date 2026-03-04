@@ -16,7 +16,9 @@ interface AppState {
   assets: Asset[];
   wallets: Wallet[];
   selectedPairId: string | null;
+  initialized: boolean;
   sseConnected: boolean;
+  setInitialized: (initialized: boolean) => void;
   setSystemStatus: (status: SystemStatus) => void;
   setUserStatus: (status: UserStatus) => void;
   setRiskStatus: (status: RiskStatus) => void;
@@ -35,7 +37,9 @@ export const useAppStore = create<AppState>((set) => ({
   assets: [],
   wallets: [],
   selectedPairId: null,
+  initialized: false,
   sseConnected: false,
+  setInitialized: (initialized) => set({ initialized }),
   setSystemStatus: (systemStatus) => set({ systemStatus }),
   setUserStatus: (userStatus) => set({ userStatus }),
   setRiskStatus: (riskStatus) => set({ riskStatus }),

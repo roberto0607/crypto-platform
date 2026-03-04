@@ -6,8 +6,16 @@ import type {
   MeResponse,
 } from "@/types/api";
 
-export function register(email: string, password: string) {
-  return client.post<RegisterResponse>("/auth/register", { email, password });
+export function register(
+  email: string,
+  password: string,
+  inviteCode?: string,
+) {
+  return client.post<RegisterResponse>("/auth/register", {
+    email,
+    password,
+    ...(inviteCode ? { inviteCode } : {}),
+  });
 }
 
 export function login(email: string, password: string) {

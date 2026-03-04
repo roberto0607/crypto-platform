@@ -29,7 +29,7 @@ export interface RefreshResponse {
 
 export interface MeResponse {
   ok: true;
-  user: { id: UUID; role: string };
+  user: User;
 }
 
 // ── Assets & Wallets ────────────────────────────────────────
