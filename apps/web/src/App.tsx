@@ -23,7 +23,23 @@ import BotPage from "@/pages/BotPage";
 import ReplayPage from "@/pages/ReplayPage";
 import PortfolioPage from "@/pages/PortfolioPage";
 import SettingsPage from "@/pages/SettingsPage";
-import AdminPage from "@/pages/AdminPage";
+import NotFoundPage from "@/pages/NotFoundPage";
+
+// Admin
+import AdminLayout from "@/pages/admin/AdminLayout";
+import AdminUsersPage from "@/pages/admin/AdminUsersPage";
+import AdminAssetsPage from "@/pages/admin/AdminAssetsPage";
+import AdminWalletsPage from "@/pages/admin/AdminWalletsPage";
+import AdminSystemPage from "@/pages/admin/AdminSystemPage";
+import AdminRiskPage from "@/pages/admin/AdminRiskPage";
+import AdminReconciliationPage from "@/pages/admin/AdminReconciliationPage";
+import AdminIncidentsPage from "@/pages/admin/AdminIncidentsPage";
+import AdminRepairPage from "@/pages/admin/AdminRepairPage";
+import AdminJobsPage from "@/pages/admin/AdminJobsPage";
+import AdminRetentionPage from "@/pages/admin/AdminRetentionPage";
+import AdminBetaPage from "@/pages/admin/AdminBetaPage";
+import AdminEventStreamPage from "@/pages/admin/AdminEventStreamPage";
+import AdminOutboxPage from "@/pages/admin/AdminOutboxPage";
 
 export default function App() {
   const initialized = useAppStore((s) => s.initialized);
@@ -152,9 +168,27 @@ export default function App() {
       {/* Admin routes */}
       <Route element={<AdminRoute />}>
         <Route element={<AppLayout />}>
-          <Route path="/admin/*" element={<AdminPage />} />
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<Navigate to="/admin/users" replace />} />
+            <Route path="users" element={<AdminUsersPage />} />
+            <Route path="assets" element={<AdminAssetsPage />} />
+            <Route path="wallets" element={<AdminWalletsPage />} />
+            <Route path="system" element={<AdminSystemPage />} />
+            <Route path="risk" element={<AdminRiskPage />} />
+            <Route path="reconciliation" element={<AdminReconciliationPage />} />
+            <Route path="incidents" element={<AdminIncidentsPage />} />
+            <Route path="repair" element={<AdminRepairPage />} />
+            <Route path="jobs" element={<AdminJobsPage />} />
+            <Route path="retention" element={<AdminRetentionPage />} />
+            <Route path="beta" element={<AdminBetaPage />} />
+            <Route path="event-stream" element={<AdminEventStreamPage />} />
+            <Route path="outbox" element={<AdminOutboxPage />} />
+          </Route>
         </Route>
       </Route>
+
+      {/* 404 catch-all */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

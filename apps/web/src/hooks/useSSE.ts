@@ -37,6 +37,9 @@ export function useSSE() {
         if (d.pairId === useTradingStore.getState().selectedPairId) {
           useTradingStore.getState().refreshBook();
         }
+        window.dispatchEvent(
+          new CustomEvent("sse:trade.created", { detail: d }),
+        );
       },
 
       onWalletUpdated: (event) => {
@@ -79,6 +82,21 @@ export function useSSE() {
             source: "replay",
           });
         }
+        window.dispatchEvent(
+          new CustomEvent("sse:replay.tick", { detail: d }),
+        );
+      },
+
+      onTriggerFired: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:trigger.fired", { detail: event.data }),
+        );
+      },
+
+      onTriggerCanceled: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:trigger.canceled", { detail: event.data }),
+        );
       },
     };
 
