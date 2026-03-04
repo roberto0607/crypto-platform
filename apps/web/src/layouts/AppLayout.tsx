@@ -6,6 +6,7 @@ import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import SystemBanner from "@/components/SystemBanner";
 import Badge from "@/components/Badge";
+import { useSSE } from "@/hooks/useSSE";
 
 // ── SVG icon paths (heroicons outline, 24x24 viewBox) ──────
 const ICONS: Record<string, string> = {
@@ -56,6 +57,7 @@ export default function AppLayout() {
 
   useSystemStatusPolling();
   useRefreshTokenKeepAlive();
+  const { sseConnected } = useSSE();
 
   function handleLogout() {
     clearAuth();
@@ -81,6 +83,14 @@ export default function AppLayout() {
         <div className="flex-1" />
 
         <div className="flex items-center gap-3">
+          {/* SSE connection indicator */}
+          <div className="flex items-center gap-1.5" title={sseConnected ? "Real-time connected" : "Real-time disconnected"}>
+            <span className={`inline-block h-2 w-2 rounded-full ${sseConnected ? "bg-blue-500 animate-pulse" : "bg-gray-600"}`} />
+            <span className="text-xs text-gray-400 hidden sm:inline">
+              {sseConnected ? "LIVE" : "OFFLINE"}
+            </span>
+          </div>
+
           {/* Risk status indicator */}
           <div className="flex items-center gap-1.5" title={
             tradingAllowed

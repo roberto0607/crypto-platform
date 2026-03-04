@@ -15,14 +15,19 @@ export function listPairs() {
   return client.get<{ ok: true; pairs: TradingPair[] }>("/pairs");
 }
 
-export function placeOrder(params: {
-  pairId: UUID;
-  side: OrderSide;
-  type: OrderType;
-  qty: DecimalString;
-  limitPrice?: DecimalString;
-}) {
-  return client.post<{ ok: true; order: Order; fills: Fill[] }>("/orders", params);
+export function placeOrder(
+  params: {
+    pairId: UUID;
+    side: OrderSide;
+    type: OrderType;
+    qty: DecimalString;
+    limitPrice?: DecimalString;
+  },
+  idempotencyKey?: string,
+) {
+  return client.post<{ ok: true; order: Order; fills: Fill[] }>("/orders", params, {
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+  });
 }
 
 export function listOrders(params?: {
@@ -50,5 +55,5 @@ export function getOrderBook(pairId: UUID) {
 }
 
 export function getSnapshot(pairId: UUID) {
-  return client.get<Snapshot>(`/pairs/${pairId}/snapshot`);
+  return client.get<{ ok: true; snapshot: Snapshot }>(`/pairs/${pairId}/snapshot`);
 }

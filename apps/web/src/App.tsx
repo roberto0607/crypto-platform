@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
@@ -35,6 +35,9 @@ export default function App() {
   const setAssets = useAppStore((s) => s.setAssets);
   const setWallets = useAppStore((s) => s.setWallets);
 
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const initLoadedData = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -53,6 +56,7 @@ export default function App() {
 
       // 3. If authenticated, fetch user data in parallel
       if (useAuthStore.getState().isAuthenticated) {
+        initLoadedData.current = true;
         const results = await Promise.allSettled([
           getUserStatus(),
           getRiskStatus(),
@@ -79,6 +83,37 @@ export default function App() {
       cancelled = true;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-load user data after fresh login (init effect doesn't re-run)
+  useEffect(() => {
+    if (!initialized || !isAuthenticated || initLoadedData.current) return;
+
+    let cancelled = false;
+
+    async function loadUserData() {
+      const results = await Promise.allSettled([
+        getUserStatus(),
+        getRiskStatus(),
+        listPairs(),
+        listAssets(),
+        listWallets(),
+      ]);
+
+      if (!cancelled) {
+        const [userRes, riskRes, pairsRes, assetsRes, walletsRes] = results;
+        if (userRes.status === "fulfilled") setUserStatus(userRes.value.data);
+        if (riskRes.status === "fulfilled") setRiskStatus(riskRes.value.data.risk);
+        if (pairsRes.status === "fulfilled") setPairs(pairsRes.value.data.pairs);
+        if (assetsRes.status === "fulfilled") setAssets(assetsRes.value.data.assets);
+        if (walletsRes.status === "fulfilled") setWallets(walletsRes.value.data.wallets);
+      }
+    }
+
+    loadUserData();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, initialized]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!initialized) {
     return (

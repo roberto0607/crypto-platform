@@ -362,3 +362,80 @@ export interface V1ApiError {
   requestId: string;
   details?: Record<string, unknown>;
 }
+
+// ── SSE Events ─────────────────────────────────────────────
+export interface EventEnvelope<T extends string = string, D = unknown> {
+  type: T;
+  ts: number;
+  requestId?: string;
+  userId?: string;
+  data: D;
+}
+
+export interface OrderUpdatedEvent {
+  orderId: UUID;
+  pairId: UUID;
+  side: OrderSide;
+  type: OrderType;
+  status: string;
+  qty: DecimalString;
+  filledQty: DecimalString;
+  limitPrice?: DecimalString | null;
+}
+
+export interface TradeCreatedEvent {
+  tradeId: UUID;
+  orderId: UUID;
+  pairId: UUID;
+  side: OrderSide;
+  price: DecimalString;
+  qty: DecimalString;
+  quoteAmount: DecimalString;
+}
+
+export interface WalletUpdatedEvent {
+  walletId: UUID;
+  assetId: UUID;
+  balance: DecimalString;
+  reserved: DecimalString;
+  entryType: string;
+}
+
+export interface PriceTickEvent {
+  pairId: UUID;
+  symbol: string;
+  bid: DecimalString | null;
+  ask: DecimalString | null;
+  last: DecimalString;
+}
+
+export interface ReplayTickEvent {
+  pairId: UUID;
+  bid: DecimalString;
+  ask: DecimalString;
+  last: DecimalString;
+  sessionTs: number;
+}
+
+export interface TriggerFiredEvent {
+  triggerId: UUID;
+  pairId: UUID;
+  kind: string;
+  side: OrderSide;
+  derivedOrderId: UUID | null;
+}
+
+export interface TriggerCanceledEvent {
+  triggerId: UUID;
+  pairId: UUID;
+  reason: string;
+}
+
+export type SSEEvent =
+  | EventEnvelope<"order.updated", OrderUpdatedEvent>
+  | EventEnvelope<"trade.created", TradeCreatedEvent>
+  | EventEnvelope<"wallet.updated", WalletUpdatedEvent>
+  | EventEnvelope<"price.tick", PriceTickEvent>
+  | EventEnvelope<"replay.tick", ReplayTickEvent>
+  | EventEnvelope<"trigger.fired", TriggerFiredEvent>
+  | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>;
