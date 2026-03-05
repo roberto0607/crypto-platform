@@ -10,6 +10,7 @@
     "auth:smoke": "bash scripts/auth-smoke.sh",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "cleanup:tokens": "tsx src/scripts/cleanupRefreshTokens.ts",
     "dev:seed": "bash scripts/seed.sh",
     "dev:reset": "bash scripts/reset.sh --force",
