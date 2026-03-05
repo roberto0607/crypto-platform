@@ -17,5 +17,15 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: cp_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - cp_redis_data:/data
+
 volumes:
   cp_postgres_data:
+  cp_redis_data:

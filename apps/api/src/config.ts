@@ -50,7 +50,6 @@ export const config = {
   isProd,
 
   jwtAccessSecret: requireEnv("JWT_ACCESS_SECRET"),
-  jwtRefreshSecret: requireEnv("JWT_REFRESH_SECRET"),
 
   jwtAccessTtlSeconds,
   jwtRefreshTtlSeconds,
@@ -91,6 +90,9 @@ export const config = {
   instanceId: process.env.INSTANCE_ID || `${hostname()}-${randomUUID().slice(0, 8)}`,
   instanceRole: instanceRoleEnv(),
   runMigrationsOnBoot: booleanEnv("RUN_MIGRATIONS_ON_BOOT", false),
+
+  // ── Phase 12 PR3: Redis for distributed state ──
+  redisUrl: process.env.REDIS_URL || "",
 
   // ── Phase 10 PR6: Beta access layer ──
   betaMode: booleanEnv("BETA_MODE", false),

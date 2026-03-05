@@ -34,7 +34,7 @@ export async function requireUser(req: FastifyRequest, reply: FastifyReply) {
     }
 
     // Rate limit check
-    if (checkApiKeyRateLimit(apiKey.id)) {
+    if (await checkApiKeyRateLimit(apiKey.id)) {
       apiKeyRateLimitedTotal.inc();
       return reply.code(429).send({
         error: { code: "API_KEY_RATE_LIMIT", message: "API key rate limit exceeded." },

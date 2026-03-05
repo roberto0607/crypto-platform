@@ -3,6 +3,7 @@ import { config } from "../config";
 import { pool } from "../db/pool";
 import { getStats } from "../events/eventBus";
 import { getLeadershipStatus } from "../coordination/leaderElection";
+import { getRedis } from "../db/redis";
 
 type CheckStatus = "OK" | "DEGRADED" | "CRITICAL" | "WARNING" | "UNKNOWN";
 
@@ -10,6 +11,7 @@ interface DeepHealthResult {
   status: "OK" | "DEGRADED" | "CRITICAL";
   checks: {
     database: { status: CheckStatus; latencyMs: number };
+    redis: { status: CheckStatus; enabled: boolean };
     eventBus: { status: CheckStatus; subscriberCount: number; globalCount: number };
     breakers: { status: CheckStatus; openCount: number };
     reconciliation: { status: CheckStatus };
@@ -42,6 +44,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
       status: "OK",
       checks: {
         database: { status: "OK", latencyMs: 0 },
+        redis: { status: "OK", enabled: false },
         eventBus: { status: "OK", subscriberCount: 0, globalCount: 0 },
         breakers: { status: "OK", openCount: 0 },
         reconciliation: { status: "UNKNOWN" },
@@ -59,7 +62,19 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
       result.checks.database.status = "CRITICAL";
     }
 
-    // 2. Event bus subscriber count
+    // 2. Redis connectivity
+    const redis = getRedis();
+    if (redis) {
+      result.checks.redis.enabled = true;
+      try {
+        await redis.ping();
+        result.checks.redis.status = "OK";
+      } catch {
+        result.checks.redis.status = "DEGRADED";
+      }
+    }
+
+    // 3. Event bus subscriber count
     try {
       const stats = getStats();
       result.checks.eventBus.subscriberCount = stats.handlerCount;
@@ -69,7 +84,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
       result.checks.eventBus.status = "DEGRADED";
     }
 
-    // 3. Breaker state summary
+    // 4. Breaker state summary
     try {
       const { rows } = await pool.query<{ open_count: string }>(
         `SELECT COUNT(*)::text AS open_count
@@ -84,7 +99,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
       result.checks.breakers.status = "CRITICAL";
     }
 
-    // 4. Reconciliation last run status (from audit_log)
+    // 5. Reconciliation last run status (from audit_log)
     try {
       const { rows } = await pool.query<{ metadata: { overallStatus?: string } }>(
         `SELECT metadata
@@ -116,7 +131,8 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
       result.status = "CRITICAL";
     } else if (
       result.checks.reconciliation.status === "WARNING" ||
-      result.checks.eventBus.status === "DEGRADED"
+      result.checks.eventBus.status === "DEGRADED" ||
+      result.checks.redis.status === "DEGRADED"
     ) {
       result.status = "DEGRADED";
     }

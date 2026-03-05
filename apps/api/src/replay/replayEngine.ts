@@ -53,7 +53,7 @@ export async function getSnapshotForUser(userId: string, pairId: string): Promis
         return { bid: null, ask: null, last: "0", ts: new Date().toISOString(), source: "fallback" };
     }
 
-    const live = getSnapshot(pair.symbol);
+    const live = await getSnapshot(pair.symbol);
     if (live) return live;
 
     //3. Fallback to last_price

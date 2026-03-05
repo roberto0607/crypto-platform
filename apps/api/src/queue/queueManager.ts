@@ -5,6 +5,14 @@ import type { PlaceOrderResult } from "../trading/phase6OrderService";
 import { pairQueueDepth, pairQueueRejectionsTotal } from "../metrics";
 import type { PairQueue, QueueJob, QueueStats } from "./queueTypes";
 import { createPairQueue, enqueue, processLoop } from "./pairQueue";
+import { getRedis } from "../db/redis.js";
+import {
+  enqueueRedis,
+  getRedisQueueStats,
+  shutdownRedisQueue,
+} from "./redisQueue";
+
+// ── In-memory queue state ──
 
 const queues = new Map<string, PairQueue>();
 let accepting = true;
@@ -27,6 +35,8 @@ async function executor(job: QueueJob): Promise<PlaceOrderResult> {
   );
 }
 
+// ── Public API ──
+
 export function enqueueOrder(
   pairId: string,
   userId: string,
@@ -35,6 +45,12 @@ export function enqueueOrder(
   requestId: string,
   timeoutMs?: number,
 ): Promise<PlaceOrderResult> {
+  // Redis path — distributed queue
+  if (getRedis()) {
+    return enqueueRedis(pairId, userId, payload, idempotencyKey, requestId, timeoutMs);
+  }
+
+  // In-memory path — existing implementation
   if (!accepting) {
     throw new AppError("server_shutting_down");
   }
@@ -66,15 +82,12 @@ export function enqueueOrder(
   });
 
   // Kick the worker loop (fire-and-forget).
-  // processLoop returns immediately if already running.
   void processLoop(pq, executor).then(() => {
     pairQueueDepth.set({ pairId }, pq.jobs.length);
   });
 
   const timeout = timeoutMs ?? config.queueTimeoutMs;
 
-  // Race the job promise against a timeout.
-  // If timeout wins, the client gets 503 but the job keeps executing.
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     setTimeout(() => {
       reject(new AppError("queue_timeout"));
@@ -84,7 +97,11 @@ export function enqueueOrder(
   return Promise.race([jobPromise, timeoutPromise]);
 }
 
-export function getQueueStats(): QueueStats[] {
+export function getQueueStats(): QueueStats[] | Promise<QueueStats[]> {
+  if (getRedis()) {
+    return getRedisQueueStats();
+  }
+
   const stats: QueueStats[] = [];
   for (const [pairId, pq] of queues) {
     if (pq.jobs.length === 0 && !pq.running) continue;
@@ -102,11 +119,13 @@ export function getQueueStats(): QueueStats[] {
 export async function shutdownQueues(
   timeoutMs: number = 10_000,
 ): Promise<void> {
+  if (getRedis()) {
+    return shutdownRedisQueue(timeoutMs);
+  }
+
   accepting = false;
 
-  // Wait for all running loops to drain, with a timeout guard.
   const deadline = Date.now() + timeoutMs;
-
   while (Date.now() < deadline) {
     let anyRunning = false;
     for (const pq of queues.values()) {
@@ -119,7 +138,6 @@ export async function shutdownQueues(
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  // Reject any remaining queued jobs that never started.
   for (const pq of queues.values()) {
     while (pq.jobs.length > 0) {
       const job = pq.jobs.shift()!;

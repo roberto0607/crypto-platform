@@ -558,6 +558,44 @@ export const invariantViolationsTotal = new client.Counter({
   labelNames: ["type"] as const,
 });
 
+// ── Phase 12 PR2: Auth hardening metrics ──
+
+export const refreshTokenReuseDetectedTotal = new client.Counter({
+  name: "refresh_token_reuse_detected_total",
+  help: "Refresh token reuse detection events (potential theft)",
+});
+
+export const refreshTokenFamilyRevokedTotal = new client.Counter({
+  name: "refresh_token_family_revoked_total",
+  help: "Full token family revocations triggered by reuse detection",
+});
+
+export const loginAttemptsDeletedTotal = new client.Counter({
+  name: "login_attempts_deleted_total",
+  help: "Login attempt records cleaned up",
+});
+
+// ── Phase 12 PR3: Redis metrics ──
+
+export const redisCommandDuration = new client.Histogram({
+  name: "redis_command_duration_seconds",
+  help: "Redis command latency",
+  labelNames: ["command"] as const,
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1],
+});
+
+export const redisPublishTotal = new client.Counter({
+  name: "redis_publish_total",
+  help: "Redis pub/sub messages published",
+  labelNames: ["channel"] as const,
+});
+
+export const redisSubscribeDeliveryTotal = new client.Counter({
+  name: "redis_subscribe_delivery_total",
+  help: "Redis pub/sub messages received and delivered locally",
+  labelNames: ["channel"] as const,
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

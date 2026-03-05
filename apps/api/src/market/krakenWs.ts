@@ -53,7 +53,7 @@ function subscribe(socket: WebSocket): void {
     socket.send(JSON.stringify(msg));
 }
 
-function handleMessage(raw: WebSocket.Data): void {
+async function handleMessage(raw: WebSocket.Data): Promise<void> {
     try {
         const msg = JSON.parse(raw.toString());
 
@@ -68,7 +68,7 @@ function handleMessage(raw: WebSocket.Data): void {
             const bid = tick.bid != null ? String(tick.bid) : null;
             const ask = tick.ask != null ? String(tick.ask) : null;
 
-            setSnapshot(ourSymbol, {
+            await setSnapshot(ourSymbol, {
                 bid,
                 ask,
                 last,

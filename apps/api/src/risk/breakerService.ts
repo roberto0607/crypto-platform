@@ -120,9 +120,9 @@ export async function recordOrderAttempt(
   client: PoolClient,
   userId: string,
 ): Promise<void> {
-  recordAttempt(userId);
+  await recordAttempt(userId);
 
-  if (isAboveThreshold(userId)) {
+  if (await isAboveThreshold(userId)) {
     const key = rateAbuseKey(userId);
 
     // Only trip if not already open

@@ -417,7 +417,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/queue — Queue stats per trading pair
   app.get("/queue", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
-    const queues = getQueueStats();
+    const queues = await getQueueStats();
     return reply.send({ ok: true, queues });
   });
 };

@@ -20,6 +20,9 @@ import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
 import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
+import { initRedis, shutdownRedis } from "./db/redis";
+import { startEventBus, stopEventBus } from "./events/eventBus";
+import { initRedisQueue } from "./queue/redisQueue";
 
 function getGitCommit(): string {
   try {
@@ -35,6 +38,11 @@ async function start() {
     const { runPendingMigrations } = await import("./db/migrate");
     await runPendingMigrations(pool);
   }
+
+  // ── Redis (optional — distributed mode) ──
+  await initRedis();
+  await startEventBus();
+  await initRedisQueue();
 
   // ── Migration guard — fail fast if schema mismatch ──
   await runMigrationGuard(pool);
@@ -69,6 +77,7 @@ async function start() {
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
     await stopOrchestrator();
+    await stopEventBus();
     stopTriggerEngine();
     stopKrakenFeed();
     await shutdownQueues(10_000);
@@ -83,6 +92,12 @@ async function start() {
       app.log.info("PG pool drained");
     } catch (err) {
       app.log.error({ err }, "Error draining PG pool");
+    }
+    try {
+      await shutdownRedis();
+      app.log.info("Redis disconnected");
+    } catch (err) {
+      app.log.error({ err }, "Error disconnecting Redis");
     }
     process.exit(0);
   };
