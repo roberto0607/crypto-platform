@@ -550,6 +550,14 @@ export const apiKeyRateLimitedTotal = new client.Counter({
   help: "Total requests rejected by API key rate limiter",
 });
 
+// ── Phase 12 PR1: Invariant enforcement metrics ──
+
+export const invariantViolationsTotal = new client.Counter({
+  name: "invariant_violations_total",
+  help: "Total post-trade invariant violations detected",
+  labelNames: ["type"] as const,
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

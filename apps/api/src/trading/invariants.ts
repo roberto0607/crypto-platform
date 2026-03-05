@@ -2,13 +2,12 @@
  * Post-trade financial integrity invariant checks.
  *
  * Runs inside the matching transaction (after fills, before COMMIT).
- *   - Development: throws on first violation (fail fast).
- *   - Production:  logs violations as warnings (does not abort trade).
+ * ALWAYS throws on violation — a violated invariant will ROLLBACK the
+ * entire transaction. Better to reject an order than to corrupt financial state.
  */
 import type { PoolClient } from "pg";
 import { D, ZERO } from "../utils/decimal";
-
-const ENFORCE = process.env.NODE_ENV !== "production";
+import { invariantViolationsTotal } from "../metrics";
 
 type Violation = { type: string; detail: string };
 
@@ -99,10 +98,10 @@ export async function verifyPostTradeInvariants(
 
     if (violations.length === 0) return;
 
-    const msg = violations.map((v) => `  [${v.type}] ${v.detail}`).join("\n");
-
-    if (ENFORCE) {
-        throw new Error(`invariant_violation:\n${msg}`);
+    for (const v of violations) {
+        invariantViolationsTotal.inc({ type: v.type });
     }
-    console.error(`[INVARIANT WARNING] Post-trade check failed:\n${msg}`);
+
+    const msg = violations.map((v) => `  [${v.type}] ${v.detail}`).join("\n");
+    throw new Error(`invariant_violation:\n${msg}`);
 }

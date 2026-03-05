@@ -180,8 +180,11 @@ export async function evaluateTriggersForPair(
  * Bootstrap: subscribe to event bus for replay.tick and price.tick events.
  * Runs trigger evaluation on every price update.
  */
-export function startTriggerEngine(): void {
+export async function startTriggerEngine(): Promise<void> {
     if (handler) return; // already started
+
+    // ── Startup recovery: mark orphaned TRIGGERED triggers as FAILED ──
+    await recoverOrphanedTriggers();
 
     handler = (event) => {
         if (event.type === "replay.tick") {
@@ -199,6 +202,41 @@ export function startTriggerEngine(): void {
 
     subscribeGlobal(handler);
     logger.info("Trigger engine started");
+}
+
+/**
+ * Startup recovery: find triggers stuck in TRIGGERED state with no derived
+ * order (server crashed between Phase 1 and Phase 2 of fireTrigger).
+ * Mark them as FAILED for manual review.
+ */
+async function recoverOrphanedTriggers(): Promise<void> {
+    const client = await pool.connect();
+    try {
+        const { rows } = await client.query<{ id: string }>(
+            `SELECT id FROM trigger_orders
+             WHERE status = 'TRIGGERED' AND derived_order_id IS NULL`,
+        );
+
+        if (rows.length === 0) return;
+
+        logger.warn({ count: rows.length }, "trigger_orphan_recovery_start");
+
+        await client.query("BEGIN");
+        for (const row of rows) {
+            await setStatusTx(client, row.id, "FAILED", {
+                failReason: "server_restart_recovery",
+            });
+            logger.warn({ triggerId: row.id }, "trigger_orphan_marked_failed");
+        }
+        await client.query("COMMIT");
+
+        logger.info({ count: rows.length }, "trigger_orphan_recovery_complete");
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        logger.error({ err }, "trigger_orphan_recovery_error");
+    } finally {
+        client.release();
+    }
 }
 
 /**

@@ -190,7 +190,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   // -- Trigger engine --
   if (!opts.disableTriggerEngine) {
-    app.addHook("onReady", () => { startTriggerEngine(); });
+    app.addHook("onReady", async () => { await startTriggerEngine(); });
   }
 
   // -- Bot runner --

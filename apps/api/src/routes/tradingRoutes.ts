@@ -9,7 +9,7 @@ import { handleError } from "../http/handleError";
 import { findPairById, listActivePairs } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
-import { cancelOrder } from "../trading/matchingEngine";
+import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
 import { enforcePreOrderChecks } from "../governance/quotaService";
 
@@ -151,7 +151,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     const actor = req.user!;
 
     try {
-        const result = await cancelOrder(actor.id, paramsParsed.data.id);
+        const result = await cancelOrderWithOutbox(actor.id, paramsParsed.data.id, req.id);
 
         await auditLog({
             actorUserId: actor.id,
