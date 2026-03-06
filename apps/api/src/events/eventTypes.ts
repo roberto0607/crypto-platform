@@ -97,6 +97,13 @@ export interface CandleClosedData {
   volume: string;
 }
 
+export interface NotificationCreatedData {
+  notificationId: string;
+  kind: string;
+  title: string;
+  body: string | null;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
@@ -109,7 +116,8 @@ export type AppEvent =
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
   | EventEnvelope<"competition.started", CompetitionStartedData>
   | EventEnvelope<"competition.ended", CompetitionEndedData>
-  | EventEnvelope<"candle.closed", CandleClosedData>;
+  | EventEnvelope<"candle.closed", CandleClosedData>
+  | EventEnvelope<"notification.created", NotificationCreatedData>;
 
 // ── Helper to create events ──
 

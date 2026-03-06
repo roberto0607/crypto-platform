@@ -15,6 +15,7 @@ export interface SSEHandlers {
   onTriggerFired?: (event: Extract<SSEEvent, { type: "trigger.fired" }>) => void;
   onTriggerCanceled?: (event: Extract<SSEEvent, { type: "trigger.canceled" }>) => void;
   onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
+  onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
 }
 
 let abortController: AbortController | null = null;
@@ -73,6 +74,9 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
           break;
         case "candle.closed":
           handlers.onCandleClosed?.(event);
+          break;
+        case "notification.created":
+          handlers.onNotificationCreated?.(event);
           break;
       }
     },

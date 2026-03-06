@@ -443,6 +443,13 @@ export interface CandleClosedEvent {
   volume: DecimalString;
 }
 
+export interface NotificationCreatedEvent {
+  notificationId: UUID;
+  kind: string;
+  title: string;
+  body: string | null;
+}
+
 export type SSEEvent =
   | EventEnvelope<"order.updated", OrderUpdatedEvent>
   | EventEnvelope<"trade.created", TradeCreatedEvent>
@@ -451,4 +458,5 @@ export type SSEEvent =
   | EventEnvelope<"replay.tick", ReplayTickEvent>
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
-  | EventEnvelope<"candle.closed", CandleClosedEvent>;
+  | EventEnvelope<"candle.closed", CandleClosedEvent>
+  | EventEnvelope<"notification.created", NotificationCreatedEvent>;

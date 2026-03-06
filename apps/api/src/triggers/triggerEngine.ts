@@ -5,7 +5,9 @@ import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
 import { subscribeGlobal, unsubscribe, publish } from "../events/eventBus";
 import type { EventHandler } from "../events/eventBus";
 import { createEvent } from "../events/eventTypes";
+import { findPairById } from "../trading/pairRepo";
 import { logger } from "../observability/logContext";
+import { notifyTriggerFired } from "../notifications/notificationService";
 
 type PriceSnapshot = { last: string };
 
@@ -144,6 +146,12 @@ export async function fireTrigger(
     } catch {
         // Events must never break trigger engine
     }
+
+    // Send in-app notification (fire-and-forget)
+    findPairById(trigger.pair_id).then((pair) => {
+        const symbol = pair?.symbol ?? trigger.pair_id;
+        notifyTriggerFired(trigger.user_id, symbol, trigger.kind, trigger.side).catch(() => {});
+    }).catch(() => {});
 
     if (canceledSibling) {
         try {

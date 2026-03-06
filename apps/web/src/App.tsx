@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
+import { useNotificationStore } from "@/stores/notificationStore";
 import { getSystemStatus, getUserStatus } from "@/api/endpoints/status";
 import { getStatus as getRiskStatus } from "@/api/endpoints/risk";
 import { listPairs } from "@/api/endpoints/trading";
@@ -95,9 +96,10 @@ export default function App() {
         }
       }
 
-      // Fetch user's competitions if authenticated
+      // Fetch user's competitions and notifications if authenticated
       if (useAuthStore.getState().isAuthenticated) {
         useCompetitionStore.getState().fetchMyCompetitions().catch(() => {});
+        useNotificationStore.getState().fetch().catch(() => {});
       }
 
       if (!cancelled) setInitialized(true);
@@ -135,6 +137,7 @@ export default function App() {
     }
 
     loadUserData();
+    useNotificationStore.getState().fetch().catch(() => {});
     return () => {
       cancelled = true;
     };

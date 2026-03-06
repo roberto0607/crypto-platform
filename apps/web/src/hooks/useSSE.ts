@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useNotificationStore } from "@/stores/notificationStore";
 import { connectSSE, disconnectSSE, type SSEHandlers } from "@/api/sse";
 
 export function useSSE() {
@@ -106,6 +107,16 @@ export function useSSE() {
         window.dispatchEvent(
           new CustomEvent("sse:candle.closed", { detail: event.data }),
         );
+      },
+
+      onNotificationCreated: (event) => {
+        const d = event.data;
+        useNotificationStore.getState().addNotification({
+          id: d.notificationId,
+          kind: d.kind,
+          title: d.title,
+          body: d.body,
+        });
       },
     };
 

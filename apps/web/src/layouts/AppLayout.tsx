@@ -6,6 +6,7 @@ import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import SystemBanner from "@/components/SystemBanner";
 import Badge from "@/components/Badge";
+import { NotificationBell } from "@/components/NotificationBell";
 import { useSSE } from "@/hooks/useSSE";
 
 // ── SVG icon paths (heroicons outline, 24x24 viewBox) ──────
@@ -92,6 +93,9 @@ export default function AppLayout() {
               {sseConnected ? "LIVE" : "OFFLINE"}
             </span>
           </div>
+
+          {/* Notifications */}
+          <NotificationBell />
 
           {/* Risk status indicator */}
           <div className="flex items-center gap-1.5" title={

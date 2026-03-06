@@ -5,9 +5,11 @@ import {
     updateCompetitionStatus,
 } from "../../competitions/competitionRepo";
 import { finalizeCompetition } from "../../competitions/competitionService";
+import { listActiveParticipants } from "../../competitions/participantRepo";
 import { pool } from "../../db/pool";
 import { publish } from "../../events/eventBus";
 import { createEvent } from "../../events/eventTypes";
+import { notifyCompetitionStarted, notifyCompetitionEnded } from "../../notifications/notificationService";
 
 export const competitionLifecycleJob: JobDefinition = {
     name: "competition-lifecycle",
@@ -28,6 +30,12 @@ export const competitionLifecycleJob: JobDefinition = {
                     competitionId: comp.id,
                     name: comp.name,
                 }));
+
+                // Notify all active participants
+                const participants = await listActiveParticipants(comp.id);
+                for (const p of participants) {
+                    notifyCompetitionStarted(p.user_id, comp.name, comp.id).catch(() => {});
+                }
             } catch (err) {
                 await client.query("ROLLBACK").catch(() => {});
                 ctx.logger.error({ err, competitionId: comp.id }, "competition_activation_failed");
@@ -47,6 +55,12 @@ export const competitionLifecycleJob: JobDefinition = {
                     competitionId: comp.id,
                     name: comp.name,
                 }));
+
+                // Notify all participants with their final rank
+                const finalized = await listActiveParticipants(comp.id);
+                for (const p of finalized) {
+                    notifyCompetitionEnded(p.user_id, comp.name, comp.id, p.final_rank).catch(() => {});
+                }
             } catch (err) {
                 ctx.logger.error({ err, competitionId: comp.id }, "competition_finalization_failed");
             }
