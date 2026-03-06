@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppStore } from "@/stores/appStore";
+import { useCompetitionStore } from "@/stores/competitionStore";
 import { getSummary } from "@/api/endpoints/portfolio";
 import { listOrders } from "@/api/endpoints/trading";
 import { listTriggers } from "@/api/endpoints/triggers";
@@ -20,6 +22,7 @@ export default function DashboardPage() {
   const wallets = useAppStore((s) => s.wallets);
   const riskStatus = useAppStore((s) => s.riskStatus);
   const userStatus = useAppStore((s) => s.userStatus);
+  const { myCompetitions, fetchMyCompetitions } = useCompetitionStore();
 
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
   const [openOrderCount, setOpenOrderCount] = useState<number | null>(null);
@@ -48,6 +51,10 @@ export default function DashboardPage() {
     load();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    fetchMyCompetitions();
+  }, [fetchMyCompetitions]);
 
   if (loading) {
     return (
@@ -159,6 +166,45 @@ export default function DashboardPage() {
           )}
         </Card>
       </div>
+
+      {/* Your Competitions */}
+      {myCompetitions.filter((c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE").length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+              Your Competitions
+            </h2>
+            <Link to="/competitions" className="text-blue-400 text-xs hover:underline">
+              View All
+            </Link>
+          </div>
+          <div className="space-y-3">
+            {myCompetitions
+              .filter((c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE")
+              .map((c) => (
+                <Link
+                  key={c.competition_id}
+                  to={`/competitions/${c.competition_id}`}
+                  className="flex items-center justify-between bg-gray-800/50 rounded px-4 py-3 hover:bg-gray-800 transition-colors"
+                >
+                  <div>
+                    <span className="text-white text-sm font-medium">
+                      {c.competition_name}
+                    </span>
+                    {c.final_rank && (
+                      <span className="ml-3 text-gray-400 text-xs">
+                        Rank #{c.final_rank}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-gray-500 text-xs">
+                    Ends {new Date(c.end_at).toLocaleDateString()}
+                  </span>
+                </Link>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

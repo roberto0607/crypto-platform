@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import axios from "axios";
 import type { User, RefreshResponse } from "@/types/api";
-import { bindAuthStore } from "@/api/client";
+import { bindAuthStore, setActiveCompetitionId } from "@/api/client";
 import { me, logout } from "@/api/endpoints/auth";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
@@ -50,6 +50,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
     clearAuth: () => {
       // Fire-and-forget logout — don't block UI on failure
       logout().catch(() => {});
+      // Reset competition context
+      setActiveCompetitionId(null);
       set({
         accessToken: null,
         user: null,

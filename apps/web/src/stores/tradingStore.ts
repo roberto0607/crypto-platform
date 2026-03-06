@@ -16,6 +16,7 @@ import {
   placeOrder,
   cancelOrder as cancelOrderApi,
 } from "@/api/endpoints/trading";
+import { setActiveCompetitionId } from "@/api/client";
 
 export interface RecentTrade {
   tradeId: UUID;
@@ -42,11 +43,15 @@ interface TradingState {
   qty: string;
   limitPrice: string;
 
+  // Competition context
+  activeCompetitionId: string | null;
+
   // Loading states
   bookLoading: boolean;
   orderSubmitting: boolean;
 
   // Actions
+  setActiveCompetition: (id: string | null) => void;
   selectPair: (pairId: string) => void;
   setOrderSide: (side: OrderSide) => void;
   setOrderType: (type: OrderType) => void;
@@ -78,8 +83,23 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   qty: "",
   limitPrice: "",
 
+  activeCompetitionId: null,
+
   bookLoading: false,
   orderSubmitting: false,
+
+  setActiveCompetition: (id: string | null) => {
+    setActiveCompetitionId(id);
+    set({ activeCompetitionId: id });
+
+    // Refresh all trading data for the new context
+    const { selectedPairId, refreshBook, refreshSnapshot, refreshOpenOrders } = get();
+    if (selectedPairId) {
+      refreshBook();
+      refreshSnapshot();
+      refreshOpenOrders();
+    }
+  },
 
   selectPair: (pairId: string) => {
     set({

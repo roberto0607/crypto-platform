@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
+import { useCompetitionStore } from "@/stores/competitionStore";
 import { getSystemStatus, getUserStatus } from "@/api/endpoints/status";
 import { getStatus as getRiskStatus } from "@/api/endpoints/risk";
 import { listPairs } from "@/api/endpoints/trading";
@@ -23,6 +24,8 @@ import BotPage from "@/pages/BotPage";
 import ReplayPage from "@/pages/ReplayPage";
 import PortfolioPage from "@/pages/PortfolioPage";
 import SettingsPage from "@/pages/SettingsPage";
+import CompetitionsPage from "@/pages/CompetitionsPage";
+import CompetitionDetailPage from "@/pages/CompetitionDetailPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 
 // Admin
@@ -89,6 +92,11 @@ export default function App() {
           if (assetsRes.status === "fulfilled") setAssets(assetsRes.value.data.assets);
           if (walletsRes.status === "fulfilled") setWallets(walletsRes.value.data.wallets);
         }
+      }
+
+      // Fetch user's competitions if authenticated
+      if (useAuthStore.getState().isAuthenticated) {
+        useCompetitionStore.getState().fetchMyCompetitions().catch(() => {});
       }
 
       if (!cancelled) setInitialized(true);
@@ -161,6 +169,8 @@ export default function App() {
           <Route path="/bot" element={<BotPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/competitions" element={<CompetitionsPage />} />
+          <Route path="/competitions/:id" element={<CompetitionDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>

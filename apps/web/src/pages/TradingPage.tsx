@@ -1,5 +1,7 @@
 import { useAppStore } from "@/stores/appStore";
+import { useTradingStore } from "@/stores/tradingStore";
 import PairSelector from "@/components/trading/PairSelector";
+import { CompetitionSelector } from "@/components/trading/CompetitionSelector";
 import PriceTicker from "@/components/trading/PriceTicker";
 import OrderBook from "@/components/trading/OrderBook";
 import OrderForm from "@/components/trading/OrderForm";
@@ -12,9 +14,20 @@ export default function TradingPage() {
 
   return (
     <div className="space-y-4">
-      {/* Top bar: pair selector + price ticker + SSE dot */}
+      {/* Competition banner */}
+      {useTradingStore((s) => s.activeCompetitionId) && (
+        <div className="bg-blue-900/30 border border-blue-700 rounded px-4 py-2 flex items-center gap-3">
+          <span className="text-blue-400 text-sm font-medium">Competition Mode</span>
+          <span className="text-gray-400 text-xs">
+            Trades and balances are isolated to this competition
+          </span>
+        </div>
+      )}
+
+      {/* Top bar: pair selector + competition selector + price ticker + SSE dot */}
       <div className="flex flex-wrap items-center gap-4">
         <PairSelector />
+        <CompetitionSelector />
         <div className="flex-1" />
         <PriceTicker />
         <div

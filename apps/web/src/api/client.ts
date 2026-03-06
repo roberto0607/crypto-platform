@@ -14,6 +14,17 @@ let getToken: () => string | null = () => null;
 let setToken: (token: string) => void = () => {};
 let clearAuth: () => void = () => {};
 
+// ── Competition context ──────────────────────────────────────
+let activeCompetitionId: string | null = null;
+
+export function setActiveCompetitionId(id: string | null): void {
+  activeCompetitionId = id;
+}
+
+export function getActiveCompetitionId(): string | null {
+  return activeCompetitionId;
+}
+
 export function bindAuthStore(fns: {
   getToken: () => string | null;
   setToken: (token: string) => void;
@@ -30,6 +41,14 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Competition scoping
+  if (activeCompetitionId) {
+    config.headers["X-Competition-Id"] = activeCompetitionId;
+  } else {
+    delete config.headers["X-Competition-Id"];
+  }
+
   return config;
 });
 
