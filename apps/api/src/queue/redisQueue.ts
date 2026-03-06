@@ -115,6 +115,7 @@ export async function enqueueRedis(
   idempotencyKey: string | undefined,
   requestId: string,
   timeoutMs?: number,
+  competitionId?: string,
 ): Promise<PlaceOrderResult> {
   if (!accepting) throw new AppError("server_shutting_down");
 
@@ -140,6 +141,7 @@ export async function enqueueRedis(
     "payload", JSON.stringify(payload),
     "idempotencyKey", idempotencyKey ?? "",
     "requestId", requestId,
+    "competitionId", competitionId ?? "",
     "enqueuedAt", Date.now().toString(),
   );
 
@@ -254,6 +256,7 @@ async function processJob(
       JSON.parse(job.payload),
       job.idempotencyKey || undefined,
       job.requestId,
+      job.competitionId || undefined,
     );
 
     pairQueueWaitMs.observe({ pairId }, execStart - enqueuedAt);

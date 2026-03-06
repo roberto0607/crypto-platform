@@ -118,7 +118,8 @@ async function placeOrderInternal(
     side: "BUY" | "SELL",
     type: "MARKET" | "LIMIT",
     qty: string,
-    limitPrice?: string
+    limitPrice?: string,
+    competitionId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -128,8 +129,8 @@ async function placeOrderInternal(
     if (type === "MARKET" && !pair.last_price) throw new Error("no_price_available");
 
     // ── Phase B: Find user's wallets (non-locking read) ──
-    const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id);
-    const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id);
+    const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id, competitionId);
+    const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id, competitionId);
     if (!baseWallet || !quoteWallet) throw new Error("wallet_not_found");
 
     // ── Phase C+D: Incrementally scan book and build execution plan ──
@@ -226,14 +227,22 @@ async function placeOrderInternal(
     const counterUserIds = [...new Set(plan.map((e) => e.resting.user_id))];
 
     if (counterUserIds.length > 0) {
+        const compFilter = (competitionId ?? null) === null
+            ? `AND w.competition_id IS NULL`
+            : `AND w.competition_id = $4`;
+        const counterParams = (competitionId ?? null) === null
+            ? [counterUserIds, pair.base_asset_id, pair.quote_asset_id]
+            : [counterUserIds, pair.base_asset_id, pair.quote_asset_id, competitionId];
+
         const counterWallets = await timedQuery<WalletRow>(
             client,
             "matchingEngine.batchCounterWallets",
             `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-             FROM wallets
-             WHERE user_id = ANY($1)
-               AND asset_id IN ($2, $3)`,
-            [counterUserIds, pair.base_asset_id, pair.quote_asset_id]
+             FROM wallets w
+             WHERE w.user_id = ANY($1)
+               AND w.asset_id IN ($2, $3)
+               ${compFilter}`,
+            counterParams
         );
 
         const walletMap = new Map<string, WalletRow>();
@@ -271,6 +280,7 @@ async function placeOrderInternal(
         status: "OPEN",
         reservedWalletId: reserveWalletId,
         reservedAmount: toFixed8(reserveAmount),
+        competitionId: competitionId ?? null,
     });
 
     // ── Phase I: Execute book fills ──
@@ -461,13 +471,14 @@ export async function placeOrder(
     side: "BUY" | "SELL",
     type: "MARKET" | "LIMIT",
     qty: string,
-    limitPrice?: string
+    limitPrice?: string,
+    competitionId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
-        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice);
+        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId);
         await client.query("COMMIT");
         return result;
     } catch (err) {
@@ -489,9 +500,10 @@ export async function placeOrderTx(
     side: "BUY" | "SELL",
     type: "MARKET" | "LIMIT",
     qty: string,
-    limitPrice?: string
+    limitPrice?: string,
+    competitionId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId);
 }
 
 /**

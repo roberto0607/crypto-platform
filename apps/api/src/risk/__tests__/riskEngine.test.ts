@@ -25,6 +25,7 @@ vi.mock("../../metrics", () => ({
   riskChecksTotal: { inc: vi.fn() },
   riskRejectionsTotal: { inc: vi.fn() },
   breakerBlocksTotal: { inc: vi.fn() },
+  riskEvaluationLatency: { observe: vi.fn() },
 }));
 
 import { resolveEffectiveLimits } from "../riskLimitRepo";

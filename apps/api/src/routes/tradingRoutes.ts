@@ -179,6 +179,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         await enforcePreOrderChecks(actor.id, parsed.data.pairId);
 
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
+        const competitionId = req.headers["x-competition-id"] as string | undefined;
 
         const result = await enqueueOrder(
             parsed.data.pairId,
@@ -192,6 +193,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
             },
             idempotencyKey,
             req.id as string,
+            undefined,
+            competitionId,
         );
 
         if (!result.fromIdempotencyCache) {

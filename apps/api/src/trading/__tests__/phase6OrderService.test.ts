@@ -475,6 +475,7 @@ describe("placeOrderWithSnapshot", () => {
         expect.any(Number), // timestamp
         "pair-1",
         "50000.00000000", // last fill price
+        undefined, // competitionId
       );
     });
   });

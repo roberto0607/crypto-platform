@@ -27,12 +27,26 @@ export type EquityPoint = {
  */
 export async function getPositions(
     userId: string,
-    pairId?: string
+    pairId?: string,
+    competitionId?: string | null,
 ): Promise<PositionWithPnl[]> {
-    const whereClause = pairId
-        ? `WHERE user_id = $1 AND pair_id = $2`
-        : `WHERE user_id = $1`;
-    const params = pairId ? [userId, pairId] : [userId];
+    const compId = competitionId ?? null;
+    const conditions = [`user_id = $1`];
+    const params: (string | null)[] = [userId];
+
+    if (pairId) {
+        params.push(pairId);
+        conditions.push(`pair_id = $${params.length}`);
+    }
+
+    if (compId === null) {
+        conditions.push(`competition_id IS NULL`);
+    } else {
+        params.push(compId);
+        conditions.push(`competition_id = $${params.length}`);
+    }
+
+    const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
     const result = await pool.query<PositionRow>(
         `
@@ -77,8 +91,8 @@ export async function getPositions(
 /**
  * Aggregate PnL summary across all positions for a user.
  */
-export async function getPnlSummary(userId: string): Promise<PnlSummary> {
-    const positions = await getPositions(userId);
+export async function getPnlSummary(userId: string, competitionId?: string | null): Promise<PnlSummary> {
+    const positions = await getPositions(userId, undefined, competitionId);
 
     let totalRealized = ZERO;
     let totalUnrealized = ZERO;
@@ -106,11 +120,15 @@ export async function getPnlSummary(userId: string): Promise<PnlSummary> {
 export async function getEquitySeries(
     userId: string,
     from?: number,
-    to?: number
+    to?: number,
+    competitionId?: string | null,
 ): Promise<EquityPoint[]> {
-    let sql = `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1`;
-    const params: (string | number)[] = [userId];
-    let paramIdx = 2;
+    const compId = competitionId ?? null;
+    let sql = compId === null
+        ? `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1 AND competition_id IS NULL`
+        : `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1 AND competition_id = $2`;
+    const params: (string | number)[] = compId === null ? [userId] : [userId, compId];
+    let paramIdx = params.length + 1;
 
     if (from !== undefined) {
         sql += ` AND ts >= $${paramIdx}`;
@@ -141,9 +159,13 @@ export async function getEquitySeriesPaginated(
     to: number | undefined,
     limit: number,
     cursor: { ts: number } | null,
+    competitionId?: string | null,
 ): Promise<EquityPoint[]> {
-    let sql = `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1`;
-    const params: (string | number)[] = [userId];
+    const compId = competitionId ?? null;
+    let sql = compId === null
+        ? `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1 AND competition_id IS NULL`
+        : `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1 AND competition_id = $2`;
+    const params: (string | number)[] = compId === null ? [userId] : [userId, compId];
 
     if (from !== undefined) {
         params.push(from);

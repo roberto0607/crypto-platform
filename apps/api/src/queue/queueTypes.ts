@@ -12,6 +12,7 @@ export interface QueueJob {
     limitPrice?: string;
   };
   idempotencyKey?: string;
+  competitionId?: string;
   enqueuedAt: number;
   resolve: (result: PlaceOrderResult) => void;
   reject: (err: Error) => void;

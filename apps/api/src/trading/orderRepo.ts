@@ -33,12 +33,13 @@ export async function createOrder(
         status: string;
         reservedWalletId: string | null;
         reservedAmount: string;
+        competitionId?: string | null;
     }
 ): Promise<OrderRow> {
     const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
-        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING ${ORDER_COLUMNS}
         `,
         [
@@ -51,6 +52,7 @@ export async function createOrder(
             params.status,
             params.reservedWalletId,
             params.reservedAmount,
+            params.competitionId ?? null,
         ]
     );
 

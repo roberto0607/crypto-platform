@@ -32,22 +32,31 @@ async function getQuoteAssetIds(): Promise<string[]> {
 export async function getPortfolioSummary(
     userId: string,
     pairId?: string,
+    competitionId?: string | null,
 ): Promise<PortfolioSummary> {
-    // 1. Cash (sum of quote-asset wallets)
+    const compId = competitionId ?? null;
+
+    // 1. Cash (sum of quote-asset wallets scoped to competition)
     const quoteAssetIds = await getQuoteAssetIds();
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
+        const compFilter = compId === null
+            ? `AND competition_id IS NULL`
+            : `AND competition_id = $3`;
+        const params = compId === null
+            ? [userId, quoteAssetIds]
+            : [userId, quoteAssetIds, compId];
         const { rows } = await pool.query<{ total: string }>(
             `SELECT COALESCE(SUM(balance), 0) AS total
              FROM wallets
-             WHERE user_id = $1 AND asset_id = ANY($2)`,
-            [userId, quoteAssetIds],
+             WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
+            params,
         );
         cashQuote = D(rows[0].total);
     }
 
     // 2. Positions (with unrealized PnL + current_price via pnlService)
-    const positions = await getPositions(userId, pairId);
+    const positions = await getPositions(userId, pairId, competitionId);
 
     let holdingsQuote = ZERO;
     let unrealizedPnl = ZERO;
@@ -86,11 +95,20 @@ export async function getEquityCurve(
     to: number | undefined,
     limit: number,
     cursor: { ts: number } | null,
+    competitionId?: string | null,
 ): Promise<PortfolioSnapshot[]> {
+    const compId = competitionId ?? null;
     let sql = `SELECT ts, equity_quote, cash_quote, holdings_quote,
                       unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote
                FROM equity_snapshots WHERE user_id = $1`;
     const params: (string | number)[] = [userId];
+
+    if (compId === null) {
+        sql += ` AND competition_id IS NULL`;
+    } else {
+        params.push(compId);
+        sql += ` AND competition_id = $${params.length}`;
+    }
 
     if (from !== undefined) {
         params.push(from);
@@ -119,9 +137,18 @@ export async function getPerformance(
     userId: string,
     from: number | undefined,
     to: number | undefined,
+    competitionId?: string | null,
 ): Promise<PerformanceSummary> {
+    const compId = competitionId ?? null;
     let sql = `SELECT ts, equity_quote FROM equity_snapshots WHERE user_id = $1`;
     const params: (string | number)[] = [userId];
+
+    if (compId === null) {
+        sql += ` AND competition_id IS NULL`;
+    } else {
+        params.push(compId);
+        sql += ` AND competition_id = $${params.length}`;
+    }
 
     if (from !== undefined) {
         params.push(from);
@@ -165,22 +192,35 @@ export async function writePortfolioSnapshot(
     ts: number,
     fillPairId: string,
     fillPrice: string,
+    competitionId?: string | null,
 ): Promise<void> {
+    const compId = competitionId ?? null;
+
     // 1. Quote asset IDs
     const quoteAssetIds = await getQuoteAssetIds();
 
     // 2. Cash
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
+        const compFilter = compId === null
+            ? `AND competition_id IS NULL`
+            : `AND competition_id = $3`;
+        const params = compId === null
+            ? [userId, quoteAssetIds]
+            : [userId, quoteAssetIds, compId];
         const { rows } = await pool.query<{ total: string }>(
             `SELECT COALESCE(SUM(balance), 0) AS total
-             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2)`,
-            [userId, quoteAssetIds],
+             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
+            params,
         );
         cashQuote = D(rows[0].total);
     }
 
-    // 3. All positions for this user
+    // 3. All positions for this user (scoped to competition)
+    const compPosFilter = compId === null
+        ? `AND competition_id IS NULL`
+        : `AND competition_id = $2`;
+    const posParams = compId === null ? [userId] : [userId, compId];
     const { rows: posRows } = await pool.query<{
         pair_id: string;
         base_qty: string;
@@ -189,8 +229,8 @@ export async function writePortfolioSnapshot(
         fees_paid_quote: string;
     }>(
         `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
-         FROM positions WHERE user_id = $1`,
-        [userId],
+         FROM positions WHERE user_id = $1 ${compPosFilter}`,
+        posParams,
     );
 
     let holdingsQuote = ZERO;
@@ -224,22 +264,36 @@ export async function writePortfolioSnapshot(
 
     // 4. Upsert (overwrites narrow snapshot from positionRepo)
     await pool.query(
-        `INSERT INTO equity_snapshots
-             (user_id, ts, equity_quote, cash_quote, holdings_quote,
-              unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (user_id, ts) DO UPDATE SET
-             equity_quote = $3,
-             cash_quote = $4,
-             holdings_quote = $5,
-             unrealized_pnl_quote = $6,
-             realized_pnl_quote = $7,
-             fees_paid_quote = $8`,
-        [
-            userId, ts, toFixed8(equityQuote),
-            toFixed8(cashQuote), toFixed8(holdingsQuote),
-            toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid),
-        ],
+        compId === null
+            ? `INSERT INTO equity_snapshots
+                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
+                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+                 equity_quote = $3,
+                 cash_quote = $4,
+                 holdings_quote = $5,
+                 unrealized_pnl_quote = $6,
+                 realized_pnl_quote = $7,
+                 fees_paid_quote = $8`
+            : `INSERT INTO equity_snapshots
+                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
+                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+                 equity_quote = $3,
+                 cash_quote = $4,
+                 holdings_quote = $5,
+                 unrealized_pnl_quote = $6,
+                 realized_pnl_quote = $7,
+                 fees_paid_quote = $8`,
+        compId === null
+            ? [userId, ts, toFixed8(equityQuote),
+               toFixed8(cashQuote), toFixed8(holdingsQuote),
+               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid)]
+            : [userId, ts, toFixed8(equityQuote),
+               toFixed8(cashQuote), toFixed8(holdingsQuote),
+               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid), compId],
     );
 
     logger.debug({ userId, ts, equity: toFixed8(equityQuote) }, "portfolio_snapshot_written");
@@ -258,7 +312,10 @@ export async function writePortfolioSnapshotTx(
     ts: number,
     fillPairId: string,
     fillPrice: string,
+    competitionId?: string | null,
 ): Promise<void> {
+    const compId = competitionId ?? null;
+
     // 1. Quote asset IDs
     const { rows: qaRows } = await client.query<{ quote_asset_id: string }>(
         `SELECT DISTINCT quote_asset_id FROM trading_pairs WHERE is_active = true`,
@@ -268,15 +325,25 @@ export async function writePortfolioSnapshotTx(
     // 2. Cash
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
+        const compFilter = compId === null
+            ? `AND competition_id IS NULL`
+            : `AND competition_id = $3`;
+        const params = compId === null
+            ? [userId, quoteAssetIds]
+            : [userId, quoteAssetIds, compId];
         const { rows } = await client.query<{ total: string }>(
             `SELECT COALESCE(SUM(balance), 0) AS total
-             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2)`,
-            [userId, quoteAssetIds],
+             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
+            params,
         );
         cashQuote = D(rows[0].total);
     }
 
-    // 3. All positions for this user
+    // 3. All positions for this user (scoped to competition)
+    const compPosFilter = compId === null
+        ? `AND competition_id IS NULL`
+        : `AND competition_id = $2`;
+    const posParams = compId === null ? [userId] : [userId, compId];
     const { rows: posRows } = await client.query<{
         pair_id: string;
         base_qty: string;
@@ -285,8 +352,8 @@ export async function writePortfolioSnapshotTx(
         fees_paid_quote: string;
     }>(
         `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
-         FROM positions WHERE user_id = $1`,
-        [userId],
+         FROM positions WHERE user_id = $1 ${compPosFilter}`,
+        posParams,
     );
 
     let holdingsQuote = ZERO;
@@ -320,22 +387,36 @@ export async function writePortfolioSnapshotTx(
 
     // 4. Upsert (overwrites narrow snapshot from positionRepo)
     await client.query(
-        `INSERT INTO equity_snapshots
-             (user_id, ts, equity_quote, cash_quote, holdings_quote,
-              unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (user_id, ts) DO UPDATE SET
-             equity_quote = $3,
-             cash_quote = $4,
-             holdings_quote = $5,
-             unrealized_pnl_quote = $6,
-             realized_pnl_quote = $7,
-             fees_paid_quote = $8`,
-        [
-            userId, ts, toFixed8(equityQuote),
-            toFixed8(cashQuote), toFixed8(holdingsQuote),
-            toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid),
-        ],
+        compId === null
+            ? `INSERT INTO equity_snapshots
+                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
+                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+                 equity_quote = $3,
+                 cash_quote = $4,
+                 holdings_quote = $5,
+                 unrealized_pnl_quote = $6,
+                 realized_pnl_quote = $7,
+                 fees_paid_quote = $8`
+            : `INSERT INTO equity_snapshots
+                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
+                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+                 equity_quote = $3,
+                 cash_quote = $4,
+                 holdings_quote = $5,
+                 unrealized_pnl_quote = $6,
+                 realized_pnl_quote = $7,
+                 fees_paid_quote = $8`,
+        compId === null
+            ? [userId, ts, toFixed8(equityQuote),
+               toFixed8(cashQuote), toFixed8(holdingsQuote),
+               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid)]
+            : [userId, ts, toFixed8(equityQuote),
+               toFixed8(cashQuote), toFixed8(holdingsQuote),
+               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid), compId],
     );
 
     logger.debug({ userId, ts, equity: toFixed8(equityQuote) }, "portfolio_snapshot_written_tx");

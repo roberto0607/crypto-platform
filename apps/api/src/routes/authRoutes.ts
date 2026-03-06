@@ -21,6 +21,7 @@ import { createEmailToken, consumeEmailToken } from "../email/emailTokenRepo";
 import { sendEmail } from "../email/emailTransport";
 import { verificationEmail, passwordResetEmail } from "../email/templates";
 import { logger } from "../observability/logContext";
+import { autoCreateWallets } from "../wallets/autoWallets";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -126,6 +127,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await consumeInviteTx(client, invite.id);
         await client.query("COMMIT");
 
+        // Fire-and-forget: create wallets for all active assets
+        autoCreateWallets(user.id).catch((err) =>
+            logger.error({ err, userId: user.id }, "auto_wallet_creation_failed"),
+        );
+
         inviteConsumedTotal.inc();
 
         await auditLog({
@@ -167,6 +173,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     try {
       const user = await createUser({ email, emailNormalized, passwordHash });
+
+      // Fire-and-forget: create wallets for all active assets
+      autoCreateWallets(user.id).catch((err) =>
+          logger.error({ err, userId: user.id }, "auto_wallet_creation_failed"),
+      );
 
       await auditLog({
         actorUserId: user.id,

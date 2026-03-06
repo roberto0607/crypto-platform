@@ -100,7 +100,8 @@ async function seedLoadtest(): Promise<void> {
       await client.query(
         `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
          VALUES (gen_random_uuid(), $1, $2, $3, '0.00000000')
-         ON CONFLICT (user_id, asset_id) DO UPDATE
+         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+         DO UPDATE
            SET balance = EXCLUDED.balance,
                reserved = '0.00000000'`,
         [userId, usdId, USD_BALANCE]
@@ -110,7 +111,8 @@ async function seedLoadtest(): Promise<void> {
       await client.query(
         `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
          VALUES (gen_random_uuid(), $1, $2, '0.00000000', '0.00000000')
-         ON CONFLICT (user_id, asset_id) DO NOTHING`,
+         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+         DO NOTHING`,
         [userId, btcId]
       );
 

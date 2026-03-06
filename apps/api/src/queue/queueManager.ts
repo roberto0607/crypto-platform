@@ -32,6 +32,7 @@ async function executor(job: QueueJob): Promise<PlaceOrderResult> {
     job.payload,
     job.idempotencyKey,
     job.requestId,
+    job.competitionId,
   );
 }
 
@@ -44,10 +45,11 @@ export function enqueueOrder(
   idempotencyKey: string | undefined,
   requestId: string,
   timeoutMs?: number,
+  competitionId?: string,
 ): Promise<PlaceOrderResult> {
   // Redis path — distributed queue
   if (getRedis()) {
-    return enqueueRedis(pairId, userId, payload, idempotencyKey, requestId, timeoutMs);
+    return enqueueRedis(pairId, userId, payload, idempotencyKey, requestId, timeoutMs, competitionId);
   }
 
   // In-memory path — existing implementation
@@ -72,6 +74,7 @@ export function enqueueOrder(
       pairId,
       payload,
       idempotencyKey,
+      competitionId,
       enqueuedAt: Date.now(),
       resolve,
       reject,

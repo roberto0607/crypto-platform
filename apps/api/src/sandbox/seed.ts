@@ -22,8 +22,8 @@ const ADMIN_PASS = "Admin123!";
 const DEMO_PASS = "Demo123!";
 
 const SEED_BALANCES = {
-  admin: { BTC: "10.00000000", USD: "500000.00000000" },
-  demo: { BTC: "1.00000000", USD: "100000.00000000" },
+  admin: { BTC: "10.00000000", USD: "500000.00000000", ETH: "50.00000000", SOL: "500.00000000" },
+  demo: { BTC: "1.00000000", USD: "100000.00000000", ETH: "5.00000000", SOL: "50.00000000" },
 } as const;
 
 // Deterministic 1h candles: 24 entries starting 2025-01-01T00:00:00Z
@@ -108,7 +108,23 @@ async function seed(): Promise<void> {
        RETURNING id`
     );
     const usdId = usdResult.rows[0].id;
-    console.log(`  Assets: BTC=${btcId}, USD=${usdId}`);
+
+    const ethResult = await client.query<{ id: string }>(
+      `INSERT INTO assets (id, symbol, name, decimals)
+       VALUES (gen_random_uuid(), 'ETH', 'Ethereum', 8)
+       ON CONFLICT (symbol) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    const ethId = ethResult.rows[0].id;
+
+    const solResult = await client.query<{ id: string }>(
+      `INSERT INTO assets (id, symbol, name, decimals)
+       VALUES (gen_random_uuid(), 'SOL', 'Solana', 8)
+       ON CONFLICT (symbol) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`
+    );
+    const solId = solResult.rows[0].id;
+    console.log(`  Assets: BTC=${btcId}, USD=${usdId}, ETH=${ethId}, SOL=${solId}`);
 
     // ── Trading Pair ──
     const pairResult = await client.query<{ id: string }>(
@@ -122,7 +138,28 @@ async function seed(): Promise<void> {
       [btcId, usdId]
     );
     const pairId = pairResult.rows[0].id;
-    console.log(`  Pair: BTC/USD=${pairId}`);
+
+    await client.query(
+      `INSERT INTO trading_pairs (id, base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
+       VALUES (gen_random_uuid(), $1, $2, 'ETH/USD', 10, 2, 5)
+       ON CONFLICT (symbol) DO UPDATE
+         SET fee_bps = EXCLUDED.fee_bps,
+             maker_fee_bps = EXCLUDED.maker_fee_bps,
+             taker_fee_bps = EXCLUDED.taker_fee_bps`,
+      [ethId, usdId]
+    );
+
+    await client.query(
+      `INSERT INTO trading_pairs (id, base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
+       VALUES (gen_random_uuid(), $1, $2, 'SOL/USD', 10, 2, 5)
+       ON CONFLICT (symbol) DO UPDATE
+         SET fee_bps = EXCLUDED.fee_bps,
+             maker_fee_bps = EXCLUDED.maker_fee_bps,
+             taker_fee_bps = EXCLUDED.taker_fee_bps`,
+      [solId, usdId]
+    );
+
+    console.log(`  Pairs: BTC/USD=${pairId}, ETH/USD, SOL/USD`);
 
     // ── Wallets (upsert with fixed balances) ──
     for (const [label, userId, balances] of [
@@ -132,11 +169,14 @@ async function seed(): Promise<void> {
       for (const [symbol, assetId, balance] of [
         ["BTC", btcId, balances.BTC],
         ["USD", usdId, balances.USD],
+        ["ETH", ethId, balances.ETH],
+        ["SOL", solId, balances.SOL],
       ] as const) {
         await client.query(
           `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
            VALUES (gen_random_uuid(), $1, $2, $3, '0.00000000')
-           ON CONFLICT (user_id, asset_id) DO UPDATE
+           ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+           DO UPDATE
              SET balance = EXCLUDED.balance,
                  reserved = '0.00000000'`,
           [userId, assetId, balance]

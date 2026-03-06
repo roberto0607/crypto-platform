@@ -36,17 +36,26 @@ export async function createWallet(userId: string, assetId: string): Promise<Wal
     return result.rows[0];
 }
 
-export async function listWalletsByUserId(userId: string): Promise<WalletWithAsset[]> {
+export async function listWalletsByUserId(
+    userId: string,
+    competitionId?: string | null,
+): Promise<WalletWithAsset[]> {
+    const compId = competitionId ?? null;
     const result = await pool.query<WalletWithAsset>(
-        `
-        SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
-               a.symbol, a.name
-        FROM wallets w
-        JOIN assets a ON a.id = w.asset_id
-        WHERE w.user_id = $1
-        ORDER BY a.symbol
-        `,
-        [userId]
+        compId === null
+            ? `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
+                      a.symbol, a.name
+               FROM wallets w
+               JOIN assets a ON a.id = w.asset_id
+               WHERE w.user_id = $1 AND w.competition_id IS NULL
+               ORDER BY a.symbol`
+            : `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
+                      a.symbol, a.name
+               FROM wallets w
+               JOIN assets a ON a.id = w.asset_id
+               WHERE w.user_id = $1 AND w.competition_id = $2
+               ORDER BY a.symbol`,
+        compId === null ? [userId] : [userId, compId]
     );
 
     return result.rows;
@@ -208,15 +217,22 @@ export async function findWalletByUserAndAsset(
     client: PoolClient,
     userId: string,
     assetId: string,
+    competitionId?: string | null,
 ): Promise<WalletRow | null> {
+    const compId = competitionId ?? null;
     const result = await timedQuery<WalletRow>(
         client,
         "walletRepo.findWalletByUserAndAsset",
-        `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-         FROM wallets
-         WHERE user_id = $1 AND asset_id = $2
-         LIMIT 1`,
-        [userId, assetId]
+        compId === null
+            ? `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+               FROM wallets
+               WHERE user_id = $1 AND asset_id = $2 AND competition_id IS NULL
+               LIMIT 1`
+            : `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+               FROM wallets
+               WHERE user_id = $1 AND asset_id = $2 AND competition_id = $3
+               LIMIT 1`,
+        compId === null ? [userId, assetId] : [userId, assetId, compId]
     );
 
     return result.rows[0] ?? null;

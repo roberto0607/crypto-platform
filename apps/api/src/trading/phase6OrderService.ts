@@ -69,7 +69,8 @@ export async function placeOrderWithSnapshot(
         limitPrice?: string;
     },
     idempotencyKey?: string,
-    requestId?: string
+    requestId?: string,
+    competitionId?: string | null,
 ): Promise<PlaceOrderResult> {
     const startMs = performance.now();
     const logCtx = buildLogContext({
@@ -223,7 +224,8 @@ export async function placeOrderWithSnapshot(
             body.side,
             body.type,
             body.qty,
-            body.limitPrice
+            body.limitPrice,
+            competitionId,
         );
 
         // ── 5. Post-fill processing ──
@@ -253,6 +255,7 @@ export async function placeOrderWithSnapshot(
                         price: fillPrice,
                         feeQuote: takerFee.feeAmount,
                         ts: executedAtMs,
+                        competitionId,
                     });
 
                     // Apply fill to maker's position (if not system fill)
@@ -285,6 +288,7 @@ export async function placeOrderWithSnapshot(
                                 price: fillPrice,
                                 feeQuote: makerFee.feeAmount,
                                 ts: executedAtMs,
+                                competitionId,
                             });
                         }
                     }
@@ -332,7 +336,7 @@ export async function placeOrderWithSnapshot(
                 // ── Portfolio snapshot (inside transaction, sees uncommitted wallet/position changes) ──
                 const lastFill = matchResult.fills[matchResult.fills.length - 1];
                 const lastFillTs = new Date(lastFill.executed_at).getTime();
-                await writePortfolioSnapshotTx(client, userId, lastFillTs, body.pairId, lastFill.price);
+                await writePortfolioSnapshotTx(client, userId, lastFillTs, body.pairId, lastFill.price, competitionId);
             }
 
             // Prepare SSE events (published after commit)

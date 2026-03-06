@@ -36,32 +36,41 @@ export async function applyFillToPositionTx(
         price: string;
         feeQuote: string;
         ts: number;
+        competitionId?: string | null;
     }
 ): Promise<PositionRow> {
     const { userId, pairId, side, qty, price, feeQuote, ts } = params;
+    const compId = params.competitionId ?? null;
     const fillQty = D(qty);
     const fillPrice = D(price);
     const fee = D(feeQuote);
 
     // Upsert position row if it doesn't exist
     await client.query(
-        `
-        INSERT INTO positions (user_id, pair_id)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id, pair_id) DO NOTHING
-        `,
-        [userId, pairId]
+        compId === null
+            ? `INSERT INTO positions (user_id, pair_id, competition_id)
+               VALUES ($1, $2, NULL)
+               ON CONFLICT (user_id, pair_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+               DO NOTHING`
+            : `INSERT INTO positions (user_id, pair_id, competition_id)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, pair_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+               DO NOTHING`,
+        compId === null ? [userId, pairId] : [userId, pairId, compId]
     );
 
     // Lock and read current position
     const posResult = await client.query<PositionRow>(
-        `
-        SELECT ${POSITION_COLUMNS}
-        FROM positions
-        WHERE user_id = $1 AND pair_id = $2
-        FOR UPDATE
-        `,
-        [userId, pairId]
+        compId === null
+            ? `SELECT ${POSITION_COLUMNS}
+               FROM positions
+               WHERE user_id = $1 AND pair_id = $2 AND competition_id IS NULL
+               FOR UPDATE`
+            : `SELECT ${POSITION_COLUMNS}
+               FROM positions
+               WHERE user_id = $1 AND pair_id = $2 AND competition_id = $3
+               FOR UPDATE`,
+        compId === null ? [userId, pairId] : [userId, pairId, compId]
     );
 
     const pos = posResult.rows[0];
@@ -129,13 +138,16 @@ export async function applyFillToPositionTx(
     // Equity = realized PnL - total fees (unrealized computed at read time)
     const equity = realizedPnl.minus(feesPaid);
     await client.query(
-        `
-        INSERT INTO equity_snapshots (user_id, ts, equity_quote)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, ts) DO UPDATE
-            SET equity_quote = $3
-        `,
-        [userId, ts, toFixed8(equity)]
+        compId === null
+            ? `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id)
+               VALUES ($1, $2, $3, NULL)
+               ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+               DO UPDATE SET equity_quote = $3`
+            : `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+               DO UPDATE SET equity_quote = $3`,
+        compId === null ? [userId, ts, toFixed8(equity)] : [userId, ts, toFixed8(equity), compId]
     );
 
     return updateResult.rows[0];
