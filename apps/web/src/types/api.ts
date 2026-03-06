@@ -9,6 +9,7 @@ export interface User {
   id: UUID;
   email: string;
   role: "USER" | "ADMIN";
+  displayName?: string | null;
 }
 
 export interface LoginResponse {

@@ -463,6 +463,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 email: { type: "string" },
                 role: { type: "string", enum: ["USER", "ADMIN"] },
                 emailVerified: { type: "boolean" },
+                displayName: { type: "string", nullable: true },
               },
             },
           },
@@ -480,8 +481,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const user = req.user!;
 
-    const { rows } = await pool.query<{ email: string; email_verified_at: string | null }>(
-      "SELECT email, email_verified_at FROM users WHERE id = $1",
+    const { rows } = await pool.query<{ email: string; email_verified_at: string | null; display_name: string | null }>(
+      "SELECT email, email_verified_at, display_name FROM users WHERE id = $1",
       [user.id]
     );
 
@@ -492,6 +493,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         email: rows[0]?.email,
         role: user.role,
         emailVerified: !!rows[0]?.email_verified_at,
+        displayName: rows[0]?.display_name ?? null,
       },
     });
   });

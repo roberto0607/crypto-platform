@@ -8,6 +8,7 @@ import {
   revoke as revokeApiKey,
 } from "@/api/endpoints/apiKeys";
 import type { ApiKey } from "@/types/api";
+import { updateDisplayName } from "@/api/endpoints/profile";
 import { normalizeApiError } from "@/lib/errors";
 import { AxiosError } from "axios";
 import Card from "@/components/Card";
@@ -23,6 +24,11 @@ const SCOPES = ["read", "trade", "admin"] as const;
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const userStatus = useAppStore((s) => s.userStatus);
+
+  // Display name
+  const [displayName, setDisplayName] = useState(user?.displayName ?? "");
+  const [dnSaving, setDnSaving] = useState(false);
+  const [dnStatus, setDnStatus] = useState<"idle" | "success" | "error">("idle");
 
   // API Keys
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -114,6 +120,19 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveDisplayName() {
+    setDnSaving(true);
+    setDnStatus("idle");
+    try {
+      await updateDisplayName(displayName);
+      setDnStatus("success");
+    } catch {
+      setDnStatus("error");
+    } finally {
+      setDnSaving(false);
+    }
+  }
+
   async function copyToClipboard() {
     if (!rawKey) return;
     await navigator.clipboard.writeText(rawKey);
@@ -148,6 +167,37 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+      </Card>
+
+      {/* Section 1b: Display Name */}
+      <Card>
+        <h2 className="text-sm font-medium text-gray-300 mb-1">Display Name</h2>
+        <p className="text-gray-500 text-xs mb-3">
+          This name appears on leaderboards. 3-30 chars, letters/numbers/underscores only.
+        </p>
+        <div className="flex gap-3 items-center">
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="your_display_name"
+            className="bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-700 focus:outline-none focus:border-blue-500 w-64"
+            maxLength={30}
+          />
+          <Button
+            onClick={handleSaveDisplayName}
+            disabled={dnSaving || displayName.length < 3}
+            loading={dnSaving}
+          >
+            Save
+          </Button>
+          {dnStatus === "success" && (
+            <span className="text-green-400 text-sm">Saved!</span>
+          )}
+          {dnStatus === "error" && (
+            <span className="text-red-400 text-sm">Failed to save</span>
+          )}
+        </div>
       </Card>
 
       {/* Section 2: API Keys */}

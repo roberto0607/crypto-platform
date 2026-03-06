@@ -27,6 +27,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import CompetitionsPage from "@/pages/CompetitionsPage";
 import CompetitionDetailPage from "@/pages/CompetitionDetailPage";
 import NotFoundPage from "@/pages/NotFoundPage";
+import LandingPage from "@/pages/LandingPage";
 
 // Admin
 import AdminLayout from "@/pages/admin/AdminLayout";
@@ -149,7 +150,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
 
       {/* Public auth routes */}
       <Route element={<AuthLayout />}>

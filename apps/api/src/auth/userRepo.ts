@@ -5,6 +5,7 @@ export type UserRow = {
     email: string;
     email_normalized: string;
     role: string;
+    display_name: string | null;
     created_at: string;
     updated_at: string;
 };
@@ -45,7 +46,7 @@ export async function findUserByEmailNormalized(emailNormalized: string): Promis
 export async function findUserById(id: string): Promise<UserRow | null> {
     const result = await pool.query<UserRow>(
         `
-        SELECT id, email, email_normalized, role, created_at, updated_at
+        SELECT id, email, email_normalized, role, display_name, created_at, updated_at
         FROM users
         WHERE id = $1
         LIMIT 1
