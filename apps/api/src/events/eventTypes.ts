@@ -86,6 +86,17 @@ export interface CompetitionEndedData {
   name: string;
 }
 
+export interface CandleClosedData {
+  pairId: string;
+  timeframe: string;
+  ts: number; // epoch ms of candle start
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
@@ -97,7 +108,8 @@ export type AppEvent =
   | EventEnvelope<"trigger.fired", TriggerFiredData>
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
   | EventEnvelope<"competition.started", CompetitionStartedData>
-  | EventEnvelope<"competition.ended", CompetitionEndedData>;
+  | EventEnvelope<"competition.ended", CompetitionEndedData>
+  | EventEnvelope<"candle.closed", CandleClosedData>;
 
 // ── Helper to create events ──
 

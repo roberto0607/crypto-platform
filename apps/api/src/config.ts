@@ -119,4 +119,8 @@ export const config = {
 
   // ── Phase 13 PR4: Swagger UI ──
   enableSwaggerUi: booleanEnv("ENABLE_SWAGGER_UI", !isProd),
+
+  // ── Phase 15: Live market data ──
+  krakenWsEnabled: booleanEnv("KRAKEN_WS_ENABLED", true),
+  lastPriceSyncIntervalMs: numberEnv("LAST_PRICE_SYNC_INTERVAL_MS", 1000),
 };

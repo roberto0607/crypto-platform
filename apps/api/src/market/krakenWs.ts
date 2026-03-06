@@ -3,6 +3,13 @@ import { setSnapshot } from "./snapshotStore";
 import { publish } from "../events/eventBus";
 import { createEvent } from "../events/eventTypes";
 import { listActivePairs } from "../trading/pairRepo";
+import { pool } from "../db/pool.js";
+import { config } from "../config.js";
+import { aggregateTick, flushDueCandles } from "./candleAggregator.js";
+import { logger } from "../observability/logContext.js";
+
+// Debounce: track last DB write time per pair to avoid write storms
+const lastSyncTime = new Map<string, number>();
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 
@@ -41,6 +48,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 let stopped = false;
+let flushInterval: ReturnType<typeof setInterval> | null = null;
 
 function subscribe(socket: WebSocket): void {
     const msg = {
@@ -89,6 +97,26 @@ async function handleMessage(raw: WebSocket.Data): Promise<void> {
                 } catch {
                     // Events must never break the feed
                 }
+
+                // Sync last_price to DB (debounced)
+                const now = Date.now();
+                const lastSync = lastSyncTime.get(pairId) ?? 0;
+                if (now - lastSync >= config.lastPriceSyncIntervalMs) {
+                    lastSyncTime.set(pairId, now);
+                    pool.query(
+                        `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
+                        [last, pairId],
+                    ).catch((err) => {
+                        logger.error({ err, pairId }, "last_price_sync_failed");
+                    });
+                }
+
+                // Feed tick to candle aggregator
+                aggregateTick(pairId, {
+                    price: last,
+                    volume: "0",
+                    ts: Date.now(),
+                });
             }
         }
     } catch {
@@ -106,6 +134,13 @@ function connect(): void {
         reconnectDelay = 1000;
         if (!pairCacheReady) await loadPairCache();
         subscribe(ws!);
+        if (!flushInterval) {
+            flushInterval = setInterval(() => {
+                flushDueCandles().catch((err: unknown) => {
+                    logger.error({ err }, "candle_flush_failed");
+                });
+            }, 5_000);
+        }
     });
 
     ws.on("message", handleMessage);
@@ -133,12 +168,21 @@ function scheduleReconnect(): void {
 }
 
 export function startKrakenFeed(): void {
+    if (!config.krakenWsEnabled) {
+        logger.info("Kraken WS feed disabled via KRAKEN_WS_ENABLED=false");
+        return;
+    }
     stopped = false;
     connect();
 }
 
 export function stopKrakenFeed(): void {
     stopped = true;
+    if (flushInterval) {
+        clearInterval(flushInterval);
+        flushInterval = null;
+    }
+    flushDueCandles().catch(() => {});
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
