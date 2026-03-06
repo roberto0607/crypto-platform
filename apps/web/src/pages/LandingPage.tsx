@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listCompetitions } from "@/api/endpoints/competitions";
+import axios from "axios";
 import type { Competition } from "@/api/endpoints/competitions";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 export default function LandingPage() {
     const [competitions, setCompetitions] = useState<Competition[]>([]);
 
     useEffect(() => {
-        listCompetitions({ status: "ACTIVE", limit: 3 })
-            .then(({ data }) => setCompetitions(data.competitions))
+        // Use raw axios (no auth interceptor) — this is a public endpoint
+        axios.get<{ ok: true; competitions: Competition[] }>(
+            `${API_BASE}/v1/competitions`,
+            { params: { status: "ACTIVE", limit: 3 } },
+        )
+            .then(({ data }) => setCompetitions(data.competitions ?? []))
             .catch(() => {}); // Non-fatal
     }, []);
 
