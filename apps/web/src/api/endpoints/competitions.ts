@@ -74,6 +74,34 @@ export function listMyCompetitions() {
     );
 }
 
+export interface EquitySnapshot {
+    ts: number;
+    equity_quote: string;
+    cash_quote?: string;
+    holdings_quote?: string;
+}
+
+export interface ComparisonParticipant {
+    label: string;
+    rank: number | null;
+    displayName?: string;
+    snapshots: Array<{ ts: number; equity: string }>;
+}
+
+export function getCompetitionEquityCurve(competitionId: string, limit?: number) {
+    return client.get<{ ok: true; snapshots: EquitySnapshot[] }>(
+        `/v1/competitions/${competitionId}/equity-curve`,
+        { params: { limit } },
+    );
+}
+
+export function getCompetitionComparison(competitionId: string, topN?: number) {
+    return client.get<{ ok: true; participants: ComparisonParticipant[] }>(
+        `/v1/competitions/${competitionId}/comparison`,
+        { params: { topN } },
+    );
+}
+
 // Admin
 export function createCompetition(body: {
     name: string;

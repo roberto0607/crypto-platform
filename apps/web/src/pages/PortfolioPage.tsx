@@ -14,6 +14,7 @@ import { format, subDays, subMonths } from "date-fns";
 import { getSummary, getEquityCurve, getPerformance } from "@/api/endpoints/portfolio";
 import { getPositions } from "@/api/endpoints/analytics";
 import { useAppStore } from "@/stores/appStore";
+import { useTradingStore } from "@/stores/tradingStore";
 import type {
   PortfolioSummary,
   PortfolioSnapshot,
@@ -72,6 +73,7 @@ function SummaryCard({
 
 export default function PortfolioPage() {
   const pairs = useAppStore((s) => s.pairs);
+  const activeCompetitionId = useTradingStore((s) => s.activeCompetitionId);
 
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([]);
@@ -90,7 +92,12 @@ export default function PortfolioPage() {
     setLoading(true);
     setError(null);
 
-    Promise.allSettled([getSummary(), getPerformance(), getPositions()]).then(
+    const compId = activeCompetitionId ?? undefined;
+    Promise.allSettled([
+      getSummary(activeCompetitionId),
+      getPerformance({ competitionId: compId }),
+      getPositions(),
+    ]).then(
       ([sumRes, perfRes, posRes]) => {
         if (cancelled) return;
         if (sumRes.status === "fulfilled") setSummary(sumRes.value.data.summary);
@@ -112,18 +119,19 @@ export default function PortfolioPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeCompetitionId]);
 
   // Load equity curve when time range changes
   const loadEquity = useCallback(async (range: TimeRange) => {
     try {
       const from = rangeToFrom(range);
-      const res = await getEquityCurve(from ? { from } : undefined);
+      const compId = activeCompetitionId ?? undefined;
+      const res = await getEquityCurve({ from: from ?? undefined, competitionId: compId });
       setSnapshots(res.data.snapshots);
     } catch {
       // Non-fatal — chart just stays empty
     }
-  }, []);
+  }, [activeCompetitionId]);
 
   useEffect(() => {
     loadEquity(timeRange);
@@ -154,6 +162,14 @@ export default function PortfolioPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Portfolio</h1>
+
+      {activeCompetitionId && (
+        <div className="bg-blue-900/20 border border-blue-800 rounded px-4 py-2">
+          <span className="text-blue-400 text-sm">
+            Showing portfolio for competition context
+          </span>
+        </div>
+      )}
 
       {/* Section 1: Summary Cards */}
       {summary && (

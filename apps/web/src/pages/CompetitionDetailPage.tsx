@@ -2,6 +2,22 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { useAuthStore } from "@/stores/authStore";
+import {
+    ResponsiveContainer,
+    LineChart,
+    Line,
+    XAxis,
+    YAxis,
+    Tooltip,
+    CartesianGrid,
+} from "recharts";
+import { format } from "date-fns";
+import {
+    getCompetitionEquityCurve,
+    getCompetitionComparison,
+    type ComparisonParticipant,
+} from "@/api/endpoints/competitions";
+import { ComparisonChart } from "@/components/competitions/ComparisonChart";
 
 export default function CompetitionDetailPage() {
     const { id } = useParams<{ id: string }>();
@@ -13,11 +29,28 @@ export default function CompetitionDetailPage() {
     const userId = useAuthStore((s) => s.user?.id);
     const [joining, setJoining] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [equityCurve, setEquityCurve] = useState<Array<{ ts: number; equity: number }>>([]);
+    const [comparison, setComparison] = useState<ComparisonParticipant[]>([]);
 
     useEffect(() => {
         if (id) {
             fetchDetail(id);
             fetchLeaderboard(id);
+
+            getCompetitionEquityCurve(id, 500)
+                .then(({ data }) => {
+                    setEquityCurve(
+                        data.snapshots.map((s) => ({
+                            ts: s.ts,
+                            equity: parseFloat(s.equity_quote),
+                        })),
+                    );
+                })
+                .catch(() => {});
+
+            getCompetitionComparison(id, 5)
+                .then(({ data }) => setComparison(data.participants))
+                .catch(() => {});
         }
     }, [id, fetchDetail, fetchLeaderboard]);
 
@@ -103,6 +136,50 @@ export default function CompetitionDetailPage() {
                         Withdraw
                     </button>
                     {error && <span className="text-red-400 text-sm self-center">{error}</span>}
+                </div>
+            )}
+
+            {/* Your Equity Curve */}
+            {equityCurve.length > 0 && (
+                <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6">
+                    <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">
+                        Your Equity
+                    </h2>
+                    <ResponsiveContainer width="100%" height={250}>
+                        <LineChart data={equityCurve}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                                dataKey="ts"
+                                type="number"
+                                domain={["dataMin", "dataMax"]}
+                                tickFormatter={(v: number) => format(new Date(v), "MMM d HH:mm")}
+                                stroke="#6b7280"
+                                fontSize={11}
+                            />
+                            <YAxis
+                                tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+                                stroke="#6b7280"
+                                fontSize={11}
+                                width={80}
+                            />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: "#1f2937", border: "1px solid #374151", borderRadius: 6 }}
+                                labelFormatter={(v) => format(new Date(v as number), "MMM d, HH:mm")}
+                                formatter={(v) => [`$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, "Equity"]}
+                            />
+                            <Line type="monotone" dataKey="equity" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            )}
+
+            {/* Comparison Chart */}
+            {comparison.length > 1 && (
+                <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-6">
+                    <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">
+                        Top Traders Comparison
+                    </h2>
+                    <ComparisonChart participants={comparison} />
                 </div>
             )}
 

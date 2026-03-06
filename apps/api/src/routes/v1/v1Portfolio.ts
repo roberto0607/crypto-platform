@@ -12,6 +12,7 @@ import {
 
 const summaryQuery = z.object({
     pairId: z.string().uuid().optional(),
+    competitionId: z.string().uuid().optional(),
 });
 
 const equityCurveQuery = z.object({
@@ -19,11 +20,13 @@ const equityCurveQuery = z.object({
     to: z.coerce.number().int().optional(),
     limit: z.string().optional(),
     cursor: z.string().optional(),
+    competitionId: z.string().uuid().optional(),
 });
 
 const performanceQuery = z.object({
     from: z.coerce.number().int().optional(),
     to: z.coerce.number().int().optional(),
+    competitionId: z.string().uuid().optional(),
 });
 
 const v1Portfolio: FastifyPluginAsync = async (app) => {
@@ -49,7 +52,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
             const parsed = summaryQuery.safeParse(req.query);
             const q = parsed.success ? parsed.data : {};
 
-            const summary = await getPortfolioSummary(actor.id, q.pairId);
+            const summary = await getPortfolioSummary(actor.id, q.pairId, q.competitionId);
             return reply.send(summary);
         } catch (err) {
             return v1HandleError(reply, err);
@@ -92,7 +95,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
             const limit = parseLimit(q.limit);
             const cursor = decodeCursor<{ ts: number }>(q.cursor);
 
-            const rows = await getEquityCurve(actor.id, q.from, q.to, limit, cursor);
+            const rows = await getEquityCurve(actor.id, q.from, q.to, limit, cursor, q.competitionId);
 
             const page = slicePage(rows, limit, (row) => ({
                 ts: Number(row.ts),
@@ -127,7 +130,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
             const parsed = performanceQuery.safeParse(req.query);
             const q = parsed.success ? parsed.data : {};
 
-            const perf = await getPerformance(actor.id, q.from, q.to);
+            const perf = await getPerformance(actor.id, q.from, q.to, q.competitionId);
             return reply.send(perf);
         } catch (err) {
             return v1HandleError(reply, err);

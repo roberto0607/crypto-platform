@@ -236,6 +236,165 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
         }
     });
 
+    // GET /competitions/:id/equity-curve
+    app.get("/competitions/:id/equity-curve", {
+        schema: {
+            tags: ["Competitions"],
+            summary: "Get your equity curve for a competition",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["id"],
+                properties: { id: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    limit: { type: "integer", minimum: 1, maximum: 1000, default: 500 },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        ok: { type: "boolean", const: true },
+                        snapshots: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    ts: { type: "number" },
+                                    equity_quote: { type: "string" },
+                                    cash_quote: { type: "string" },
+                                    holdings_quote: { type: "string" },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { id: competitionId } = req.params as { id: string };
+            const { limit } = req.query as { limit?: number };
+            const userId = req.user!.id;
+
+            const { rows } = await pool.query(
+                `SELECT ts, equity_quote, cash_quote, holdings_quote,
+                        unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote
+                 FROM equity_snapshots
+                 WHERE user_id = $1 AND competition_id = $2
+                 ORDER BY ts ASC
+                 LIMIT $3`,
+                [userId, competitionId, limit ?? 500],
+            );
+
+            return reply.send({ ok: true, snapshots: rows });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /competitions/:id/comparison
+    app.get("/competitions/:id/comparison", {
+        schema: {
+            tags: ["Competitions"],
+            summary: "Get equity curves for top participants (comparison chart)",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["id"],
+                properties: { id: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    topN: { type: "integer", minimum: 2, maximum: 10, default: 5 },
+                    limit: { type: "integer", minimum: 10, maximum: 500, default: 200 },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { id: competitionId } = req.params as { id: string };
+            const query = req.query as { topN?: number; limit?: number };
+            const topN = query.topN ?? 5;
+            const limit = query.limit ?? 200;
+            const userId = req.user!.id;
+
+            // Get top N from leaderboard
+            const { rows: leaders } = await pool.query<{
+                user_id: string;
+                rank: number;
+                display_name: string;
+            }>(
+                `SELECT lb.user_id, lb.rank,
+                        COALESCE(u.display_name, SPLIT_PART(u.email, '@', 1)) AS display_name
+                 FROM competition_leaderboard lb
+                 JOIN users u ON u.id = lb.user_id
+                 WHERE lb.competition_id = $1
+                 ORDER BY lb.rank ASC
+                 LIMIT $2`,
+                [competitionId, topN],
+            );
+
+            if (leaders.length === 0) {
+                return reply.send({ ok: true, participants: [] });
+            }
+
+            // Ensure the current user is included (even if not in top N)
+            const leaderUserIds = leaders.map((l) => l.user_id);
+            const includesUser = leaderUserIds.includes(userId);
+
+            const allUserIds = includesUser
+                ? leaderUserIds
+                : [...leaderUserIds, userId];
+
+            // Fetch equity curves for all selected users
+            const { rows: snapshots } = await pool.query<{
+                user_id: string;
+                ts: number;
+                equity_quote: string;
+            }>(
+                `SELECT user_id, ts, equity_quote
+                 FROM equity_snapshots
+                 WHERE competition_id = $1 AND user_id = ANY($2)
+                 ORDER BY ts ASC`,
+                [competitionId, allUserIds],
+            );
+
+            // Group by user
+            const byUser = new Map<string, Array<{ ts: number; equity: string }>>();
+            for (const s of snapshots) {
+                const arr = byUser.get(s.user_id) ?? [];
+                arr.push({ ts: s.ts, equity: s.equity_quote });
+                byUser.set(s.user_id, arr);
+            }
+
+            // Build response — anonymize other users (show rank, not name)
+            const participants = allUserIds.map((uid) => {
+                const leader = leaders.find((l) => l.user_id === uid);
+                const isCurrentUser = uid === userId;
+                return {
+                    userId: isCurrentUser ? uid : undefined,
+                    label: isCurrentUser
+                        ? "You"
+                        : `#${leader?.rank ?? "?"}`,
+                    rank: leader?.rank ?? null,
+                    displayName: isCurrentUser ? (leader?.display_name ?? "You") : undefined,
+                    snapshots: (byUser.get(uid) ?? []).slice(-limit),
+                };
+            });
+
+            return reply.send({ ok: true, participants });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
     // ═══ Admin routes ═══
 
     // POST /admin/competitions — create
