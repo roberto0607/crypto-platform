@@ -1,0 +1,159 @@
+groups:
+  - name: critical
+    rules:
+      # Financial integrity — invariant violation means potential balance corruption
+      - alert: InvariantViolation
+        expr: increase(invariant_violations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Post-trade invariant violation detected"
+          description: "{{ $value }} invariant violations in the last 5 minutes. This indicates potential balance/ledger corruption. Immediate investigation required."
+          runbook: "Check audit_log for recent trades. Run reconciliation. Consider pausing trading."
+
+      # Security — refresh token reuse means potential account theft
+      - alert: RefreshTokenReuse
+        expr: increase(refresh_token_reuse_detected_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Refresh token reuse detected (possible session theft)"
+          description: "{{ $value }} token reuse events in 5 minutes. Token families have been revoked. Check audit_log for affected users."
+
+      # Availability — circuit breaker tripped
+      - alert: CircuitBreakerTripped
+        expr: increase(breaker_trips_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker tripped: {{ $labels.breaker }}"
+          description: "Breaker {{ $labels.breaker }} has tripped. Trading may be blocked for affected users."
+
+  - name: performance
+    rules:
+      # Latency — p99 order placement above 2 seconds
+      - alert: HighOrderLatency
+        expr: histogram_quantile(0.99, rate(order_placement_latency_ms_bucket[5m])) > 2000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 order placement latency > 2s"
+          description: "p99 latency is {{ $value }}ms. Check queue depth and database performance."
+
+      # Queue backpressure — orders queuing up
+      - alert: QueueBackpressure
+        expr: pair_queue_depth > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order queue depth > 50 for pair {{ $labels.pairId }}"
+          description: "Queue depth: {{ $value }}. Consider scaling or investigating slow execution."
+
+      # Queue rejections — orders being dropped
+      - alert: QueueRejections
+        expr: increase(pair_queue_rejections_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Order queue rejecting requests"
+          description: "{{ $value }} orders rejected due to queue overload in 5 minutes."
+
+      # HTTP error rate spike
+      - alert: HighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx error rate > 5%"
+          description: "{{ $value | humanizePercentage }} of requests returning 5xx errors."
+
+      # API p99 latency above 500ms
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 API latency > 500ms"
+          description: "Overall API p99 is {{ $value }}s. Check DB pool, lock contention, and slow queries."
+
+  - name: infrastructure
+    rules:
+      # Database pool exhaustion
+      - alert: DBPoolExhaustion
+        expr: db_pool_in_use / pg_pool_total_count > 0.8
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database pool > 80% utilized"
+          description: "{{ $value | humanizePercentage }} of DB connections in use. Pool saturation imminent."
+
+      # Database pool waiting
+      - alert: DBPoolWaiting
+        expr: pg_pool_waiting_count > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} queries waiting for DB connections"
+          description: "Connection pool contention detected. Consider increasing DB_POOL_MAX."
+
+      # Outbox backlog
+      - alert: OutboxBacklog
+        expr: outbox_queue_depth > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox queue depth > 500"
+          description: "{{ $value }} unprocessed outbox events. Check outbox worker health."
+
+      # Outbox failures
+      - alert: OutboxFailures
+        expr: increase(outbox_failures_total[5m]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox processing failures"
+          description: "{{ $value }} outbox event failures in 5 minutes."
+
+      # Load shedding active
+      - alert: LoadShedding
+        expr: load_state_overloaded == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Load shedding ACTIVE — rejecting low-priority requests"
+          description: "System is overloaded and actively shedding load. Check all infrastructure metrics."
+
+  - name: reconciliation
+    rules:
+      # Reconciliation finding mismatches
+      - alert: ReconciliationMismatch
+        expr: increase(reconciliation_wallet_mismatches[1h]) > 0 or increase(reconciliation_position_mismatches[1h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation found balance/position mismatches"
+          description: "Wallet or position mismatches detected in the last hour. Users may be quarantined."
+
+      # Reconciliation failures
+      - alert: ReconciliationFailure
+        expr: increase(reconciliation_failures_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconciliation run failed"
+          description: "{{ $value }} reconciliation failures. Check job runner logs."
