@@ -69,6 +69,9 @@ export function useSSE() {
           p.id === d.pairId ? { ...p, last_price: d.last } : p,
         );
         useAppStore.getState().setPairs(updatedPairs);
+        window.dispatchEvent(
+          new CustomEvent("sse:price.tick", { detail: d }),
+        );
       },
 
       onReplayTick: (event) => {
@@ -96,6 +99,12 @@ export function useSSE() {
       onTriggerCanceled: (event) => {
         window.dispatchEvent(
           new CustomEvent("sse:trigger.canceled", { detail: event.data }),
+        );
+      },
+
+      onCandleClosed: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:candle.closed", { detail: event.data }),
         );
       },
     };

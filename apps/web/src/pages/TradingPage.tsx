@@ -7,6 +7,7 @@ import OrderBook from "@/components/trading/OrderBook";
 import OrderForm from "@/components/trading/OrderForm";
 import RecentTrades from "@/components/trading/RecentTrades";
 import OpenOrders from "@/components/trading/OpenOrders";
+import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import Card from "@/components/Card";
 
 export default function TradingPage() {
@@ -42,31 +43,38 @@ export default function TradingPage() {
         </div>
       </div>
 
-      {/* Main grid: Order Book | Order Form | Recent Trades */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Order Book */}
-        <Card className="lg:col-span-1 min-h-[400px] flex flex-col p-2">
-          <OrderBook />
-        </Card>
+      {/* Main content: Chart + Order Form */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Chart: spans 3 columns */}
+        <div className="lg:col-span-3">
+          <Card className="h-[400px] p-2">
+            <CandlestickChart />
+          </Card>
+        </div>
 
-        {/* Order Form */}
-        <Card className="lg:col-span-1 p-4">
-          <OrderForm />
-        </Card>
-
-        {/* Recent Trades */}
-        <Card className="lg:col-span-1 min-h-[400px] flex flex-col p-2">
-          <RecentTrades />
-        </Card>
+        {/* Order form: 1 column */}
+        <div className="lg:col-span-1">
+          <Card className="p-4">
+            <OrderForm />
+          </Card>
+        </div>
       </div>
 
-      {/* Open Orders */}
-      <Card className="p-2">
-        <div className="text-[10px] uppercase text-gray-500 font-medium px-2 pb-2 tracking-wider">
-          Open Orders
-        </div>
-        <OpenOrders />
-      </Card>
+      {/* Bottom row: Order Book + Recent Trades + Open Orders */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="min-h-[300px] p-2">
+          <OrderBook />
+        </Card>
+        <Card className="min-h-[300px] p-2">
+          <RecentTrades />
+        </Card>
+        <Card className="min-h-[300px] p-2">
+          <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-2 px-1">
+            Open Orders
+          </div>
+          <OpenOrders />
+        </Card>
+      </div>
     </div>
   );
 }

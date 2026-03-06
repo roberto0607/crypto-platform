@@ -432,6 +432,17 @@ export interface TriggerCanceledEvent {
   reason: string;
 }
 
+export interface CandleClosedEvent {
+  pairId: UUID;
+  timeframe: string;
+  ts: number;
+  open: DecimalString;
+  high: DecimalString;
+  low: DecimalString;
+  close: DecimalString;
+  volume: DecimalString;
+}
+
 export type SSEEvent =
   | EventEnvelope<"order.updated", OrderUpdatedEvent>
   | EventEnvelope<"trade.created", TradeCreatedEvent>
@@ -439,4 +450,5 @@ export type SSEEvent =
   | EventEnvelope<"price.tick", PriceTickEvent>
   | EventEnvelope<"replay.tick", ReplayTickEvent>
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
-  | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>;
+  | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
+  | EventEnvelope<"candle.closed", CandleClosedEvent>;

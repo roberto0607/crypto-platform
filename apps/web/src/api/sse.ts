@@ -14,6 +14,7 @@ export interface SSEHandlers {
   onReplayTick?: (event: Extract<SSEEvent, { type: "replay.tick" }>) => void;
   onTriggerFired?: (event: Extract<SSEEvent, { type: "trigger.fired" }>) => void;
   onTriggerCanceled?: (event: Extract<SSEEvent, { type: "trigger.canceled" }>) => void;
+  onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
 }
 
 let abortController: AbortController | null = null;
@@ -69,6 +70,9 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
           break;
         case "trigger.canceled":
           handlers.onTriggerCanceled?.(event);
+          break;
+        case "candle.closed":
+          handlers.onCandleClosed?.(event);
           break;
       }
     },
