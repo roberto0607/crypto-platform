@@ -11,14 +11,25 @@ export async function storeRefreshToken(args: {
     userId: string;
     tokenHash: string;
     expiresAt: Date;
-}) {
-    const { userId, tokenHash, expiresAt } = args;
+    familyId?: string;
+}): Promise<{ id: string; familyId: string }> {
+    const { userId, tokenHash, expiresAt, familyId } = args;
 
-    await pool.query(
-        `
-        INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-        VALUES ($1, $2, $3)
-        `,
+    if (familyId) {
+        const result = await pool.query<{ id: string; family_id: string }>(
+            `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id)
+             VALUES ($1, $2, $3, $4)
+             RETURNING id, family_id`,
+            [userId, tokenHash, expiresAt, familyId]
+        );
+        return { id: result.rows[0].id, familyId: result.rows[0].family_id };
+    }
+
+    const result = await pool.query<{ id: string; family_id: string }>(
+        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3)
+         RETURNING id, family_id`,
         [userId, tokenHash, expiresAt]
     );
+    return { id: result.rows[0].id, familyId: result.rows[0].family_id };
 }

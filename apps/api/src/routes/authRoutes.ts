@@ -6,17 +6,21 @@ import { config } from "../config";
 import { pool } from "../db/pool";
 import { normalizeEmail } from "../auth/normalizeEmail";
 import { hashPassword, verifyPassword } from "../auth/password";
-import { createUser, findUserByEmailNormalized } from "../auth/userRepo";
+import { createUser, findUserByEmailNormalized, findUserById } from "../auth/userRepo";
 import { auditLog } from "../audit/log";
 import { requireUser } from "../auth/requireUser";
 import { newRefreshToken, storeRefreshToken } from "../auth/refreshTokens";
-import { findValidRefreshTokenByHash, revokeRefreshTokenById } from "../auth/refreshRepo";
+import { findRefreshTokenByHash, revokeRefreshTokenById, revokeTokenFamily, markReplacedBy } from "../auth/refreshRepo";
 import { REFRESH_COOKIE_NAME, refreshCookieSetOptions, refreshCookieClearOptions } from "../auth/cookieOptions";
 import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
 import { validateInvite, consumeInviteTx } from "../beta/inviteRepo";
-import { inviteConsumedTotal } from "../metrics";
+import { inviteConsumedTotal, refreshTokenReuseDetectedTotal, refreshTokenFamilyRevokedTotal, emailsSentTotal, emailVerificationsTotal, passwordResetsTotal } from "../metrics";
 import { isLoginBlocked, recordLoginAttempt } from "../security/loginProtectionService";
+import { createEmailToken, consumeEmailToken } from "../email/emailTokenRepo";
+import { sendEmail } from "../email/emailTransport";
+import { verificationEmail, passwordResetEmail } from "../email/templates";
+import { logger } from "../observability/logContext";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -88,6 +92,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           metadata: { emailNormalized, inviteCode: parsed.data.inviteCode },
         });
 
+        // Fire-and-forget verification email
+        const rawToken = await createEmailToken(user.id, "EMAIL_VERIFY", 1440);
+        const { subject, html } = verificationEmail(rawToken);
+        sendEmail(user.email, subject, html)
+          .then(() => emailsSentTotal.inc({ kind: "verification" }))
+          .catch((err) => logger.error({ err, userId: user.id }, "Failed to send verification email"));
+
         return reply.code(201).send({
           ok: true,
           user: { id: user.id, email: user.email, role: user.role },
@@ -120,6 +131,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { emailNormalized },
       });
+
+      // Fire-and-forget verification email
+      const rawToken = await createEmailToken(user.id, "EMAIL_VERIFY", 1440);
+      const { subject, html } = verificationEmail(rawToken);
+      sendEmail(user.email, subject, html)
+        .then(() => emailsSentTotal.inc({ kind: "verification" }))
+        .catch((err) => logger.error({ err, userId: user.id }, "Failed to send verification email"));
 
       return reply.code(201).send({
         ok: true,
@@ -182,7 +200,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       Date.now() + config.jwtRefreshTtlSeconds * 1000
     );
 
-    await storeRefreshToken({
+    const stored = await storeRefreshToken({
       userId: user.id,
       tokenHash,
       expiresAt: refreshExpiresAt,
@@ -198,7 +216,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       requestId: req.id,
       ip: req.ip,
       userAgent: req.headers["user-agent"] ?? null,
-      metadata: { emailNormalized },
+      metadata: { emailNormalized, familyId: stored.familyId },
     });
 
     return reply.code(200).send({
@@ -218,25 +236,55 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
-    const row = await findValidRefreshTokenByHash(tokenHash);
+    const row = await findRefreshTokenByHash(tokenHash);
+
+    // Token not found or expired
     if (!row) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
     }
 
-    // Rotate: revoke old refresh token row
+    // ── Reuse detection: token was already revoked ──
+    if (row.revoked_at) {
+      // Someone already used this token and got a new one.
+      // This replay means either theft or a confused client.
+      // Nuclear option: revoke the entire family.
+      const revokedCount = await revokeTokenFamily(row.family_id);
+      refreshTokenReuseDetectedTotal.inc();
+      refreshTokenFamilyRevokedTotal.inc();
+
+      await auditLog({
+        actorUserId: row.user_id,
+        action: "auth.refresh_reuse_detected",
+        targetType: "refresh_token",
+        targetId: row.id,
+        requestId: req.id,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] ?? null,
+        metadata: { familyId: row.family_id, revokedCount },
+      });
+
+      reply.clearCookie(REFRESH_COOKIE_NAME, refreshCookieClearOptions);
+      return reply.code(401).send({ ok: false, error: "refresh_token_reuse" });
+    }
+
+    // ── Valid token: rotate ──
     await revokeRefreshTokenById(row.id);
 
-    // Mint new refresh token + store new hash
+    // Mint new refresh token inheriting the same family
     const { token: newToken, tokenHash: newHash } = newRefreshToken();
     const refreshExpiresAt = new Date(
       Date.now() + config.jwtRefreshTtlSeconds * 1000
     );
 
-    await storeRefreshToken({
+    const stored = await storeRefreshToken({
       userId: row.user_id,
       tokenHash: newHash,
       expiresAt: refreshExpiresAt,
+      familyId: row.family_id,
     });
+
+    // Record chain: old token → new token
+    await markReplacedBy(row.id, stored.id);
 
     // Set new cookie
     reply.setCookie(REFRESH_COOKIE_NAME, newToken, refreshCookieSetOptions(refreshExpiresAt));
@@ -260,9 +308,19 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   app.get("/me", { preHandler: requireUser }, async (req, reply) => {
     const user = req.user!;
 
+    const { rows } = await pool.query<{ email: string; email_verified_at: string | null }>(
+      "SELECT email, email_verified_at FROM users WHERE id = $1",
+      [user.id]
+    );
+
     return reply.send({
       ok: true,
-      user: { id: user.id, role: user.role },
+      user: {
+        id: user.id,
+        email: rows[0]?.email,
+        role: user.role,
+        emailVerified: !!rows[0]?.email_verified_at,
+      },
     });
   });
 
@@ -274,7 +332,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     if (rawToken) {
       const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-      const row = await findValidRefreshTokenByHash(tokenHash);
+      const row = await findRefreshTokenByHash(tokenHash);
       if (row) {
         actorUserId = row.user_id;
         await revokeRefreshTokenById(row.id);
@@ -292,6 +350,141 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.code(200).send({ ok: true });
+  });
+
+  // POST /auth/verify-email
+  const verifyEmailBody = z.object({
+    token: z.string().min(1),
+  });
+
+  app.post("/verify-email", async (req, reply) => {
+    const parsed = verifyEmailBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input" });
+    }
+
+    const result = await consumeEmailToken(parsed.data.token, "EMAIL_VERIFY");
+    if (!result) {
+      return reply.code(400).send({ ok: false, error: "invalid_or_expired_token" });
+    }
+
+    await pool.query(
+      "UPDATE users SET email_verified_at = now() WHERE id = $1 AND email_verified_at IS NULL",
+      [result.userId]
+    );
+
+    emailVerificationsTotal.inc();
+
+    await auditLog({
+      actorUserId: result.userId,
+      action: "auth.email_verified",
+      targetType: "user",
+      targetId: result.userId,
+      requestId: req.id,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] ?? null,
+    });
+
+    return reply.send({ ok: true });
+  });
+
+  // POST /auth/resend-verification (rate limited, authenticated)
+  app.post("/resend-verification", {
+    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
+    preHandler: [requireUser],
+  }, async (req, reply) => {
+    const user = await findUserById(req.user!.id);
+    if (!user) return reply.code(404).send({ ok: false, error: "user_not_found" });
+
+    // Check if already verified
+    const { rows } = await pool.query<{ email_verified_at: string | null }>(
+      "SELECT email_verified_at FROM users WHERE id = $1",
+      [user.id]
+    );
+    if (rows[0]?.email_verified_at) return reply.send({ ok: true, message: "already_verified" });
+
+    const rawToken = await createEmailToken(user.id, "EMAIL_VERIFY", 1440);
+    const { subject, html } = verificationEmail(rawToken);
+    sendEmail(user.email, subject, html)
+      .then(() => emailsSentTotal.inc({ kind: "verification" }))
+      .catch((err) => logger.error({ err, userId: user.id }, "Failed to resend verification email"));
+
+    return reply.send({ ok: true });
+  });
+
+  // POST /auth/forgot-password (public, rate limited)
+  const forgotPasswordBody = z.object({
+    email: z.string().email(),
+  });
+
+  app.post("/forgot-password", {
+    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
+  }, async (req, reply) => {
+    const parsed = forgotPasswordBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input" });
+    }
+
+    const normalized = normalizeEmail(parsed.data.email);
+    const user = await findUserByEmailNormalized(normalized.emailNormalized);
+
+    // ALWAYS return success — don't reveal whether email exists
+    if (user) {
+      const rawToken = await createEmailToken(user.id, "PASSWORD_RESET", 60); // 1 hour
+      const { subject, html } = passwordResetEmail(rawToken);
+      sendEmail(user.email, subject, html)
+        .then(() => emailsSentTotal.inc({ kind: "password_reset" }))
+        .catch((err) => logger.error({ err, userId: user.id }, "Failed to send password reset email"));
+    }
+
+    return reply.send({ ok: true, message: "If that email is registered, a reset link has been sent." });
+  });
+
+  // POST /auth/reset-password (public)
+  const resetPasswordBody = z.object({
+    token: z.string().min(1),
+    password: z.string().min(8).max(72),
+  });
+
+  app.post("/reset-password", async (req, reply) => {
+    const parsed = resetPasswordBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+    }
+
+    const result = await consumeEmailToken(parsed.data.token, "PASSWORD_RESET");
+    if (!result) {
+      return reply.code(400).send({ ok: false, error: "invalid_or_expired_token" });
+    }
+
+    // Hash new password
+    const newPasswordHash = await hashPassword(parsed.data.password);
+
+    // Update password
+    await pool.query(
+      "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2",
+      [newPasswordHash, result.userId]
+    );
+
+    // Revoke ALL refresh tokens for this user (force re-login everywhere)
+    await pool.query(
+      "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+      [result.userId]
+    );
+
+    passwordResetsTotal.inc();
+
+    await auditLog({
+      actorUserId: result.userId,
+      action: "auth.password_reset",
+      targetType: "user",
+      targetId: result.userId,
+      requestId: req.id,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] ?? null,
+    });
+
+    return reply.send({ ok: true });
   });
 };
 

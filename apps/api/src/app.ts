@@ -112,6 +112,14 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   await app.register(jwt, {
     secret: config.jwtAccessSecret,
+    sign: {
+      iss: "crypto-platform",
+      aud: "crypto-platform-api",
+    },
+    verify: {
+      allowedIss: "crypto-platform",
+      allowedAud: "crypto-platform-api",
+    },
   });
 
   // ── Observability ──

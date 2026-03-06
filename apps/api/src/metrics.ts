@@ -596,6 +596,24 @@ export const redisSubscribeDeliveryTotal = new client.Counter({
   labelNames: ["channel"] as const,
 });
 
+// ── Phase 13 PR3: Email metrics ──
+
+export const emailsSentTotal = new client.Counter({
+  name: "emails_sent_total",
+  help: "Emails sent",
+  labelNames: ["kind"] as const,
+});
+
+export const emailVerificationsTotal = new client.Counter({
+  name: "email_verifications_total",
+  help: "Successful email verifications",
+});
+
+export const passwordResetsTotal = new client.Counter({
+  name: "password_resets_total",
+  help: "Successful password resets",
+});
+
 // ── Plugin ──
 
 declare module "fastify" {

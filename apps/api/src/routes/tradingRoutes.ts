@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { requireUser } from "../auth/requireUser";
+import { requireVerified } from "../auth/requireVerified";
 import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { findPairById, listActivePairs } from "../trading/pairRepo";
@@ -53,7 +54,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /orders — Place order (matching-lite) — rate limit: 60/min per IP
-  app.post("/orders", { preHandler: requireUser, config: { rateLimit: { max: 60, timeWindow: 60_000 } } }, async (req, reply) => {
+  app.post("/orders", { preHandler: [requireUser, requireVerified], config: { rateLimit: { max: 60, timeWindow: 60_000 } } }, async (req, reply) => {
     const parsed = placeOrderBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -142,7 +143,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // DELETE /orders/:id — Cancel open/partial order
-  app.delete("/orders/:id", { preHandler: requireUser }, async (req, reply) => {
+  app.delete("/orders/:id", { preHandler: [requireUser, requireVerified] }, async (req, reply) => {
     const paramsParsed = orderIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });

@@ -23,6 +23,7 @@ import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./co
 import { initRedis, shutdownRedis } from "./db/redis";
 import { startEventBus, stopEventBus } from "./events/eventBus";
 import { initRedisQueue } from "./queue/redisQueue";
+import { initEmailTransport } from "./email/emailTransport";
 
 function getGitCommit(): string {
   try {
@@ -43,6 +44,7 @@ async function start() {
   await initRedis();
   await startEventBus();
   await initRedisQueue();
+  initEmailTransport();
 
   // ── Migration guard — fail fast if schema mismatch ──
   await runMigrationGuard(pool);

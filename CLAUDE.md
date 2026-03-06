@@ -50,7 +50,6 @@ This is a cryptocurrency/financial services platform built as a pnpm monorepo.
 |---|---|---|---|
 | `DATABASE_URL` | **yes** | — | PostgreSQL connection string |
 | `JWT_ACCESS_SECRET` | **yes** | — | HMAC secret for access tokens |
-| `JWT_REFRESH_SECRET` | **yes** | — | HMAC secret for refresh tokens |
 | `PORT` | no | `3001` | HTTP listen port |
 | `HOST` | no | `0.0.0.0` | HTTP listen host |
 | `NODE_ENV` | no | `development` | `development` or `production` |
