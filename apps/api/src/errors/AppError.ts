@@ -58,6 +58,14 @@ const ERROR_STATUS: Record<string, number> = {
   unquarantine_not_allowed: 409,
   // 404 (incidents)
   incident_not_found: 404,
+  // 400 (competitions)
+  competition_not_joinable: 400,
+  competition_full: 400,
+  already_joined: 400,
+  wallet_creation_failed: 400,
+  not_participating: 400,
+  // 404 (competitions)
+  competition_not_found: 404,
   // 429
   quota_exceeded: 429,
   suspicious_activity: 429,

@@ -6,6 +6,8 @@ import { portfolioSamplingJob } from "./portfolioSamplingJob";
 import { retentionJob } from "./retentionJob";
 import { cleanupLoginAttemptsJob } from "./cleanupLoginAttemptsJob";
 import { cleanupEmailTokensJob } from "./cleanupEmailTokensJob";
+import { competitionLifecycleJob } from "./competitionLifecycleJob";
+import { competitionLeaderboardJob } from "./competitionLeaderboardJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -17,4 +19,6 @@ export const allJobs: JobDefinition[] = [
     retentionJob,
     cleanupLoginAttemptsJob,
     cleanupEmailTokensJob,
+    competitionLifecycleJob,
+    competitionLeaderboardJob,
 ];

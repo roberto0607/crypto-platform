@@ -76,6 +76,16 @@ export interface TriggerCanceledData {
   reason: string;
 }
 
+export interface CompetitionStartedData {
+  competitionId: string;
+  name: string;
+}
+
+export interface CompetitionEndedData {
+  competitionId: string;
+  name: string;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
@@ -85,7 +95,9 @@ export type AppEvent =
   | EventEnvelope<"replay.tick", ReplayTickData>
   | EventEnvelope<"price.tick", PriceTickData>
   | EventEnvelope<"trigger.fired", TriggerFiredData>
-  | EventEnvelope<"trigger.canceled", TriggerCanceledData>;
+  | EventEnvelope<"trigger.canceled", TriggerCanceledData>
+  | EventEnvelope<"competition.started", CompetitionStartedData>
+  | EventEnvelope<"competition.ended", CompetitionEndedData>;
 
 // ── Helper to create events ──
 

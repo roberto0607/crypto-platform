@@ -18,6 +18,7 @@ import v1Incidents from "./v1Incidents";
 import v1EventStream from "./v1EventStream";
 import v1Outbox from "./v1Outbox";
 import v1SystemAdmin from "./v1SystemAdmin";
+import v1Competitions from "./v1Competitions";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -38,6 +39,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1EventStream);
     await app.register(v1Outbox);
     await app.register(v1SystemAdmin);
+    await app.register(v1Competitions);
 };
 
 export default v1Routes;
