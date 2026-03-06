@@ -81,7 +81,31 @@ const createOcoBody = z.object({
 
 const v1Triggers: FastifyPluginAsync = async (app) => {
     // POST /v1/triggers — create a single trigger order
-    app.post("/triggers", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/triggers", {
+        schema: {
+            tags: ["Triggers"],
+            summary: "Create a trigger order",
+            description: "Creates a conditional trigger order (stop-loss or take-profit). Fires automatically when the trigger price is reached.",
+            security: [{ bearerAuth: [] }],
+            body: {
+                type: "object",
+                required: ["pairId", "kind", "side", "triggerPrice", "qty"],
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    kind: { type: "string", enum: ["STOP_MARKET", "STOP_LIMIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT"] },
+                    side: { type: "string", enum: ["BUY", "SELL"] },
+                    triggerPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                    limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for *_LIMIT kinds, forbidden for *_MARKET kinds" },
+                    qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                },
+            },
+            response: {
+                201: { type: "object", additionalProperties: true },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = createTriggerBody.safeParse(req.body);
@@ -107,7 +131,33 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/triggers — list user's trigger orders (paginated)
-    app.get("/triggers", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/triggers", {
+        schema: {
+            tags: ["Triggers"],
+            summary: "List trigger orders (paginated)",
+            description: "Returns paginated trigger orders for the authenticated user. Filter by pair or status.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    status: { type: "string", description: "Filter by trigger status (ACTIVE, FIRED, CANCELLED)" },
+                    limit: { type: "string" },
+                    cursor: { type: "string" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const queryParsed = listTriggersQuery.safeParse(req.query);
@@ -137,7 +187,24 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
     // DELETE /v1/triggers/:id — cancel an ACTIVE trigger (idempotent)
     app.delete(
         "/triggers/:id",
-        { preHandler: requireUser },
+        {
+            schema: {
+                tags: ["Triggers"],
+                summary: "Cancel a trigger order",
+                description: "Cancels an ACTIVE trigger order. Idempotent — cancelling an already-cancelled trigger returns success.",
+                security: [{ bearerAuth: [] }],
+                params: {
+                    type: "object",
+                    required: ["id"],
+                    properties: { id: { type: "string", format: "uuid" } },
+                },
+                response: {
+                    200: { type: "object", additionalProperties: true },
+                    404: { type: "object", additionalProperties: true },
+                },
+            },
+            preHandler: requireUser,
+        },
         async (req, reply) => {
             try {
                 const actor = req.user!;
@@ -153,7 +220,35 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
     );
 
     // POST /v1/oco — create an OCO pair (two linked triggers)
-    app.post("/oco", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/oco", {
+        schema: {
+            tags: ["Triggers"],
+            summary: "Create an OCO (One-Cancels-Other) pair",
+            description: "Creates two linked trigger orders. When one fires, the other is automatically cancelled.",
+            security: [{ bearerAuth: [] }],
+            body: {
+                type: "object",
+                required: ["pairId", "legA", "legB"],
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    legA: { type: "object", description: "First trigger leg" },
+                    legB: { type: "object", description: "Second trigger leg" },
+                },
+            },
+            response: {
+                201: {
+                    type: "object",
+                    properties: {
+                        ocoGroupId: { type: "string", format: "uuid" },
+                        legA: { type: "object", additionalProperties: true },
+                        legB: { type: "object", additionalProperties: true },
+                    },
+                },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = createOcoBody.safeParse(req.body);

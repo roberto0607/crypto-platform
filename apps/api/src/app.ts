@@ -12,6 +12,8 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import jwt from "@fastify/jwt";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
 
 import { config } from "./config";
 
@@ -66,6 +68,8 @@ export interface BuildAppOptions {
   disableLoadShedding?: boolean;
   /** Skip starting lock sampler (orchestrator manages it). */
   disableLockSampler?: boolean;
+  /** Disable orchestrator (useful for scripts). */
+  disableOrchestrator?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions = {}) {
@@ -121,6 +125,71 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       allowedAud: "crypto-platform-api",
     },
   });
+
+  // ── OpenAPI / Swagger (register BEFORE routes) ──
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: "Crypto Platform API",
+        description: "Cryptocurrency trading platform — REST API documentation",
+        version: "1.0.0",
+      },
+      servers: [
+        { url: "http://localhost:3001", description: "Development" },
+      ],
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+            description: "JWT access token from POST /auth/login",
+          },
+          apiKey: {
+            type: "apiKey",
+            in: "header",
+            name: "Authorization",
+            description: "API key: 'ApiKey <your-key>'",
+          },
+          cookieAuth: {
+            type: "apiKey",
+            in: "cookie",
+            name: "refresh_token",
+            description: "HttpOnly refresh token cookie (set by login)",
+          },
+        },
+      },
+      tags: [
+        { name: "Auth", description: "Authentication — register, login, refresh, logout" },
+        { name: "Users", description: "User profile and management" },
+        { name: "Wallets", description: "Wallet balances and transactions" },
+        { name: "Trading", description: "Order placement and management" },
+        { name: "Pairs", description: "Trading pair configuration and order books" },
+        { name: "Assets", description: "Asset definitions" },
+        { name: "Triggers", description: "Conditional trigger orders (stop-loss, take-profit, OCO)" },
+        { name: "Portfolio", description: "Portfolio analytics, equity snapshots, positions" },
+        { name: "Bot", description: "Strategy bot runs and signals" },
+        { name: "Replay", description: "Historical replay engine" },
+        { name: "Risk", description: "Risk status and circuit breakers" },
+        { name: "Status", description: "System and user status" },
+        { name: "Events", description: "Server-Sent Events (SSE) real-time stream" },
+        { name: "Admin", description: "Administrative endpoints (ADMIN role required)" },
+        { name: "Health", description: "Health checks and instance info" },
+      ],
+    },
+  });
+
+  if (!config.isProd || config.enableSwaggerUi) {
+    await app.register(swaggerUi, {
+      routePrefix: "/docs",
+      uiConfig: {
+        docExpansion: "list",
+        deepLinking: true,
+        defaultModelsExpandDepth: 3,
+        defaultModelExpandDepth: 3,
+      },
+    });
+  }
 
   // ── Observability ──
   await app.register(metricsPlugin);
@@ -190,6 +259,57 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(betaAdminRoutes, { prefix: "/v1/admin" });
   await app.register(statusRoutes, { prefix: "/status" });
   await app.register(apiKeyRoutes, { prefix: "/api-keys" });
+
+  // ── Error code reference (documentation endpoint) ──
+  app.get("/api/errors", {
+    schema: {
+      tags: ["Status"],
+      summary: "Error code reference",
+      description: "Returns all possible API error codes and their meanings.",
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean" },
+            errors: { type: "object" },
+          },
+        },
+      },
+    },
+  }, async (_req, reply) => {
+    return reply.send({
+      ok: true,
+      errors: {
+        // Auth
+        invalid_credentials: "Wrong email or password",
+        login_blocked: "Too many failed attempts, wait 15 minutes",
+        email_taken: "Email already registered",
+        invite_required: "Beta mode requires an invite code",
+        invite_invalid: "Invalid or expired invite code",
+        invalid_or_expired_token: "Verification/reset token is invalid or expired",
+        email_not_verified: "Email verification required",
+
+        // Trading
+        insufficient_balance: "Not enough available balance",
+        risk_check_failed: "Order rejected by risk engine",
+        governance_check_failed: "Order rejected by governance check",
+        pair_queue_overloaded: "Order queue full, try again shortly",
+        trading_paused_global: "Trading is paused system-wide",
+        trading_paused_pair: "Trading is paused for this pair",
+        quota_exceeded: "Rate or order quota exceeded",
+        order_not_found: "Order does not exist",
+        order_not_cancelable: "Order is already filled or cancelled",
+
+        // General
+        invalid_input: "Request validation failed (check details field)",
+        unauthorized: "Authentication required",
+        forbidden: "Insufficient permissions",
+        not_found: "Resource not found",
+        read_only_mode: "System is in read-only maintenance mode",
+        idempotency_conflict: "Idempotent request already processed",
+      },
+    });
+  });
 
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {

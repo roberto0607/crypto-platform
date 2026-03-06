@@ -38,7 +38,54 @@ const loginBody = z.object({
 const authRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /auth/register — rate limit: 3/min per IP
-  app.post("/register", { config: { rateLimit: { max: 3, timeWindow: 60_000 } } }, async (req, reply) => {
+  app.post("/register", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Register a new user",
+      description: "**Rate limit:** 3 requests per minute per IP.\n\nCreates a new user account. In beta mode, requires a valid invite code. Sends a verification email on success.",
+      body: {
+        type: "object",
+        required: ["email", "password"],
+        properties: {
+          email: { type: "string", description: "User email address" },
+          password: { type: "string", description: "User password (8-72 chars)" },
+          inviteCode: { type: "string", description: "Required when BETA_MODE is enabled" },
+        },
+      },
+      response: {
+        201: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            user: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                email: { type: "string" },
+                role: { type: "string", enum: ["USER", "ADMIN"] },
+              },
+            },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input", "invite_required", "invite_invalid"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+        409: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["email_taken"] },
+          },
+        },
+      },
+    },
+    config: { rateLimit: { max: 3, timeWindow: 60_000 } },
+  }, async (req, reply) => {
     const parsed = registerBody.safeParse(req.body);
 
     if (!parsed.success) {
@@ -151,7 +198,66 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /auth/login — rate limit: 5/min per IP
-  app.post("/login", { config: { rateLimit: { max: 5, timeWindow: 60_000 } } }, async (req, reply) => {
+  app.post("/login", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Login with email and password",
+      description: "**Rate limit:** 5 requests per minute per IP.\n\nAuthenticates a user and returns a JWT access token. Sets an HttpOnly refresh token cookie. Blocked after too many failed attempts.",
+      body: {
+        type: "object",
+        required: ["email", "password"],
+        properties: {
+          email: { type: "string", description: "User email address" },
+          password: { type: "string", description: "User password (8-72 chars)" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            accessToken: { type: "string", description: "JWT access token (15min TTL)" },
+            user: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                email: { type: "string" },
+                role: { type: "string", enum: ["USER", "ADMIN"] },
+              },
+            },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+        401: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_credentials"] },
+          },
+        },
+        429: {
+          type: "object",
+          properties: {
+            error: {
+              type: "object",
+              properties: {
+                code: { type: "string", enum: ["LOGIN_BLOCKED"] },
+                message: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    config: { rateLimit: { max: 5, timeWindow: 60_000 } },
+  }, async (req, reply) => {
     const parsed = loginBody.safeParse(req.body);
 
     if (!parsed.success) {
@@ -227,7 +333,30 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /auth/refresh
-  app.post("/refresh", async (req, reply) => {
+  app.post("/refresh", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Refresh access token",
+      description: "Rotates the refresh token cookie and returns a new JWT access token. Detects token reuse and revokes the entire token family if replay is detected.",
+      security: [{ cookieAuth: [] }],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            accessToken: { type: "string", description: "New JWT access token" },
+          },
+        },
+        401: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["unauthorized", "refresh_token_reuse"] },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
 
     if (!rawToken) {
@@ -305,7 +434,39 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /auth/me
-  app.get("/me", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/me", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Get current user profile",
+      description: "Returns the authenticated user's profile including email verification status.",
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            user: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                email: { type: "string" },
+                role: { type: "string", enum: ["USER", "ADMIN"] },
+                emailVerified: { type: "boolean" },
+              },
+            },
+          },
+        },
+        401: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["unauthorized"] },
+          },
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const user = req.user!;
 
     const { rows } = await pool.query<{ email: string; email_verified_at: string | null }>(
@@ -325,7 +486,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /auth/logout
-  app.post("/logout", async (req, reply) => {
+  app.post("/logout", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Logout and revoke refresh token",
+      description: "Revokes the current refresh token and clears the cookie. Always returns 200 even if no token is present.",
+      security: [{ cookieAuth: [] }],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
 
     let actorUserId: string | null = null;
@@ -357,7 +533,35 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     token: z.string().min(1),
   });
 
-  app.post("/verify-email", async (req, reply) => {
+  app.post("/verify-email", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Verify email address",
+      description: "Consumes a one-time email verification token and marks the user's email as verified.",
+      body: {
+        type: "object",
+        required: ["token"],
+        properties: {
+          token: { type: "string", description: "Email verification token from the verification link" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input", "invalid_or_expired_token"] },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const parsed = verifyEmailBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });
@@ -390,6 +594,35 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /auth/resend-verification (rate limited, authenticated)
   app.post("/resend-verification", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Resend verification email",
+      description: "**Rate limit:** 3 requests per 15 minutes per user.\n\nResends the email verification link. Returns success even if already verified.",
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            message: { type: "string", description: "Set to 'already_verified' if email is already verified" },
+          },
+        },
+        401: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["unauthorized"] },
+          },
+        },
+        404: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["user_not_found"] },
+          },
+        },
+      },
+    },
     config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
     preHandler: [requireUser],
   }, async (req, reply) => {
@@ -418,6 +651,34 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/forgot-password", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Request password reset",
+      description: "**Rate limit:** 3 requests per 15 minutes per IP.\n\nSends a password reset email if the address is registered. Always returns 200 to prevent email enumeration.",
+      body: {
+        type: "object",
+        required: ["email"],
+        properties: {
+          email: { type: "string", description: "Email address to send reset link to" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            message: { type: "string" },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input"] },
+          },
+        },
+      },
+    },
     config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
   }, async (req, reply) => {
     const parsed = forgotPasswordBody.safeParse(req.body);
@@ -446,7 +707,37 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     password: z.string().min(8).max(72),
   });
 
-  app.post("/reset-password", async (req, reply) => {
+  app.post("/reset-password", {
+    schema: {
+      tags: ["Auth"],
+      summary: "Reset password with token",
+      description: "Consumes a password reset token and sets a new password. Revokes all existing refresh tokens to force re-login on all devices.",
+      body: {
+        type: "object",
+        required: ["token", "password"],
+        properties: {
+          token: { type: "string", description: "Password reset token from the reset email" },
+          password: { type: "string", description: "New password (8-72 chars)" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input", "invalid_or_expired_token"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+      },
+    },
+  }, async (req, reply) => {
     const parsed = resetPasswordBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });

@@ -64,7 +64,7 @@ const resetBreakerBody = z.object({
 const adminRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /admin/users
-  app.get("/users", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.get("/users", { schema: { tags: ["Admin"], summary: "List all users", description: "Returns all registered users. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, users: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const users = await listUsers();
 
     return reply.send({
@@ -79,7 +79,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // PATCH /admin/users/:id/role
-  app.patch("/users/:id/role", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.patch("/users/:id/role", { schema: { tags: ["Admin"], summary: "Change user role", description: "Updates a user's role to USER or ADMIN. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["role"], properties: { role: { type: "string", enum: ["USER", "ADMIN"] } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, user: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const paramsParsed = changeRoleParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({
@@ -130,7 +130,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/assets
-  app.post("/assets", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/assets", { schema: { tags: ["Admin"], summary: "Create an asset", description: "Creates a new asset definition. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["symbol", "name"], properties: { symbol: { type: "string", minLength: 1, maxLength: 10 }, name: { type: "string", minLength: 1, maxLength: 100 }, decimals: { type: "integer", minimum: 0, maximum: 18, default: 8 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, asset: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const parsed = createAssetBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -159,7 +159,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/wallets/:id/credit
-  app.post("/wallets/:id/credit", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/wallets/:id/credit", { schema: { tags: ["Admin"], summary: "Credit a wallet", description: "Adds funds to a wallet. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["amount"], properties: { amount: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, wallet: { type: "object", additionalProperties: true }, ledgerEntryId: { type: "string" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const paramsParsed = walletIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
@@ -194,7 +194,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/wallets/:id/debit
-  app.post("/wallets/:id/debit", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/wallets/:id/debit", { schema: { tags: ["Admin"], summary: "Debit a wallet", description: "Removes funds from a wallet. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["amount"], properties: { amount: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, wallet: { type: "object", additionalProperties: true }, ledgerEntryId: { type: "string" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const paramsParsed = walletIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
@@ -233,7 +233,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/pairs
-  app.post("/pairs", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/pairs", { schema: { tags: ["Admin"], summary: "Create a trading pair", description: "Creates a new trading pair from base and quote assets. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["baseAssetId", "quoteAssetId", "symbol"], properties: { baseAssetId: { type: "string", format: "uuid" }, quoteAssetId: { type: "string", format: "uuid" }, symbol: { type: "string" }, feeBps: { type: "integer", default: 30 }, makerFeeBps: { type: "integer", default: 2 }, takerFeeBps: { type: "integer", default: 5 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, pair: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const parsed = createPairBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -279,7 +279,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // PATCH /admin/pairs/:id/price
-  app.patch("/pairs/:id/price", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.patch("/pairs/:id/price", { schema: { tags: ["Admin"], summary: "Set pair last price", description: "Manually sets the last price for a trading pair. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["price"], properties: { price: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, pair: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const paramsParsed = pairIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
@@ -313,13 +313,13 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /admin/reconcile
-  app.get("/reconcile", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+  app.get("/reconcile", { schema: { tags: ["Admin"], summary: "Run full reconciliation", description: "Runs a full balance/position reconciliation and returns the report. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, report: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const report = await runFullReconciliation();
     return reply.send({ ok: true, report });
   });
 
   // GET /admin/risk-limits
-  app.get("/risk-limits", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+  app.get("/risk-limits", { schema: { tags: ["Admin"], summary: "List risk limits", description: "Returns all configured risk limits (global and per-user/pair). Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, limits: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const client = await pool.connect();
     try {
       const limits = await listRiskLimits(client);
@@ -330,7 +330,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // PUT /admin/risk-limits
-  app.put("/risk-limits", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.put("/risk-limits", { schema: { tags: ["Admin"], summary: "Upsert risk limit", description: "Creates or updates a risk limit rule (global, per-user, or per-pair). Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", properties: { user_id: { type: "string", format: "uuid", nullable: true }, pair_id: { type: "string", format: "uuid", nullable: true }, max_order_notional_quote: { type: "string" }, max_position_base_qty: { type: "string" }, max_open_orders_per_pair: { type: "integer" }, max_price_deviation_bps: { type: "integer" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, limit: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const parsed = upsertRiskLimitBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -371,7 +371,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /admin/breakers
-  app.get("/breakers", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+  app.get("/breakers", { schema: { tags: ["Risk"], summary: "List circuit breakers", description: "Returns all circuit breaker states. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, breakers: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const client = await pool.connect();
     try {
       const breakers = await listBreakers(client);
@@ -382,7 +382,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/breakers/reset
-  app.post("/breakers/reset", { preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/breakers/reset", { schema: { tags: ["Risk"], summary: "Reset circuit breakers", description: "Resets one or all circuit breakers. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", properties: { breaker_key: { type: "string", description: "Specific breaker key to reset. Omit to reset all." } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, reset_count: { type: "integer" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const parsed = resetBreakerBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -416,7 +416,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /admin/queue — Queue stats per trading pair
-  app.get("/queue", { preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+  app.get("/queue", { schema: { tags: ["Admin"], summary: "Queue statistics", description: "Returns order queue depth per trading pair. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, queues: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const queues = await getQueueStats();
     return reply.send({ ok: true, queues });
   });

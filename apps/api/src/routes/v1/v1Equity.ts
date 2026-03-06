@@ -14,7 +14,33 @@ const equityQuery = z.object({
 });
 
 const v1Equity: FastifyPluginAsync = async (app) => {
-    app.get("/equity", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/equity", {
+        schema: {
+            tags: ["Portfolio"],
+            summary: "Equity series (paginated)",
+            description: "Returns paginated equity snapshots over time. Supports time range filtering.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    from: { type: "integer", description: "Start timestamp (epoch seconds)" },
+                    to: { type: "integer", description: "End timestamp (epoch seconds)" },
+                    limit: { type: "string" },
+                    cursor: { type: "string" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const queryParsed = equityQuery.safeParse(req.query);

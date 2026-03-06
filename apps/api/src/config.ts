@@ -116,4 +116,7 @@ export const config = {
   emailFrom: process.env.EMAIL_FROM || "noreply@crypto-platform.local",
   appUrl: process.env.APP_URL || "http://localhost:5173",
   requireEmailVerification: booleanEnv("REQUIRE_EMAIL_VERIFICATION", false),
+
+  // ── Phase 13 PR4: Swagger UI ──
+  enableSwaggerUi: booleanEnv("ENABLE_SWAGGER_UI", !isProd),
 };

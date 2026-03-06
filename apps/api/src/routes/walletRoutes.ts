@@ -19,13 +19,13 @@ const walletIdParams = z.object({ id: z.string().uuid() });
 const walletRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /assets — list active assets (authenticated)
-  app.get("/assets", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/assets", { schema: { tags: ["Assets"], summary: "List active assets", description: "Returns all active asset definitions.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, assets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
     const assets = await listActiveAssets();
     return reply.send({ ok: true, assets });
   });
 
   // POST /wallets — create a wallet for an asset (authenticated)
-  app.post("/wallets", { preHandler: requireUser }, async (req, reply) => {
+  app.post("/wallets", { schema: { tags: ["Wallets"], summary: "Create a wallet", description: "Creates a wallet for the authenticated user for a given asset.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["assetId"], properties: { assetId: { type: "string", format: "uuid" } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, wallet: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
     const parsed = createWalletBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -49,14 +49,14 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /wallets — list user's wallets (authenticated)
-  app.get("/wallets", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/wallets", { schema: { tags: ["Wallets"], summary: "List user wallets", description: "Returns all wallets owned by the authenticated user.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, wallets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
     const actor = req.user!;
     const wallets = await listWalletsByUserId(actor.id);
     return reply.send({ ok: true, wallets });
   });
 
   // GET /wallets/:id/transactions — ledger entries (authenticated, ownership check)
-  app.get("/wallets/:id/transactions", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/wallets/:id/transactions", { schema: { tags: ["Wallets"], summary: "Wallet transactions", description: "Returns ledger entries for a specific wallet. Only accessible by the wallet owner.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, entries: { type: "array", items: { type: "object", additionalProperties: true } } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 403: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
     const paramsParsed = walletIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });

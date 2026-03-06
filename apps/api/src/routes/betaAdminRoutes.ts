@@ -38,7 +38,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   // ── Invites ──
 
   // POST /v1/admin/invites
-  app.post("/invites", async (req, reply) => {
+  app.post("/invites", { schema: { tags: ["Admin"], summary: "Create beta invite", description: "Creates a new beta invite code. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["code"], properties: { code: { type: "string", minLength: 1, maxLength: 64 }, maxUses: { type: "integer", minimum: 1, default: 1 }, expiresAt: { type: "string", format: "date-time" } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, invite: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const parsed = createInviteBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -73,13 +73,13 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /v1/admin/invites
-  app.get("/invites", async (_req, reply) => {
+  app.get("/invites", { schema: { tags: ["Admin"], summary: "List beta invites", description: "Returns all beta invite codes. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, invites: { type: "array", items: { type: "object", additionalProperties: true } } } } } } }, async (_req, reply) => {
     const invites = await listInvites();
     return reply.send({ ok: true, invites });
   });
 
   // POST /v1/admin/invites/:id/disable
-  app.post("/invites/:id/disable", async (req, reply) => {
+  app.post("/invites/:id/disable", { schema: { tags: ["Admin"], summary: "Disable a beta invite", description: "Disables an invite code so it can no longer be used. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, invite: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const paramsParsed = idParams.safeParse(req.params);
     if (!paramsParsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });
@@ -106,7 +106,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   // ── System flags ──
 
   // POST /v1/admin/system/trading-global
-  app.post("/system/trading-global", async (req, reply) => {
+  app.post("/system/trading-global", { schema: { tags: ["Admin"], summary: "Toggle global trading", description: "Enables or disables trading globally. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const parsed = enabledBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });
@@ -127,7 +127,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /v1/admin/system/read-only
-  app.post("/system/read-only", async (req, reply) => {
+  app.post("/system/read-only", { schema: { tags: ["Admin"], summary: "Toggle read-only mode", description: "Enables or disables read-only mode for the platform. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const parsed = enabledBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });
@@ -150,7 +150,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   // ── User quotas ──
 
   // POST /v1/admin/users/:id/quotas
-  app.post("/users/:id/quotas", async (req, reply) => {
+  app.post("/users/:id/quotas", { schema: { tags: ["Admin"], summary: "Update user quotas", description: "Updates trading quotas for a specific user. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", properties: { maxOrdersPerMin: { type: "integer", minimum: 1 }, maxOpenOrders: { type: "integer", minimum: 1 }, maxDailyOrders: { type: "integer", minimum: 1 }, tradingEnabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, quotas: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const paramsParsed = idParams.safeParse(req.params);
     if (!paramsParsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });
@@ -185,7 +185,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
   // ── Pair trading toggle ──
 
   // POST /v1/admin/pairs/:id/trading
-  app.post("/pairs/:id/trading", async (req, reply) => {
+  app.post("/pairs/:id/trading", { schema: { tags: ["Admin"], summary: "Toggle pair trading", description: "Enables or disables trading for a specific pair. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
     const paramsParsed = idParams.safeParse(req.params);
     if (!paramsParsed.success) {
       return reply.code(400).send({ ok: false, error: "invalid_input" });

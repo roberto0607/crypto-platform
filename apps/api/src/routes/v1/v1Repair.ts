@@ -37,7 +37,7 @@ const v1Repair: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/repair/positions/dry-run
   app.post(
     "/admin/repair/positions/dry-run",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Repair positions (dry run)", description: "Simulates position repair without applying changes. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["userId"], properties: { userId: { type: "string", format: "uuid" }, pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const body = repairBody.parse(req.body);
@@ -72,7 +72,7 @@ const v1Repair: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/repair/positions/apply
   app.post(
     "/admin/repair/positions/apply",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Repair positions (apply)", description: "Applies position corrections to resolve discrepancies. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["userId"], properties: { userId: { type: "string", format: "uuid" }, pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const body = repairBody.parse(req.body);
@@ -107,7 +107,7 @@ const v1Repair: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/repair/users/:id/reconcile
   app.post(
     "/admin/repair/users/:id/reconcile",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Reconcile user", description: "Runs a targeted reconciliation for a specific user. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = userIdParams.parse(req.params);
@@ -163,7 +163,7 @@ const v1Repair: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/repair/users/:id/unquarantine-if-clean
   app.post(
     "/admin/repair/users/:id/unquarantine-if-clean",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Unquarantine if clean", description: "Checks all incident gates and unquarantines user if all conditions are met. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { userId: { type: "string" }, accountStatus: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = userIdParams.parse(req.params);
@@ -247,7 +247,7 @@ const v1Repair: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/repair/runs
   app.get(
     "/admin/repair/runs",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List repair runs", description: "Returns paginated repair run history for a user. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", required: ["userId"], properties: { userId: { type: "string", format: "uuid" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, default: 0 } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } }, total: { type: "integer" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = listRunsQuery.parse(req.query);

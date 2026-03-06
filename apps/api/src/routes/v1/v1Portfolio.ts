@@ -28,7 +28,22 @@ const performanceQuery = z.object({
 
 const v1Portfolio: FastifyPluginAsync = async (app) => {
     // GET /v1/portfolio/summary
-    app.get("/portfolio/summary", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/portfolio/summary", {
+        schema: {
+            tags: ["Portfolio"],
+            summary: "Portfolio summary",
+            description: "Returns portfolio summary including total equity, unrealized PnL, and open positions. Optionally filter by pair.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    pairId: { type: "string", format: "uuid", description: "Filter by trading pair" },
+                },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = summaryQuery.safeParse(req.query);
@@ -42,7 +57,33 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/portfolio/equity
-    app.get("/portfolio/equity", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/portfolio/equity", {
+        schema: {
+            tags: ["Portfolio"],
+            summary: "Equity curve (paginated)",
+            description: "Returns equity snapshots over time. Supports time range filtering and cursor-based pagination.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    from: { type: "integer", description: "Start timestamp (epoch seconds)" },
+                    to: { type: "integer", description: "End timestamp (epoch seconds)" },
+                    limit: { type: "string" },
+                    cursor: { type: "string" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = equityCurveQuery.safeParse(req.query);
@@ -64,7 +105,23 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/portfolio/performance
-    app.get("/portfolio/performance", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/portfolio/performance", {
+        schema: {
+            tags: ["Portfolio"],
+            summary: "Portfolio performance metrics",
+            description: "Returns performance metrics (win rate, Sharpe ratio, max drawdown, etc.) over an optional time range.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    from: { type: "integer", description: "Start timestamp (epoch seconds)" },
+                    to: { type: "integer", description: "End timestamp (epoch seconds)" },
+                },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = performanceQuery.safeParse(req.query);

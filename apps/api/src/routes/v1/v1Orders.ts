@@ -14,7 +14,33 @@ const listOrdersQuery = z.object({
 });
 
 const v1Orders: FastifyPluginAsync = async (app) => {
-    app.get("/orders", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/orders", {
+        schema: {
+            tags: ["Trading"],
+            summary: "List orders (paginated)",
+            description: "Returns paginated orders for the authenticated user. Supports cursor-based pagination and filtering by pair or status.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    pairId: { type: "string", format: "uuid", description: "Filter by trading pair" },
+                    status: { type: "string", description: "Filter by order status" },
+                    limit: { type: "string", description: "Page size (default 50, max 100)" },
+                    cursor: { type: "string", description: "Cursor from previous page's nextCursor" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const queryParsed = listOrdersQuery.safeParse(req.query);

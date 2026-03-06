@@ -13,7 +13,7 @@ const PatchJobBody = z.object({
 const v1Jobs: FastifyPluginAsync = async (app) => {
     app.get(
         "/admin/jobs",
-        { preHandler: [requireUser, requireRole("ADMIN")] },
+        { schema: { tags: ["Admin"], summary: "List background jobs", description: "Returns all background job configurations and last-run info. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { jobs: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
         async (_req, reply) => {
             const rows = await jobRepo.getAllJobRows();
             reply.send({ jobs: rows });
@@ -22,7 +22,7 @@ const v1Jobs: FastifyPluginAsync = async (app) => {
 
     app.patch(
         "/admin/jobs/:name",
-        { preHandler: [requireUser, requireRole("ADMIN")] },
+        { schema: { tags: ["Admin"], summary: "Update job config", description: "Updates a background job's enabled state or interval. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["name"], properties: { name: { type: "string" } } }, body: { type: "object", properties: { is_enabled: { type: "boolean" }, interval_seconds: { type: "integer", minimum: 10, maximum: 86400 } } }, response: { 200: { type: "object", properties: { job: { type: "object", additionalProperties: true } } }, 404: { type: "object", properties: { error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
         async (req, reply) => {
             const { name } = req.params as { name: string };
             const body = PatchJobBody.parse(req.body);
@@ -37,7 +37,7 @@ const v1Jobs: FastifyPluginAsync = async (app) => {
 
     app.post(
         "/admin/jobs/:name/run",
-        { preHandler: [requireUser, requireRole("ADMIN")] },
+        { schema: { tags: ["Admin"], summary: "Trigger job manually", description: "Immediately runs a background job. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["name"], properties: { name: { type: "string" } } }, response: { 200: { type: "object", additionalProperties: true }, 404: { type: "object", properties: { error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
         async (req, reply) => {
             const { name } = req.params as { name: string };
             const result = await triggerJob(name);

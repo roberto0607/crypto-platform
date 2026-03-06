@@ -11,7 +11,30 @@ const pairsQuery = z.object({
 });
 
 const v1Pairs: FastifyPluginAsync = async (app) => {
-    app.get("/pairs", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/pairs", {
+        schema: {
+            tags: ["Pairs"],
+            summary: "List trading pairs (v1 paginated)",
+            description: "Returns active trading pairs with optional limit.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    limit: { type: "string", description: "Max results to return (default 50, max 100)" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const queryParsed = pairsQuery.safeParse(req.query);
             const q = queryParsed.success ? queryParsed.data : {};

@@ -53,7 +53,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/incidents
   app.get(
     "/admin/incidents",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List incidents", description: "Returns paginated incidents. Filter by status, user, or date range. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { status: { type: "string", enum: ["OPEN", "INVESTIGATING", "RESOLVED"] }, userId: { type: "string", format: "uuid" }, from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, default: 0 } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } }, total: { type: "integer" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = listIncidentsQuery.parse(req.query);
@@ -76,7 +76,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/incidents/:id
   app.get(
     "/admin/incidents/:id",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Get incident by ID", description: "Returns a single incident with full details. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);
@@ -94,7 +94,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/incidents/:id/events
   app.get(
     "/admin/incidents/:id/events",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List incident events", description: "Returns the timeline of events for an incident. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);
@@ -113,7 +113,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/incidents/:id/ack
   app.post(
     "/admin/incidents/:id/ack",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Acknowledge incident", description: "Marks an incident as acknowledged by the admin. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", properties: { note: { type: "string", maxLength: 2000 } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { incidentId: { type: "string" }, acknowledgedAt: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);
@@ -141,7 +141,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/incidents/:id/note
   app.post(
     "/admin/incidents/:id/note",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Add incident note", description: "Adds a note to an incident's timeline. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["note"], properties: { note: { type: "string", minLength: 1, maxLength: 2000 } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { incidentId: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);
@@ -168,7 +168,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/incidents/:id/resolve
   app.post(
     "/admin/incidents/:id/resolve",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Resolve incident", description: "Marks an incident as resolved with a resolution summary. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", required: ["resolutionSummary"], properties: { resolutionSummary: { type: "object", description: "Free-form resolution details" } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { incidentId: { type: "string" }, resolvedAt: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);
@@ -196,7 +196,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/incidents/:id/proof-pack
   app.get(
     "/admin/incidents/:id/proof-pack",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Generate proof pack", description: "Generates a forensic proof pack for an incident including trades, ledger entries, and positions. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, querystring: { type: "object", properties: { from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" }, orderId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = incidentIdParams.parse(req.params);

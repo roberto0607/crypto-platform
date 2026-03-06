@@ -26,7 +26,8 @@
     "load:writes": "k6 run load/k6/scenario_trade_burst.js",
     "load:mixed": "k6 run load/k6/scenario_mixed_realistic.js",
     "load:outbox": "k6 run load/k6/scenario_outbox_pressure.js",
-    "load:all": "pnpm load:auth && pnpm load:reads && pnpm load:writes && pnpm load:mixed && pnpm load:outbox"
+    "load:all": "pnpm load:auth && pnpm load:reads && pnpm load:writes && pnpm load:mixed && pnpm load:outbox",
+    "openapi": "tsx src/scripts/generateOpenapi.ts"
   },
   "keywords": [],
   "author": "",
@@ -38,6 +39,8 @@
     "@fastify/helmet": "^13.0.2",
     "@fastify/jwt": "^10.0.0",
     "@fastify/rate-limit": "^10.3.0",
+    "@fastify/swagger": "^9.7.0",
+    "@fastify/swagger-ui": "^5.2.5",
     "argon2": "^0.44.0",
     "decimal.js": "^10.6.0",
     "dotenv": "^17.3.1",

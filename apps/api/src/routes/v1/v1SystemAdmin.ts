@@ -24,7 +24,7 @@ const v1SystemAdmin: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/system/migration-status
   app.get(
     "/admin/system/migration-status",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Check migration status", description: "Returns database migration version vs. latest code version. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { data: { type: "object", properties: { db_version: { type: "integer" }, latest_code_version: { type: "integer" }, status: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (_req, reply) => {
       try {
         const result = await checkMigrationStatus(pool);
@@ -44,7 +44,7 @@ const v1SystemAdmin: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/system/backups
   app.get(
     "/admin/system/backups",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List backups", description: "Returns recent database backups. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = listBackupsQuery.parse(req.query);
@@ -60,7 +60,7 @@ const v1SystemAdmin: FastifyPluginAsync = async (app) => {
   // Always returns 200 — result field carries PASS or FAIL.
   app.post(
     "/admin/system/restore-drill",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Run restore drill", description: "Runs a backup-restore drill to verify backup integrity. Always returns 200 — result field carries PASS or FAIL. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { data: { type: "object", properties: { result: { type: "string", enum: ["PASS", "FAIL"] }, output: { type: "string" }, message: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (_req, reply) => {
       try {
         const scriptPath = path.join(SCRIPTS_DIR, "restore-drill.sh");

@@ -43,7 +43,28 @@ const paginationQuery = z.object({
 
 const v1Bot: FastifyPluginAsync = async (app) => {
     // POST /v1/bot/runs — start a new bot run
-    app.post("/bot/runs", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/bot/runs", {
+        schema: {
+            tags: ["Bot"],
+            summary: "Start a new bot run",
+            description: "Starts a strategy bot run in REPLAY or LIVE mode for the specified pair.",
+            security: [{ bearerAuth: [] }],
+            body: {
+                type: "object",
+                required: ["pairId", "mode"],
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    mode: { type: "string", enum: ["REPLAY", "LIVE"] },
+                    params: { type: "object", description: "Optional strategy parameters (adxThreshold, atrMultiplierSL, etc.)" },
+                },
+            },
+            response: {
+                201: { type: "object", properties: { ok: { type: "boolean" }, run: { type: "object", additionalProperties: true } } },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = startRunBody.safeParse(req.body);
@@ -61,7 +82,20 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // POST /v1/bot/runs/:id/pause
-    app.post("/bot/runs/:id/pause", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/bot/runs/:id/pause", {
+        schema: {
+            tags: ["Bot"],
+            summary: "Pause a bot run",
+            description: "Pauses a running bot. Can be resumed later.",
+            security: [{ bearerAuth: [] }],
+            params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, run: { type: "object", additionalProperties: true } } },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const p = runIdParams.safeParse(req.params);
@@ -78,7 +112,20 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // POST /v1/bot/runs/:id/resume
-    app.post("/bot/runs/:id/resume", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/bot/runs/:id/resume", {
+        schema: {
+            tags: ["Bot"],
+            summary: "Resume a paused bot run",
+            description: "Resumes a previously paused bot run.",
+            security: [{ bearerAuth: [] }],
+            params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, run: { type: "object", additionalProperties: true } } },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const p = runIdParams.safeParse(req.params);
@@ -95,7 +142,20 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // POST /v1/bot/runs/:id/stop
-    app.post("/bot/runs/:id/stop", { preHandler: requireUser }, async (req, reply) => {
+    app.post("/bot/runs/:id/stop", {
+        schema: {
+            tags: ["Bot"],
+            summary: "Stop a bot run",
+            description: "Permanently stops a bot run. Cannot be resumed after stopping.",
+            security: [{ bearerAuth: [] }],
+            params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, run: { type: "object", additionalProperties: true } } },
+                400: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const p = runIdParams.safeParse(req.params);
@@ -112,7 +172,25 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/bot/runs — list user's bot runs (paginated)
-    app.get("/bot/runs", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/bot/runs", {
+        schema: {
+            tags: ["Bot"],
+            summary: "List bot runs (paginated)",
+            description: "Returns paginated list of the user's bot runs.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    cursor: { type: "string" },
+                    limit: { type: "string" },
+                },
+            },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, data: { type: "array", items: { type: "object", additionalProperties: true } }, nextCursor: { type: "string", nullable: true } } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const q = paginationQuery.safeParse(req.query);
@@ -126,7 +204,20 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/bot/runs/:id — get a single run
-    app.get("/bot/runs/:id", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/bot/runs/:id", {
+        schema: {
+            tags: ["Bot"],
+            summary: "Get bot run details",
+            description: "Returns details of a specific bot run including status, parameters, and metrics.",
+            security: [{ bearerAuth: [] }],
+            params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, run: { type: "object", additionalProperties: true } } },
+                404: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const p = runIdParams.safeParse(req.params);
@@ -143,7 +234,26 @@ const v1Bot: FastifyPluginAsync = async (app) => {
     });
 
     // GET /v1/bot/runs/:id/signals — list signals for a run (paginated)
-    app.get("/bot/runs/:id/signals", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/bot/runs/:id/signals", {
+        schema: {
+            tags: ["Bot"],
+            summary: "List signals for a bot run (paginated)",
+            description: "Returns paginated trading signals generated by a specific bot run.",
+            security: [{ bearerAuth: [] }],
+            params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } },
+            querystring: {
+                type: "object",
+                properties: {
+                    cursor: { type: "string" },
+                    limit: { type: "string" },
+                },
+            },
+            response: {
+                200: { type: "object", properties: { ok: { type: "boolean" }, data: { type: "array", items: { type: "object", additionalProperties: true } }, nextCursor: { type: "string", nullable: true } } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const p = runIdParams.safeParse(req.params);

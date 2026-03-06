@@ -25,7 +25,7 @@ const v1Outbox: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/outbox
   app.get(
     "/admin/outbox",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List outbox events", description: "Returns outbox events, optionally filtered by status. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { status: { type: "string", enum: ["PENDING", "PROCESSING", "DONE", "FAILED"] }, limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = listQuery.parse(req.query);
@@ -40,7 +40,7 @@ const v1Outbox: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/outbox/stats
   app.get(
     "/admin/outbox/stats",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Outbox stats", description: "Returns count of outbox events grouped by status. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (_req, reply) => {
       try {
         const stats = await countByStatus();
@@ -54,7 +54,7 @@ const v1Outbox: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/outbox/retry/:id
   app.post(
     "/admin/outbox/retry/:id",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Retry outbox event", description: "Resets a FAILED outbox event to PENDING for reprocessing. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = retryParams.parse(req.params);
@@ -72,7 +72,7 @@ const v1Outbox: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/outbox/replay
   app.post(
     "/admin/outbox/replay",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Replay outbox batch", description: "Processes a batch of pending outbox events. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { processed: { type: "integer" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (_req, reply) => {
       try {
         const processed = await processBatch();

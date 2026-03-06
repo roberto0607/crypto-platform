@@ -38,7 +38,22 @@ const quoteQuery = z.object({
 
 const v1Sim: FastifyPluginAsync = async (app) => {
     // GET /v1/sim/config
-    app.get("/sim/config", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/sim/config", {
+        schema: {
+            tags: ["Trading"],
+            summary: "Get simulation config",
+            description: "Returns the effective simulation configuration for the authenticated user, optionally for a specific pair.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    pairId: { type: "string", format: "uuid", description: "Optional pair-specific config" },
+                },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const query = req.query as { pairId?: string };
@@ -52,7 +67,37 @@ const v1Sim: FastifyPluginAsync = async (app) => {
     // PUT /v1/sim/config (ADMIN only)
     app.put(
         "/sim/config",
-        { preHandler: [requireUser, requireRole("ADMIN")] },
+        {
+            schema: {
+                tags: ["Admin"],
+                summary: "Update simulation config",
+                description: "Sets simulation parameters globally or per-user/per-pair. Requires ADMIN role.",
+                security: [{ bearerAuth: [] }],
+                body: {
+                    type: "object",
+                    required: ["config"],
+                    properties: {
+                        userId: { type: "string", format: "uuid", nullable: true },
+                        pairId: { type: "string", format: "uuid", nullable: true },
+                        config: {
+                            type: "object",
+                            properties: {
+                                base_spread_bps: { type: "number" },
+                                base_slippage_bps: { type: "number" },
+                                impact_bps_per_10k_quote: { type: "number" },
+                                liquidity_quote_per_tick: { type: "number" },
+                                volatility_widening_k: { type: "number" },
+                            },
+                        },
+                    },
+                },
+                response: {
+                    200: { type: "object", properties: { ok: { type: "boolean" } } },
+                    400: { type: "object", additionalProperties: true },
+                },
+            },
+            preHandler: [requireUser, requireRole("ADMIN")],
+        },
         async (req, reply) => {
             try {
                 const parsed = putConfigBody.safeParse(req.body);
@@ -73,7 +118,36 @@ const v1Sim: FastifyPluginAsync = async (app) => {
     );
 
     // GET /v1/sim/quote
-    app.get("/sim/quote", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/sim/quote", {
+        schema: {
+            tags: ["Trading"],
+            summary: "Get simulation quote",
+            description: "Simulates a market order execution and returns estimated price, slippage, and available liquidity.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                required: ["pairId", "side", "qty"],
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    side: { type: "string", enum: ["BUY", "SELL"] },
+                    qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        executable: { type: "boolean" },
+                        estimatedPrice: { type: "string" },
+                        slippage_bps: { type: "string" },
+                        requestedNotional: { type: "string" },
+                        availableLiquidity: { type: "string" },
+                    },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const actor = req.user!;
             const parsed = quoteQuery.safeParse(req.query);

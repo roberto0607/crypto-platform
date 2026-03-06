@@ -16,7 +16,41 @@ const txQuery = z.object({
 });
 
 const v1Transactions: FastifyPluginAsync = async (app) => {
-    app.get("/wallets/:id/transactions", { preHandler: requireUser }, async (req, reply) => {
+    app.get("/wallets/:id/transactions", {
+        schema: {
+            tags: ["Wallets"],
+            summary: "List wallet transactions (paginated)",
+            description: "Returns paginated ledger entries for a specific wallet. Only the wallet owner can access.",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["id"],
+                properties: {
+                    id: { type: "string", format: "uuid", description: "Wallet ID" },
+                },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    limit: { type: "string", description: "Page size (default 50, max 100)" },
+                    cursor: { type: "string", description: "Cursor from previous page's nextCursor" },
+                },
+            },
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        nextCursor: { type: "string", nullable: true },
+                    },
+                },
+                400: { type: "object", additionalProperties: true },
+                403: { type: "object", additionalProperties: true },
+                404: { type: "object", additionalProperties: true },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
         try {
             const paramsParsed = walletIdParams.safeParse(req.params);
             if (!paramsParsed.success) {

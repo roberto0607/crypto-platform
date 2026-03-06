@@ -19,16 +19,16 @@ interface DeepHealthResult {
 }
 
 const healthRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/health", async () => {
+  app.get("/health", { schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" } } } } } }, async () => {
     return { ok: true, service: "api", timestamp: new Date().toISOString() };
   });
 
-  app.get("/health/db", async () => {
+  app.get("/health/db", { schema: { tags: ["Health"], summary: "Database health", description: "Checks PostgreSQL connectivity.", response: { 200: { type: "object", properties: { ok: { type: "boolean" } } } } } }, async () => {
     const res = await pool.query("select 1 as ok");
     return { ok: res.rows[0]?.ok === 1 };
   });
 
-  app.get("/health/pool", async () => {
+  app.get("/health/pool", { schema: { tags: ["Health"], summary: "Connection pool stats", description: "Returns PostgreSQL connection pool metrics.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, pool: { type: "object", properties: { totalCount: { type: "integer" }, idleCount: { type: "integer" }, waitingCount: { type: "integer" } } } } } } } }, async () => {
     return {
       ok: true,
       pool: {
@@ -39,7 +39,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
-  app.get("/health/deep", async () => {
+  app.get("/health/deep", { schema: { tags: ["Health"], summary: "Deep health check", description: "Checks database, Redis, event bus, circuit breakers, and reconciliation status.", response: { 200: { type: "object", properties: { status: { type: "string", enum: ["OK", "DEGRADED", "CRITICAL"] }, checks: { type: "object", additionalProperties: true } } } } } }, async () => {
     const result: DeepHealthResult = {
       status: "OK",
       checks: {
@@ -143,7 +143,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
   // ── Phase 10 PR5: Instance identity + leader status ──
   const startedAt = new Date().toISOString();
 
-  app.get("/health/instance", async () => {
+  app.get("/health/instance", { schema: { tags: ["Health"], summary: "Instance identity", description: "Returns instance ID, role, leader status, and uptime.", response: { 200: { type: "object", properties: { instanceId: { type: "string" }, role: { type: "string" }, leader: { type: "object", additionalProperties: true }, startedAt: { type: "string" }, version: { type: "string" } } } } } }, async () => {
     return {
       instanceId: config.instanceId,
       role: config.instanceRole,

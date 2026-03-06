@@ -18,7 +18,7 @@ const createBody = z.object({
 const apiKeyRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api-keys — Create a new API key (JWT auth only)
-  app.post("/", { preHandler: requireUser }, async (req, reply) => {
+  app.post("/", { schema: { tags: ["Auth"], summary: "Create API key", description: "Creates a new API key with specified scopes. JWT auth only — cannot create keys using an API key.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["label", "scopes"], properties: { label: { type: "string", minLength: 1, maxLength: 100 }, scopes: { type: "array", items: { type: "string", enum: ["read", "trade", "admin"] }, minItems: 1 }, expiresAt: { type: "string", format: "date-time" } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, id: { type: "string", format: "uuid" }, rawKey: { type: "string", description: "The raw API key — shown only once" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 403: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
     // Only allow JWT-authenticated users to create keys
     if (req.authType === "API_KEY") {
       return reply.code(403).send({ ok: false, error: "forbidden" });
@@ -65,7 +65,7 @@ const apiKeyRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /api-keys — List user's API keys
-  app.get("/", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/", { schema: { tags: ["Auth"], summary: "List API keys", description: "Returns all API keys for the authenticated user (hashed, not raw).", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, keys: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
     const keys = await listApiKeysForUser(req.user!.id);
 
     return reply.send({
@@ -83,7 +83,7 @@ const apiKeyRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /api-keys/:id/revoke — Revoke an API key
-  app.post("/:id/revoke", { preHandler: requireUser }, async (req, reply) => {
+  app.post("/:id/revoke", { schema: { tags: ["Auth"], summary: "Revoke API key", description: "Revokes an API key. JWT auth only — cannot revoke keys using an API key.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 403: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
     // Only allow JWT-authenticated users to revoke keys
     if (req.authType === "API_KEY") {
       return reply.code(403).send({ ok: false, error: "forbidden" });

@@ -38,7 +38,7 @@ const v1Governance: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/account-limits?userId=<uuid>
   app.get(
     "/admin/account-limits",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Get account limits", description: "Returns trading limits for a specific user. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", required: ["userId"], properties: { userId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = getAccountLimitsQuery.parse(req.query);
@@ -58,7 +58,7 @@ const v1Governance: FastifyPluginAsync = async (app) => {
   // PUT /v1/admin/account-limits
   app.put(
     "/admin/account-limits",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Upsert account limits", description: "Creates or updates trading limits for a user. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["userId"], properties: { userId: { type: "string", format: "uuid" }, maxDailyNotionalQuote: { type: "string", nullable: true }, maxDailyRealizedLossQuote: { type: "string", nullable: true }, maxOpenPositions: { type: "integer", nullable: true }, maxOpenOrders: { type: "integer", nullable: true } } }, response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const body = upsertAccountLimitsBody.parse(req.body);
@@ -101,7 +101,7 @@ const v1Governance: FastifyPluginAsync = async (app) => {
   // PATCH /v1/admin/account-status
   app.patch(
     "/admin/account-status",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Update account status", description: "Changes a user's account status (ACTIVE, SUSPENDED, LOCKED, QUARANTINED). Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["userId", "status"], properties: { userId: { type: "string", format: "uuid" }, status: { type: "string", enum: ["ACTIVE", "SUSPENDED", "LOCKED", "QUARANTINED"] } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { userId: { type: "string" }, accountStatus: { type: "string" }, updatedAt: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const body = patchAccountStatusBody.parse(req.body);

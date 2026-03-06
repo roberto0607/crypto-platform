@@ -32,7 +32,7 @@ const v1Reconciliation: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/reconciliation/reports
   app.get(
     "/admin/reconciliation/reports",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "List reconciliation reports", description: "Returns paginated reconciliation reports. Filter by user, date range, severity, or check name. Requires ADMIN role.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { userId: { type: "string", format: "uuid" }, from: { type: "string", format: "date-time" }, to: { type: "string", format: "date-time" }, severity: { type: "string", enum: ["INFO", "WARN", "HIGH"] }, check: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, default: 0 } } }, response: { 200: { type: "object", properties: { data: { type: "array", items: { type: "object", additionalProperties: true } }, total: { type: "integer" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const query = listReportsQuery.parse(req.query);
@@ -67,7 +67,7 @@ const v1Reconciliation: FastifyPluginAsync = async (app) => {
   // GET /v1/admin/reconciliation/runs/latest
   app.get(
     "/admin/reconciliation/runs/latest",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Latest reconciliation run", description: "Returns the summary of the most recent reconciliation run. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { data: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (_req, reply) => {
       const summary = await getLatestRunSummary();
       reply.send({ data: summary });
@@ -77,7 +77,7 @@ const v1Reconciliation: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/reconciliation/run
   app.post(
     "/admin/reconciliation/run",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Trigger reconciliation run", description: "Manually triggers a full reconciliation run. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { data: { type: "object", properties: { runId: { type: "string" }, findingsCount: { type: "integer" }, highCount: { type: "integer" }, warnCount: { type: "integer" }, quarantinedUserIds: { type: "array", items: { type: "string" } } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const result = await runReconciliation();
@@ -115,7 +115,7 @@ const v1Reconciliation: FastifyPluginAsync = async (app) => {
   // POST /v1/admin/users/:id/unquarantine
   app.post(
     "/admin/users/:id/unquarantine",
-    { preHandler: [requireUser, requireRole("ADMIN")] },
+    { schema: { tags: ["Admin"], summary: "Unquarantine user", description: "Removes quarantine status from a user account. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { data: { type: "object", properties: { userId: { type: "string" }, accountStatus: { type: "string" }, updatedAt: { type: "string" } } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] },
     async (req, reply) => {
       try {
         const { id } = unquarantineParams.parse(req.params);

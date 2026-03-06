@@ -17,7 +17,21 @@ import {
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
 const v1Events: FastifyPluginAsync = async (app) => {
-  app.get("/events", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/events", {
+    schema: {
+      tags: ["Events"],
+      summary: "Server-Sent Events stream",
+      description: "Real-time event stream. Events: order.updated, trade.created, wallet.updated, price.tick, replay.tick, trigger.fired, trigger.canceled. Sends heartbeat every 20s.",
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          description: "SSE event stream (text/event-stream)",
+          type: "string",
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const userId = req.user!.id;
 
     // Set SSE headers

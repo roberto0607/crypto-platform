@@ -48,13 +48,125 @@ const bookQuery = z.object({
 const tradingRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /pairs — List active pairs
-  app.get("/pairs", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/pairs", {
+    schema: {
+      tags: ["Pairs"],
+      summary: "List active trading pairs",
+      description: "Returns all active trading pairs with base/quote asset info.",
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            pairs: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  base_asset_id: { type: "string", format: "uuid" },
+                  quote_asset_id: { type: "string", format: "uuid" },
+                  symbol: { type: "string" },
+                  status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const pairs = await listActivePairs();
     return reply.send({ ok: true, pairs });
   });
 
   // POST /orders — Place order (matching-lite) — rate limit: 60/min per IP
-  app.post("/orders", { preHandler: [requireUser, requireVerified], config: { rateLimit: { max: 60, timeWindow: 60_000 } } }, async (req, reply) => {
+  app.post("/orders", {
+    schema: {
+      tags: ["Trading"],
+      summary: "Place a new order",
+      description: "**Rate limit:** 60 requests per minute per IP.\n\nPlaces a BUY or SELL order. Supports MARKET and LIMIT types. Send `Idempotency-Key` header for exactly-once semantics. Subject to pre-order governance checks (quotas, risk, circuit breakers).",
+      security: [{ bearerAuth: [] }],
+      headers: {
+        type: "object",
+        properties: {
+          "idempotency-key": { type: "string", description: "Idempotency key for exactly-once order placement" },
+        },
+      },
+      body: {
+        type: "object",
+        required: ["pairId", "side", "type", "qty"],
+        properties: {
+          pairId: { type: "string", format: "uuid", description: "Trading pair ID" },
+          side: { type: "string", enum: ["BUY", "SELL"] },
+          type: { type: "string", enum: ["MARKET", "LIMIT"] },
+          qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Order quantity (decimal string, up to 8 decimals)" },
+          limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for LIMIT orders, forbidden for MARKET orders" },
+        },
+      },
+      response: {
+        201: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            order: {
+              type: "object",
+              additionalProperties: true,
+              properties: {
+                id: { type: "string", format: "uuid" },
+                pair_id: { type: "string", format: "uuid" },
+                user_id: { type: "string", format: "uuid" },
+                side: { type: "string", enum: ["BUY", "SELL"] },
+                type: { type: "string", enum: ["MARKET", "LIMIT"] },
+                status: { type: "string", enum: ["OPEN", "FILLED", "PARTIALLY_FILLED", "CANCELLED"] },
+                qty: { type: "string" },
+                qty_filled: { type: "string" },
+                limit_price: { type: "string", nullable: true },
+              },
+            },
+            fills: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: true,
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  price: { type: "string" },
+                  qty: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+        409: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["idempotency_conflict"] },
+          },
+        },
+        503: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["pair_queue_overloaded"] },
+          },
+        },
+      },
+    },
+    preHandler: [requireUser, requireVerified],
+    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
+  }, async (req, reply) => {
     const parsed = placeOrderBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -113,7 +225,31 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orders — List user's orders
-  app.get("/orders", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/orders", {
+    schema: {
+      tags: ["Trading"],
+      summary: "List user's orders",
+      description: "Returns all orders for the authenticated user. Optionally filter by pair or status.",
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: "object",
+        properties: {
+          pairId: { type: "string", format: "uuid", description: "Filter by trading pair" },
+          status: { type: "string", description: "Filter by order status (e.g. OPEN, FILLED, CANCELLED)" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            orders: { type: "array", items: { type: "object", additionalProperties: true } },
+          },
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const actor = req.user!;
     const queryParsed = listOrdersQuery.safeParse(req.query);
     const filters = queryParsed.success ? queryParsed.data : {};
@@ -122,7 +258,54 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /orders/:id — Order detail + fills
-  app.get("/orders/:id", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/orders/:id", {
+    schema: {
+      tags: ["Trading"],
+      summary: "Get order detail with trades",
+      description: "Returns a single order and its associated trade fills. Only the order owner can access.",
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", format: "uuid", description: "Order ID" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            order: { type: "object", additionalProperties: true },
+            trades: { type: "array", items: { type: "object", additionalProperties: true } },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+        403: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["forbidden"] },
+          },
+        },
+        404: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["order_not_found"] },
+          },
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const paramsParsed = orderIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
@@ -143,7 +326,46 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // DELETE /orders/:id — Cancel open/partial order
-  app.delete("/orders/:id", { preHandler: [requireUser, requireVerified] }, async (req, reply) => {
+  app.delete("/orders/:id", {
+    schema: {
+      tags: ["Trading"],
+      summary: "Cancel an open order",
+      description: "Cancels an OPEN or PARTIALLY_FILLED order and releases the reserved balance.",
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", format: "uuid", description: "Order ID to cancel" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            order: { type: "object", additionalProperties: true },
+            releasedAmount: { type: "string", description: "Amount released back to available balance" },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["order_not_cancelable"] },
+          },
+        },
+        404: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["order_not_found"] },
+          },
+        },
+      },
+    },
+    preHandler: [requireUser, requireVerified],
+  }, async (req, reply) => {
     const paramsParsed = orderIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
@@ -172,7 +394,78 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /pairs/:id/book — Aggregated order book
-  app.get("/pairs/:id/book", { preHandler: requireUser }, async (req, reply) => {
+  app.get("/pairs/:id/book", {
+    schema: {
+      tags: ["Pairs"],
+      summary: "Get order book for a trading pair",
+      description: "Returns aggregated bid and ask levels for the specified trading pair. Each level shows the price, total quantity, and number of orders.",
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", format: "uuid", description: "Trading pair ID" },
+        },
+      },
+      querystring: {
+        type: "object",
+        properties: {
+          levels: { type: "integer", minimum: 1, maximum: 100, default: 20, description: "Number of price levels to return (default 20)" },
+        },
+      },
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: true },
+            book: {
+              type: "object",
+              properties: {
+                bids: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      price: { type: "string" },
+                      qty: { type: "string" },
+                      count: { type: "string" },
+                    },
+                  },
+                },
+                asks: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      price: { type: "string" },
+                      qty: { type: "string" },
+                      count: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["invalid_input"] },
+            details: { type: "object", additionalProperties: true },
+          },
+        },
+        404: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", const: false },
+            error: { type: "string", enum: ["pair_not_found"] },
+          },
+        },
+      },
+    },
+    preHandler: requireUser,
+  }, async (req, reply) => {
     const paramsParsed = pairIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: paramsParsed.error.flatten() });
