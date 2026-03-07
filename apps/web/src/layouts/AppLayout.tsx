@@ -44,6 +44,7 @@ const NAV_ITEMS = [
   { to: "/positions", label: "Positions", icon: "layers" },
   { to: "/triggers", label: "Triggers", icon: "zap" },
   { to: "/portfolio", label: "Portfolio", icon: "trendingUp" },
+  { to: "/journal", label: "Journal", icon: "list" },
   { to: "/competitions", label: "Compete", icon: "trophy" },
   { to: "/bot", label: "Bot", icon: "cpu" },
   { to: "/replay", label: "Replay", icon: "play" },

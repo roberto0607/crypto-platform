@@ -28,6 +28,7 @@ import { computeMarketExecution } from "../sim/slippageModel";
 import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { txWithEvents } from "../utils/txWithEvents";
+import { processFillForJournal } from "../journal/journalService";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -258,6 +259,19 @@ export async function placeOrderWithSnapshot(
                         competitionId,
                     });
 
+                    // Journal: record taker fill for FIFO P&L
+                    await processFillForJournal(client, {
+                        userId,
+                        pairId: body.pairId,
+                        fillId: fill.id,
+                        side: body.side,
+                        price: fillPrice,
+                        qty: fillQty,
+                        feeQuote: takerFee.feeAmount,
+                        filledAt: new Date(fill.executed_at),
+                        competitionId: competitionId ?? null,
+                    });
+
                     // Apply fill to maker's position (if not system fill)
                     if (!fill.is_system_fill) {
                         const makerOrderId = body.side === "BUY" ? fill.sell_order_id : fill.buy_order_id;
@@ -289,6 +303,19 @@ export async function placeOrderWithSnapshot(
                                 feeQuote: makerFee.feeAmount,
                                 ts: executedAtMs,
                                 competitionId,
+                            });
+
+                            // Journal: record maker fill for FIFO P&L
+                            await processFillForJournal(client, {
+                                userId: makerUserId,
+                                pairId: body.pairId,
+                                fillId: fill.id,
+                                side: makerSide as "BUY" | "SELL",
+                                price: fillPrice,
+                                qty: fillQty,
+                                feeQuote: makerFee.feeAmount,
+                                filledAt: new Date(fill.executed_at),
+                                competitionId: competitionId ?? null,
                             });
                         }
                     }

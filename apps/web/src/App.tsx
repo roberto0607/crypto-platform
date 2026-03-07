@@ -27,6 +27,7 @@ import PortfolioPage from "@/pages/PortfolioPage";
 import SettingsPage from "@/pages/SettingsPage";
 import CompetitionsPage from "@/pages/CompetitionsPage";
 import CompetitionDetailPage from "@/pages/CompetitionDetailPage";
+import JournalPage from "@/pages/JournalPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import LandingPage from "@/pages/LandingPage";
 
@@ -175,6 +176,7 @@ export default function App() {
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/competitions" element={<CompetitionsPage />} />
           <Route path="/competitions/:id" element={<CompetitionDetailPage />} />
+          <Route path="/journal" element={<JournalPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
