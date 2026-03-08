@@ -11,8 +11,11 @@ export interface Competition {
     status: "UPCOMING" | "ACTIVE" | "ENDED" | "CANCELLED";
     max_participants: number | null;
     pairs_allowed: "all" | string[];
-    created_by: string;
+    created_by: string | null;
     created_at: string;
+    competition_type?: "CUSTOM" | "WEEKLY";
+    tier?: string | null;
+    week_id?: string | null;
 }
 
 export interface LeaderboardEntry {
@@ -26,6 +29,26 @@ export interface LeaderboardEntry {
     trades_count: number;
     display_name: string;
     updated_at: string;
+    user_tier?: string;
+    qualified?: boolean;
+    has_champion_badge?: boolean;
+}
+
+export interface Badge {
+    id: string;
+    badge_type: string;
+    tier: string;
+    week_id: string;
+    competition_id: string;
+    earned_at: string;
+}
+
+export interface TierHistoryEntry {
+    old_tier: string;
+    new_tier: string;
+    reason: string;
+    week_id: string | null;
+    created_at: string;
 }
 
 export interface UserCompetition {
@@ -42,7 +65,7 @@ export interface UserCompetition {
     final_return_pct: string | null;
 }
 
-export function listCompetitions(params?: { status?: string; limit?: number; offset?: number }) {
+export function listCompetitions(params?: { status?: string; competition_type?: string; tier?: string; limit?: number; offset?: number }) {
     return client.get<{ ok: true; competitions: Competition[]; total: number }>(
         "/v1/competitions",
         { params },
@@ -120,4 +143,24 @@ export function createCompetition(body: {
 
 export function cancelCompetition(id: string) {
     return client.patch<{ ok: true }>(`/v1/admin/competitions/${id}/cancel`);
+}
+
+// Weekly competitions
+export function getCurrentWeeklyCompetition() {
+    return client.get<{ ok: true; competition: Competition | null; joined: boolean; tier: string }>(
+        "/v1/competitions/weekly/current",
+    );
+}
+
+// Tier & badges
+export function getUserTier() {
+    return client.get<{ ok: true; tier: string; history: TierHistoryEntry[] }>(
+        "/v1/profile/tier",
+    );
+}
+
+export function getUserBadges() {
+    return client.get<{ ok: true; badges: Badge[] }>(
+        "/v1/profile/badges",
+    );
 }

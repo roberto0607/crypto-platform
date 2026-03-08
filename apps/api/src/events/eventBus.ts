@@ -34,6 +34,7 @@ function deliverLocally(event: AppEvent): void {
   const deliveryStart = performance.now();
 
   if (event.userId) {
+    // User-scoped event → deliver to that user's handlers only
     const handlers = userHandlers.get(event.userId);
     if (handlers) {
       for (const handler of handlers) {
@@ -42,6 +43,18 @@ function deliverLocally(event: AppEvent): void {
         } catch (err) {
           eventsDeliveryFailuresTotal.inc();
           logger.error({ eventType: "event.delivery_error", eventKind: event.type, userId: event.userId, err }, "Event handler error");
+        }
+      }
+    }
+  } else {
+    // Broadcast event (no userId) → deliver to ALL user handlers
+    for (const handlers of userHandlers.values()) {
+      for (const handler of handlers) {
+        try {
+          handler(event);
+        } catch (err) {
+          eventsDeliveryFailuresTotal.inc();
+          logger.error({ eventType: "event.delivery_error", eventKind: event.type, err }, "Broadcast event handler error");
         }
       }
     }

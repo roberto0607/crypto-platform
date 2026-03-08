@@ -108,3 +108,48 @@ export async function notifyOrderFilled(
         metadata: { pairSymbol, side, qty, price },
     });
 }
+
+export async function notifyTierPromotion(
+    userId: string,
+    oldTier: string,
+    newTier: string,
+    weekId: string,
+): Promise<void> {
+    await notify({
+        userId,
+        kind: "TIER_PROMOTION",
+        title: `Promoted to ${newTier}!`,
+        body: `Great performance! You moved up from ${oldTier} to ${newTier}.`,
+        metadata: { oldTier, newTier, weekId },
+    });
+}
+
+export async function notifyTierDemotion(
+    userId: string,
+    oldTier: string,
+    newTier: string,
+    weekId: string,
+): Promise<void> {
+    await notify({
+        userId,
+        kind: "TIER_DEMOTION",
+        title: `Moved to ${newTier}`,
+        body: `You moved from ${oldTier} to ${newTier}. Keep trading to climb back up!`,
+        metadata: { oldTier, newTier, weekId },
+    });
+}
+
+export async function notifyWeeklyChampion(
+    userId: string,
+    tier: string,
+    weekId: string,
+    competitionId: string,
+): Promise<void> {
+    await notify({
+        userId,
+        kind: "WEEKLY_CHAMPION",
+        title: `Weekly Champion - ${tier}!`,
+        body: `You finished #1 in the ${tier} tier. A champion badge has been added to your profile!`,
+        metadata: { tier, weekId, competitionId },
+    });
+}

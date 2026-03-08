@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 import type { ParticipantRow } from "./competitionTypes.js";
 
 const COLUMNS = `id, competition_id, user_id, joined_at, starting_equity,
-    final_equity, final_return_pct, final_max_drawdown_pct, final_rank, status`;
+    final_equity, final_return_pct, final_max_drawdown_pct, final_rank, status, qualified`;
 
 export async function insertParticipant(
     client: PoolClient,

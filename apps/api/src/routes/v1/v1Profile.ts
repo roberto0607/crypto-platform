@@ -2,6 +2,8 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { pool } from "../../db/pool.js";
 import { requireUser } from "../../auth/requireUser.js";
+import { getUserTier, getUserTierHistory } from "../../competitions/tierRepo.js";
+import { getUserBadges } from "../../competitions/badgeRepo.js";
 
 
 const displayNameSchema = z.object({
@@ -136,6 +138,54 @@ const v1Profile: FastifyPluginAsync = async (app) => {
                 role: user.role,
             },
         });
+    });
+    // GET /v1/profile/tier — Get user's tier and history
+    app.get("/profile/tier", {
+        schema: {
+            tags: ["Profile"],
+            summary: "Get user tier",
+            description: "Returns the authenticated user's current tier and tier change history.",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        const userId = req.user!.id;
+        const tier = await getUserTier(userId);
+        const history = await getUserTierHistory(userId, 20);
+        return reply.send({ ok: true, tier, history });
+    });
+
+    // GET /v1/profile/badges — Get user's badges
+    app.get("/profile/badges", {
+        schema: {
+            tags: ["Profile"],
+            summary: "Get user badges",
+            description: "Returns all badges earned by the authenticated user.",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        const userId = req.user!.id;
+        const badges = await getUserBadges(userId);
+        return reply.send({ ok: true, badges });
+    });
+
+    // GET /v1/users/:id/badges — Public: get badges for any user
+    app.get("/users/:id/badges", {
+        schema: {
+            tags: ["Profile"],
+            summary: "Get user badges (public)",
+            description: "Returns all badges for a given user. No authentication required.",
+            params: {
+                type: "object",
+                properties: { id: { type: "string", format: "uuid" } },
+                required: ["id"],
+            },
+        },
+    }, async (req, reply) => {
+        const { id } = req.params as { id: string };
+        const badges = await getUserBadges(id);
+        return reply.send({ ok: true, badges });
     });
 };
 

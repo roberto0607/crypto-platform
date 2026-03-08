@@ -9,6 +9,7 @@ import { cleanupEmailTokensJob } from "./cleanupEmailTokensJob";
 import { competitionLifecycleJob } from "./competitionLifecycleJob";
 import { competitionLeaderboardJob } from "./competitionLeaderboardJob";
 import { candleRollupJob } from "./candleRollupJob";
+import { weeklyCompetitionJob } from "./weeklyCompetitionJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -23,4 +24,5 @@ export const allJobs: JobDefinition[] = [
     competitionLifecycleJob,
     competitionLeaderboardJob,
     candleRollupJob,
+    weeklyCompetitionJob,
 ];

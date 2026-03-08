@@ -27,7 +27,7 @@ export function CompetitionSelector() {
             <option value="">Free Play</option>
             {activeComps.map((c) => (
                 <option key={c.competition_id} value={c.competition_id}>
-                    {c.competition_name}
+                    {c.competition_name.startsWith("Weekly") ? `[Weekly] ${c.competition_name}` : c.competition_name}
                 </option>
             ))}
         </select>

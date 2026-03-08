@@ -10,9 +10,17 @@ export async function getLeaderboard(
         `SELECT lb.competition_id, lb.user_id, lb.rank, lb.equity, lb.return_pct,
                 lb.max_drawdown_pct, lb.current_drawdown_pct, lb.trades_count,
                 lb.updated_at,
-                SPLIT_PART(u.email, '@', 1) AS display_name
+                COALESCE(u.display_name, SPLIT_PART(u.email, '@', 1)) AS display_name,
+                COALESCE(ut.tier, 'ROOKIE') AS user_tier,
+                COALESCE(cp.qualified, false) AS qualified,
+                CASE WHEN ub.id IS NOT NULL THEN true ELSE false END AS has_champion_badge
          FROM competition_leaderboard lb
          JOIN users u ON u.id = lb.user_id
+         LEFT JOIN user_tiers ut ON ut.user_id = lb.user_id
+         LEFT JOIN competition_participants cp
+             ON cp.competition_id = lb.competition_id AND cp.user_id = lb.user_id
+         LEFT JOIN user_badges ub
+             ON ub.user_id = lb.user_id AND ub.competition_id = lb.competition_id
          WHERE lb.competition_id = $1
          ORDER BY lb.rank ASC
          LIMIT $2 OFFSET $3`,

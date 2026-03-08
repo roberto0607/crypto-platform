@@ -13,9 +13,9 @@ const lastSyncTime = new Map<string, number>();
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 
-// Kraken uses XBT for Bitcoin
+// Kraken WS v2 uses BTC (not XBT) — symbols match ours directly
 export const SYMBOL_MAP: Record<string, string> = {
-    "BTC/USD": "XBT/USD",
+    "BTC/USD": "BTC/USD",
     "ETH/USD": "ETH/USD",
     "SOL/USD": "SOL/USD",
 };

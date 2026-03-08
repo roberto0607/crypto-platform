@@ -6,6 +6,7 @@ import { v1HandleError } from "../../http/v1Error";
 import {
     createCompetition,
     findCompetitionById,
+    findWeeklyCompetition,
     listCompetitions,
     lockCompetitionForUpdate,
     updateCompetitionStatus,
@@ -20,6 +21,8 @@ import {
     updateParticipantStatus,
     findParticipant,
 } from "../../competitions/participantRepo";
+import { ensureUserTier, getUserTier } from "../../competitions/tierRepo";
+import { getISOWeekId } from "../../competitions/weeklyUtils";
 import { pool } from "../../db/pool";
 import { AppError } from "../../errors/AppError";
 
@@ -47,6 +50,8 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
                 type: "object",
                 properties: {
                     status: { type: "string", description: "Filter by status (UPCOMING, ACTIVE, ENDED, CANCELLED)" },
+                    competition_type: { type: "string", description: "Filter by type (CUSTOM, WEEKLY)" },
+                    tier: { type: "string", description: "Filter by tier (ROOKIE, TRADER, SPECIALIST, EXPERT, MASTER, LEGEND)" },
                     limit: { type: "string", description: "Page size (default 50)" },
                     offset: { type: "string", description: "Offset (default 0)" },
                 },
@@ -63,13 +68,88 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
         },
     }, async (req, reply) => {
         try {
-            const query = req.query as { status?: string; limit?: string; offset?: string };
+            const query = req.query as { status?: string; competition_type?: string; tier?: string; limit?: string; offset?: string };
             const result = await listCompetitions({
                 status: query.status,
+                competitionType: query.competition_type,
+                tier: query.tier,
                 limit: query.limit ? parseInt(query.limit) : undefined,
                 offset: query.offset ? parseInt(query.offset) : undefined,
             });
             return reply.send({ data: result.competitions, total: result.total });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /competitions/weekly/current — this week's competition for user's tier
+    app.get("/competitions/weekly/current", {
+        schema: {
+            tags: ["Competitions"],
+            summary: "Current weekly competition",
+            description: "Returns this week's weekly competition for the authenticated user's tier.",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const userId = req.user!.id;
+            await ensureUserTier(userId);
+            const tier = await getUserTier(userId);
+            const weekId = getISOWeekId(new Date());
+            const competition = await findWeeklyCompetition(tier, weekId);
+
+            let joined = false;
+            if (competition) {
+                const participant = await findParticipant(competition.id, userId);
+                joined = participant != null && participant.status === "ACTIVE";
+            }
+
+            return reply.send({ ok: true, competition, joined, tier });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /competitions/weekly/history — past weekly competitions for user's tier
+    app.get("/competitions/weekly/history", {
+        schema: {
+            tags: ["Competitions"],
+            summary: "Weekly competition history",
+            description: "Returns past weekly competitions for the user's tier with their final rank.",
+            security: [{ bearerAuth: [] }],
+            querystring: {
+                type: "object",
+                properties: {
+                    limit: { type: "string", description: "Page size (default 10)" },
+                    offset: { type: "string", description: "Offset (default 0)" },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const userId = req.user!.id;
+            const tier = await getUserTier(userId);
+            const query = req.query as { limit?: string; offset?: string };
+            const limit = query.limit ? parseInt(query.limit) : 10;
+            const offset = query.offset ? parseInt(query.offset) : 0;
+
+            const { rows } = await pool.query(
+                `SELECT c.id, c.name, c.week_id, c.start_at, c.end_at, c.tier,
+                        cp.final_rank, cp.final_equity, cp.final_return_pct, cp.qualified
+                 FROM competitions c
+                 LEFT JOIN competition_participants cp
+                     ON cp.competition_id = c.id AND cp.user_id = $1
+                 WHERE c.competition_type = 'WEEKLY'
+                   AND c.tier = $2
+                   AND c.status = 'ENDED'
+                 ORDER BY c.end_at DESC
+                 LIMIT $3 OFFSET $4`,
+                [userId, tier, limit, offset],
+            );
+
+            return reply.send({ ok: true, data: rows, tier });
         } catch (err) {
             return v1HandleError(reply, err);
         }

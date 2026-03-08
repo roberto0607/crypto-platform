@@ -18,6 +18,7 @@ import {
     type ComparisonParticipant,
 } from "@/api/endpoints/competitions";
 import { ComparisonChart } from "@/components/competitions/ComparisonChart";
+import { TierBadge } from "@/components/competitions/TierBadge";
 
 export default function CompetitionDetailPage() {
     const { id } = useParams<{ id: string }>();
@@ -60,7 +61,10 @@ export default function CompetitionDetailPage() {
 
     const isActive = detail.status === "ACTIVE";
     const isUpcoming = detail.status === "UPCOMING";
-    const canJoin = isActive || isUpcoming;
+    const isEnded = detail.status === "ENDED";
+    const isWeekly = detail.competition_type === "WEEKLY";
+    const hasJoined = leaderboard.some((e) => e.user_id === userId);
+    const canJoin = (isActive || isUpcoming) && !hasJoined;
 
     // Countdown timer
     const now = Date.now();
@@ -200,7 +204,9 @@ export default function CompetitionDetailPage() {
                         <thead>
                             <tr className="text-gray-500 text-xs uppercase border-b border-gray-800">
                                 <th className="px-5 py-2 text-left">#</th>
+                                {isWeekly && <th className="px-5 py-2 text-left">Tier</th>}
                                 <th className="px-5 py-2 text-left">Trader</th>
+                                {isWeekly && <th className="px-5 py-2 text-center">Qualified</th>}
                                 <th className="px-5 py-2 text-right">Return %</th>
                                 <th className="px-5 py-2 text-right">Equity</th>
                                 <th className="px-5 py-2 text-right">Max DD</th>
@@ -211,6 +217,7 @@ export default function CompetitionDetailPage() {
                             {leaderboard.map((entry) => {
                                 const isCurrentUser = entry.user_id === userId;
                                 const returnPct = parseFloat(entry.return_pct);
+                                const isChampion = isWeekly && isEnded && entry.has_champion_badge;
                                 return (
                                     <tr
                                         key={entry.user_id}
@@ -221,12 +228,29 @@ export default function CompetitionDetailPage() {
                                         <td className="px-5 py-3 text-gray-400 font-mono">
                                             {entry.rank}
                                         </td>
+                                        {isWeekly && (
+                                            <td className="px-5 py-3">
+                                                <TierBadge tier={entry.user_tier ?? "ROOKIE"} size="sm" />
+                                            </td>
+                                        )}
                                         <td className="px-5 py-3 text-white">
+                                            {isChampion && <span className="mr-1" title="Weekly Champion">&#x1F3C6;</span>}
                                             {entry.display_name}
                                             {isCurrentUser && (
                                                 <span className="ml-2 text-xs text-blue-400">(you)</span>
                                             )}
                                         </td>
+                                        {isWeekly && (
+                                            <td className="px-5 py-3 text-center">
+                                                {entry.qualified ? (
+                                                    <span className="text-green-400" title="Qualified">&#x2713;</span>
+                                                ) : (
+                                                    <span className="text-yellow-400 text-xs font-mono">
+                                                        {entry.trades_count}/5
+                                                    </span>
+                                                )}
+                                            </td>
+                                        )}
                                         <td className={`px-5 py-3 text-right font-mono ${
                                             returnPct > 0 ? "text-green-400" : returnPct < 0 ? "text-red-400" : "text-gray-400"
                                         }`}>
