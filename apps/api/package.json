@@ -27,7 +27,9 @@
     "load:mixed": "k6 run load/k6/scenario_mixed_realistic.js",
     "load:outbox": "k6 run load/k6/scenario_outbox_pressure.js",
     "load:all": "pnpm load:auth && pnpm load:reads && pnpm load:writes && pnpm load:mixed && pnpm load:outbox",
-    "openapi": "tsx src/scripts/generateOpenapi.ts"
+    "openapi": "tsx src/scripts/generateOpenapi.ts",
+    "backfill": "tsx src/scripts/backfillCandles.ts",
+    "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],
   "author": "",

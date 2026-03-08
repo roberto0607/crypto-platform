@@ -48,22 +48,30 @@ export function IndicatorToolbar() {
             On Chart
           </div>
           {OVERLAY_INDICATORS.map((ind) => (
-            <label
+            <button
               key={ind.key}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 cursor-pointer"
+              onClick={() => toggle(ind.key)}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 cursor-pointer w-full text-left"
             >
-              <input
-                type="checkbox"
-                checked={config[ind.key]}
-                onChange={() => toggle(ind.key)}
-                className="rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-0 focus:ring-offset-0"
-              />
+              <span
+                className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
+                  config[ind.key]
+                    ? "bg-blue-600 border-blue-600"
+                    : "border-gray-600 bg-gray-800"
+                }`}
+              >
+                {config[ind.key] && (
+                  <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M2 6l3 3 5-5" />
+                  </svg>
+                )}
+              </span>
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
                 style={{ backgroundColor: ind.color }}
               />
               <span className="text-xs text-gray-300">{ind.label}</span>
-            </label>
+            </button>
           ))}
         </div>
       )}

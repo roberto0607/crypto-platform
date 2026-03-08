@@ -33,31 +33,34 @@ function Row({
   const price = new Decimal(level.price);
   const total = qty.mul(price);
   const depthPct = maxQ.isZero() ? 0 : qty.div(maxQ).mul(100).toNumber();
-  const barColor = side === "bid" ? "bg-green-500/15" : "bg-red-500/15";
   const textColor = side === "bid" ? "text-green-400" : "text-red-400";
 
+  const bgColor = side === "bid" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)";
+  const bgPosition = side === "bid" ? "right" : "left";
+
   return (
-    <tr className="relative text-xs leading-6 hover:bg-gray-800/50 cursor-pointer">
-      {/* Depth bar background */}
-      <td colSpan={3} className="absolute inset-0 p-0">
-        <div
-          className={`h-full ${barColor}`}
-          style={{ width: `${depthPct}%`, marginLeft: side === "bid" ? "auto" : undefined, marginRight: side === "ask" ? "auto" : undefined }}
-        />
-      </td>
+    <tr
+      className="text-xs leading-6 hover:bg-gray-800/50 cursor-pointer"
+      style={{
+        backgroundImage: `linear-gradient(${bgColor}, ${bgColor})`,
+        backgroundSize: `${depthPct}% 100%`,
+        backgroundRepeat: "no-repeat",
+        backgroundPosition: bgPosition,
+      }}
+    >
       <td
-        className={`relative px-2 text-right font-mono ${textColor}`}
+        className={`px-2 text-right font-mono ${textColor}`}
         onClick={() => onClickPrice(level.price)}
       >
         {formatDecimal(level.price, 2)}
       </td>
       <td
-        className="relative px-2 text-right font-mono text-gray-300"
+        className="px-2 text-right font-mono text-gray-300"
         onClick={() => onClickQty(level.qty)}
       >
         {formatDecimal(level.qty, 6)}
       </td>
-      <td className="relative px-2 text-right font-mono text-gray-500">
+      <td className="px-2 text-right font-mono text-gray-500">
         {formatDecimal(total.toString(), 2)}
       </td>
     </tr>

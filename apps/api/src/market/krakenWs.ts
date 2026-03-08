@@ -14,7 +14,7 @@ const lastSyncTime = new Map<string, number>();
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 
 // Kraken uses XBT for Bitcoin
-const SYMBOL_MAP: Record<string, string> = {
+export const SYMBOL_MAP: Record<string, string> = {
     "BTC/USD": "XBT/USD",
     "ETH/USD": "ETH/USD",
     "SOL/USD": "SOL/USD",
@@ -51,73 +51,97 @@ let stopped = false;
 let flushInterval: ReturnType<typeof setInterval> | null = null;
 
 function subscribe(socket: WebSocket): void {
-    const msg = {
+    const symbols = Object.values(SYMBOL_MAP);
+
+    // Ticker: bid/ask/last for snapshots and price.tick events
+    socket.send(JSON.stringify({
         method: "subscribe",
-        params: {
-            channel: "ticker",
-            symbol: Object.values(SYMBOL_MAP),
-        },
-    };
-    socket.send(JSON.stringify(msg));
+        params: { channel: "ticker", symbol: symbols },
+    }));
+
+    // Trade: individual trades with real volume for candle aggregation
+    socket.send(JSON.stringify({
+        method: "subscribe",
+        params: { channel: "trade", symbol: symbols, snapshot: false },
+    }));
+}
+
+async function handleTickerMessage(data: any[]): Promise<void> {
+    for (const tick of data) {
+        const krakenSymbol = tick.symbol;
+        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        if (!ourSymbol) continue;
+
+        const last = String(tick.last);
+        const bid = tick.bid != null ? String(tick.bid) : null;
+        const ask = tick.ask != null ? String(tick.ask) : null;
+
+        await setSnapshot(ourSymbol, {
+            bid,
+            ask,
+            last,
+            ts: new Date().toISOString(),
+        });
+
+        // Publish price.tick for trigger engine
+        const pairId = symbolToPairId[ourSymbol];
+        if (pairId) {
+            try {
+                publish(createEvent("price.tick", {
+                    pairId,
+                    symbol: ourSymbol,
+                    bid,
+                    ask,
+                    last,
+                }));
+            } catch {
+                // Events must never break the feed
+            }
+
+            // Sync last_price to DB (debounced)
+            const now = Date.now();
+            const lastSync = lastSyncTime.get(pairId) ?? 0;
+            if (now - lastSync >= config.lastPriceSyncIntervalMs) {
+                lastSyncTime.set(pairId, now);
+                pool.query(
+                    `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
+                    [last, pairId],
+                ).catch((err) => {
+                    logger.error({ err, pairId }, "last_price_sync_failed");
+                });
+            }
+        }
+    }
+}
+
+function handleTradeMessage(data: any[]): void {
+    for (const trade of data) {
+        const krakenSymbol = trade.symbol;
+        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        if (!ourSymbol) continue;
+
+        const pairId = symbolToPairId[ourSymbol];
+        if (!pairId) continue;
+
+        const price = String(trade.price);
+        const volume = String(trade.qty);
+        const ts = trade.timestamp
+            ? new Date(trade.timestamp).getTime()
+            : Date.now();
+
+        aggregateTick(pairId, { price, volume, ts });
+    }
 }
 
 async function handleMessage(raw: WebSocket.Data): Promise<void> {
     try {
         const msg = JSON.parse(raw.toString());
+        if (msg.type !== "update") return;
 
-        if (msg.channel !== "ticker" || msg.type !== "update") return;
-
-        for (const tick of msg.data) {
-            const krakenSymbol = tick.symbol;
-            const ourSymbol = REVERSE_MAP[krakenSymbol];
-            if (!ourSymbol) continue;
-
-            const last = String(tick.last);
-            const bid = tick.bid != null ? String(tick.bid) : null;
-            const ask = tick.ask != null ? String(tick.ask) : null;
-
-            await setSnapshot(ourSymbol, {
-                bid,
-                ask,
-                last,
-                ts: new Date().toISOString(),
-            });
-
-            // Publish price.tick for trigger engine
-            const pairId = symbolToPairId[ourSymbol];
-            if (pairId) {
-                try {
-                    publish(createEvent("price.tick", {
-                        pairId,
-                        symbol: ourSymbol,
-                        bid,
-                        ask,
-                        last,
-                    }));
-                } catch {
-                    // Events must never break the feed
-                }
-
-                // Sync last_price to DB (debounced)
-                const now = Date.now();
-                const lastSync = lastSyncTime.get(pairId) ?? 0;
-                if (now - lastSync >= config.lastPriceSyncIntervalMs) {
-                    lastSyncTime.set(pairId, now);
-                    pool.query(
-                        `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
-                        [last, pairId],
-                    ).catch((err) => {
-                        logger.error({ err, pairId }, "last_price_sync_failed");
-                    });
-                }
-
-                // Feed tick to candle aggregator
-                aggregateTick(pairId, {
-                    price: last,
-                    volume: "0",
-                    ts: Date.now(),
-                });
-            }
+        if (msg.channel === "ticker") {
+            await handleTickerMessage(msg.data);
+        } else if (msg.channel === "trade") {
+            handleTradeMessage(msg.data);
         }
     } catch {
         // Ignore unparseable messages (heartbeats, etc.)
