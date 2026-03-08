@@ -1,15 +1,30 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
+    createSeriesMarkers,
     CandlestickSeries,
+    LineSeries,
+    LineStyle,
     type IChartApi,
     type ISeriesApi,
+    type ISeriesMarkersPluginApi,
     type CandlestickData,
     type Time,
     ColorType,
+    type IPriceLine,
+    type SeriesMarker,
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
 import { useTradingStore } from "@/stores/tradingStore";
+import { IndicatorToolbar } from "./IndicatorToolbar";
+import {
+    ema,
+    vwap,
+    prevDayHighLow,
+    swingPoints,
+    type Candle as IndicatorCandle,
+    type Point,
+} from "@/lib/indicators";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -23,14 +38,40 @@ function candleToLW(c: Candle): CandlestickData<Time> {
     };
 }
 
+function apiCandleToIndicator(c: Candle): IndicatorCandle {
+    return {
+        time: new Date(c.ts).getTime() / 1000,
+        open: parseFloat(c.open),
+        high: parseFloat(c.high),
+        low: parseFloat(c.low),
+        close: parseFloat(c.close),
+        volume: parseFloat(c.volume),
+    };
+}
+
+function pointsToLW(points: Point[]): { time: Time; value: number }[] {
+    return points.map((p) => ({ time: p.time as Time, value: p.value }));
+}
+
+interface OverlaySeries {
+    ema200?: ISeriesApi<"Line">;
+    ema50?: ISeriesApi<"Line">;
+    vwap?: ISeriesApi<"Line">;
+}
+
 export function CandlestickChart() {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+    const overlayRef = useRef<OverlaySeries>({});
+    const priceLinesRef = useRef<IPriceLine[]>([]);
+    const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const rawCandlesRef = useRef<Candle[]>([]);
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
+    const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
 
     // Create chart instance
     useEffect(() => {
@@ -85,8 +126,136 @@ export function CandlestickChart() {
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
+            overlayRef.current = {};
+            priceLinesRef.current = [];
         };
     }, []);
+
+    // Remove all overlay series and price lines
+    const clearOverlays = useCallback(() => {
+        const chart = chartRef.current;
+        const candleSeries = seriesRef.current;
+        if (!chart) return;
+
+        const overlay = overlayRef.current;
+        if (overlay.ema200) { chart.removeSeries(overlay.ema200); overlay.ema200 = undefined; }
+        if (overlay.ema50) { chart.removeSeries(overlay.ema50); overlay.ema50 = undefined; }
+        if (overlay.vwap) { chart.removeSeries(overlay.vwap); overlay.vwap = undefined; }
+
+        // Remove price lines (PDH/PDL)
+        if (candleSeries) {
+            for (const pl of priceLinesRef.current) {
+                candleSeries.removePriceLine(pl);
+            }
+        }
+        priceLinesRef.current = [];
+
+        // Clear swing markers
+        if (markersPluginRef.current) {
+            markersPluginRef.current.detach();
+            markersPluginRef.current = null;
+        }
+    }, []);
+
+    // Render indicator overlays from raw candle data
+    const renderOverlays = useCallback((candles: Candle[]) => {
+        const chart = chartRef.current;
+        const candleSeries = seriesRef.current;
+        if (!chart || !candleSeries || candles.length === 0) return;
+
+        clearOverlays();
+
+        const indCandles = candles.map(apiCandleToIndicator);
+
+        // EMA 200
+        if (indicatorConfig.ema200) {
+            const series = chart.addSeries(LineSeries, {
+                color: "#a855f7",
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            });
+            series.setData(pointsToLW(ema(indCandles, 200)));
+            overlayRef.current.ema200 = series;
+        }
+
+        // EMA 50
+        if (indicatorConfig.ema50) {
+            const series = chart.addSeries(LineSeries, {
+                color: "#eab308",
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            });
+            series.setData(pointsToLW(ema(indCandles, 50)));
+            overlayRef.current.ema50 = series;
+        }
+
+        // VWAP
+        if (indicatorConfig.vwap) {
+            const series = chart.addSeries(LineSeries, {
+                color: "#06b6d4",
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            });
+            series.setData(pointsToLW(vwap(indCandles)));
+            overlayRef.current.vwap = series;
+        }
+
+        // Key Levels — PDH/PDL
+        if (indicatorConfig.keyLevels) {
+            const levels = prevDayHighLow(indCandles);
+            if (levels) {
+                const pdhLine = candleSeries.createPriceLine({
+                    price: levels.pdh,
+                    color: "#94a3b8",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: "PDH",
+                });
+                const pdlLine = candleSeries.createPriceLine({
+                    price: levels.pdl,
+                    color: "#94a3b8",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: "PDL",
+                });
+                priceLinesRef.current.push(pdhLine, pdlLine);
+            }
+        }
+
+        // Swing Points
+        if (indicatorConfig.swingPoints) {
+            const swings = swingPoints(indCandles);
+            const markers: SeriesMarker<Time>[] = [];
+
+            for (const h of swings.highs) {
+                markers.push({
+                    time: h.time as Time,
+                    position: "aboveBar",
+                    shape: "arrowDown",
+                    color: "#ef4444",
+                    text: "SH",
+                });
+            }
+            for (const l of swings.lows) {
+                markers.push({
+                    time: l.time as Time,
+                    position: "belowBar",
+                    shape: "arrowUp",
+                    color: "#22c55e",
+                    text: "SL",
+                });
+            }
+
+            // Markers must be sorted by time
+            markers.sort((a, b) => (a.time as number) - (b.time as number));
+            markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
+        }
+    }, [indicatorConfig, clearOverlays]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
@@ -99,8 +268,12 @@ export function CandlestickChart() {
                 limit: 300,
             });
 
+            rawCandlesRef.current = data.candles;
             const lwData = data.candles.map(candleToLW);
             seriesRef.current.setData(lwData);
+
+            // Render indicator overlays
+            renderOverlays(data.candles);
 
             // Fit content to show all candles
             chartRef.current?.timeScale().fitContent();
@@ -109,11 +282,18 @@ export function CandlestickChart() {
         } finally {
             setLoading(false);
         }
-    }, [selectedPairId, timeframe]);
+    }, [selectedPairId, timeframe, renderOverlays]);
 
     useEffect(() => {
         fetchCandles();
     }, [fetchCandles]);
+
+    // Re-render overlays when indicator config changes (without re-fetching)
+    useEffect(() => {
+        if (rawCandlesRef.current.length > 0) {
+            renderOverlays(rawCandlesRef.current);
+        }
+    }, [renderOverlays]);
 
     // Live update: price.tick → update current candle
     useEffect(() => {
@@ -140,7 +320,7 @@ export function CandlestickChart() {
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
     }, [selectedPairId]);
 
-    // Live update: candle.closed → append completed candle
+    // Live update: candle.closed → append completed candle + update overlays incrementally
     useEffect(() => {
         if (!selectedPairId) return;
 
@@ -156,15 +336,27 @@ export function CandlestickChart() {
                 low: parseFloat(detail.low),
                 close: parseFloat(detail.close),
             });
+
+            // Append to raw candles and re-render overlays
+            const newCandle: Candle = {
+                ts: new Date(detail.ts).toISOString(),
+                open: detail.open,
+                high: detail.high,
+                low: detail.low,
+                close: detail.close,
+                volume: detail.volume ?? "0",
+            };
+            rawCandlesRef.current = [...rawCandlesRef.current, newCandle];
+            renderOverlays(rawCandlesRef.current);
         };
 
         window.addEventListener("sse:candle.closed", handleCandleClosed);
         return () => window.removeEventListener("sse:candle.closed", handleCandleClosed);
-    }, [selectedPairId, timeframe]);
+    }, [selectedPairId, timeframe, renderOverlays]);
 
     return (
         <div className="flex flex-col h-full">
-            {/* Timeframe selector */}
+            {/* Timeframe selector + Indicator toolbar */}
             <div className="flex items-center gap-1 mb-2">
                 {TIMEFRAMES.map((tf) => (
                     <button
@@ -179,6 +371,9 @@ export function CandlestickChart() {
                         {tf}
                     </button>
                 ))}
+                <div className="ml-2">
+                    <IndicatorToolbar />
+                </div>
                 {loading && (
                     <span className="text-gray-600 text-xs ml-2">Loading...</span>
                 )}

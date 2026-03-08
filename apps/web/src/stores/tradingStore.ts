@@ -30,6 +30,31 @@ export interface RecentTrade {
 
 const MAX_RECENT_TRADES = 50;
 
+const INDICATOR_STORAGE_KEY = "indicator-config";
+
+const defaultIndicatorConfig = {
+  ema200: false,
+  ema50: false,
+  vwap: false,
+  keyLevels: false,
+  swingPoints: false,
+  volumeProfile: false,
+  volume: false,
+  cvd: false,
+  rsi: false,
+  stochRsi: false,
+};
+
+type IndicatorConfig = typeof defaultIndicatorConfig;
+
+function loadIndicatorConfig(): IndicatorConfig {
+  try {
+    const stored = localStorage.getItem(INDICATOR_STORAGE_KEY);
+    if (stored) return { ...defaultIndicatorConfig, ...JSON.parse(stored) };
+  } catch { /* ignore */ }
+  return { ...defaultIndicatorConfig };
+}
+
 interface TradingState {
   selectedPairId: string | null;
   orderBook: OrderBook | null;
@@ -49,6 +74,10 @@ interface TradingState {
   // Loading states
   bookLoading: boolean;
   orderSubmitting: boolean;
+
+  // Indicator config (persisted to localStorage)
+  indicatorConfig: IndicatorConfig;
+  toggleIndicator: (key: keyof IndicatorConfig) => void;
 
   // Actions
   setActiveCompetition: (id: string | null) => void;
@@ -87,6 +116,14 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   bookLoading: false,
   orderSubmitting: false,
+
+  indicatorConfig: loadIndicatorConfig(),
+
+  toggleIndicator: (key: keyof IndicatorConfig) => {
+    const config = { ...get().indicatorConfig, [key]: !get().indicatorConfig[key] };
+    localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(config));
+    set({ indicatorConfig: config });
+  },
 
   setActiveCompetition: (id: string | null) => {
     setActiveCompetitionId(id);

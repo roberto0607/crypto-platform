@@ -1,0 +1,72 @@
+import { useState, useRef, useEffect } from "react";
+import { useTradingStore } from "@/stores/tradingStore";
+
+const OVERLAY_INDICATORS = [
+  { key: "ema200", label: "EMA 200", color: "#a855f7" },
+  { key: "ema50", label: "EMA 50", color: "#eab308" },
+  { key: "vwap", label: "VWAP", color: "#06b6d4" },
+  { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#94a3b8" },
+  { key: "swingPoints", label: "Swing Points", color: "#f97316" },
+] as const;
+
+export function IndicatorToolbar() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const config = useTradingStore((s) => s.indicatorConfig);
+  const toggle = useTradingStore((s) => s.toggleIndicator);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const activeCount = OVERLAY_INDICATORS.filter((i) => config[i.key]).length;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="px-2 py-1 text-xs rounded transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1"
+      >
+        Indicators
+        {activeCount > 0 && (
+          <span className="bg-blue-600 text-white text-[10px] rounded-full px-1.5 leading-4">
+            {activeCount}
+          </span>
+        )}
+        <span className="text-[10px]">&#9662;</span>
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 min-w-[200px] py-1">
+          <div className="px-3 py-1 text-[10px] text-gray-500 uppercase tracking-widest">
+            On Chart
+          </div>
+          {OVERLAY_INDICATORS.map((ind) => (
+            <label
+              key={ind.key}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={config[ind.key]}
+                onChange={() => toggle(ind.key)}
+                className="rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-0 focus:ring-offset-0"
+              />
+              <span
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: ind.color }}
+              />
+              <span className="text-xs text-gray-300">{ind.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
