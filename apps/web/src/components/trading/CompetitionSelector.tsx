@@ -13,7 +13,7 @@ export function CompetitionSelector() {
     }, [fetchMyCompetitions]);
 
     // Only show active competitions the user is participating in
-    const activeComps = myCompetitions.filter(
+    const activeComps = (myCompetitions ?? []).filter(
         (c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE",
     );
 

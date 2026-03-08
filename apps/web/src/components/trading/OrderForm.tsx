@@ -49,11 +49,11 @@ export default function OrderForm() {
   // Find wallets for base and quote assets
   const baseWallet = wallets.find((w) => w.asset_id === pair.base_asset_id);
   const quoteWallet = wallets.find((w) => w.asset_id === pair.quote_asset_id);
-  const baseAvailable = baseWallet
-    ? new Decimal(baseWallet.balance).minus(baseWallet.reserved)
+  const baseAvailable = baseWallet?.balance != null
+    ? new Decimal(baseWallet.balance).minus(baseWallet.reserved ?? "0")
     : new Decimal(0);
-  const quoteAvailable = quoteWallet
-    ? new Decimal(quoteWallet.balance).minus(quoteWallet.reserved)
+  const quoteAvailable = quoteWallet?.balance != null
+    ? new Decimal(quoteWallet.balance).minus(quoteWallet.reserved ?? "0")
     : new Decimal(0);
 
   // Effective price for estimates
@@ -68,7 +68,7 @@ export default function OrderForm() {
 
   // Estimated values
   const estimated = effectivePrice && qtyDec ? qtyDec.mul(effectivePrice) : null;
-  const feeBps = new Decimal(pair.taker_fee_bps);
+  const feeBps = new Decimal(pair.taker_fee_bps ?? 0);
   const fee = estimated ? estimated.mul(feeBps).div(10_000) : null;
   const total = estimated && fee ? estimated.plus(fee) : null;
 

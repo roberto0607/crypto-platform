@@ -19,8 +19,8 @@ const summaryQuery = z.object({
 });
 
 const v1Journal: FastifyPluginAsync = async (app) => {
-    // GET /v1/trades/journal — paginated trade journal
-    app.get("/v1/trades/journal", {
+    // GET /trades/journal — paginated trade journal
+    app.get("/trades/journal", {
         preHandler: requireUser,
         handler: async (req, reply) => {
             const userId = (req as any).user.id;
@@ -43,8 +43,8 @@ const v1Journal: FastifyPluginAsync = async (app) => {
         },
     });
 
-    // GET /v1/trades/journal/summary — aggregate stats
-    app.get("/v1/trades/journal/summary", {
+    // GET /trades/journal/summary — aggregate stats
+    app.get("/trades/journal/summary", {
         preHandler: requireUser,
         handler: async (req, reply) => {
             const userId = (req as any).user.id;
@@ -61,8 +61,8 @@ const v1Journal: FastifyPluginAsync = async (app) => {
         },
     });
 
-    // GET /v1/trades/journal/export — CSV download
-    app.get("/v1/trades/journal/export", {
+    // GET /trades/journal/export — CSV download
+    app.get("/trades/journal/export", {
         preHandler: requireUser,
         handler: async (req, reply) => {
             const userId = (req as any).user.id;

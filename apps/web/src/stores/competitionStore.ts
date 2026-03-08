@@ -53,7 +53,7 @@ export const useCompetitionStore = create<CompetitionState>((set) => ({
         set({ listLoading: true });
         try {
             const { data } = await listCompetitions(params);
-            set({ competitions: data.competitions, total: data.total });
+            set({ competitions: data.competitions ?? (data as any).data ?? [], total: data.total ?? 0 });
         } finally {
             set({ listLoading: false });
         }
@@ -95,7 +95,7 @@ export const useCompetitionStore = create<CompetitionState>((set) => ({
         set({ myLoading: true });
         try {
             const { data } = await listMyCompetitions();
-            set({ myCompetitions: data.competitions });
+            set({ myCompetitions: data.competitions ?? (data as any).data ?? [] });
         } finally {
             set({ myLoading: false });
         }

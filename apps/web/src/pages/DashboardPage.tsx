@@ -168,7 +168,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Your Competitions */}
-      {myCompetitions.filter((c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE").length > 0 && (
+      {(myCompetitions ?? []).filter((c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE").length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
@@ -179,7 +179,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {myCompetitions
+            {(myCompetitions ?? [])
               .filter((c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE")
               .map((c) => (
                 <Link
