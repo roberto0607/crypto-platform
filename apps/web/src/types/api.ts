@@ -450,6 +450,20 @@ export interface NotificationCreatedEvent {
   body: string | null;
 }
 
+export interface SignalNewEvent {
+  signalId: UUID;
+  pairId: UUID;
+  timeframe: string;
+  signalType: "BUY" | "SELL";
+  confidence: number;
+  entryPrice: DecimalString;
+  tp1: DecimalString;
+  tp2: DecimalString;
+  tp3: DecimalString;
+  stopLoss: DecimalString;
+  modelVersion: string;
+}
+
 export type SSEEvent =
   | EventEnvelope<"order.updated", OrderUpdatedEvent>
   | EventEnvelope<"trade.created", TradeCreatedEvent>
@@ -459,4 +473,5 @@ export type SSEEvent =
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
   | EventEnvelope<"candle.closed", CandleClosedEvent>
-  | EventEnvelope<"notification.created", NotificationCreatedEvent>;
+  | EventEnvelope<"notification.created", NotificationCreatedEvent>
+  | EventEnvelope<"signal.new", SignalNewEvent>;

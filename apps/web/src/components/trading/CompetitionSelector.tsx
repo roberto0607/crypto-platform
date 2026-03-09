@@ -17,6 +17,9 @@ export function CompetitionSelector() {
         (c) => c.competition_status === "ACTIVE" && c.status === "ACTIVE",
     );
 
+    // Hide when there are no competitions to switch between
+    if (activeComps.length === 0 && !activeCompetitionId) return null;
+
     return (
         <select
             value={activeCompetitionId ?? ""}

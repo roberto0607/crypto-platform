@@ -6,6 +6,7 @@ import { listActivePairs } from "../trading/pairRepo";
 import { pool } from "../db/pool.js";
 import { config } from "../config.js";
 import { aggregateTick, flushDueCandles } from "./candleAggregator.js";
+import { runBackfill } from "./candleBackfill.js";
 import { logger } from "../observability/logContext.js";
 
 // Debounce: track last DB write time per pair to avoid write storms
@@ -49,6 +50,7 @@ let reconnectDelay = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 let stopped = false;
 let flushInterval: ReturnType<typeof setInterval> | null = null;
+let backfillDone = false;
 
 function subscribe(socket: WebSocket): void {
     const symbols = Object.values(SYMBOL_MAP);
@@ -83,9 +85,13 @@ async function handleTickerMessage(data: any[]): Promise<void> {
             ts: new Date().toISOString(),
         });
 
-        // Publish price.tick for trigger engine
         const pairId = symbolToPairId[ourSymbol];
         if (pairId) {
+            // Feed ticker into candle aggregator as safety net.
+            // Volume "0" = synthetic tick — ensures candles form even with no trades.
+            aggregateTick(pairId, { price: last, volume: "0", ts: Date.now() });
+
+            // Publish price.tick for trigger engine
             try {
                 publish(createEvent("price.tick", {
                     pairId,
@@ -164,6 +170,14 @@ function connect(): void {
                     logger.error({ err }, "candle_flush_failed");
                 });
             }, 5_000);
+        }
+
+        // One-time candle backfill on first connect (fire-and-forget)
+        if (config.candleBackfillOnBoot && !backfillDone) {
+            backfillDone = true;
+            runBackfill()
+                .then((r) => logger.info(r, "candle_backfill_complete"))
+                .catch((e) => logger.error({ err: e }, "candle_backfill_failed"));
         }
     });
 

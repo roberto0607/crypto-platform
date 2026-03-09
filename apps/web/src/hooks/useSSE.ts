@@ -118,6 +118,12 @@ export function useSSE() {
           body: d.body,
         });
       },
+
+      onSignalNew: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:signal.new", { detail: event.data }),
+        );
+      },
     };
 
     disconnectRef.current = connectSSE(accessToken, handlers);

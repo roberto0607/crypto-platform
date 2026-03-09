@@ -104,6 +104,20 @@ export interface NotificationCreatedData {
   body: string | null;
 }
 
+export interface SignalNewData {
+  signalId: string;
+  pairId: string;
+  timeframe: string;
+  signalType: "BUY" | "SELL";
+  confidence: number;
+  entryPrice: string;
+  tp1: string;
+  tp2: string;
+  tp3: string;
+  stopLoss: string;
+  modelVersion: string;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
@@ -117,7 +131,8 @@ export type AppEvent =
   | EventEnvelope<"competition.started", CompetitionStartedData>
   | EventEnvelope<"competition.ended", CompetitionEndedData>
   | EventEnvelope<"candle.closed", CandleClosedData>
-  | EventEnvelope<"notification.created", NotificationCreatedData>;
+  | EventEnvelope<"notification.created", NotificationCreatedData>
+  | EventEnvelope<"signal.new", SignalNewData>;
 
 // ── Helper to create events ──
 

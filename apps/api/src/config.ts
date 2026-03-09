@@ -123,4 +123,17 @@ export const config = {
   // ── Phase 15: Live market data ──
   krakenWsEnabled: booleanEnv("KRAKEN_WS_ENABLED", true),
   lastPriceSyncIntervalMs: numberEnv("LAST_PRICE_SYNC_INTERVAL_MS", 1000),
+
+  // ── Market maker bot ──
+  disableMarketMaker: booleanEnv("DISABLE_MARKET_MAKER", false),
+
+  // ── Phase 19: Candle backfill on boot ──
+  candleBackfillOnBoot: booleanEnv("CANDLE_BACKFILL_ON_BOOT", true),
+
+  // ── Phase 20: ML signals ──
+  mlServiceUrl: process.env.ML_SERVICE_URL || "http://localhost:8000",
+  mlPredictionEnabled: booleanEnv("ML_PREDICTION_ENABLED", true),
+  mlMinConfidence: numberEnv("ML_MIN_CONFIDENCE", 70),
+  mlSignalCooldownMs: numberEnv("ML_SIGNAL_COOLDOWN_MS", 300_000), // 5 min between signals per pair
+  mlSignalExpiryHours: numberEnv("ML_SIGNAL_EXPIRY_HOURS", 24),
 };

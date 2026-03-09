@@ -1,0 +1,8 @@
+[project]
+name = "crypto-ml"
+version = "0.1.0"
+description = "AI/ML trading signal service for the crypto platform"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100

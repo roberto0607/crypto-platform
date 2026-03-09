@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import PairSelector from "@/components/trading/PairSelector";
@@ -8,10 +9,12 @@ import OrderForm from "@/components/trading/OrderForm";
 import RecentTrades from "@/components/trading/RecentTrades";
 import OpenOrders from "@/components/trading/OpenOrders";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
+import { AISignalPanel } from "@/components/trading/AISignalPanel";
 import Card from "@/components/Card";
 
 export default function TradingPage() {
   const sseConnected = useAppStore((s) => s.sseConnected);
+  const [chartTimeframe, setChartTimeframe] = useState("1h");
 
   return (
     <div className="space-y-4">
@@ -47,28 +50,31 @@ export default function TradingPage() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Chart: spans 3 columns */}
         <div className="lg:col-span-3">
-          <Card className="h-[400px] p-2">
-            <CandlestickChart />
+          <Card className="h-[560px] p-2">
+            <CandlestickChart onTimeframeChange={setChartTimeframe} />
           </Card>
         </div>
 
-        {/* Order form: 1 column */}
+        {/* Order form: 1 column — matches chart height */}
         <div className="lg:col-span-1">
-          <Card className="p-4">
+          <Card className="h-[560px] p-4 overflow-y-auto">
             <OrderForm />
           </Card>
         </div>
       </div>
 
+      {/* AI Signal Panel */}
+      <AISignalPanel timeframe={chartTimeframe} />
+
       {/* Bottom row: Order Book + Recent Trades + Open Orders */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="min-h-[300px] p-2">
+        <Card className="h-[180px] p-2 overflow-y-auto">
           <OrderBook />
         </Card>
-        <Card className="min-h-[300px] p-2">
+        <Card className="h-[180px] p-2 overflow-y-auto">
           <RecentTrades />
         </Card>
-        <Card className="min-h-[300px] p-2">
+        <Card className="h-[180px] p-2 overflow-y-auto">
           <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-2 px-1">
             Open Orders
           </div>

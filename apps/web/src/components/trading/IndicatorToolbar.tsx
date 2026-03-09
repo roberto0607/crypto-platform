@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 
 const OVERLAY_INDICATORS = [
+  { key: "aiSignals", label: "AI Signals", color: "#10b981" },
   { key: "ema200", label: "EMA 200", color: "#a855f7" },
   { key: "ema50", label: "EMA 50", color: "#eab308" },
   { key: "vwap", label: "VWAP", color: "#06b6d4" },

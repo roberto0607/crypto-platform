@@ -26,6 +26,19 @@ services:
     volumes:
       - cp_redis_data:/data
 
+  ml:
+    build:
+      context: ./apps/ml
+    container_name: cp_ml
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cp:cp@postgres:5432/cp
+    ports:
+      - "8000:8000"
+
 volumes:
   cp_postgres_data:
   cp_redis_data:

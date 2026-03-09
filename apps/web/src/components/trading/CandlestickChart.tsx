@@ -15,6 +15,7 @@ import {
     type SeriesMarker,
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
+import { getSignals, type MLSignal } from "@/api/endpoints/signals";
 import { useTradingStore } from "@/stores/tradingStore";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import {
@@ -59,14 +60,35 @@ interface OverlaySeries {
     vwap?: ISeriesApi<"Line">;
 }
 
-export function CandlestickChart() {
+/** Bucket an epoch-second timestamp to the start of its timeframe period. */
+function bucketTime(epochSec: number, tf: Timeframe): number {
+    switch (tf) {
+        case "1m":  return Math.floor(epochSec / 60) * 60;
+        case "5m":  return Math.floor(epochSec / 300) * 300;
+        case "15m": return Math.floor(epochSec / 900) * 900;
+        case "1h":  return Math.floor(epochSec / 3600) * 3600;
+        case "4h":  return Math.floor(epochSec / 14400) * 14400;
+        case "1d":  return Math.floor(epochSec / 86400) * 86400;
+        default:    return Math.floor(epochSec / 60) * 60;
+    }
+}
+
+interface CandlestickChartProps {
+    onTimeframeChange?: (tf: Timeframe) => void;
+}
+
+export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const overlayRef = useRef<OverlaySeries>({});
     const priceLinesRef = useRef<IPriceLine[]>([]);
+    const signalLinesRef = useRef<IPriceLine[]>([]);
     const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
+    const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
+    const signalHistoryRef = useRef<MLSignal[]>([]);
+    const activeSignalRef = useRef<MLSignal | null>(null);
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
 
@@ -83,8 +105,8 @@ export function CandlestickChart() {
                 textColor: "#9ca3af",
             },
             grid: {
-                vertLines: { color: "#1f2937" },
-                horzLines: { color: "#1f2937" },
+                vertLines: { visible: false },
+                horzLines: { visible: false },
             },
             crosshair: {
                 vertLine: { color: "#4b5563", labelBackgroundColor: "#374151" },
@@ -128,8 +150,88 @@ export function CandlestickChart() {
             seriesRef.current = null;
             overlayRef.current = {};
             priceLinesRef.current = [];
+            signalLinesRef.current = [];
         };
     }, []);
+
+    // Clear signal price lines
+    const clearSignalLines = useCallback(() => {
+        const candleSeries = seriesRef.current;
+        if (!candleSeries) return;
+        for (const pl of signalLinesRef.current) {
+            candleSeries.removePriceLine(pl);
+        }
+        signalLinesRef.current = [];
+    }, []);
+
+    // Draw TP/SL lines for an active signal
+    const drawSignalLines = useCallback((signal: MLSignal | null) => {
+        clearSignalLines();
+        const candleSeries = seriesRef.current;
+        if (!candleSeries || !signal || signal.outcome !== "pending") return;
+
+        const entry = parseFloat(signal.entryPrice);
+        const tp1 = parseFloat(signal.tp1Price);
+        const tp2 = parseFloat(signal.tp2Price);
+        const tp3 = parseFloat(signal.tp3Price);
+        const sl = parseFloat(signal.stopLossPrice);
+
+        // Entry line
+        signalLinesRef.current.push(
+            candleSeries.createPriceLine({
+                price: entry,
+                color: "#9ca3af",
+                lineWidth: 1,
+                lineStyle: LineStyle.Solid,
+                axisLabelVisible: true,
+                title: "Entry",
+            }),
+        );
+
+        // TP lines
+        signalLinesRef.current.push(
+            candleSeries.createPriceLine({
+                price: tp1,
+                color: "#10b981",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `TP1 (${signal.tp1Prob}%)`,
+            }),
+        );
+        signalLinesRef.current.push(
+            candleSeries.createPriceLine({
+                price: tp2,
+                color: "#10b981",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `TP2 (${signal.tp2Prob}%)`,
+            }),
+        );
+        signalLinesRef.current.push(
+            candleSeries.createPriceLine({
+                price: tp3,
+                color: "#10b981",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: `TP3 (${signal.tp3Prob}%)`,
+            }),
+        );
+
+        // SL line
+        signalLinesRef.current.push(
+            candleSeries.createPriceLine({
+                price: sl,
+                color: "#ef4444",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: "SL",
+            }),
+        );
+    }, [clearSignalLines]);
 
     // Remove all overlay series and price lines
     const clearOverlays = useCallback(() => {
@@ -150,12 +252,15 @@ export function CandlestickChart() {
         }
         priceLinesRef.current = [];
 
-        // Clear swing markers
+        // Clear markers (swing + AI combined)
         if (markersPluginRef.current) {
             markersPluginRef.current.detach();
             markersPluginRef.current = null;
         }
-    }, []);
+
+        // Clear signal lines
+        clearSignalLines();
+    }, [clearSignalLines]);
 
     // Render indicator overlays from raw candle data
     const renderOverlays = useCallback((candles: Candle[]) => {
@@ -227,11 +332,12 @@ export function CandlestickChart() {
             }
         }
 
+        // Build combined markers: swing points + AI signals
+        const markers: SeriesMarker<Time>[] = [];
+
         // Swing Points
         if (indicatorConfig.swingPoints) {
             const swings = swingPoints(indCandles);
-            const markers: SeriesMarker<Time>[] = [];
-
             for (const h of swings.highs) {
                 markers.push({
                     time: h.time as Time,
@@ -250,12 +356,51 @@ export function CandlestickChart() {
                     text: "SL",
                 });
             }
+        }
 
-            // Markers must be sorted by time
+        // AI Signal markers
+        if (indicatorConfig.aiSignals && signalHistoryRef.current.length > 0) {
+            for (const sig of signalHistoryRef.current) {
+                const sigTime = Math.floor(new Date(sig.createdAt).getTime() / 1000) as Time;
+                const isBuy = sig.signalType === "BUY";
+
+                markers.push({
+                    time: sigTime,
+                    position: isBuy ? "belowBar" : "aboveBar",
+                    shape: isBuy ? "arrowUp" : "arrowDown",
+                    color: isBuy ? "#10b981" : "#ef4444",
+                    text: `${sig.signalType} ${sig.confidence}%`,
+                });
+            }
+
+            // Draw TP/SL lines for active signal
+            drawSignalLines(activeSignalRef.current);
+        }
+
+        // Sort and render all markers
+        if (markers.length > 0) {
             markers.sort((a, b) => (a.time as number) - (b.time as number));
             markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
         }
-    }, [indicatorConfig, clearOverlays]);
+    }, [indicatorConfig, clearOverlays, drawSignalLines]);
+
+    // Fetch signals for the current pair + timeframe
+    const fetchSignals = useCallback(async () => {
+        if (!selectedPairId || !indicatorConfig.aiSignals) {
+            signalHistoryRef.current = [];
+            activeSignalRef.current = null;
+            return;
+        }
+
+        try {
+            const { data } = await getSignals(selectedPairId, { timeframe, limit: 20 });
+            signalHistoryRef.current = data.history;
+            activeSignalRef.current = data.active;
+        } catch {
+            signalHistoryRef.current = [];
+            activeSignalRef.current = null;
+        }
+    }, [selectedPairId, timeframe, indicatorConfig.aiSignals]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
@@ -263,17 +408,19 @@ export function CandlestickChart() {
 
         setLoading(true);
         try {
-            const { data } = await getCandles(selectedPairId, {
-                timeframe,
-                limit: 300,
-            });
+            // Fetch candles and signals in parallel
+            const [candleRes] = await Promise.all([
+                getCandles(selectedPairId, { timeframe, limit: 300 }),
+                fetchSignals(),
+            ]);
 
-            rawCandlesRef.current = data.candles;
-            const lwData = data.candles.map(candleToLW);
+            rawCandlesRef.current = candleRes.data.candles;
+            liveCandleRef.current = null; // Reset live candle on fresh fetch
+            const lwData = candleRes.data.candles.map(candleToLW);
             seriesRef.current.setData(lwData);
 
-            // Render indicator overlays
-            renderOverlays(data.candles);
+            // Render indicator overlays (includes AI signals)
+            renderOverlays(candleRes.data.candles);
 
             // Fit content to show all candles
             chartRef.current?.timeScale().fitContent();
@@ -282,20 +429,31 @@ export function CandlestickChart() {
         } finally {
             setLoading(false);
         }
-    }, [selectedPairId, timeframe, renderOverlays]);
+    }, [selectedPairId, timeframe, renderOverlays, fetchSignals]);
 
     useEffect(() => {
         fetchCandles();
     }, [fetchCandles]);
 
-    // Re-render overlays when indicator config changes (without re-fetching)
+    // Re-render overlays when indicator config changes (without re-fetching candles)
     useEffect(() => {
         if (rawCandlesRef.current.length > 0) {
-            renderOverlays(rawCandlesRef.current);
+            // If AI signals toggle changed, refetch signals first
+            if (indicatorConfig.aiSignals && signalHistoryRef.current.length === 0) {
+                fetchSignals().then(() => {
+                    renderOverlays(rawCandlesRef.current);
+                });
+            } else {
+                if (!indicatorConfig.aiSignals) {
+                    signalHistoryRef.current = [];
+                    activeSignalRef.current = null;
+                }
+                renderOverlays(rawCandlesRef.current);
+            }
         }
-    }, [renderOverlays]);
+    }, [renderOverlays, fetchSignals, indicatorConfig.aiSignals]);
 
-    // Live update: price.tick → update current candle
+    // Live update: price.tick → update current candle with proper OHLC tracking
     useEffect(() => {
         if (!selectedPairId) return;
 
@@ -304,21 +462,32 @@ export function CandlestickChart() {
             if (detail.pairId !== selectedPairId || !seriesRef.current) return;
 
             const price = parseFloat(detail.last);
-            const now = Math.floor(Date.now() / 1000) as Time;
+            const now = Math.floor(Date.now() / 1000);
+            const candleTime = bucketTime(now, timeframe) as Time;
 
-            // Update the last candle with the new price
-            seriesRef.current.update({
-                time: now,
-                open: price,
-                high: price,
-                low: price,
-                close: price,
-            });
+            const live = liveCandleRef.current;
+            if (live && live.time === candleTime) {
+                // Same candle period — preserve open, track high/low, update close
+                live.high = Math.max(live.high, price);
+                live.low = Math.min(live.low, price);
+                live.close = price;
+            } else {
+                // New candle period — start fresh
+                liveCandleRef.current = {
+                    time: candleTime,
+                    open: price,
+                    high: price,
+                    low: price,
+                    close: price,
+                };
+            }
+
+            seriesRef.current.update(liveCandleRef.current!);
         };
 
         window.addEventListener("sse:price.tick", handlePriceTick);
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
-    }, [selectedPairId]);
+    }, [selectedPairId, timeframe]);
 
     // Live update: candle.closed → append completed candle + update overlays incrementally
     useEffect(() => {
@@ -337,6 +506,9 @@ export function CandlestickChart() {
                 close: parseFloat(detail.close),
             });
 
+            // Reset live candle so the next tick starts a fresh one
+            liveCandleRef.current = null;
+
             // Append to raw candles and re-render overlays
             const newCandle: Candle = {
                 ts: new Date(detail.ts).toISOString(),
@@ -354,6 +526,30 @@ export function CandlestickChart() {
         return () => window.removeEventListener("sse:candle.closed", handleCandleClosed);
     }, [selectedPairId, timeframe, renderOverlays]);
 
+    // Live update: signal.new → refetch signals and re-render
+    useEffect(() => {
+        if (!selectedPairId || !indicatorConfig.aiSignals) return;
+
+        const handleSignalNew = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail.pairId !== selectedPairId) return;
+
+            fetchSignals().then(() => {
+                if (rawCandlesRef.current.length > 0) {
+                    renderOverlays(rawCandlesRef.current);
+                }
+            });
+        };
+
+        window.addEventListener("sse:signal.new", handleSignalNew);
+        return () => window.removeEventListener("sse:signal.new", handleSignalNew);
+    }, [selectedPairId, indicatorConfig.aiSignals, fetchSignals, renderOverlays]);
+
+    const handleTimeframeChange = (tf: Timeframe) => {
+        setTimeframe(tf);
+        onTimeframeChange?.(tf);
+    };
+
     return (
         <div className="flex flex-col h-full">
             {/* Timeframe selector + Indicator toolbar */}
@@ -361,7 +557,7 @@ export function CandlestickChart() {
                 {TIMEFRAMES.map((tf) => (
                     <button
                         key={tf}
-                        onClick={() => setTimeframe(tf)}
+                        onClick={() => handleTimeframeChange(tf)}
                         className={`px-2 py-1 text-xs rounded transition-colors ${
                             timeframe === tf
                                 ? "bg-blue-600 text-white"

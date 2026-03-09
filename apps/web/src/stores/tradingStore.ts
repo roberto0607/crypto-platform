@@ -43,6 +43,7 @@ const defaultIndicatorConfig = {
   cvd: false,
   rsi: false,
   stochRsi: false,
+  aiSignals: true,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;
