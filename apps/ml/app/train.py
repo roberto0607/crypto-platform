@@ -11,6 +11,7 @@ Usage:
     python -m app.train --model lstm             # Train LSTM only
     python -m app.train --model ensemble         # Train full ensemble
     python -m app.train --model target            # Train target zone predictor (MFE/MAE)
+    python -m app.train --model regime           # Train regime classifier (XGBoost 5-class)
     python -m app.train --retrain                # Auto-retrain pipeline
     python -m app.train --compare                # Compare all model performances
     python -m app.train --pair BTC/USD --timeframe 1h
@@ -166,13 +167,16 @@ async def main_async(args: argparse.Namespace) -> None:
             await _train_lstm(X, y, feature_names, args)
 
         if model_type in ("tft", "all", "ensemble"):
-            await _train_tft(X, y, feature_names, args)
+            await _train_tft(X, y, feature_names, args, all_dfs)
 
         if model_type in ("cnn", "all", "ensemble"):
             await _train_cnn(X, y, feature_names, args)
 
         if model_type in ("target", "all"):
             await _train_target(X, feature_names, all_dfs, forward_window)
+
+        if model_type in ("regime", "all"):
+            await _train_regime(all_dfs)
 
         if model_type in ("ensemble", "all"):
             await _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence)
@@ -261,17 +265,53 @@ async def _train_lstm(X, y, feature_names, args):
     print(f"  Model saved: {model_path}")
 
 
-async def _train_tft(X, y, feature_names, args):
-    """Train TFT."""
+async def _train_tft(X, y, feature_names, args, all_dfs=None):
+    """Train TFT with multi-horizon quantile forecasting."""
     from app.models.tft_model import TFTModel
+    from app.training.labels import generate_multi_horizon_labels
 
     print(f"\n── Temporal Fusion Transformer ──")
-    split = int(len(X) * 0.9)
-    model = TFTModel(n_features=X.shape[1])
-    metrics = model.train(X[:split], y[:split], X[split:], y[split:], feature_names=feature_names)
 
-    print(f"  Train accuracy: {metrics['train_accuracy']}")
-    print(f"  Val accuracy:   {metrics.get('val_accuracy', 'N/A')}")
+    # Generate multi-horizon labels for quantile mode
+    y_mh = None
+    if all_dfs:
+        all_mh = []
+        for df in all_dfs:
+            if df.empty:
+                continue
+            mh = generate_multi_horizon_labels(df)
+            # Align: X was trimmed from df.dropna(), take from end
+            samples_per_pair = len(X) // len(all_dfs)
+            offset = len(df) - samples_per_pair
+            all_mh.append(mh[offset:offset + samples_per_pair])
+        if all_mh:
+            y_mh = np.vstack(all_mh)
+            # Trim to match X length
+            min_len = min(len(X), len(y_mh))
+            X_use = X[:min_len]
+            y_mh = y_mh[:min_len]
+            valid = ~np.any(np.isnan(y_mh), axis=1)
+            print(f"  Multi-horizon labels: {int(valid.sum())}/{len(y_mh)} valid samples")
+
+    if y_mh is not None:
+        # Quantile mode
+        split = int(len(X_use) * 0.9)
+        model = TFTModel(n_features=X_use.shape[1])
+        metrics = model.train(X_use[:split], y_mh[:split], X_use[split:], y_mh[split:], feature_names=feature_names)
+
+        print(f"  Mode: quantile (4 horizons × 3 quantiles)")
+        print(f"  Train quantile loss: {metrics.get('train_quantile_loss', 'N/A')}")
+        print(f"  Val quantile loss:   {metrics.get('val_quantile_loss', 'N/A')}")
+        print(f"  Val direction acc:   {metrics.get('val_direction_accuracy', 'N/A')}")
+    else:
+        # Classification fallback
+        split = int(len(X) * 0.9)
+        model = TFTModel(n_features=X.shape[1])
+        metrics = model.train(X[:split], y[:split], X[split:], y[split:], feature_names=feature_names)
+
+        print(f"  Mode: classification")
+        print(f"  Train accuracy: {metrics.get('train_accuracy', 'N/A')}")
+        print(f"  Val accuracy:   {metrics.get('val_accuracy', 'N/A')}")
 
     version = f"tft_v1_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     model_dir = Path(ML_MODEL_PATH)
@@ -373,6 +413,65 @@ async def _train_target(X, feature_names, all_dfs, forward_window):
     print(f"    SL:  ${zones['stop_loss']:,.2f}")
     print(f"    Expected move: +{zones['predicted_mfe_pct']:.2f}%")
     print(f"    Risk/Reward: {zones['risk_reward']:.2f}")
+
+
+async def _train_regime(all_dfs):
+    """Train the regime classifier on historical data from all pairs."""
+    import pandas as pd
+    from app.models.regime_classifier import RegimeClassifier
+    from app.training.regime_labels import auto_label_regimes, regime_label_distribution
+
+    print(f"\n── Regime Classifier ──")
+
+    all_labeled_dfs = []
+    all_labels = []
+
+    for i, df in enumerate(all_dfs):
+        if df.empty:
+            continue
+        labels = auto_label_regimes(df)
+        all_labeled_dfs.append(df)
+        all_labels.append(labels)
+        dist = regime_label_distribution(labels)
+        print(f"  Pair {i + 1}: {len(df)} samples — {dist['distribution']}")
+
+    if not all_labeled_dfs:
+        print("  ERROR: No data available for regime training")
+        return
+
+    combined_df = pd.concat(all_labeled_dfs, ignore_index=True)
+    combined_labels = np.concatenate(all_labels)
+
+    print(f"\n  Total: {len(combined_df)} samples")
+    overall_dist = regime_label_distribution(combined_labels)
+    for regime, info in overall_dist["distribution"].items():
+        print(f"    {regime}: {info['count']} ({info['pct']}%)")
+
+    classifier = RegimeClassifier()
+    metrics = classifier.train(combined_df, combined_labels)
+
+    print(f"\n  Train accuracy: {metrics['train_accuracy']}")
+    print(f"  Val accuracy:   {metrics['val_accuracy']}")
+
+    # Save
+    model_dir = Path(ML_MODEL_PATH)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    version = f"regime_v1_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    classifier.version = version
+    model_path = model_dir / f"{version}.joblib"
+    classifier.save(str(model_path))
+
+    # Copy as latest
+    latest_path = model_dir / "regime_classifier_latest.joblib"
+    if latest_path.exists():
+        latest_path.unlink()
+    shutil.copy2(str(model_path), str(latest_path))
+    meta_src = model_path.with_suffix(".meta.json")
+    meta_dst = latest_path.with_suffix(".meta.json")
+    if meta_src.exists():
+        shutil.copy2(str(meta_src), str(meta_dst))
+
+    print(f"\n  Regime classifier saved: {model_path}")
 
 
 async def _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence):
@@ -522,7 +621,7 @@ def _print_backtest(results: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Train ML trading models")
     parser.add_argument("--model", type=str, default="xgboost",
-                        choices=["xgboost", "lstm", "tft", "cnn", "target", "ensemble", "all"],
+                        choices=["xgboost", "lstm", "tft", "cnn", "target", "regime", "ensemble", "all"],
                         help="Model type to train")
     parser.add_argument("--pair", type=str, help="Single pair (e.g. BTC/USD)")
     parser.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe")

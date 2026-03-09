@@ -6,6 +6,7 @@ import {
     type SignalPerformance,
     type SignalExplanation,
     type EquityCurvePoint,
+    type ForecastHorizon,
 } from "@/api/endpoints/signals";
 import { useTradingStore } from "@/stores/tradingStore";
 
@@ -111,6 +112,11 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
                 </div>
             </div>
 
+            {/* TFT Forecast Horizons */}
+            {active?.forecast && (
+                <ForecastRow forecast={active.forecast} />
+            )}
+
             {/* Bottom row: Performance + Equity Curve */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-800/50">
                 <div>
@@ -139,6 +145,25 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Regime display helpers
+// ---------------------------------------------------------------------------
+
+const REGIME_COLORS: Record<string, string> = {
+    TRENDING_UP: "bg-emerald-500/20 text-emerald-400",
+    TRENDING_DOWN: "bg-red-500/20 text-red-400",
+    RANGING: "bg-blue-500/20 text-blue-400",
+    VOLATILE: "bg-orange-500/20 text-orange-400",
+    TRANSITIONING: "bg-gray-600/30 text-gray-400",
+};
+
+const STRATEGY_LABELS: Record<string, string> = {
+    momentum: "Momentum",
+    mean_reversion: "Mean Reversion",
+    volatility: "Volatility",
+    abstain: "Abstain",
+};
+
+// ---------------------------------------------------------------------------
 // Active Signal Card
 // ---------------------------------------------------------------------------
 
@@ -164,6 +189,37 @@ function ActiveSignalCard({ signal }: { signal: MLSignal }) {
                     {signal.modelVersion}
                 </span>
             </div>
+
+            {/* Regime badge + strategy */}
+            {signal.regime && (
+                <div className="flex items-center gap-2">
+                    <span
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                            REGIME_COLORS[signal.regime] ?? "bg-gray-700/50 text-gray-400"
+                        }`}
+                    >
+                        {signal.regime.replace("_", " ")}
+                    </span>
+                    {signal.strategy && (
+                        <span className="text-[10px] text-gray-500">
+                            Strategy: {STRATEGY_LABELS[signal.strategy] ?? signal.strategy}
+                        </span>
+                    )}
+                    {signal.regimeConfidence != null && (
+                        <div className="flex items-center gap-1 ml-auto">
+                            <div className="w-16 h-1 bg-gray-800 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-cyan-500 rounded-full"
+                                    style={{ width: `${Math.round(signal.regimeConfidence * 100)}%` }}
+                                />
+                            </div>
+                            <span className="text-[10px] text-gray-600">
+                                {Math.round(signal.regimeConfidence * 100)}%
+                            </span>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
                 <div className="text-gray-500">
@@ -264,6 +320,40 @@ function ExplanationCard({ explanation }: { explanation: SignalExplanation }) {
                     {explanation.attention_highlight}
                 </div>
             )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Forecast Row (TFT quantile horizons)
+// ---------------------------------------------------------------------------
+
+const HORIZON_ORDER = ["t+1", "t+3", "t+6", "t+12"];
+
+function ForecastRow({ forecast }: { forecast: Record<string, ForecastHorizon> }) {
+    return (
+        <div className="mt-3 pt-3 border-t border-gray-800/50">
+            <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
+                Price Forecast
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-xs">
+                {HORIZON_ORDER.map((h) => {
+                    const hz = forecast[h];
+                    if (!hz) return null;
+                    const isUp = hz.p50 > 0;
+                    return (
+                        <div key={h} className="text-center">
+                            <div className="text-gray-500 text-[10px] mb-0.5">{h}</div>
+                            <div className={isUp ? "text-emerald-400 font-medium" : "text-red-400 font-medium"}>
+                                {isUp ? "+" : ""}{(hz.p50 * 100).toFixed(2)}%
+                            </div>
+                            <div className="text-gray-600 text-[10px]">
+                                {(hz.p10 * 100).toFixed(1)}% — {(hz.p90 * 100).toFixed(1)}%
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 }

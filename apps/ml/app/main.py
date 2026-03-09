@@ -29,6 +29,7 @@ from app.models.xgboost_model import XGBoostModel
 from app.models.ensemble import EnsembleModel
 from app.models.signal_generator import generate_signal
 from app.models.regime_detector import detect_regime, REGIME_CONFIGS
+from app.models.regime_classifier import RegimeClassifier, REGIME_PARAMS
 from app.models.explainer import generate_explanation
 from app.models.target_predictor import TargetPredictor
 from app.training.alerts import AlertChecker, format_alerts
@@ -39,6 +40,7 @@ logger = logging.getLogger("ml")
 _model: XGBoostModel | None = None
 _ensemble: EnsembleModel | None = None
 _target_predictor: TargetPredictor | None = None
+_regime_classifier: RegimeClassifier | None = None
 
 
 @asynccontextmanager
@@ -77,6 +79,20 @@ async def lifespan(app: FastAPI):
             logger.info(f"Target predictor loaded: {_target_predictor.version}")
         except Exception as e:
             logger.warning(f"Failed to load target predictor: {e}")
+
+    # Try loading trained regime classifier (Phase 22 PR2)
+    regime_path = model_dir / "regime_classifier_latest.joblib"
+    if regime_path.exists():
+        try:
+            _regime_classifier = RegimeClassifier.load(str(regime_path))
+            logger.info(f"Regime classifier loaded: {_regime_classifier.version}")
+            # Attach to ensemble if available
+            if _ensemble:
+                _ensemble.regime_classifier = _regime_classifier
+        except Exception as e:
+            logger.warning(f"Failed to load regime classifier: {e}")
+    else:
+        logger.info("No trained regime classifier found — using heuristic detector")
 
     yield
     await close_pool()
@@ -286,6 +302,9 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         except Exception as e:
             logger.warning(f"Target predictor failed, falling back to ATR: {e}")
 
+    # Extract TFT forecast from ensemble prediction (quantile mode)
+    tft_forecast = prediction.get("tft_forecast")
+
     signal = generate_signal(
         prediction=prediction,
         current_price=current_price,
@@ -294,6 +313,7 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         top_features=top_features,
         model_version=model_version,
         learned_zones=learned_zones,
+        tft_forecast=tft_forecast,
     )
 
     # Apply regime TP/SL multipliers
@@ -341,6 +361,8 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         response["model_contributions"] = model_contributions
     if attention:
         response["attention"] = attention
+    if tft_forecast:
+        response["forecast"] = tft_forecast
 
     return response
 
@@ -357,6 +379,27 @@ async def get_regime(symbol: str, timeframe: str = "1h", limit: int = 300):
     if df.empty:
         raise HTTPException(status_code=400, detail="Not enough candle data")
 
+    # Use trained classifier if available, else heuristic
+    if _regime_classifier is not None:
+        result = _regime_classifier.predict(df)
+        params = REGIME_PARAMS[result.regime]
+        return {
+            "pair": db_symbol,
+            "timeframe": timeframe,
+            "regime": result.regime.value,
+            "confidence": result.confidence,
+            "probabilities": result.probabilities,
+            "should_trade": result.should_trade,
+            "strategy": params["strategy"],
+            "features_used": result.features_used,
+            "classifier": "trained",
+            "config": {
+                "min_confidence": params["min_confidence"],
+                "tp_multiplier": params["tp_multiplier"],
+                "sl_multiplier": params["sl_multiplier"],
+            },
+        }
+
     regime, evidence = detect_regime(df)
     config = REGIME_CONFIGS[regime]
 
@@ -365,6 +408,7 @@ async def get_regime(symbol: str, timeframe: str = "1h", limit: int = 300):
         "timeframe": timeframe,
         "regime": regime.value,
         "evidence": evidence,
+        "classifier": "heuristic",
         "config": {
             "min_confidence": config.min_confidence,
             "tp_multiplier": config.tp_multiplier,
@@ -403,6 +447,12 @@ async def model_info():
             "n_features": len(_model.feature_names),
             "feature_importance": _model.get_feature_importance(15),
         }
+
+    info["regime_classifier"] = {
+        "loaded": _regime_classifier is not None,
+        "version": _regime_classifier.version if _regime_classifier else None,
+        "type": "trained" if _regime_classifier else "heuristic",
+    }
 
     return info
 

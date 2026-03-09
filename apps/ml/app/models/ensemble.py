@@ -24,6 +24,7 @@ from app.models.lstm_model import LSTMModel
 from app.models.tft_model import TFTModel
 from app.models.cnn_model import CNNModel
 from app.models.regime_detector import detect_regime, get_regime_config, MarketRegime
+from app.models.regime_classifier import RegimeClassifier, REGIME_PARAMS, Regime
 
 logger = logging.getLogger("ml.ensemble")
 
@@ -48,6 +49,7 @@ class EnsembleModel:
         self.lstm: LSTMModel | None = None
         self.tft: TFTModel | None = None
         self.cnn: CNNModel | None = None
+        self.regime_classifier: RegimeClassifier | None = None
         self.weights: dict[str, float] = DEFAULT_WEIGHTS.copy()
         self.feature_names: list[str] = []
         self.version: str = ""
@@ -129,21 +131,37 @@ class EnsembleModel:
             # Disagreement: reduce confidence or flip to NEUTRAL
             confidence *= 0.7
 
-        # Regime detection
+        # Regime detection — prefer trained classifier, fall back to heuristic
         regime_info = None
         if self.regime_aware and df is not None and not df.empty:
             try:
-                regime, evidence = detect_regime(df)
-                regime_config = get_regime_config(regime)
-                regime_info = {
-                    "regime": regime.value,
-                    "evidence": evidence,
-                    "config": {
-                        "min_confidence": regime_config.min_confidence,
-                        "tp_multiplier": regime_config.tp_multiplier,
-                        "sl_multiplier": regime_config.sl_multiplier,
-                    },
-                }
+                if self.regime_classifier is not None:
+                    result = self.regime_classifier.predict(df)
+                    params = REGIME_PARAMS[result.regime]
+                    regime_info = {
+                        "regime": result.regime.value,
+                        "confidence": result.confidence,
+                        "probabilities": result.probabilities,
+                        "should_trade": result.should_trade,
+                        "strategy": params["strategy"],
+                        "config": {
+                            "min_confidence": params["min_confidence"],
+                            "tp_multiplier": params["tp_multiplier"],
+                            "sl_multiplier": params["sl_multiplier"],
+                        },
+                    }
+                else:
+                    regime, evidence = detect_regime(df)
+                    regime_config = get_regime_config(regime)
+                    regime_info = {
+                        "regime": regime.value,
+                        "evidence": evidence,
+                        "config": {
+                            "min_confidence": regime_config.min_confidence,
+                            "tp_multiplier": regime_config.tp_multiplier,
+                            "sl_multiplier": regime_config.sl_multiplier,
+                        },
+                    }
             except Exception as e:
                 logger.warning(f"Regime detection failed: {e}")
 
@@ -156,7 +174,7 @@ class EnsembleModel:
                 "confidence": predictions[name]["confidence"],
             }
 
-        return {
+        result = {
             "direction": direction,
             "confidence": round(confidence, 1),
             "probabilities": {
@@ -168,6 +186,13 @@ class EnsembleModel:
             "model_contributions": contributions,
             "regime": regime_info,
         }
+
+        # Pass through TFT forecast if available (quantile mode)
+        tft_pred = predictions.get("tft")
+        if tft_pred and "forecast" in tft_pred:
+            result["tft_forecast"] = tft_pred["forecast"]
+
+        return result
 
     def calibrate_weights(
         self,

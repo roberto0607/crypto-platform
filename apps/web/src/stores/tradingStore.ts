@@ -45,6 +45,7 @@ const defaultIndicatorConfig = {
   stochRsi: false,
   aiSignals: true,
   orderFlow: false,
+  derivatives: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

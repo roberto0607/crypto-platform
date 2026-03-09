@@ -9,6 +9,7 @@ from app.features.volatility import compute_volatility_features
 from app.features.volume import compute_volume_features
 from app.features.price_action import compute_price_action_features
 from app.features.order_flow import fetch_order_flow_features
+from app.features.derivatives import fetch_derivatives_features
 
 # Minimum candles needed (indicators need warm-up periods)
 MIN_CANDLES = 50
@@ -70,6 +71,30 @@ async def build_feature_matrix(
                     df[col] = df[col].fillna(val)
     except Exception:
         pass  # Non-fatal: order flow data may not exist yet
+
+    # Merge derivatives features (funding rate, OI, L/S ratios)
+    try:
+        deriv_df = await fetch_derivatives_features(pair_id, timeframe, limit)
+        if not deriv_df.empty:
+            df = df.merge(deriv_df, on="ts", how="left")
+            deriv_fill = {
+                "deriv_funding_rate": 0,
+                "deriv_mark_price": 0,
+                "deriv_oi": 0,
+                "deriv_oi_usd": 0,
+                "deriv_oi_change_pct": 0,
+                "deriv_global_ls_ratio": 1,
+                "deriv_global_long_pct": 0.5,
+                "deriv_top_ls_ratio": 1,
+                "deriv_top_long_pct": 0.5,
+                "deriv_liq_pressure": 0,
+                "deriv_liq_intensity": 0,
+            }
+            for col, val in deriv_fill.items():
+                if col in df.columns:
+                    df[col] = df[col].fillna(val)
+    except Exception:
+        pass  # Non-fatal: derivatives data may not exist yet
 
     # Drop rows with NaN (from indicator warm-up periods)
     df = df.dropna().reset_index(drop=True)

@@ -52,6 +52,7 @@ def generate_signal(
     model_version: str = "unknown",
     tp_probs: dict | None = None,
     learned_zones: dict | None = None,
+    tft_forecast: dict | None = None,
 ) -> Signal | None:
     """
     Convert a model prediction into a trading signal.
@@ -67,6 +68,8 @@ def generate_signal(
         tp_probs: Custom TP hit probabilities from backtest.
         learned_zones: Data-driven TP/SL from TargetPredictor.
                        If provided, overrides ATR-based zones.
+        tft_forecast: TFT quantile forecast with horizons.
+                      Highest priority for TP/SL calculation.
 
     Returns:
         Signal object or None if confidence is too low or direction is NEUTRAL.
@@ -84,7 +87,19 @@ def generate_signal(
         "tp3": DEFAULT_TP3_PROB,
     }
 
-    if learned_zones:
+    if tft_forecast:
+        # TFT quantile forecast: highest priority
+        if direction == "BUY":
+            tp1 = current_price * (1 + tft_forecast["t+3"]["p50"])
+            tp2 = current_price * (1 + tft_forecast["t+6"]["p50"])
+            tp3 = current_price * (1 + tft_forecast["t+12"]["p90"])
+            stop_loss = current_price * (1 + tft_forecast["t+3"]["p10"])
+        else:  # SELL
+            tp1 = current_price * (1 + tft_forecast["t+3"]["p50"])
+            tp2 = current_price * (1 + tft_forecast["t+6"]["p50"])
+            tp3 = current_price * (1 + tft_forecast["t+12"]["p10"])
+            stop_loss = current_price * (1 + tft_forecast["t+3"]["p90"])
+    elif learned_zones:
         # Use data-driven zones from TargetPredictor
         tp1 = learned_zones["tp1"]
         tp2 = learned_zones["tp2"]

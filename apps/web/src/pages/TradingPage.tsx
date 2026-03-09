@@ -11,6 +11,7 @@ import OpenOrders from "@/components/trading/OpenOrders";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { AISignalPanel } from "@/components/trading/AISignalPanel";
 import { OrderFlowBar } from "@/components/trading/OrderFlowBar";
+import { DerivativesPanel } from "@/components/trading/DerivativesPanel";
 import Card from "@/components/Card";
 
 export default function TradingPage() {
@@ -69,6 +70,9 @@ export default function TradingPage() {
 
       {/* Order Flow Bar */}
       <OrderFlowBar />
+
+      {/* Derivatives Panel */}
+      <DerivativesPanel />
 
       {/* Bottom row: Order Book + Recent Trades + Open Orders */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

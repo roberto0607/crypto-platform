@@ -136,4 +136,7 @@ export const config = {
   mlMinConfidence: numberEnv("ML_MIN_CONFIDENCE", 70),
   mlSignalCooldownMs: numberEnv("ML_SIGNAL_COOLDOWN_MS", 300_000), // 5 min between signals per pair
   mlSignalExpiryHours: numberEnv("ML_SIGNAL_EXPIRY_HOURS", 24),
+
+  // ── Phase 22: Derivatives data ──
+  derivativesPollerEnabled: booleanEnv("DERIVATIVES_POLLER_ENABLED", true),
 };

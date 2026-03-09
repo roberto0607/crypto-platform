@@ -60,6 +60,39 @@ def generate_labels(
     return labels
 
 
+def generate_multi_horizon_labels(
+    df: pd.DataFrame,
+    horizons: list[int] | None = None,
+) -> np.ndarray:
+    """
+    Generate multi-horizon forward return labels for TFT quantile training.
+
+    For each row, computes the forward return at each horizon:
+      returns[i, h] = (close[i + horizon] - close[i]) / close[i]
+
+    Args:
+        df: DataFrame with 'close' column.
+        horizons: List of forward candle counts (default: [1, 3, 6, 12]).
+
+    Returns:
+        Array of shape (n_rows, n_horizons). Last max(horizons) rows are NaN.
+    """
+    if horizons is None:
+        horizons = [1, 3, 6, 12]
+
+    close = df["close"].values
+    n = len(close)
+    n_horizons = len(horizons)
+    labels = np.full((n, n_horizons), np.nan)
+
+    for h_idx, h in enumerate(horizons):
+        for i in range(n - h):
+            if close[i] > 0:
+                labels[i, h_idx] = (close[i + h] - close[i]) / close[i]
+
+    return labels
+
+
 def generate_magnitude_labels(
     df: pd.DataFrame,
     forward_window: int = 10,

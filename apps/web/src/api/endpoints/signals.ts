@@ -8,6 +8,12 @@ export interface SignalExplanation {
     attention_highlight: string | null;
 }
 
+export interface ForecastHorizon {
+    p10: number;
+    p50: number;
+    p90: number;
+}
+
 export interface MLSignal {
     id: string;
     pairId: string;
@@ -28,6 +34,10 @@ export interface MLSignal {
     outcome: string;
     createdAt: string;
     expiresAt: string;
+    regime?: string;
+    regimeConfidence?: number;
+    strategy?: string;
+    forecast?: Record<string, ForecastHorizon>;
 }
 
 export interface SignalPerformance {
@@ -104,6 +114,31 @@ export function getOrderFlow(pairId: string) {
         ok: true;
         features: OrderFlowFeatures | null;
     }>(`/v1/pairs/${pairId}/order-flow`);
+}
+
+export interface DerivativesSnapshot {
+    fundingRate: number;
+    fundingTime: number;
+    markPrice: number;
+    openInterest: number;
+    openInterestUsd: number;
+    oiChangePct: number;
+    globalLsRatio: number;
+    globalLongPct: number;
+    globalShortPct: number;
+    topLsRatio: number;
+    topLongPct: number;
+    topShortPct: number;
+    liqPressure: number;
+    liqIntensity: number;
+    ts: number;
+}
+
+export function getDerivatives(pairId: string) {
+    return client.get<{
+        ok: true;
+        derivatives: DerivativesSnapshot | null;
+    }>(`/v1/pairs/${pairId}/derivatives`);
 }
 
 export function getAggregatePerformance() {

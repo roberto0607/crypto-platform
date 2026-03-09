@@ -11,6 +11,7 @@ import {
     fetchAndStoreSignal,
 } from "../../market/signalService.js";
 import { getOrderFlow } from "../../market/orderFlowFeatures.js";
+import { getDerivatives, loadDerivativesFromDB } from "../../market/derivativesPoller.js";
 import { pool } from "../../db/pool.js";
 
 const signalQuery = z.object({
@@ -127,6 +128,36 @@ const v1Signals: FastifyPluginAsync = async (app) => {
             return reply.send({
                 ok: true,
                 features,
+            });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/pairs/:pairId/derivatives — real-time derivatives data
+    app.get("/pairs/:pairId/derivatives", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get derivatives data (funding, OI, L/S ratios) for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            let derivatives = getDerivatives(pairId);
+            if (!derivatives) {
+                derivatives = await loadDerivativesFromDB(pairId);
+            }
+
+            return reply.send({
+                ok: true,
+                derivatives,
             });
         } catch (err) {
             return v1HandleError(reply, err);
