@@ -27,6 +27,8 @@ import {
     type Candle as IndicatorCandle,
     type Point,
 } from "@/lib/indicators";
+import { detectRegimes, type RegimeType } from "@/lib/regimeDetector";
+import { RegimeBandsPrimitive, REGIME_SOLID_COLORS } from "@/lib/regimeBandsPrimitive";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -123,8 +125,10 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
     const signalHistoryRef = useRef<MLSignal[]>([]);
     const activeSignalRef = useRef<MLSignal | null>(null);
+    const regimePrimitiveRef = useRef<RegimeBandsPrimitive | null>(null);
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
+    const [currentRegime, setCurrentRegime] = useState<RegimeType | null>(null);
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
@@ -167,6 +171,11 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
 
         chartRef.current = chart;
         seriesRef.current = series;
+
+        // Attach regime bands primitive
+        const regimePrimitive = new RegimeBandsPrimitive();
+        series.attachPrimitive(regimePrimitive);
+        regimePrimitiveRef.current = regimePrimitive;
 
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
@@ -470,6 +479,21 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
                 overlayRef.current.forecastLower = lowerSeries;
             }
         }
+
+        // Regime bands
+        if (indicatorConfig.regimeBands) {
+            const segments = detectRegimes(indCandles);
+            regimePrimitiveRef.current?.setSegments(segments);
+            // Set current regime from last segment
+            if (segments.length > 0) {
+                setCurrentRegime(segments[segments.length - 1]!.regime);
+            } else {
+                setCurrentRegime(null);
+            }
+        } else {
+            regimePrimitiveRef.current?.setSegments([]);
+            setCurrentRegime(null);
+        }
     }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
 
     // Fetch signals for the current pair + timeframe
@@ -666,7 +690,20 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             </div>
 
             {/* Chart container */}
-            <div ref={containerRef} className="flex-1 min-h-0" />
+            <div className="relative flex-1 min-h-0">
+                <div ref={containerRef} className="absolute inset-0" />
+                {indicatorConfig.regimeBands && currentRegime && (
+                    <div className="absolute top-2 right-2 bg-gray-900/80 px-2 py-1 rounded text-xs flex items-center gap-1.5 z-10">
+                        <span
+                            className="w-2.5 h-2.5 rounded-sm"
+                            style={{ backgroundColor: REGIME_SOLID_COLORS[currentRegime] }}
+                        />
+                        <span className="text-gray-300">
+                            {currentRegime.replace("_", " ")}
+                        </span>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

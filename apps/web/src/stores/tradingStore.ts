@@ -47,6 +47,7 @@ const defaultIndicatorConfig = {
   orderFlow: false,
   derivatives: false,
   forecastCone: false,
+  regimeBands: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;
