@@ -10,6 +10,7 @@ const OVERLAY_INDICATORS = [
   { key: "swingPoints", label: "Swing Points", color: "#f97316" },
   { key: "orderFlow", label: "Order Flow", color: "#f59e0b" },
   { key: "derivatives", label: "Derivatives", color: "#ec4899" },
+  { key: "forecastCone", label: "Forecast Cone", color: "#06b6d4" },
 ] as const;
 
 export function IndicatorToolbar() {

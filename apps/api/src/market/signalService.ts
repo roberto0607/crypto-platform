@@ -38,6 +38,9 @@ export interface MLSignal {
     modelVersion: string;
     topFeatures: unknown;
     explanation: SignalExplanation | null;
+    regimeConfidence?: number;
+    regimeStrategy?: string;
+    forecast?: Record<string, { p10: number; p50: number; p90: number }>;
     outcome: string;
     createdAt: string;
     expiresAt: string;
@@ -70,9 +73,11 @@ interface MLPredictionResponse {
     model_version: string;
     regime?: {
         regime: string;
+        confidence?: number;
         evidence: Record<string, unknown>;
-        config: { min_confidence: number; tp_multiplier: number; sl_multiplier: number };
+        config: { min_confidence: number; tp_multiplier: number; sl_multiplier: number; strategy?: string };
     };
+    forecast?: Record<string, { p10: number; p50: number; p90: number }>;
     model_contributions?: Record<string, { weight: number; direction: string; confidence: number }>;
     attention?: { temporal_attention: unknown[]; feature_importance: unknown[] };
     explanation?: {
@@ -144,6 +149,9 @@ export async function fetchAndStoreSignal(
     const expiresAt = new Date(Date.now() + config.mlSignalExpiryHours * 3600_000).toISOString();
 
     const regime = data.regime?.regime ?? null;
+    const regimeConfidence = data.regime?.confidence ?? null;
+    const regimeStrategy = data.regime?.config?.strategy ?? null;
+    const forecast = data.forecast ?? null;
     const explanation = data.explanation ?? null;
 
     // Store features + explanation together in JSONB
@@ -157,14 +165,16 @@ export async function fetchAndStoreSignal(
             pair_id, timeframe, signal_type, confidence,
             entry_price, tp1_price, tp2_price, tp3_price, stop_loss_price,
             tp1_prob, tp2_prob, tp3_prob,
-            model_version, top_features, outcome, expires_at, regime
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',$15,$16)
+            model_version, top_features, outcome, expires_at, regime,
+            regime_confidence, regime_strategy, forecast
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending',$15,$16,$17,$18,$19)
         RETURNING id, created_at`,
         [
             pairId, timeframe, sig.signal_type, sig.confidence,
             String(sig.entry_price), String(sig.tp1), String(sig.tp2), String(sig.tp3), String(sig.stop_loss),
             sig.tp1_prob, sig.tp2_prob, sig.tp3_prob,
             sig.model_version, topFeaturesJson, expiresAt, regime,
+            regimeConfidence, regimeStrategy, forecast ? JSON.stringify(forecast) : null,
         ],
     );
 
@@ -212,6 +222,9 @@ export async function fetchAndStoreSignal(
         modelVersion: sig.model_version,
         topFeatures: sig.top_features,
         explanation,
+        ...(regimeConfidence != null && { regimeConfidence }),
+        ...(regimeStrategy != null && { regimeStrategy }),
+        ...(forecast != null && { forecast }),
         outcome: "pending",
         createdAt: inserted.created_at,
         expiresAt,
@@ -261,7 +274,11 @@ export async function getActiveSignal(
 
     if (rows.length === 0) return null;
 
-    const r = rows[0]!;
+    const r = rows[0]! as typeof rows[0] & {
+        regime_confidence?: string | null;
+        regime_strategy?: string | null;
+        forecast?: Record<string, { p10: number; p50: number; p90: number }> | null;
+    };
     const { topFeatures, explanation } = parseStoredFeatures(r.top_features);
     return {
         id: r.id,
@@ -280,6 +297,9 @@ export async function getActiveSignal(
         modelVersion: r.model_version,
         topFeatures,
         explanation,
+        ...(r.regime_confidence != null && { regimeConfidence: Number(r.regime_confidence) }),
+        ...(r.regime_strategy != null && { regimeStrategy: r.regime_strategy }),
+        ...(r.forecast != null && { forecast: r.forecast }),
         outcome: r.outcome,
         createdAt: r.created_at,
         expiresAt: r.expires_at,
@@ -320,6 +340,9 @@ export async function getSignalHistory(
             modelVersion: r.model_version,
             topFeatures,
             explanation,
+            ...(r.regime_confidence != null && { regimeConfidence: Number(r.regime_confidence) }),
+            ...(r.regime_strategy != null && { regimeStrategy: r.regime_strategy }),
+            ...(r.forecast != null && { forecast: r.forecast }),
             outcome: r.outcome,
             createdAt: r.created_at,
             expiresAt: r.expires_at,

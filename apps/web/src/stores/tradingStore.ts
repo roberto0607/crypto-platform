@@ -46,6 +46,7 @@ const defaultIndicatorConfig = {
   aiSignals: true,
   orderFlow: false,
   derivatives: false,
+  forecastCone: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

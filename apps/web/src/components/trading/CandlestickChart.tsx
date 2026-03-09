@@ -4,6 +4,7 @@ import {
     createSeriesMarkers,
     CandlestickSeries,
     LineSeries,
+    AreaSeries,
     LineStyle,
     type IChartApi,
     type ISeriesApi,
@@ -58,6 +59,39 @@ interface OverlaySeries {
     ema200?: ISeriesApi<"Line">;
     ema50?: ISeriesApi<"Line">;
     vwap?: ISeriesApi<"Line">;
+    forecastP50?: ISeriesApi<"Line">;
+    forecastUpper?: ISeriesApi<"Area">;
+    forecastLower?: ISeriesApi<"Area">;
+}
+
+const TF_SECONDS: Record<Timeframe, number> = {
+    "1m": 60, "5m": 300, "15m": 900,
+    "1h": 3600, "4h": 14400, "1d": 86400,
+};
+
+function forecastToChartPoints(
+    currentPrice: number,
+    currentTime: number,
+    timeframeSec: number,
+    forecast: Record<string, { p10: number; p50: number; p90: number }>,
+): { p10: { time: Time; value: number }[]; p50: { time: Time; value: number }[]; p90: { time: Time; value: number }[] } {
+    const horizons: [string, number][] = [["t+1", 1], ["t+3", 3], ["t+6", 6], ["t+12", 12]];
+    const origin = { time: currentTime as Time, value: currentPrice };
+
+    const p10 = [origin];
+    const p50 = [origin];
+    const p90 = [origin];
+
+    for (const [key, mult] of horizons) {
+        const h = forecast[key];
+        if (!h) continue;
+        const t = (currentTime + mult * timeframeSec) as Time;
+        p10.push({ time: t, value: currentPrice * (1 + h.p10) });
+        p50.push({ time: t, value: currentPrice * (1 + h.p50) });
+        p90.push({ time: t, value: currentPrice * (1 + h.p90) });
+    }
+
+    return { p10, p50, p90 };
 }
 
 /** Bucket an epoch-second timestamp to the start of its timeframe period. */
@@ -243,6 +277,9 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         if (overlay.ema200) { chart.removeSeries(overlay.ema200); overlay.ema200 = undefined; }
         if (overlay.ema50) { chart.removeSeries(overlay.ema50); overlay.ema50 = undefined; }
         if (overlay.vwap) { chart.removeSeries(overlay.vwap); overlay.vwap = undefined; }
+        if (overlay.forecastP50) { chart.removeSeries(overlay.forecastP50); overlay.forecastP50 = undefined; }
+        if (overlay.forecastUpper) { chart.removeSeries(overlay.forecastUpper); overlay.forecastUpper = undefined; }
+        if (overlay.forecastLower) { chart.removeSeries(overlay.forecastLower); overlay.forecastLower = undefined; }
 
         // Remove price lines (PDH/PDL)
         if (candleSeries) {
@@ -382,7 +419,58 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             markers.sort((a, b) => (a.time as number) - (b.time as number));
             markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
         }
-    }, [indicatorConfig, clearOverlays, drawSignalLines]);
+
+        // Forecast cone
+        if (indicatorConfig.forecastCone && activeSignalRef.current?.forecast) {
+            const lastCandle = candles[candles.length - 1];
+            if (lastCandle) {
+                const currentPrice = parseFloat(lastCandle.close);
+                const currentTime = Math.floor(new Date(lastCandle.ts).getTime() / 1000);
+                const tfSec = TF_SECONDS[timeframe] ?? 3600;
+                const { p10, p50, p90 } = forecastToChartPoints(
+                    currentPrice, currentTime, tfSec, activeSignalRef.current.forecast,
+                );
+
+                // p50 median line — dashed cyan
+                const p50Series = chart.addSeries(LineSeries, {
+                    color: "#06b6d4",
+                    lineWidth: 2,
+                    lineStyle: LineStyle.Dashed,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                p50Series.setData(p50);
+                overlayRef.current.forecastP50 = p50Series;
+
+                // Upper area (p90 → p50 fill)
+                const upperSeries = chart.addSeries(AreaSeries, {
+                    lineColor: "rgba(6,182,212,0.3)",
+                    lineWidth: 1,
+                    topColor: "rgba(6,182,212,0.08)",
+                    bottomColor: "transparent",
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                upperSeries.setData(p90);
+                overlayRef.current.forecastUpper = upperSeries;
+
+                // Lower area (p10 → transparent fill)
+                const lowerSeries = chart.addSeries(AreaSeries, {
+                    lineColor: "rgba(6,182,212,0.3)",
+                    lineWidth: 1,
+                    topColor: "transparent",
+                    bottomColor: "rgba(6,182,212,0.08)",
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                lowerSeries.setData(p10);
+                overlayRef.current.forecastLower = lowerSeries;
+            }
+        }
+    }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
 
     // Fetch signals for the current pair + timeframe
     const fetchSignals = useCallback(async () => {
