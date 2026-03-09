@@ -7,8 +7,10 @@ import {
     getActiveSignal,
     getSignalHistory,
     getSignalPerformance,
+    getEquityCurve,
     fetchAndStoreSignal,
 } from "../../market/signalService.js";
+import { getOrderFlow } from "../../market/orderFlowFeatures.js";
 import { pool } from "../../db/pool.js";
 
 const signalQuery = z.object({
@@ -99,6 +101,50 @@ const v1Signals: FastifyPluginAsync = async (app) => {
                 signal,
                 message: signal ? "New signal generated" : "No signal (below confidence or cooldown)",
             });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/pairs/:pairId/order-flow — real-time order flow features
+    app.get("/pairs/:pairId/order-flow", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get real-time order flow features for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const features = getOrderFlow(pairId);
+
+            return reply.send({
+                ok: true,
+                features,
+            });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/signals/equity-curve — cumulative P&L from all closed signals
+    app.get("/signals/equity-curve", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get equity curve from signal history",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (_req, reply) => {
+        try {
+            const result = await getEquityCurve();
+            return reply.send({ ok: true, ...result });
         } catch (err) {
             return v1HandleError(reply, err);
         }

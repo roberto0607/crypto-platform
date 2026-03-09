@@ -29,6 +29,8 @@ from app.models.xgboost_model import XGBoostModel
 from app.models.ensemble import EnsembleModel
 from app.models.signal_generator import generate_signal
 from app.models.regime_detector import detect_regime, REGIME_CONFIGS
+from app.models.explainer import generate_explanation
+from app.models.target_predictor import TargetPredictor
 from app.training.alerts import AlertChecker, format_alerts
 
 logger = logging.getLogger("ml")
@@ -36,11 +38,12 @@ logger = logging.getLogger("ml")
 # Loaded models
 _model: XGBoostModel | None = None
 _ensemble: EnsembleModel | None = None
+_target_predictor: TargetPredictor | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _ensemble
+    global _model, _ensemble, _target_predictor
     await get_pool()
 
     model_dir = Path(ML_MODEL_PATH)
@@ -65,6 +68,15 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to load XGBoost: {e}")
     else:
         logger.info("No trained model found — /predict will return 503 until training is run")
+
+    # Try loading target predictor (learned TP/SL zones)
+    target_path = model_dir / "target_latest.joblib"
+    if target_path.exists():
+        try:
+            _target_predictor = TargetPredictor.load(str(target_path))
+            logger.info(f"Target predictor loaded: {_target_predictor.version}")
+        except Exception as e:
+            logger.warning(f"Failed to load target predictor: {e}")
 
     yield
     await close_pool()
@@ -94,6 +106,7 @@ async def health():
         "service": "ml",
         "models_loaded": list(set(models_loaded)),
         "ensemble": _ensemble is not None,
+        "target_predictor": _target_predictor is not None,
     }
 
 
@@ -263,6 +276,16 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         sl_mult = rc.get("sl_multiplier", 1.0)
         effective_min_conf = rc.get("min_confidence", ML_MIN_CONFIDENCE)
 
+    # Predict learned TP/SL zones if target predictor is available
+    learned_zones = None
+    if _target_predictor:
+        try:
+            learned_zones = _target_predictor.predict_zones(
+                X[0], current_price, prediction["direction"]
+            )
+        except Exception as e:
+            logger.warning(f"Target predictor failed, falling back to ATR: {e}")
+
     signal = generate_signal(
         prediction=prediction,
         current_price=current_price,
@@ -270,6 +293,7 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         min_confidence=effective_min_conf,
         top_features=top_features,
         model_version=model_version,
+        learned_zones=learned_zones,
     )
 
     # Apply regime TP/SL multipliers
@@ -285,6 +309,15 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
             signal.tp3 = round(current_price - (current_price - signal.tp3) * tp_mult, 2)
             signal.stop_loss = round(current_price + (signal.stop_loss - current_price) * sl_mult, 2)
 
+    # Generate explanation
+    explanation = generate_explanation(
+        prediction=prediction,
+        top_features=top_features,
+        regime=regime_info,
+        contributions=model_contributions,
+        attention=attention,
+    )
+
     response: dict = {
         "pair": db_symbol,
         "timeframe": timeframe,
@@ -297,8 +330,11 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         "current_price": current_price,
         "atr_14": round(atr, 2),
         "model_version": model_version,
+        "explanation": explanation,
     }
 
+    if learned_zones:
+        response["learned_zones"] = learned_zones
     if regime_info:
         response["regime"] = regime_info
     if model_contributions:

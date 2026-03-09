@@ -1,5 +1,12 @@
-import { useEffect, useState, useCallback } from "react";
-import { getSignals, type MLSignal, type SignalPerformance } from "@/api/endpoints/signals";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import {
+    getSignals,
+    getEquityCurve,
+    type MLSignal,
+    type SignalPerformance,
+    type SignalExplanation,
+    type EquityCurvePoint,
+} from "@/api/endpoints/signals";
 import { useTradingStore } from "@/stores/tradingStore";
 
 interface AISignalPanelProps {
@@ -12,15 +19,30 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
 
     const [active, setActive] = useState<MLSignal | null>(null);
     const [performance, setPerformance] = useState<SignalPerformance | null>(null);
+    const [equityCurve, setEquityCurve] = useState<{
+        curve: EquityCurvePoint[];
+        totalReturn: number;
+        maxDrawdown: number;
+        sharpe: number;
+    } | null>(null);
     const [loading, setLoading] = useState(false);
 
     const fetchSignals = useCallback(async () => {
         if (!selectedPairId || !aiEnabled) return;
         setLoading(true);
         try {
-            const { data } = await getSignals(selectedPairId, { timeframe, limit: 10 });
-            setActive(data.active);
-            setPerformance(data.performance);
+            const [signalRes, curveRes] = await Promise.all([
+                getSignals(selectedPairId, { timeframe, limit: 10 }),
+                getEquityCurve(),
+            ]);
+            setActive(signalRes.data.active);
+            setPerformance(signalRes.data.performance);
+            setEquityCurve({
+                curve: curveRes.data.curve,
+                totalReturn: curveRes.data.totalReturn,
+                maxDrawdown: curveRes.data.maxDrawdown,
+                sharpe: curveRes.data.sharpe,
+            });
         } catch {
             // Non-fatal
         } finally {
@@ -39,7 +61,6 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
         const handler = (e: Event) => {
             const detail = (e as CustomEvent).detail;
             if (detail.pairId !== selectedPairId) return;
-            // Refetch to get full signal data
             fetchSignals();
         };
 
@@ -61,7 +82,7 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {/* Active Signal */}
+                {/* Left: Active Signal + Model Votes */}
                 <div>
                     <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
                         Active Signal
@@ -75,7 +96,23 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
                     )}
                 </div>
 
-                {/* Performance */}
+                {/* Right: Explanation */}
+                <div>
+                    <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
+                        Why This Signal
+                    </div>
+                    {active?.explanation ? (
+                        <ExplanationCard explanation={active.explanation} />
+                    ) : (
+                        <div className="text-gray-600 text-xs py-2">
+                            {active ? "No explanation available" : "Generate a signal to see analysis"}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Bottom row: Performance + Equity Curve */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-800/50">
                 <div>
                     <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
                         Performance
@@ -83,15 +120,27 @@ export function AISignalPanel({ timeframe }: AISignalPanelProps) {
                     {performance ? (
                         <PerformanceCard perf={performance} />
                     ) : (
-                        <div className="text-gray-600 text-xs py-2">
-                            No data yet
-                        </div>
+                        <div className="text-gray-600 text-xs py-2">No data yet</div>
+                    )}
+                </div>
+                <div>
+                    <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1.5">
+                        Equity Curve
+                    </div>
+                    {equityCurve ? (
+                        <EquityCurveCard data={equityCurve} />
+                    ) : (
+                        <div className="text-gray-600 text-xs py-2">No closed signals yet</div>
                     )}
                 </div>
             </div>
         </div>
     );
 }
+
+// ---------------------------------------------------------------------------
+// Active Signal Card
+// ---------------------------------------------------------------------------
 
 function ActiveSignalCard({ signal }: { signal: MLSignal }) {
     const isBuy = signal.signalType === "BUY";
@@ -139,9 +188,89 @@ function ActiveSignalCard({ signal }: { signal: MLSignal }) {
                     Status: <span className="text-gray-300">{signal.outcome}</span>
                 </div>
             </div>
+
+            {/* Model Votes */}
+            {signal.explanation?.model_votes && (
+                <div className="flex items-center gap-1.5 mt-1">
+                    <span className="text-[10px] text-gray-500">Models:</span>
+                    {Object.entries(signal.explanation.model_votes).map(([model, vote]) => (
+                        <span
+                            key={model}
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                                vote === "BUY"
+                                    ? "bg-emerald-500/20 text-emerald-400"
+                                    : vote === "SELL"
+                                      ? "bg-red-500/20 text-red-400"
+                                      : "bg-gray-700/50 text-gray-400"
+                            }`}
+                            title={`${model}: ${vote}`}
+                        >
+                            {model.slice(0, 4).toUpperCase()}:{vote.slice(0, 1)}
+                        </span>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
+
+// ---------------------------------------------------------------------------
+// Explanation Card
+// ---------------------------------------------------------------------------
+
+const ICON_COLORS: Record<string, string> = {
+    momentum: "text-blue-400",
+    trend: "text-purple-400",
+    regime: "text-cyan-400",
+    agreement: "text-emerald-400",
+    volume: "text-yellow-400",
+    pattern: "text-orange-400",
+    volatility: "text-amber-400",
+    calendar: "text-gray-400",
+    other: "text-gray-400",
+};
+
+function ExplanationCard({ explanation }: { explanation: SignalExplanation }) {
+    return (
+        <div className="space-y-1.5">
+            {/* Summary */}
+            <div className="text-xs text-gray-200 italic">
+                &quot;{explanation.summary}&quot;
+            </div>
+
+            {/* Reasons */}
+            <div className="space-y-0.5">
+                {explanation.reasons.map((r, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-xs">
+                        <span className={`mt-0.5 ${ICON_COLORS[r.icon] ?? "text-gray-400"}`}>
+                            {r.weight === "high" ? "\u25C9" : "\u25CB"}
+                        </span>
+                        <span className="text-gray-300">{r.text}</span>
+                    </div>
+                ))}
+            </div>
+
+            {/* Caution */}
+            {explanation.caution && (
+                <div className="flex items-start gap-1.5 text-xs mt-1">
+                    <span className="text-amber-400 mt-0.5">{"\u26A0"}</span>
+                    <span className="text-amber-300">{explanation.caution}</span>
+                </div>
+            )}
+
+            {/* Attention highlight */}
+            {explanation.attention_highlight && (
+                <div className="text-[10px] text-gray-500 mt-1">
+                    {explanation.attention_highlight}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Performance Card
+// ---------------------------------------------------------------------------
 
 function PerformanceCard({ perf }: { perf: SignalPerformance }) {
     return (
@@ -175,6 +304,100 @@ function PerformanceCard({ perf }: { perf: SignalPerformance }) {
         </div>
     );
 }
+
+// ---------------------------------------------------------------------------
+// Equity Curve Card (SVG sparkline)
+// ---------------------------------------------------------------------------
+
+function EquityCurveCard({ data }: {
+    data: {
+        curve: EquityCurvePoint[];
+        totalReturn: number;
+        maxDrawdown: number;
+        sharpe: number;
+    };
+}) {
+    const { curve, totalReturn, maxDrawdown, sharpe } = data;
+
+    const svgPath = useMemo(() => {
+        if (curve.length < 2) return null;
+
+        const values = curve.map((p) => p.cumPnlPct);
+        const min = Math.min(0, ...values);
+        const max = Math.max(0, ...values);
+        const range = max - min || 1;
+
+        const w = 200;
+        const h = 40;
+        const pad = 2;
+
+        const points = values.map((v, i) => {
+            const x = pad + (i / (values.length - 1)) * (w - 2 * pad);
+            const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+            return `${x},${y}`;
+        });
+
+        // Zero line Y
+        const zeroY = h - pad - ((0 - min) / range) * (h - 2 * pad);
+
+        return { path: `M${points.join("L")}`, w, h, zeroY };
+    }, [curve]);
+
+    const isPositive = totalReturn >= 0;
+
+    if (curve.length === 0) {
+        return <div className="text-gray-600 text-xs py-2">No closed signals yet</div>;
+    }
+
+    return (
+        <div className="space-y-1.5">
+            {/* Sparkline */}
+            {svgPath && (
+                <svg
+                    viewBox={`0 0 ${svgPath.w} ${svgPath.h}`}
+                    className="w-full h-10"
+                    preserveAspectRatio="none"
+                >
+                    {/* Zero line */}
+                    <line
+                        x1="0" y1={svgPath.zeroY}
+                        x2={svgPath.w} y2={svgPath.zeroY}
+                        stroke="#374151" strokeWidth="0.5" strokeDasharray="3,3"
+                    />
+                    {/* Curve */}
+                    <path
+                        d={svgPath.path}
+                        fill="none"
+                        stroke={isPositive ? "#34d399" : "#f87171"}
+                        strokeWidth="1.5"
+                    />
+                </svg>
+            )}
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-x-3 text-xs">
+                <div>
+                    <div className="text-gray-500">Return</div>
+                    <div className={isPositive ? "text-emerald-400 font-medium" : "text-red-400 font-medium"}>
+                        {isPositive ? "+" : ""}{totalReturn.toFixed(1)}%
+                    </div>
+                </div>
+                <div>
+                    <div className="text-gray-500">Max DD</div>
+                    <div className="text-red-400">-{maxDrawdown.toFixed(1)}%</div>
+                </div>
+                <div>
+                    <div className="text-gray-500">Sharpe</div>
+                    <div className="text-gray-200">{sharpe.toFixed(2)}</div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function fmtPrice(price: string): string {
     const n = parseFloat(price);

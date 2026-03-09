@@ -10,6 +10,7 @@ Usage:
     python -m app.train --model all              # Train all models + ensemble
     python -m app.train --model lstm             # Train LSTM only
     python -m app.train --model ensemble         # Train full ensemble
+    python -m app.train --model target            # Train target zone predictor (MFE/MAE)
     python -m app.train --retrain                # Auto-retrain pipeline
     python -m app.train --compare                # Compare all model performances
     python -m app.train --pair BTC/USD --timeframe 1h
@@ -170,6 +171,9 @@ async def main_async(args: argparse.Namespace) -> None:
         if model_type in ("cnn", "all", "ensemble"):
             await _train_cnn(X, y, feature_names, args)
 
+        if model_type in ("target", "all"):
+            await _train_target(X, feature_names, all_dfs, forward_window)
+
         if model_type in ("ensemble", "all"):
             await _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence)
 
@@ -293,6 +297,82 @@ async def _train_cnn(X, y, feature_names, args):
     model_path = model_dir / f"{version}.pt"
     model.save(str(model_path), version)
     print(f"  Model saved: {model_path}")
+
+
+async def _train_target(X, feature_names, all_dfs, forward_window):
+    """Train target zone predictor (MFE/MAE regression)."""
+    from app.models.target_predictor import TargetPredictor
+    from app.training.labels import generate_mfe_mae_labels
+
+    print(f"\n── Target Zone Predictor ──")
+
+    # Generate MFE/MAE labels for each pair's DataFrame
+    all_mfe = []
+    all_mae = []
+    for df in all_dfs:
+        labels_df = generate_mfe_mae_labels(df, forward_window)
+        mfe = labels_df["mfe_pct"].values
+        mae = labels_df["mae_pct"].values
+
+        # Align with X: the pipeline drops NaN rows from indicator warm-up
+        # X is built from the tail of each df after dropna, so we align from the end
+        samples_per_pair = len(X) // len(all_dfs)
+        # labels_df has same len as df; X was trimmed from df.dropna()
+        offset = len(df) - samples_per_pair
+        all_mfe.append(mfe[offset:offset + samples_per_pair])
+        all_mae.append(mae[offset:offset + samples_per_pair])
+
+    mfe_labels = np.concatenate(all_mfe)
+    mae_labels = np.concatenate(all_mae)
+
+    # Ensure alignment (trim to shortest)
+    min_len = min(len(X), len(mfe_labels))
+    X_aligned = X[:min_len]
+    mfe_labels = mfe_labels[:min_len]
+    mae_labels = mae_labels[:min_len]
+
+    valid_count = int(np.sum(~(np.isnan(mfe_labels) | np.isnan(mae_labels))))
+    print(f"  Samples: {len(X_aligned)} total, {valid_count} with valid MFE/MAE labels")
+
+    if valid_count < 50:
+        print("  ERROR: Not enough valid samples. Need more candle data.")
+        return
+
+    predictor = TargetPredictor()
+    metrics = predictor.train(X_aligned, mfe_labels, mae_labels, feature_names)
+
+    print(f"  MFE R² (train): {metrics['mfe_r2_train']}")
+    print(f"  MFE R² (val):   {metrics['mfe_r2_val']}")
+    print(f"  MAE R² (train): {metrics['mae_r2_train']}")
+    print(f"  MAE R² (val):   {metrics['mae_r2_val']}")
+
+    # Save
+    version = f"target_v1_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    model_dir = Path(ML_MODEL_PATH)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / f"{version}.joblib"
+    predictor.save(str(model_path), version)
+
+    # Copy as latest
+    latest_path = model_dir / "target_latest.joblib"
+    if latest_path.exists():
+        latest_path.unlink()
+    shutil.copy2(str(model_path), str(latest_path))
+    meta_src = model_path.with_suffix(".meta.json")
+    meta_dst = latest_path.with_suffix(".meta.json")
+    if meta_src.exists():
+        shutil.copy2(str(meta_src), str(meta_dst))
+
+    print(f"\n  Target predictor saved: {model_path}")
+
+    # Demo prediction
+    sample_price = 65000.0  # Example BTC price
+    zones = predictor.predict_zones(X_aligned[-1], sample_price, "BUY")
+    print(f"\n  Demo (BUY @ ${sample_price:,.0f}):")
+    print(f"    TP1: ${zones['tp1']:,.2f}  TP2: ${zones['tp2']:,.2f}  TP3: ${zones['tp3']:,.2f}")
+    print(f"    SL:  ${zones['stop_loss']:,.2f}")
+    print(f"    Expected move: +{zones['predicted_mfe_pct']:.2f}%")
+    print(f"    Risk/Reward: {zones['risk_reward']:.2f}")
 
 
 async def _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence):
@@ -442,7 +522,7 @@ def _print_backtest(results: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Train ML trading models")
     parser.add_argument("--model", type=str, default="xgboost",
-                        choices=["xgboost", "lstm", "tft", "cnn", "ensemble", "all"],
+                        choices=["xgboost", "lstm", "tft", "cnn", "target", "ensemble", "all"],
                         help="Model type to train")
     parser.add_argument("--pair", type=str, help="Single pair (e.g. BTC/USD)")
     parser.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe")

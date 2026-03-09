@@ -8,6 +8,12 @@ import { config } from "../config.js";
 import { aggregateTick, flushDueCandles } from "./candleAggregator.js";
 import { runBackfill } from "./candleBackfill.js";
 import { logger } from "../observability/logContext.js";
+import {
+    computeOrderFlowFeatures,
+    bookSnapshots,
+    orderFlowCache,
+    type BookLevel,
+} from "./orderFlowFeatures.js";
 
 // Debounce: track last DB write time per pair to avoid write storms
 const lastSyncTime = new Map<string, number>();
@@ -65,6 +71,12 @@ function subscribe(socket: WebSocket): void {
     socket.send(JSON.stringify({
         method: "subscribe",
         params: { channel: "trade", symbol: symbols, snapshot: false },
+    }));
+
+    // Book: 25-level depth for order flow analysis
+    socket.send(JSON.stringify({
+        method: "subscribe",
+        params: { channel: "book", depth: 25, symbol: symbols, snapshot: true },
     }));
 }
 
@@ -139,15 +151,50 @@ function handleTradeMessage(data: any[]): void {
     }
 }
 
+function handleBookMessage(data: any[]): void {
+    for (const entry of data) {
+        const krakenSymbol = entry.symbol;
+        if (!krakenSymbol) continue;
+
+        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        if (!ourSymbol) continue;
+
+        const pairId = symbolToPairId[ourSymbol];
+        if (!pairId) continue;
+
+        const rawBids: any[] = entry.bids || [];
+        const rawAsks: any[] = entry.asks || [];
+
+        const bids: BookLevel[] = rawBids.map((b: any) => ({
+            price: parseFloat(b.price),
+            qty: parseFloat(b.qty),
+        }));
+        const asks: BookLevel[] = rawAsks.map((a: any) => ({
+            price: parseFloat(a.price),
+            qty: parseFloat(a.qty),
+        }));
+
+        // Store raw snapshot
+        bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
+
+        // Compute and cache order flow features
+        const features = computeOrderFlowFeatures(bids, asks);
+        orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+    }
+}
+
 async function handleMessage(raw: WebSocket.Data): Promise<void> {
     try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type !== "update") return;
+        // Accept both "update" and "snapshot" types for book channel
+        if (msg.type !== "update" && msg.type !== "snapshot") return;
 
         if (msg.channel === "ticker") {
             await handleTickerMessage(msg.data);
         } else if (msg.channel === "trade") {
             handleTradeMessage(msg.data);
+        } else if (msg.channel === "book") {
+            handleBookMessage(msg.data);
         }
     } catch {
         // Ignore unparseable messages (heartbeats, etc.)

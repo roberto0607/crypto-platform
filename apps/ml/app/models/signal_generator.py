@@ -51,6 +51,7 @@ def generate_signal(
     top_features: list[dict] | None = None,
     model_version: str = "unknown",
     tp_probs: dict | None = None,
+    learned_zones: dict | None = None,
 ) -> Signal | None:
     """
     Convert a model prediction into a trading signal.
@@ -64,6 +65,8 @@ def generate_signal(
         top_features: Feature importance list from model.
         model_version: Model version string.
         tp_probs: Custom TP hit probabilities from backtest.
+        learned_zones: Data-driven TP/SL from TargetPredictor.
+                       If provided, overrides ATR-based zones.
 
     Returns:
         Signal object or None if confidence is too low or direction is NEUTRAL.
@@ -81,7 +84,13 @@ def generate_signal(
         "tp3": DEFAULT_TP3_PROB,
     }
 
-    if direction == "BUY":
+    if learned_zones:
+        # Use data-driven zones from TargetPredictor
+        tp1 = learned_zones["tp1"]
+        tp2 = learned_zones["tp2"]
+        tp3 = learned_zones["tp3"]
+        stop_loss = learned_zones["stop_loss"]
+    elif direction == "BUY":
         tp1 = current_price + TP1_MULT * atr
         tp2 = current_price + TP2_MULT * atr
         tp3 = current_price + TP3_MULT * atr

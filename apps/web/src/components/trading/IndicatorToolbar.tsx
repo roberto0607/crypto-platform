@@ -8,6 +8,7 @@ const OVERLAY_INDICATORS = [
   { key: "vwap", label: "VWAP", color: "#06b6d4" },
   { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#94a3b8" },
   { key: "swingPoints", label: "Swing Points", color: "#f97316" },
+  { key: "orderFlow", label: "Order Flow", color: "#f59e0b" },
 ] as const;
 
 export function IndicatorToolbar() {

@@ -13,6 +13,14 @@ const logger = rootLogger.child({ module: "signalService" });
 // Cooldown tracking: pairId → last signal timestamp
 const cooldowns = new Map<string, number>();
 
+export interface SignalExplanation {
+    summary: string;
+    reasons: { icon: string; text: string; weight: string }[];
+    caution: string | null;
+    model_votes: Record<string, string> | null;
+    attention_highlight: string | null;
+}
+
 export interface MLSignal {
     id: string;
     pairId: string;
@@ -29,6 +37,7 @@ export interface MLSignal {
     tp3Prob: number;
     modelVersion: string;
     topFeatures: unknown;
+    explanation: SignalExplanation | null;
     outcome: string;
     createdAt: string;
     expiresAt: string;
@@ -66,6 +75,13 @@ interface MLPredictionResponse {
     };
     model_contributions?: Record<string, { weight: number; direction: string; confidence: number }>;
     attention?: { temporal_attention: unknown[]; feature_importance: unknown[] };
+    explanation?: {
+        summary: string;
+        reasons: { icon: string; text: string; weight: string }[];
+        caution: string | null;
+        model_votes: Record<string, string> | null;
+        attention_highlight: string | null;
+    };
 }
 
 /**
@@ -128,6 +144,13 @@ export async function fetchAndStoreSignal(
     const expiresAt = new Date(Date.now() + config.mlSignalExpiryHours * 3600_000).toISOString();
 
     const regime = data.regime?.regime ?? null;
+    const explanation = data.explanation ?? null;
+
+    // Store features + explanation together in JSONB
+    const topFeaturesJson = JSON.stringify({
+        features: sig.top_features,
+        explanation,
+    });
 
     const { rows } = await pool.query<{ id: string; created_at: string }>(
         `INSERT INTO ml_signals (
@@ -141,7 +164,7 @@ export async function fetchAndStoreSignal(
             pairId, timeframe, sig.signal_type, sig.confidence,
             String(sig.entry_price), String(sig.tp1), String(sig.tp2), String(sig.tp3), String(sig.stop_loss),
             sig.tp1_prob, sig.tp2_prob, sig.tp3_prob,
-            sig.model_version, JSON.stringify(sig.top_features), expiresAt, regime,
+            sig.model_version, topFeaturesJson, expiresAt, regime,
         ],
     );
 
@@ -188,10 +211,29 @@ export async function fetchAndStoreSignal(
         tp3Prob: sig.tp3_prob,
         modelVersion: sig.model_version,
         topFeatures: sig.top_features,
+        explanation,
         outcome: "pending",
         createdAt: inserted.created_at,
         expiresAt,
     };
+}
+
+/**
+ * Extract explanation from stored top_features JSONB.
+ * top_features is either: {features: [...], explanation: {...}} (new format)
+ * or a plain array (old format, no explanation).
+ */
+function parseStoredFeatures(raw: unknown): { topFeatures: unknown; explanation: SignalExplanation | null } {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const obj = raw as Record<string, unknown>;
+        if ("explanation" in obj) {
+            return {
+                topFeatures: obj.features ?? [],
+                explanation: (obj.explanation as SignalExplanation) ?? null,
+            };
+        }
+    }
+    return { topFeatures: raw, explanation: null };
 }
 
 /**
@@ -220,6 +262,7 @@ export async function getActiveSignal(
     if (rows.length === 0) return null;
 
     const r = rows[0]!;
+    const { topFeatures, explanation } = parseStoredFeatures(r.top_features);
     return {
         id: r.id,
         pairId: r.pair_id,
@@ -235,7 +278,8 @@ export async function getActiveSignal(
         tp2Prob: Number(r.tp2_prob),
         tp3Prob: Number(r.tp3_prob),
         modelVersion: r.model_version,
-        topFeatures: r.top_features,
+        topFeatures,
+        explanation,
         outcome: r.outcome,
         createdAt: r.created_at,
         expiresAt: r.expires_at,
@@ -257,26 +301,139 @@ export async function getSignalHistory(
         [pairId, timeframe, limit],
     );
 
-    return rows.map((r: any) => ({
-        id: r.id,
-        pairId: r.pair_id,
-        timeframe: r.timeframe,
-        signalType: r.signal_type,
-        confidence: Number(r.confidence),
-        entryPrice: r.entry_price,
-        tp1Price: r.tp1_price,
-        tp2Price: r.tp2_price,
-        tp3Price: r.tp3_price,
-        stopLossPrice: r.stop_loss_price,
-        tp1Prob: Number(r.tp1_prob),
-        tp2Prob: Number(r.tp2_prob),
-        tp3Prob: Number(r.tp3_prob),
-        modelVersion: r.model_version,
-        topFeatures: r.top_features,
-        outcome: r.outcome,
-        createdAt: r.created_at,
-        expiresAt: r.expires_at,
-    }));
+    return rows.map((r: any) => {
+        const { topFeatures, explanation } = parseStoredFeatures(r.top_features);
+        return {
+            id: r.id,
+            pairId: r.pair_id,
+            timeframe: r.timeframe,
+            signalType: r.signal_type,
+            confidence: Number(r.confidence),
+            entryPrice: r.entry_price,
+            tp1Price: r.tp1_price,
+            tp2Price: r.tp2_price,
+            tp3Price: r.tp3_price,
+            stopLossPrice: r.stop_loss_price,
+            tp1Prob: Number(r.tp1_prob),
+            tp2Prob: Number(r.tp2_prob),
+            tp3Prob: Number(r.tp3_prob),
+            modelVersion: r.model_version,
+            topFeatures,
+            explanation,
+            outcome: r.outcome,
+            createdAt: r.created_at,
+            expiresAt: r.expires_at,
+        };
+    });
+}
+
+/**
+ * Compute equity curve from signal history — cumulative P&L over time.
+ */
+export async function getEquityCurve(): Promise<{
+    curve: { ts: string; cumPnlPct: number; signalId: string }[];
+    totalReturn: number;
+    maxDrawdown: number;
+    sharpe: number;
+    totalSignals: number;
+    winRate: number;
+}> {
+    const { rows } = await pool.query<{
+        id: string;
+        signal_type: string;
+        entry_price: string;
+        tp1_price: string;
+        tp2_price: string;
+        tp3_price: string;
+        stop_loss_price: string;
+        outcome: string;
+        closed_at: string;
+    }>(
+        `SELECT id, signal_type, entry_price, tp1_price, tp2_price, tp3_price,
+                stop_loss_price, outcome, closed_at
+         FROM ml_signals
+         WHERE outcome != 'pending'
+         ORDER BY COALESCE(closed_at, created_at) ASC`,
+    );
+
+    const curve: { ts: string; cumPnlPct: number; signalId: string }[] = [];
+    let cumPnl = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+    let wins = 0;
+    const returns: number[] = [];
+
+    for (const r of rows) {
+        const entry = parseFloat(r.entry_price);
+        if (!entry) continue;
+
+        let pnl = 0;
+        const isBuy = r.signal_type === "BUY";
+
+        switch (r.outcome) {
+            case "tp1":
+                pnl = (parseFloat(r.tp1_price) - entry) / entry;
+                break;
+            case "tp2":
+                pnl = (parseFloat(r.tp2_price) - entry) / entry;
+                break;
+            case "tp3":
+                pnl = (parseFloat(r.tp3_price) - entry) / entry;
+                break;
+            case "sl":
+                pnl = (parseFloat(r.stop_loss_price) - entry) / entry;
+                break;
+            case "expired":
+                pnl = 0;
+                break;
+            default:
+                continue;
+        }
+
+        // Flip sign for SELL signals
+        if (!isBuy) pnl = -pnl;
+
+        if (r.outcome === "tp1" || r.outcome === "tp2" || r.outcome === "tp3") {
+            wins++;
+        }
+
+        cumPnl += pnl * 100; // Convert to percentage
+        returns.push(pnl);
+
+        // Track drawdown
+        if (cumPnl > peak) peak = cumPnl;
+        const dd = peak - cumPnl;
+        if (dd > maxDrawdown) maxDrawdown = dd;
+
+        curve.push({
+            ts: r.closed_at,
+            cumPnlPct: Math.round(cumPnl * 100) / 100,
+            signalId: r.id,
+        });
+    }
+
+    // Compute Sharpe ratio (annualized, assuming 1h signals)
+    let sharpe = 0;
+    if (returns.length > 1) {
+        const mean = returns.reduce((s, v) => s + v, 0) / returns.length;
+        const variance = returns.reduce((s, v) => s + (v - mean) ** 2, 0) / (returns.length - 1);
+        const std = Math.sqrt(variance);
+        if (std > 0) {
+            // Annualize: sqrt(8760) for hourly signals
+            sharpe = (mean / std) * Math.sqrt(8760);
+        }
+    }
+
+    const decided = rows.filter((r) => ["tp1", "tp2", "tp3", "sl"].includes(r.outcome)).length;
+
+    return {
+        curve,
+        totalReturn: Math.round(cumPnl * 100) / 100,
+        maxDrawdown: Math.round(maxDrawdown * 100) / 100,
+        sharpe: Math.round(sharpe * 100) / 100,
+        totalSignals: rows.length,
+        winRate: decided > 0 ? Math.round((wins / decided) * 1000) / 1000 : 0,
+    };
 }
 
 /**

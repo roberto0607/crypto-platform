@@ -8,6 +8,7 @@ from app.features.momentum import compute_momentum_features
 from app.features.volatility import compute_volatility_features
 from app.features.volume import compute_volume_features
 from app.features.price_action import compute_price_action_features
+from app.features.order_flow import fetch_order_flow_features
 
 # Minimum candles needed (indicators need warm-up periods)
 MIN_CANDLES = 50
@@ -46,6 +47,29 @@ async def build_feature_matrix(
     df["hour_of_day"] = df["ts"].dt.hour
     df["day_of_week"] = df["ts"].dt.dayofweek
     df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
+
+    # Merge order flow features (from book snapshots, aggregated to candle windows)
+    try:
+        of_df = await fetch_order_flow_features(pair_id, timeframe, limit)
+        if not of_df.empty:
+            df = df.merge(of_df, on="ts", how="left")
+            # Fill NaN (periods with no order flow data) with neutral values
+            of_fill = {
+                "of_avg_imbalance": 0,
+                "of_max_imbalance": 0,
+                "of_avg_weighted_imb": 0,
+                "of_avg_depth_ratio": 1,
+                "of_avg_spread_bps": 0,
+                "of_whale_bid_count": 0,
+                "of_whale_ask_count": 0,
+                "of_avg_bid_depth_usd": 0,
+                "of_avg_ask_depth_usd": 0,
+            }
+            for col, val in of_fill.items():
+                if col in df.columns:
+                    df[col] = df[col].fillna(val)
+    except Exception:
+        pass  # Non-fatal: order flow data may not exist yet
 
     # Drop rows with NaN (from indicator warm-up periods)
     df = df.dropna().reset_index(drop=True)

@@ -74,6 +74,62 @@ def generate_magnitude_labels(
     return magnitude
 
 
+def generate_mfe_mae_labels(
+    df: pd.DataFrame,
+    forward_window: int = 10,
+) -> pd.DataFrame:
+    """
+    For each candle, compute forward-looking MFE and MAE.
+
+    MFE (Maximum Favorable Excursion): how far price moves in favorable direction.
+    MAE (Maximum Adverse Excursion): how far price moves against you.
+
+    Returns DataFrame with columns:
+        mfe_pct: max favorable excursion (always positive, as % of entry)
+        mae_pct: max adverse excursion (always positive, as % of entry)
+        mfe_candles: candles until MFE peak
+        mae_candles: candles until MAE trough
+        exit_pct: P&L at end of forward_window
+    """
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    n = len(df)
+
+    mfe_pct = np.full(n, np.nan)
+    mae_pct = np.full(n, np.nan)
+    mfe_candles = np.full(n, np.nan)
+    mae_candles = np.full(n, np.nan)
+    exit_pct = np.full(n, np.nan)
+
+    for i in range(n - forward_window):
+        entry = close[i]
+        if entry <= 0:
+            continue
+
+        future_highs = high[i + 1 : i + 1 + forward_window]
+        future_lows = low[i + 1 : i + 1 + forward_window]
+        end_idx = min(i + forward_window, n - 1)
+        future_close = close[end_idx]
+
+        max_up = (future_highs.max() - entry) / entry   # Best upside
+        max_down = (entry - future_lows.min()) / entry   # Worst downside
+
+        mfe_pct[i] = max_up
+        mae_pct[i] = max_down
+        mfe_candles[i] = int(np.argmax(future_highs)) + 1
+        mae_candles[i] = int(np.argmin(future_lows)) + 1
+        exit_pct[i] = (future_close - entry) / entry
+
+    result = df[["ts"]].copy()
+    result["mfe_pct"] = mfe_pct
+    result["mae_pct"] = mae_pct
+    result["mfe_candles"] = mfe_candles
+    result["mae_candles"] = mae_candles
+    result["exit_pct"] = exit_pct
+    return result
+
+
 def label_distribution(labels: pd.Series) -> dict:
     """Get human-readable label distribution."""
     clean = labels.dropna()

@@ -10,6 +10,7 @@ import RecentTrades from "@/components/trading/RecentTrades";
 import OpenOrders from "@/components/trading/OpenOrders";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { AISignalPanel } from "@/components/trading/AISignalPanel";
+import { OrderFlowBar } from "@/components/trading/OrderFlowBar";
 import Card from "@/components/Card";
 
 export default function TradingPage() {
@@ -65,6 +66,9 @@ export default function TradingPage() {
 
       {/* AI Signal Panel */}
       <AISignalPanel timeframe={chartTimeframe} />
+
+      {/* Order Flow Bar */}
+      <OrderFlowBar />
 
       {/* Bottom row: Order Book + Recent Trades + Open Orders */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
