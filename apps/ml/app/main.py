@@ -50,6 +50,8 @@ from app.models.pattern_detector import scan_patterns, adjust_with_cnn, pattern_
 from app.models.scenario_engine import generate_scenarios, scenarios_to_dict
 from app.models.seasonality import SeasonalityModel
 from app.training.alerts import AlertChecker, format_alerts
+from app.copilot.models import MarketContext, CopilotAnalysis
+from app.copilot.analyzer import CopilotAnalyzer
 
 logger = logging.getLogger("ml")
 
@@ -520,6 +522,17 @@ async def predict_scenarios(symbol: str, timeframe: str = "1h", limit: int = 300
     }
 
     return JSONResponse(content=json.loads(json.dumps(response, cls=NumpyEncoder)))
+
+
+_copilot_analyzer = CopilotAnalyzer()
+
+
+@app.post("/copilot/analyze")
+async def copilot_analyze(body: dict):
+    """Analyze market context and produce trade copilot narrative."""
+    ctx = MarketContext.from_dict(body)
+    analysis = _copilot_analyzer.analyze(ctx)
+    return analysis.to_dict()
 
 
 @app.get("/regime/{symbol}")

@@ -245,3 +245,35 @@ export function getPatterns(
         patterns: ChartPattern[];
     }>(`/v1/pairs/${pairId}/patterns`, { params });
 }
+
+export interface CopilotAnalysis {
+    conviction: number;
+    convictionLabel: string;
+    marketRead: string;
+    tradeIdea: string;
+    tradeLevels: {
+        entry: number;
+        tp1: number | null;
+        tp2: number | null;
+        tp3: number | null;
+        sl: number | null;
+        rrRatio: number;
+        tp1Prob: number;
+        tp2Prob: number;
+        tp3Prob: number;
+    } | null;
+    riskFlags: { severity: string; text: string; icon: string }[];
+    positionAdvice: string;
+    keyDatapoints: { label: string; value: string; sentiment: string }[];
+    changesSinceLast: string[];
+}
+
+export function postCopilotAnalysis(
+    pairId: string,
+    context: unknown,
+) {
+    return client.post<{
+        ok: true;
+        analysis: CopilotAnalysis;
+    }>(`/v1/pairs/${pairId}/copilot`, context);
+}

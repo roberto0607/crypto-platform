@@ -15,6 +15,7 @@ import { getDerivatives, loadDerivativesFromDB } from "../../market/derivativesP
 import { computeLiquidityZones } from "../../market/liquidityZones.js";
 import { fetchPatterns, fetchScenarios } from "../../market/patternService.js";
 import { pool } from "../../db/pool.js";
+import { config } from "../../config.js";
 
 const signalQuery = z.object({
     timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
@@ -396,6 +397,41 @@ const v1Signals: FastifyPluginAsync = async (app) => {
                 currentPrice: result.currentPrice,
                 generatedAt: result.generatedAt,
             });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // POST /v1/pairs/:pairId/copilot — AI trade copilot analysis
+    app.post("/pairs/:pairId/copilot", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get AI copilot analysis for market context",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const context = req.body as Record<string, unknown>;
+            const mlRes = await fetch(`${config.mlServiceUrl}/copilot/analyze`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(context),
+                signal: AbortSignal.timeout(5_000),
+            });
+            if (!mlRes.ok) {
+                return reply.status(502).send({
+                    ok: false,
+                    error: `ML service returned ${mlRes.status}`,
+                });
+            }
+            const analysis = await mlRes.json() as Record<string, unknown>;
+            return reply.send({ ok: true, analysis });
         } catch (err) {
             return v1HandleError(reply, err);
         }

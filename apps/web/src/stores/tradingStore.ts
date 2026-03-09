@@ -52,6 +52,7 @@ const defaultIndicatorConfig = {
   liquidityZones: false,
   patternDetection: false,
   ghostCandles: false,
+  copilot: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

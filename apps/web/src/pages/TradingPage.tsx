@@ -12,11 +12,17 @@ import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { AISignalPanel } from "@/components/trading/AISignalPanel";
 import { OrderFlowBar } from "@/components/trading/OrderFlowBar";
 import { DerivativesPanel } from "@/components/trading/DerivativesPanel";
+import { CopilotPanel } from "@/components/trading/CopilotPanel";
 import Card from "@/components/Card";
 
 export default function TradingPage() {
   const sseConnected = useAppStore((s) => s.sseConnected);
+  const pairs = useAppStore((s) => s.pairs);
+  const selectedPairId = useTradingStore((s) => s.selectedPairId);
+  const copilotEnabled = useTradingStore((s) => s.indicatorConfig.copilot);
   const [chartTimeframe, setChartTimeframe] = useState("1h");
+
+  const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "";
 
   return (
     <div className="space-y-4">
@@ -67,6 +73,15 @@ export default function TradingPage() {
 
       {/* AI Signal Panel */}
       <AISignalPanel timeframe={chartTimeframe} />
+
+      {/* AI Copilot */}
+      {copilotEnabled && selectedPairId && (
+        <CopilotPanel
+          pairId={selectedPairId}
+          pairSymbol={selectedPairSymbol}
+          timeframe={chartTimeframe}
+        />
+      )}
 
       {/* Order Flow Bar */}
       <OrderFlowBar />
