@@ -11,12 +11,26 @@ and performance monitoring.
 """
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 from app.config import ML_MODEL_PATH, ML_MIN_CONFIDENCE
 from app.db import get_pool, close_pool, fetch_pair_id, fetch_active_pairs
@@ -364,7 +378,8 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
     if tft_forecast:
         response["forecast"] = tft_forecast
 
-    return response
+    # Serialize with numpy-safe encoder
+    return JSONResponse(content=json.loads(json.dumps(response, cls=NumpyEncoder)))
 
 
 @app.get("/regime/{symbol}")

@@ -473,8 +473,10 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
 
     // Fetch signals for the current pair + timeframe
+    const needsSignals = indicatorConfig.aiSignals || indicatorConfig.forecastCone;
+
     const fetchSignals = useCallback(async () => {
-        if (!selectedPairId || !indicatorConfig.aiSignals) {
+        if (!selectedPairId || !needsSignals) {
             signalHistoryRef.current = [];
             activeSignalRef.current = null;
             return;
@@ -488,7 +490,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             signalHistoryRef.current = [];
             activeSignalRef.current = null;
         }
-    }, [selectedPairId, timeframe, indicatorConfig.aiSignals]);
+    }, [selectedPairId, timeframe, needsSignals]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
@@ -526,20 +528,20 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     // Re-render overlays when indicator config changes (without re-fetching candles)
     useEffect(() => {
         if (rawCandlesRef.current.length > 0) {
-            // If AI signals toggle changed, refetch signals first
-            if (indicatorConfig.aiSignals && signalHistoryRef.current.length === 0) {
+            // If signals are needed but not yet loaded, fetch first
+            if (needsSignals && signalHistoryRef.current.length === 0 && !activeSignalRef.current) {
                 fetchSignals().then(() => {
                     renderOverlays(rawCandlesRef.current);
                 });
             } else {
-                if (!indicatorConfig.aiSignals) {
+                if (!needsSignals) {
                     signalHistoryRef.current = [];
                     activeSignalRef.current = null;
                 }
                 renderOverlays(rawCandlesRef.current);
             }
         }
-    }, [renderOverlays, fetchSignals, indicatorConfig.aiSignals]);
+    }, [renderOverlays, fetchSignals, needsSignals]);
 
     // Live update: price.tick → update current candle with proper OHLC tracking
     useEffect(() => {
@@ -616,7 +618,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
 
     // Live update: signal.new → refetch signals and re-render
     useEffect(() => {
-        if (!selectedPairId || !indicatorConfig.aiSignals) return;
+        if (!selectedPairId || !needsSignals) return;
 
         const handleSignalNew = (e: Event) => {
             const detail = (e as CustomEvent).detail;
@@ -631,7 +633,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
 
         window.addEventListener("sse:signal.new", handleSignalNew);
         return () => window.removeEventListener("sse:signal.new", handleSignalNew);
-    }, [selectedPairId, indicatorConfig.aiSignals, fetchSignals, renderOverlays]);
+    }, [selectedPairId, needsSignals, fetchSignals, renderOverlays]);
 
     const handleTimeframeChange = (tf: Timeframe) => {
         setTimeframe(tf);
