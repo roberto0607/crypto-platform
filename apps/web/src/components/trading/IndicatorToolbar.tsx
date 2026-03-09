@@ -13,6 +13,7 @@ const OVERLAY_INDICATORS = [
   { key: "forecastCone", label: "Forecast Cone", color: "#06b6d4" },
   { key: "regimeBands", label: "Regime Bands", color: "#8b5cf6" },
   { key: "confidenceHeatmap", label: "AI Confidence", color: "#10b981" },
+  { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
 ] as const;
 
 export function IndicatorToolbar() {

@@ -12,6 +12,7 @@ import {
 } from "../../market/signalService.js";
 import { getOrderFlow } from "../../market/orderFlowFeatures.js";
 import { getDerivatives, loadDerivativesFromDB } from "../../market/derivativesPoller.js";
+import { computeLiquidityZones } from "../../market/liquidityZones.js";
 import { pool } from "../../db/pool.js";
 
 const signalQuery = z.object({
@@ -263,6 +264,39 @@ const v1Signals: FastifyPluginAsync = async (app) => {
             }
 
             return reply.send({ ok: true, bars });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/pairs/:pairId/liquidity-zones — liquidity magnet zones
+    app.get("/pairs/:pairId/liquidity-zones", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get liquidity magnet zones for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"] },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const q = z.object({
+                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
+            }).parse(req.query);
+
+            const result = await computeLiquidityZones(pairId, q.timeframe);
+            return reply.send({ ok: true, ...result });
         } catch (err) {
             return v1HandleError(reply, err);
         }

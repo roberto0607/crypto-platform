@@ -173,3 +173,23 @@ export function getConfidenceHeatmap(
         bars: ConfidenceBar[];
     }>(`/v1/pairs/${pairId}/confidence-heatmap`, { params });
 }
+
+export interface LiquidityZone {
+    price: number;
+    width: number;
+    strength: number;
+    type: "support" | "resistance";
+    sources: string[];
+    estimatedLiquidity: string;
+}
+
+export function getLiquidityZones(
+    pairId: string,
+    params?: { timeframe?: string },
+) {
+    return client.get<{
+        ok: true;
+        zones: LiquidityZone[];
+        currentPrice: number;
+    }>(`/v1/pairs/${pairId}/liquidity-zones`, { params });
+}

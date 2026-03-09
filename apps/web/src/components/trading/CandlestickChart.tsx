@@ -30,6 +30,8 @@ import {
 import { detectRegimes, type RegimeType } from "@/lib/regimeDetector";
 import { RegimeBandsPrimitive, REGIME_SOLID_COLORS } from "@/lib/regimeBandsPrimitive";
 import { ConfidenceHeatmap } from "./ConfidenceHeatmap";
+import { LiquidityZonesPrimitive } from "@/lib/liquidityZonesPrimitive";
+import { getLiquidityZones } from "@/api/endpoints/signals";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -127,6 +129,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     const signalHistoryRef = useRef<MLSignal[]>([]);
     const activeSignalRef = useRef<MLSignal | null>(null);
     const regimePrimitiveRef = useRef<RegimeBandsPrimitive | null>(null);
+    const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
     const [currentRegime, setCurrentRegime] = useState<RegimeType | null>(null);
@@ -177,6 +180,11 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         const regimePrimitive = new RegimeBandsPrimitive();
         series.attachPrimitive(regimePrimitive);
         regimePrimitiveRef.current = regimePrimitive;
+
+        // Attach liquidity zones primitive
+        const liquidityPrimitive = new LiquidityZonesPrimitive();
+        series.attachPrimitive(liquidityPrimitive);
+        liquidityPrimitiveRef.current = liquidityPrimitive;
 
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
@@ -495,6 +503,12 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             regimePrimitiveRef.current?.setSegments([]);
             setCurrentRegime(null);
         }
+
+        // Liquidity zones are fetched separately and set via primitive ref
+        // (not computed from candle data — they come from the API)
+        if (!indicatorConfig.liquidityZones) {
+            liquidityPrimitiveRef.current?.setZones([]);
+        }
     }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
 
     // Fetch signals for the current pair + timeframe
@@ -659,6 +673,27 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         window.addEventListener("sse:signal.new", handleSignalNew);
         return () => window.removeEventListener("sse:signal.new", handleSignalNew);
     }, [selectedPairId, needsSignals, fetchSignals, renderOverlays]);
+
+    // Liquidity zones: fetch on mount + 60s refresh
+    useEffect(() => {
+        if (!selectedPairId || !indicatorConfig.liquidityZones) {
+            liquidityPrimitiveRef.current?.setZones([]);
+            return;
+        }
+
+        const fetchZones = async () => {
+            try {
+                const { data } = await getLiquidityZones(selectedPairId, { timeframe });
+                liquidityPrimitiveRef.current?.setZones(data.zones);
+            } catch {
+                // Non-fatal
+            }
+        };
+
+        fetchZones();
+        const interval = setInterval(fetchZones, 60_000);
+        return () => clearInterval(interval);
+    }, [selectedPairId, timeframe, indicatorConfig.liquidityZones]);
 
     const handleTimeframeChange = (tf: Timeframe) => {
         setTimeframe(tf);
