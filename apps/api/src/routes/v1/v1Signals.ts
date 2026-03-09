@@ -13,6 +13,7 @@ import {
 import { getOrderFlow } from "../../market/orderFlowFeatures.js";
 import { getDerivatives, loadDerivativesFromDB } from "../../market/derivativesPoller.js";
 import { computeLiquidityZones } from "../../market/liquidityZones.js";
+import { fetchPatterns } from "../../market/patternService.js";
 import { pool } from "../../db/pool.js";
 
 const signalQuery = z.object({
@@ -297,6 +298,48 @@ const v1Signals: FastifyPluginAsync = async (app) => {
 
             const result = await computeLiquidityZones(pairId, q.timeframe);
             return reply.send({ ok: true, ...result });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/pairs/:pairId/patterns — detected chart patterns from ML service
+    app.get("/pairs/:pairId/patterns", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get detected chart patterns for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"] },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const q = z.object({
+                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
+            }).parse(req.query);
+
+            // Look up symbol
+            const { rows } = await pool.query<{ symbol: string }>(
+                `SELECT symbol FROM trading_pairs WHERE id = $1`,
+                [pairId],
+            );
+            if (rows.length === 0) {
+                return reply.status(404).send({ ok: false, error: "Pair not found" });
+            }
+
+            const patterns = await fetchPatterns(rows[0]!.symbol, q.timeframe);
+            return reply.send({ ok: true, patterns });
         } catch (err) {
             return v1HandleError(reply, err);
         }

@@ -193,3 +193,26 @@ export function getLiquidityZones(
         currentPrice: number;
     }>(`/v1/pairs/${pairId}/liquidity-zones`, { params });
 }
+
+export interface ChartPattern {
+    type: string;
+    status: "forming" | "confirmed";
+    completionPct: number;
+    completionProb: number;
+    impliedDirection: "BUY" | "SELL";
+    entryZone: number;
+    targetPrice: number;
+    invalidationPrice: number;
+    keyPoints: { time: number; price: number; label: string }[];
+    projection: { time: number; price: number }[];
+}
+
+export function getPatterns(
+    pairId: string,
+    params?: { timeframe?: string },
+) {
+    return client.get<{
+        ok: true;
+        patterns: ChartPattern[];
+    }>(`/v1/pairs/${pairId}/patterns`, { params });
+}

@@ -50,6 +50,7 @@ const defaultIndicatorConfig = {
   regimeBands: false,
   confidenceHeatmap: false,
   liquidityZones: false,
+  patternDetection: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

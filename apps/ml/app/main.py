@@ -46,6 +46,7 @@ from app.models.regime_detector import detect_regime, REGIME_CONFIGS
 from app.models.regime_classifier import RegimeClassifier, REGIME_PARAMS
 from app.models.explainer import generate_explanation
 from app.models.target_predictor import TargetPredictor
+from app.models.pattern_detector import scan_patterns, adjust_with_cnn, pattern_to_dict
 from app.training.alerts import AlertChecker, format_alerts
 
 logger = logging.getLogger("ml")
@@ -377,6 +378,27 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         response["attention"] = attention
     if tft_forecast:
         response["forecast"] = tft_forecast
+
+    # Scan for chart patterns
+    try:
+        df_times = df["ts"].values[-100:].astype(np.int64) // 10**9  # datetime64 → epoch seconds
+        df_highs = df["high"].values[-100:].astype(np.float64)
+        df_lows = df["low"].values[-100:].astype(np.float64)
+        df_closes = df["close"].values[-100:].astype(np.float64)
+
+        detected = scan_patterns(df_highs, df_lows, df_closes, df_times, atr, lookback=100)
+
+        # Adjust with CNN if available
+        if detected and _ensemble and _ensemble.cnn:
+            cnn_dir = prediction["direction"]
+            cnn_conf = prediction["confidence"]
+            detected = [adjust_with_cnn(p, cnn_dir, cnn_conf) for p in detected]
+            detected.sort(key=lambda p: p.completion_prob, reverse=True)
+
+        if detected:
+            response["patterns"] = [pattern_to_dict(p) for p in detected[:3]]
+    except Exception as e:
+        logger.warning(f"Pattern detection failed: {e}")
 
     # Serialize with numpy-safe encoder
     return JSONResponse(content=json.loads(json.dumps(response, cls=NumpyEncoder)))
