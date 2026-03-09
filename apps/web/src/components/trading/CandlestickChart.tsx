@@ -32,7 +32,8 @@ import { RegimeBandsPrimitive, REGIME_SOLID_COLORS } from "@/lib/regimeBandsPrim
 import { ConfidenceHeatmap } from "./ConfidenceHeatmap";
 import { LiquidityZonesPrimitive } from "@/lib/liquidityZonesPrimitive";
 import { PatternPrimitive } from "@/lib/patternPrimitive";
-import { getLiquidityZones, getPatterns } from "@/api/endpoints/signals";
+import { GhostCandlePrimitive } from "@/lib/ghostCandlePrimitive";
+import { getLiquidityZones, getPatterns, getScenarios, type PriceScenario } from "@/api/endpoints/signals";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -132,6 +133,9 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
     const regimePrimitiveRef = useRef<RegimeBandsPrimitive | null>(null);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const patternPrimitiveRef = useRef<PatternPrimitive | null>(null);
+    const ghostPrimitiveRef = useRef<GhostCandlePrimitive | null>(null);
+    const [scenarios, setScenarios] = useState<PriceScenario[]>([]);
+    const [visibleScenarios, setVisibleScenarios] = useState(new Set(["bull", "base", "bear"]));
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
     const [currentRegime, setCurrentRegime] = useState<RegimeType | null>(null);
@@ -192,6 +196,11 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         const patternPrimitive = new PatternPrimitive();
         series.attachPrimitive(patternPrimitive);
         patternPrimitiveRef.current = patternPrimitive;
+
+        // Attach ghost candle primitive
+        const ghostPrimitive = new GhostCandlePrimitive();
+        series.attachPrimitive(ghostPrimitive);
+        ghostPrimitiveRef.current = ghostPrimitive;
 
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
@@ -521,6 +530,11 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         if (!indicatorConfig.patternDetection) {
             patternPrimitiveRef.current?.setPatterns([]);
         }
+
+        // Ghost candles are fetched separately via API
+        if (!indicatorConfig.ghostCandles) {
+            ghostPrimitiveRef.current?.setScenarios([]);
+        }
     }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
 
     // Fetch signals for the current pair + timeframe
@@ -728,6 +742,40 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         return () => clearInterval(interval);
     }, [selectedPairId, timeframe, indicatorConfig.patternDetection]);
 
+    // Ghost candles: fetch scenarios + periodic refresh (every 6 candles)
+    useEffect(() => {
+        if (!selectedPairId || !indicatorConfig.ghostCandles) {
+            ghostPrimitiveRef.current?.setScenarios([]);
+            setScenarios([]);
+            return;
+        }
+
+        const fetchScenariosData = async () => {
+            try {
+                const { data } = await getScenarios(selectedPairId, { timeframe });
+                setScenarios(data.scenarios);
+
+                // Get last real candle time for separator line
+                const candles = rawCandlesRef.current;
+                const lastRealTime = candles.length > 0
+                    ? (new Date(candles[candles.length - 1]!.ts).getTime() / 1000) as unknown as Time
+                    : undefined;
+
+                // Filter to visible scenarios
+                const filtered = data.scenarios.filter(s => visibleScenarios.has(s.name));
+                ghostPrimitiveRef.current?.setScenarios(filtered, lastRealTime);
+            } catch {
+                // Non-fatal
+            }
+        };
+
+        fetchScenariosData();
+        // Refresh every 6 candles worth of time
+        const refreshMs = Math.max((TF_SECONDS[timeframe] ?? 3600) * 6 * 1000, 60_000);
+        const interval = setInterval(fetchScenariosData, refreshMs);
+        return () => clearInterval(interval);
+    }, [selectedPairId, timeframe, indicatorConfig.ghostCandles, visibleScenarios]);
+
     const handleTimeframeChange = (tf: Timeframe) => {
         setTimeframe(tf);
         onTimeframeChange?.(tf);
@@ -770,6 +818,37 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
                         <span className="text-gray-300">
                             {currentRegime.replace("_", " ")}
                         </span>
+                    </div>
+                )}
+                {indicatorConfig.ghostCandles && scenarios.length > 0 && (
+                    <div className="absolute top-10 right-2 bg-gray-900/90 border border-gray-700 rounded-lg p-2 z-10 text-xs space-y-1">
+                        <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">
+                            AI Scenarios
+                        </div>
+                        {scenarios.map(s => (
+                            <button
+                                key={s.name}
+                                onClick={() => {
+                                    setVisibleScenarios(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(s.name)) next.delete(s.name);
+                                        else next.add(s.name);
+                                        return next;
+                                    });
+                                }}
+                                className={`flex items-center gap-2 w-full px-1.5 py-0.5 rounded ${
+                                    visibleScenarios.has(s.name) ? "bg-gray-800" : "opacity-40"
+                                }`}
+                            >
+                                <span className={`w-2 h-2 rounded-full ${
+                                    s.name === "bull" ? "bg-green-500" :
+                                    s.name === "bear" ? "bg-red-500" : "bg-gray-400"
+                                }`} />
+                                <span className="text-gray-300 capitalize">{s.name}</span>
+                                <span className="text-gray-500 ml-auto">{Math.round(s.probability * 100)}%</span>
+                                <span className="text-gray-600">${s.finalPrice.toLocaleString()}</span>
+                            </button>
+                        ))}
                     </div>
                 )}
             </div>

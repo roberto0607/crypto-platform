@@ -51,6 +51,7 @@ const defaultIndicatorConfig = {
   confidenceHeatmap: false,
   liquidityZones: false,
   patternDetection: false,
+  ghostCandles: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

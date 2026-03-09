@@ -178,6 +178,9 @@ async def main_async(args: argparse.Namespace) -> None:
         if model_type in ("regime", "all"):
             await _train_regime(all_dfs)
 
+        if model_type in ("seasonality", "all"):
+            await _train_seasonality(pairs)
+
         if model_type in ("ensemble", "all"):
             await _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence)
 
@@ -474,6 +477,50 @@ async def _train_regime(all_dfs):
     print(f"\n  Regime classifier saved: {model_path}")
 
 
+async def _train_seasonality(pairs):
+    """Train seasonality profiles for all active pairs."""
+    from app.models.seasonality import SeasonalityModel
+
+    print(f"\n── Seasonality Profiles ──")
+
+    model_dir = Path(ML_MODEL_PATH)
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    for pair in pairs:
+        pair_id = pair["id"]
+        symbol = pair["symbol"]
+
+        print(f"  {symbol}...", end=" ")
+
+        # Fetch 1h candles for seasonality
+        pool = await get_pool()
+        rows = await pool.fetch("""
+            SELECT ts, open::float, high::float, low::float, close::float, volume::float
+            FROM candles
+            WHERE pair_id = $1 AND timeframe = '1h'
+            ORDER BY ts ASC
+        """, pair_id)
+
+        if len(rows) < 100:
+            print(f"skipped ({len(rows)} candles, need >= 100)")
+            continue
+
+        import pandas as pd
+        df = pd.DataFrame([dict(r) for r in rows])
+        df["ts"] = pd.to_datetime(df["ts"])
+
+        model = SeasonalityModel()
+        model.pair_id = pair_id
+        metrics = model.train(df)
+
+        save_name = symbol.replace("/", "_")
+        save_path = model_dir / f"{save_name}_seasonality.json"
+        model.save(str(save_path))
+        print(f"{metrics['buckets_learned']} buckets from {metrics['total_candles']} candles → {save_path.name}")
+
+    print("  Seasonality training complete.")
+
+
 async def _train_ensemble(X, y, feature_names, all_dfs, pairs, args, min_confidence):
     """Train and calibrate the ensemble."""
     from app.models.lstm_model import LSTMModel
@@ -621,7 +668,7 @@ def _print_backtest(results: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Train ML trading models")
     parser.add_argument("--model", type=str, default="xgboost",
-                        choices=["xgboost", "lstm", "tft", "cnn", "target", "regime", "ensemble", "all"],
+                        choices=["xgboost", "lstm", "tft", "cnn", "target", "regime", "seasonality", "ensemble", "all"],
                         help="Model type to train")
     parser.add_argument("--pair", type=str, help="Single pair (e.g. BTC/USD)")
     parser.add_argument("--timeframe", type=str, default="1h", help="Candle timeframe")

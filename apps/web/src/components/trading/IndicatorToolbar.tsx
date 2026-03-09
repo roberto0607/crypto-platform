@@ -15,6 +15,7 @@ const OVERLAY_INDICATORS = [
   { key: "confidenceHeatmap", label: "AI Confidence", color: "#10b981" },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "patternDetection", label: "Pattern Detection", color: "#8b5cf6" },
+  { key: "ghostCandles", label: "Predictive Candles", color: "#f472b6" },
 ] as const;
 
 export function IndicatorToolbar() {

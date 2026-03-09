@@ -47,6 +47,8 @@ from app.models.regime_classifier import RegimeClassifier, REGIME_PARAMS
 from app.models.explainer import generate_explanation
 from app.models.target_predictor import TargetPredictor
 from app.models.pattern_detector import scan_patterns, adjust_with_cnn, pattern_to_dict
+from app.models.scenario_engine import generate_scenarios, scenarios_to_dict
+from app.models.seasonality import SeasonalityModel
 from app.training.alerts import AlertChecker, format_alerts
 
 logger = logging.getLogger("ml")
@@ -56,6 +58,7 @@ _model: XGBoostModel | None = None
 _ensemble: EnsembleModel | None = None
 _target_predictor: TargetPredictor | None = None
 _regime_classifier: RegimeClassifier | None = None
+_seasonality_models: dict[str, SeasonalityModel] = {}  # symbol → model
 
 
 @asynccontextmanager
@@ -108,6 +111,16 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to load regime classifier: {e}")
     else:
         logger.info("No trained regime classifier found — using heuristic detector")
+
+    # Load seasonality models for all pairs
+    for path in model_dir.glob("*_seasonality.json"):
+        try:
+            sm = SeasonalityModel.load(str(path))
+            symbol = path.stem.replace("_seasonality", "").replace("_", "/")
+            _seasonality_models[symbol] = sm
+            logger.info(f"Seasonality loaded for {symbol}: {len(sm.profiles)} buckets")
+        except Exception as e:
+            logger.warning(f"Failed to load seasonality {path}: {e}")
 
     yield
     await close_pool()
@@ -401,6 +414,111 @@ async def predict(symbol: str, timeframe: str = "1h", limit: int = 300):
         logger.warning(f"Pattern detection failed: {e}")
 
     # Serialize with numpy-safe encoder
+    return JSONResponse(content=json.loads(json.dumps(response, cls=NumpyEncoder)))
+
+
+@app.get("/predict/{symbol}/scenarios")
+async def predict_scenarios(symbol: str, timeframe: str = "1h", limit: int = 300):
+    """Generate 3 AI scenario paths (bull/base/bear) with ghost candles."""
+    from datetime import datetime as dt, timezone as tz
+
+    if _ensemble is None and _model is None:
+        raise HTTPException(status_code=503, detail="No trained model available")
+
+    db_symbol = symbol.replace("-", "/")
+    pair_id = await fetch_pair_id(db_symbol)
+    if not pair_id:
+        raise HTTPException(status_code=404, detail=f"Pair {db_symbol} not found")
+
+    df = await build_feature_matrix(pair_id, timeframe, limit)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Not enough candle data")
+
+    # Get feature columns for prediction
+    if _ensemble and _ensemble.xgboost:
+        feature_cols = _ensemble.xgboost.feature_names
+    elif _model:
+        feature_cols = _model.feature_names
+    else:
+        feature_cols = get_feature_columns(df)
+
+    available_cols = set(df.columns)
+    missing = [c for c in feature_cols if c not in available_cols]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Feature mismatch: {missing}")
+
+    latest = df.iloc[-1]
+    X = latest[feature_cols].values.astype(np.float64).reshape(1, -1)
+    current_price = float(latest["close"])
+    atr = float(latest["atr_14"]) if "atr_14" in df.columns else current_price * 0.002
+
+    # Run ensemble prediction
+    prediction = None
+    if _ensemble and _ensemble.available_models:
+        prediction = _ensemble.predict(X, df=df)
+    elif _model:
+        prediction = _model.predict(X)
+
+    if prediction is None:
+        raise HTTPException(status_code=503, detail="Prediction failed")
+
+    # Extract inputs for scenario engine
+    ensemble_direction = prediction.get("direction", "NEUTRAL")
+    ensemble_confidence = prediction.get("confidence", 50)
+    tft_forecast = prediction.get("tft_forecast")
+    regime_info = prediction.get("regime")
+    regime = regime_info.get("regime") if regime_info else None
+    regime_confidence = regime_info.get("confidence", 0) if regime_info else 0
+
+    # Get or create seasonality model
+    seasonality = _seasonality_models.get(db_symbol)
+    if seasonality is None:
+        seasonality = SeasonalityModel()
+        # Train on the fly from available data
+        try:
+            seas_df = df[["ts", "open", "high", "low", "close", "volume"]].copy()
+            seas_df.columns = ["ts", "open", "high", "low", "close", "volume"]
+            seasonality.train(seas_df)
+        except Exception as e:
+            logger.warning(f"On-the-fly seasonality training failed: {e}")
+
+    # Get last candle timestamp
+    last_ts = df["ts"].iloc[-1]
+    if hasattr(last_ts, "to_pydatetime"):
+        current_time = last_ts.to_pydatetime()
+    else:
+        current_time = dt.now(tz.utc)
+
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=tz.utc)
+
+    scenarios = generate_scenarios(
+        current_price=current_price,
+        current_time=current_time,
+        timeframe=timeframe,
+        tft_forecast=tft_forecast,
+        regime=regime,
+        regime_confidence=regime_confidence,
+        ensemble_direction=ensemble_direction,
+        ensemble_confidence=ensemble_confidence,
+        seasonality=seasonality,
+        atr_14=atr,
+    )
+
+    response = {
+        "pair": db_symbol,
+        "timeframe": timeframe,
+        "currentPrice": current_price,
+        "generatedAt": dt.now(tz.utc).isoformat(),
+        "scenarios": scenarios_to_dict(scenarios),
+        "inputs": {
+            "regime": regime,
+            "ensembleDirection": ensemble_direction,
+            "ensembleConfidence": ensemble_confidence,
+            "tftForecastAvailable": tft_forecast is not None,
+        },
+    }
+
     return JSONResponse(content=json.loads(json.dumps(response, cls=NumpyEncoder)))
 
 

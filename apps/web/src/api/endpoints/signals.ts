@@ -207,6 +207,35 @@ export interface ChartPattern {
     projection: { time: number; price: number }[];
 }
 
+export interface GhostCandle {
+    ts: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    confidence: number;
+}
+
+export interface PriceScenario {
+    name: "bull" | "base" | "bear";
+    probability: number;
+    finalPrice: number;
+    totalReturnPct: number;
+    candles: GhostCandle[];
+}
+
+export function getScenarios(
+    pairId: string,
+    params?: { timeframe?: string },
+) {
+    return client.get<{
+        ok: true;
+        scenarios: PriceScenario[];
+        currentPrice: number;
+        generatedAt: string;
+    }>(`/v1/pairs/${pairId}/scenarios`, { params });
+}
+
 export function getPatterns(
     pairId: string,
     params?: { timeframe?: string },
