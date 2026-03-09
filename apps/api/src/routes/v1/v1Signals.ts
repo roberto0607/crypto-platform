@@ -164,6 +164,110 @@ const v1Signals: FastifyPluginAsync = async (app) => {
         }
     });
 
+    // GET /v1/pairs/:pairId/confidence-heatmap — historical AI confidence per candle
+    app.get("/pairs/:pairId/confidence-heatmap", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get AI confidence heatmap for chart overlay",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"] },
+                    limit: { type: "number" },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const q = z.object({
+                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
+                limit: z.coerce.number().int().min(1).max(500).optional().default(300),
+            }).parse(req.query);
+
+            const tfSeconds: Record<string, number> = {
+                "1m": 60, "5m": 300, "15m": 900,
+                "1h": 3600, "4h": 14400, "1d": 86400,
+            };
+            const bucketSec = tfSeconds[q.timeframe] ?? 3600;
+
+            // Generate time buckets going back `limit` periods from now
+            const now = Math.floor(Date.now() / 1000);
+            const currentBucket = Math.floor(now / bucketSec) * bucketSec;
+            const buckets: number[] = [];
+            for (let i = q.limit - 1; i >= 0; i--) {
+                buckets.push(currentBucket - i * bucketSec);
+            }
+
+            // Fetch signals for this pair/timeframe, ordered chronologically
+            const { rows: signals } = await pool.query<{
+                signal_type: string;
+                confidence: string;
+                created_at: string;
+                expires_at: string;
+            }>(
+                `SELECT signal_type, confidence, created_at, expires_at
+                 FROM ml_signals
+                 WHERE pair_id = $1 AND timeframe = $2
+                 ORDER BY created_at ASC`,
+                [pairId, q.timeframe],
+            );
+
+            // Build timeline with decay
+            const DECAY_PER_BAR = 5;
+            const bars: { ts: number; direction: string; confidence: number }[] = [];
+
+            let lastDirection = "NEUTRAL";
+            let lastConfidence = 0;
+            let signalIdx = 0;
+
+            for (const bucket of buckets) {
+                const bucketMs = bucket * 1000;
+
+                // Check if a signal is active during this bucket
+                let found = false;
+                while (signalIdx < signals.length) {
+                    const sig = signals[signalIdx]!;
+                    const createdMs = new Date(sig.created_at).getTime();
+                    const expiresMs = new Date(sig.expires_at).getTime();
+
+                    if (createdMs > bucketMs + bucketSec * 1000) break; // future signal
+                    if (expiresMs <= bucketMs) {
+                        signalIdx++;
+                        continue; // expired before this bucket
+                    }
+
+                    // Signal is active during this bucket
+                    lastDirection = sig.signal_type;
+                    lastConfidence = Number(sig.confidence);
+                    bars.push({ ts: bucket, direction: lastDirection, confidence: lastConfidence });
+                    found = true;
+                    break;
+                }
+
+                if (!found) {
+                    // Decay from last known state
+                    lastConfidence = Math.max(0, lastConfidence - DECAY_PER_BAR);
+                    if (lastConfidence <= 0) {
+                        lastDirection = "NEUTRAL";
+                    }
+                    bars.push({ ts: bucket, direction: lastDirection, confidence: lastConfidence });
+                }
+            }
+
+            return reply.send({ ok: true, bars });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
     // GET /v1/signals/equity-curve — cumulative P&L from all closed signals
     app.get("/signals/equity-curve", {
         schema: {

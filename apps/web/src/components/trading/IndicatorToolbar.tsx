@@ -12,6 +12,7 @@ const OVERLAY_INDICATORS = [
   { key: "derivatives", label: "Derivatives", color: "#ec4899" },
   { key: "forecastCone", label: "Forecast Cone", color: "#06b6d4" },
   { key: "regimeBands", label: "Regime Bands", color: "#8b5cf6" },
+  { key: "confidenceHeatmap", label: "AI Confidence", color: "#10b981" },
 ] as const;
 
 export function IndicatorToolbar() {

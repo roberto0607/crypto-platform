@@ -157,3 +157,19 @@ export function getAggregatePerformance() {
         };
     }>("/v1/signals/performance");
 }
+
+export interface ConfidenceBar {
+    ts: number;
+    direction: "BUY" | "SELL" | "NEUTRAL";
+    confidence: number;
+}
+
+export function getConfidenceHeatmap(
+    pairId: string,
+    params?: { timeframe?: string; limit?: number },
+) {
+    return client.get<{
+        ok: true;
+        bars: ConfidenceBar[];
+    }>(`/v1/pairs/${pairId}/confidence-heatmap`, { params });
+}

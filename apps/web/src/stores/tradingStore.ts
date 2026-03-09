@@ -48,6 +48,7 @@ const defaultIndicatorConfig = {
   derivatives: false,
   forecastCone: false,
   regimeBands: false,
+  confidenceHeatmap: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

@@ -29,6 +29,7 @@ import {
 } from "@/lib/indicators";
 import { detectRegimes, type RegimeType } from "@/lib/regimeDetector";
 import { RegimeBandsPrimitive, REGIME_SOLID_COLORS } from "@/lib/regimeBandsPrimitive";
+import { ConfidenceHeatmap } from "./ConfidenceHeatmap";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -704,6 +705,15 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
                     </div>
                 )}
             </div>
+
+            {/* Confidence heatmap (40px) */}
+            {indicatorConfig.confidenceHeatmap && selectedPairId && (
+                <ConfidenceHeatmap
+                    pairId={selectedPairId}
+                    timeframe={timeframe}
+                    mainChart={chartRef.current}
+                />
+            )}
         </div>
     );
 }
