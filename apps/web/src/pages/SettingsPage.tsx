@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
@@ -355,6 +356,15 @@ export default function SettingsPage() {
           </div>
         </Card>
       )}
+
+      {/* Section 4: Bot Management */}
+      <Card>
+        <h2 className="text-sm font-medium text-gray-300 mb-2">Bot Management</h2>
+        <p className="text-xs text-gray-500 mb-2">Configure and manage your trading bot strategies.</p>
+        <Link to="/bot" className="text-sm text-blue-400 hover:text-blue-300">
+          Open Bot Manager &rarr;
+        </Link>
+      </Card>
 
       {/* Raw Key Modal */}
       {rawKey && (

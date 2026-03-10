@@ -17,10 +17,6 @@ import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
 import DashboardPage from "@/pages/DashboardPage";
 import TradingPage from "@/pages/TradingPage";
-import OrderHistoryPage from "@/pages/OrderHistoryPage";
-import WalletsPage from "@/pages/WalletsPage";
-import PositionsPage from "@/pages/PositionsPage";
-import TriggersPage from "@/pages/TriggersPage";
 import BotPage from "@/pages/BotPage";
 import ReplayPage from "@/pages/ReplayPage";
 import PortfolioPage from "@/pages/PortfolioPage";
@@ -167,10 +163,11 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/trade" element={<TradingPage />} />
-          <Route path="/orders" element={<OrderHistoryPage />} />
-          <Route path="/wallets" element={<WalletsPage />} />
-          <Route path="/positions" element={<PositionsPage />} />
-          <Route path="/triggers" element={<TriggersPage />} />
+          {/* Redirects for consolidated nav items */}
+          <Route path="/orders" element={<Navigate to="/trade?tab=orders" replace />} />
+          <Route path="/wallets" element={<Navigate to="/portfolio" replace />} />
+          <Route path="/positions" element={<Navigate to="/trade?tab=positions" replace />} />
+          <Route path="/triggers" element={<Navigate to="/trade?tab=triggers" replace />} />
           <Route path="/bot" element={<BotPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />

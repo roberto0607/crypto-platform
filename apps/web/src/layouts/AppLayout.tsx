@@ -39,14 +39,9 @@ function Icon({ name, className = "w-5 h-5" }: { name: string; className?: strin
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: "home" },
   { to: "/trade", label: "Trade", icon: "chart" },
-  { to: "/orders", label: "Orders", icon: "list" },
-  { to: "/wallets", label: "Wallets", icon: "wallet" },
-  { to: "/positions", label: "Positions", icon: "layers" },
-  { to: "/triggers", label: "Triggers", icon: "zap" },
   { to: "/portfolio", label: "Portfolio", icon: "trendingUp" },
-  { to: "/journal", label: "Journal", icon: "list" },
   { to: "/competitions", label: "Compete", icon: "trophy" },
-  { to: "/bot", label: "Bot", icon: "cpu" },
+  { to: "/journal", label: "Journal", icon: "list" },
   { to: "/replay", label: "Replay", icon: "play" },
   { to: "/settings", label: "Settings", icon: "settings" },
 ];

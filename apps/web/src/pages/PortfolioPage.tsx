@@ -21,6 +21,7 @@ import type {
   PerformanceSummary,
   Position,
 } from "@/types/api";
+import Decimal from "decimal.js-light";
 import { formatUsd, formatPct, formatDecimal } from "@/lib/decimal";
 import Card from "@/components/Card";
 import Spinner from "@/components/Spinner";
@@ -73,6 +74,8 @@ function SummaryCard({
 
 export default function PortfolioPage() {
   const pairs = useAppStore((s) => s.pairs);
+  const wallets = useAppStore((s) => s.wallets);
+  const assets = useAppStore((s) => s.assets);
   const activeCompetitionId = useTradingStore((s) => s.activeCompetitionId);
 
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
@@ -339,7 +342,50 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {/* Section 4: Positions Table */}
+      {/* Section 4: Wallet Balances */}
+      <Card>
+        <h2 className="text-sm font-medium text-gray-300 mb-3">Wallet Balances</h2>
+        {wallets.length === 0 ? (
+          <EmptyState message="No wallets" />
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {wallets.map((wallet) => {
+              const symbol = assets.find((a) => a.id === wallet.asset_id)?.symbol ?? "???";
+              const balance = new Decimal(wallet.balance);
+              const reserved = new Decimal(wallet.reserved);
+              const available = balance.minus(reserved);
+              const decimals = symbol === "USD" ? 2 : 8;
+              return (
+                <div key={wallet.id} className="border border-gray-800 rounded-lg p-3">
+                  <div className="text-sm font-bold text-white mb-2">{symbol}</div>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Balance</span>
+                      <span className="font-mono text-gray-200">
+                        {formatDecimal(wallet.balance, decimals)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Reserved</span>
+                      <span className="font-mono text-gray-400">
+                        {formatDecimal(wallet.reserved, decimals)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t border-gray-800 pt-1">
+                      <span className="text-gray-400">Available</span>
+                      <span className="font-mono text-white font-medium">
+                        {formatDecimal(available.toString(), decimals)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {/* Section 5: Positions Table */}
       <Card>
         <h2 className="text-sm font-medium text-gray-300 mb-3">Positions</h2>
         {positions.length === 0 ? (

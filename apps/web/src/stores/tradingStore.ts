@@ -33,26 +33,13 @@ const MAX_RECENT_TRADES = 50;
 const INDICATOR_STORAGE_KEY = "indicator-config";
 
 const defaultIndicatorConfig = {
-  ema200: false,
-  ema50: false,
-  vwap: false,
   keyLevels: false,
-  swingPoints: false,
-  volumeProfile: false,
-  volume: false,
-  cvd: false,
-  rsi: false,
-  stochRsi: false,
-  aiSignals: true,
-  orderFlow: false,
-  derivatives: false,
-  forecastCone: false,
-  regimeBands: false,
-  confidenceHeatmap: false,
   liquidityZones: false,
-  patternDetection: false,
-  ghostCandles: false,
-  copilot: false,
+  orderBlocks: true,
+  fvg: true,
+  cvd: true,
+  volumeProfile: true,
+  tradeSetup: true,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;
@@ -60,7 +47,15 @@ type IndicatorConfig = typeof defaultIndicatorConfig;
 function loadIndicatorConfig(): IndicatorConfig {
   try {
     const stored = localStorage.getItem(INDICATOR_STORAGE_KEY);
-    if (stored) return { ...defaultIndicatorConfig, ...JSON.parse(stored) };
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Strip removed keys — only keep keys that exist in defaults
+      const cleaned: Record<string, boolean> = {};
+      for (const key of Object.keys(defaultIndicatorConfig)) {
+        cleaned[key] = typeof parsed[key] === "boolean" ? parsed[key] : (defaultIndicatorConfig as Record<string, boolean>)[key]!;
+      }
+      return cleaned as IndicatorConfig;
+    }
   } catch { /* ignore */ }
   return { ...defaultIndicatorConfig };
 }
@@ -84,6 +79,10 @@ interface TradingState {
   // Loading states
   bookLoading: boolean;
   orderSubmitting: boolean;
+
+  // Bottom panel tab
+  bottomTab: "market" | "orders" | "positions" | "triggers";
+  setBottomTab: (tab: "market" | "orders" | "positions" | "triggers") => void;
 
   // Indicator config (persisted to localStorage)
   indicatorConfig: IndicatorConfig;
@@ -123,6 +122,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   limitPrice: "",
 
   activeCompetitionId: null,
+
+  bottomTab: "market",
+  setBottomTab: (bottomTab) => set({ bottomTab }),
 
   bookLoading: false,
   orderSubmitting: false,
