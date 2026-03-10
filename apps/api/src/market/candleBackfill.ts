@@ -113,9 +113,23 @@ async function backfillPairTimeframe(
     krakenPair: string,
     plan: TimeframePlan,
 ): Promise<number> {
-    // Resume from latest existing candle or start from sinceCap
+    // Always start from sinceCap to fill any gaps from server downtime.
+    // ON CONFLICT DO NOTHING makes re-fetching existing candles harmless.
+    // For full-history timeframes (sinceCap=0), look back from the latest
+    // existing candle minus a buffer to catch downtime gaps.
     const latestExisting = await getLatestCandleTs(pairId, plan.ourTf);
-    let since = Math.max(latestExisting, plan.sinceCap);
+    let since: number;
+    if (plan.sinceCap > 0) {
+        // Capped timeframes (1m/5m/15m): always scan the full retention window
+        since = plan.sinceCap;
+    } else if (latestExisting > 0) {
+        // Full-history timeframes (1h/4h/1d): look back 7 days from latest
+        // candle to fill any gaps from recent downtime
+        since = latestExisting - 7 * 86400;
+    } else {
+        // No existing candles at all — fetch full history
+        since = 0;
+    }
 
     let totalInserted = 0;
     let page = 0;

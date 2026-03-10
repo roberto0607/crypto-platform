@@ -14,6 +14,7 @@ import { getOrderFlow } from "../../market/orderFlowFeatures.js";
 import { getDerivatives, loadDerivativesFromDB } from "../../market/derivativesPoller.js";
 import { computeLiquidityZones } from "../../market/liquidityZones.js";
 import { fetchPatterns, fetchScenarios } from "../../market/patternService.js";
+import { estimateLiquidationLevels } from "../../market/liquidationEstimator.js";
 import { pool } from "../../db/pool.js";
 import { config } from "../../config.js";
 
@@ -506,6 +507,52 @@ const v1Signals: FastifyPluginAsync = async (app) => {
                     avgConfidence: Math.round(Number(r.avg_confidence) * 10) / 10,
                 },
             });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+    // GET /v1/pairs/:pairId/liquidation-levels — estimated liquidation zones
+    app.get("/pairs/:pairId/liquidation-levels", {
+        schema: {
+            tags: ["ML Signals"],
+            summary: "Get estimated liquidation levels for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+
+            // Get current price from trading_pairs
+            const { rows: pairRows } = await pool.query<{ last_price: string }>(
+                `SELECT last_price FROM trading_pairs WHERE id = $1`,
+                [pairId],
+            );
+            if (pairRows.length === 0) {
+                return reply.status(404).send({ error: "Pair not found" });
+            }
+            const currentPrice = parseFloat(pairRows[0].last_price);
+            if (!currentPrice || currentPrice <= 0) {
+                return reply.send({ ok: true, levels: [] });
+            }
+
+            // Get latest OI from derivatives_snapshots
+            const { rows: derivRows } = await pool.query<{ open_interest: string }>(
+                `SELECT open_interest FROM derivatives_snapshots
+                 WHERE pair_id = $1
+                 ORDER BY ts DESC LIMIT 1`,
+                [pairId],
+            );
+            const openInterest = derivRows.length > 0 ? parseFloat(derivRows[0].open_interest) : 0;
+
+            const levels = estimateLiquidationLevels(currentPrice, openInterest);
+
+            return reply.send({ ok: true, levels });
         } catch (err) {
             return v1HandleError(reply, err);
         }

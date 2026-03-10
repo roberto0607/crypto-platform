@@ -105,7 +105,7 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
             const timeframe = query.timeframe ?? "1h";
             const limit = Math.min(query.limit ?? 200, 500);
 
-            let sql = `SELECT ts, open, high, low, close, volume
+            let sql = `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
                        FROM candles
                        WHERE pair_id = $1 AND timeframe = $2`;
             const params: (string | number)[] = [pairId, timeframe];

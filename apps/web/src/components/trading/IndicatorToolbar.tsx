@@ -2,21 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 
 const OVERLAY_INDICATORS = [
-  { key: "aiSignals", label: "AI Signals", color: "#10b981" },
-  { key: "ema200", label: "EMA 200", color: "#a855f7" },
-  { key: "ema50", label: "EMA 50", color: "#eab308" },
-  { key: "vwap", label: "VWAP", color: "#06b6d4" },
   { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#94a3b8" },
-  { key: "swingPoints", label: "Swing Points", color: "#f97316" },
-  { key: "orderFlow", label: "Order Flow", color: "#f59e0b" },
-  { key: "derivatives", label: "Derivatives", color: "#ec4899" },
-  { key: "forecastCone", label: "Forecast Cone", color: "#06b6d4" },
-  { key: "regimeBands", label: "Regime Bands", color: "#8b5cf6" },
-  { key: "confidenceHeatmap", label: "AI Confidence", color: "#10b981" },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
-  { key: "patternDetection", label: "Pattern Detection", color: "#8b5cf6" },
-  { key: "ghostCandles", label: "Predictive Candles", color: "#f472b6" },
-  { key: "copilot", label: "AI Copilot", color: "#f472b6" },
+  { key: "orderBlocks", label: "Order Blocks", color: "#22c55e" },
+  { key: "fvg", label: "Fair Value Gaps", color: "#06b6d4" },
+  { key: "cvd", label: "CVD", color: "#06b6d4" },
+  { key: "volumeProfile", label: "Volume Profile", color: "#8b5cf6" },
+  { key: "tradeSetup", label: "Trade Setup", color: "#10b981" },
 ] as const;
 
 export function IndicatorToolbar() {

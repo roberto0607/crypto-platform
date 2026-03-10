@@ -7,6 +7,8 @@ export interface Candle {
     low: string;
     close: string;
     volume: string;
+    buy_volume?: string;
+    sell_volume?: string;
 }
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";

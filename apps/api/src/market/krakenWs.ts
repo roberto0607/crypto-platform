@@ -146,8 +146,10 @@ function handleTradeMessage(data: any[]): void {
         const ts = trade.timestamp
             ? new Date(trade.timestamp).getTime()
             : Date.now();
+        // Kraken WS v2 trade channel includes 'side' ("buy" or "sell")
+        const side = trade.side === "buy" || trade.side === "sell" ? trade.side : undefined;
 
-        aggregateTick(pairId, { price, volume, ts });
+        aggregateTick(pairId, { price, volume, ts, side });
     }
 }
 

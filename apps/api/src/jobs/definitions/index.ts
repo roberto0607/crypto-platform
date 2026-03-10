@@ -14,6 +14,7 @@ import { marketMakerJob } from "./marketMakerJob";
 import { signalTrackerJob } from "./signalTrackerJob";
 import { orderFlowSnapshotJob } from "./orderFlowSnapshotJob";
 import { derivativesPollerJob } from "./derivativesPollerJob";
+import { krakenCandleSyncJob } from "./krakenCandleSyncJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -33,4 +34,5 @@ export const allJobs: JobDefinition[] = [
     signalTrackerJob,
     orderFlowSnapshotJob,
     derivativesPollerJob,
+    krakenCandleSyncJob,
 ];

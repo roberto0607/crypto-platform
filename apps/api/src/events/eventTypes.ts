@@ -95,6 +95,8 @@ export interface CandleClosedData {
   low: string;
   close: string;
   volume: string;
+  buyVolume: string;
+  sellVolume: string;
 }
 
 export interface NotificationCreatedData {

@@ -81,8 +81,8 @@ interface TradingState {
   orderSubmitting: boolean;
 
   // Bottom panel tab
-  bottomTab: "market" | "orders" | "positions" | "triggers";
-  setBottomTab: (tab: "market" | "orders" | "positions" | "triggers") => void;
+  bottomTab: "market" | "orders" | "positions" | "triggers" | "setup" | "liquidation";
+  setBottomTab: (tab: "market" | "orders" | "positions" | "triggers" | "setup" | "liquidation") => void;
 
   // Indicator config (persisted to localStorage)
   indicatorConfig: IndicatorConfig;

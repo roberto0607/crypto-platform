@@ -62,6 +62,8 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
         low: string;
         close: string;
         volume: string;
+        buy_volume: string;
+        sell_volume: string;
     }>(
         `WITH bucketed AS (
             SELECT
@@ -69,7 +71,7 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
                     floor(extract(epoch FROM ts) / $3) * $3
                 ) AS bucket,
                 ts,
-                open, high, low, close, volume
+                open, high, low, close, volume, buy_volume, sell_volume
             FROM candles
             WHERE pair_id = $1
               AND timeframe = '1m'
@@ -81,7 +83,9 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
             MAX(high)::text AS high,
             MIN(low)::text AS low,
             (array_agg(close ORDER BY ts DESC))[1] AS close,
-            SUM(volume)::text AS volume
+            SUM(volume)::text AS volume,
+            SUM(buy_volume)::text AS buy_volume,
+            SUM(sell_volume)::text AS sell_volume
         FROM bucketed
         GROUP BY bucket
         HAVING COUNT(*) > 0
@@ -98,15 +102,17 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
         if (bucketTime.getTime() >= currentBucket.getTime()) continue; // Still open
 
         await pool.query(
-            `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
                  open = EXCLUDED.open,
                  high = EXCLUDED.high,
                  low = EXCLUDED.low,
                  close = EXCLUDED.close,
-                 volume = EXCLUDED.volume`,
-            [pairId, rollup.timeframe, row.bucket, row.open, row.high, row.low, row.close, row.volume],
+                 volume = EXCLUDED.volume,
+                 buy_volume = EXCLUDED.buy_volume,
+                 sell_volume = EXCLUDED.sell_volume`,
+            [pairId, rollup.timeframe, row.bucket, row.open, row.high, row.low, row.close, row.volume, row.buy_volume, row.sell_volume],
         );
     }
 }

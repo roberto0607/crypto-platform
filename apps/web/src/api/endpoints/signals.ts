@@ -277,3 +277,17 @@ export function postCopilotAnalysis(
         analysis: CopilotAnalysis;
     }>(`/v1/pairs/${pairId}/copilot`, context);
 }
+
+// Liquidation levels
+export interface LiquidationLevel {
+    price: number;
+    magnitude: number;
+    leverage: number;
+    side: "long" | "short";
+}
+
+export function getLiquidationLevels(pairId: string) {
+    return client.get<{ ok: true; levels: LiquidationLevel[] }>(
+        `/v1/pairs/${pairId}/liquidation-levels`,
+    );
+}

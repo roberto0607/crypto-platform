@@ -7,6 +7,7 @@ interface Tick {
     price: string;
     volume: string;
     ts: number; // epoch ms
+    side?: "buy" | "sell";
 }
 
 interface OpenCandle {
@@ -17,6 +18,8 @@ interface OpenCandle {
     low: string;
     close: string;
     volume: string;
+    buyVolume: string;
+    sellVolume: string;
     tickCount: number;
 }
 
@@ -34,6 +37,9 @@ function minuteFloor(tsMs: number): number {
 export function aggregateTick(pairId: string, tick: Tick): void {
     const minuteKey = minuteFloor(tick.ts);
     const existing = openCandles.get(pairId);
+    const vol = parseFloat(tick.volume);
+    const buyVol = tick.side === "buy" ? vol : 0;
+    const sellVol = tick.side === "sell" ? vol : 0;
 
     if (!existing || existing.minuteKey !== minuteKey) {
         // New candle for this minute
@@ -45,6 +51,8 @@ export function aggregateTick(pairId: string, tick: Tick): void {
             low: tick.price,
             close: tick.price,
             volume: tick.volume,
+            buyVolume: String(buyVol),
+            sellVolume: String(sellVol),
             tickCount: 1,
         });
         return;
@@ -55,7 +63,9 @@ export function aggregateTick(pairId: string, tick: Tick): void {
     if (p > parseFloat(existing.high)) existing.high = tick.price;
     if (p < parseFloat(existing.low)) existing.low = tick.price;
     existing.close = tick.price;
-    existing.volume = String(parseFloat(existing.volume) + parseFloat(tick.volume));
+    existing.volume = String(parseFloat(existing.volume) + vol);
+    existing.buyVolume = String(parseFloat(existing.buyVolume) + buyVol);
+    existing.sellVolume = String(parseFloat(existing.sellVolume) + sellVol);
     existing.tickCount++;
 }
 
@@ -75,15 +85,17 @@ export async function flushDueCandles(): Promise<void> {
 
         try {
             await pool.query(
-                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-                 VALUES ($1, '1m', $2, $3, $4, $5, $6, $7)
+                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
+                 VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9)
                  ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
                      open = EXCLUDED.open,
                      high = GREATEST(candles.high, EXCLUDED.high),
                      low = LEAST(candles.low, EXCLUDED.low),
                      close = EXCLUDED.close,
-                     volume = candles.volume + EXCLUDED.volume`,
-                [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume],
+                     volume = candles.volume + EXCLUDED.volume,
+                     buy_volume = candles.buy_volume + EXCLUDED.buy_volume,
+                     sell_volume = candles.sell_volume + EXCLUDED.sell_volume`,
+                [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.buyVolume, candle.sellVolume],
             );
 
             // Publish candle.closed event for live chart updates
@@ -96,6 +108,8 @@ export async function flushDueCandles(): Promise<void> {
                 low: candle.low,
                 close: candle.close,
                 volume: candle.volume,
+                buyVolume: candle.buyVolume,
+                sellVolume: candle.sellVolume,
             }));
 
             logger.debug(

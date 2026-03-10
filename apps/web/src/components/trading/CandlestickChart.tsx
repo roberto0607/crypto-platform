@@ -1,39 +1,33 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
-    createSeriesMarkers,
     CandlestickSeries,
-    LineSeries,
-    AreaSeries,
     LineStyle,
     type IChartApi,
     type ISeriesApi,
-    type ISeriesMarkersPluginApi,
     type CandlestickData,
     type Time,
     ColorType,
     type IPriceLine,
-    type SeriesMarker,
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
-import { getSignals, type MLSignal } from "@/api/endpoints/signals";
 import { useTradingStore } from "@/stores/tradingStore";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import {
-    ema,
-    vwap,
     prevDayHighLow,
-    swingPoints,
     type Candle as IndicatorCandle,
-    type Point,
 } from "@/lib/indicators";
-import { detectRegimes, type RegimeType } from "@/lib/regimeDetector";
-import { RegimeBandsPrimitive, REGIME_SOLID_COLORS } from "@/lib/regimeBandsPrimitive";
-import { ConfidenceHeatmap } from "./ConfidenceHeatmap";
 import { LiquidityZonesPrimitive } from "@/lib/liquidityZonesPrimitive";
-import { PatternPrimitive } from "@/lib/patternPrimitive";
-import { GhostCandlePrimitive } from "@/lib/ghostCandlePrimitive";
-import { getLiquidityZones, getPatterns, getScenarios, type PriceScenario } from "@/api/endpoints/signals";
+import { OrderBlockPrimitive } from "@/lib/orderBlockPrimitive";
+import { FvgPrimitive } from "@/lib/fvgPrimitive";
+import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
+import { detectFairValueGaps, type FairValueGap } from "@/lib/fairValueGaps";
+import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
+import { computeCVD, detectCvdDivergence, type CvdPoint } from "@/lib/cvd";
+import { CvdPanel } from "./CvdPanel";
+import { VolumeProfilePrimitive } from "@/lib/volumeProfilePrimitive";
+import { computeVolumeProfile } from "@/lib/volumeProfile";
+import { computeTradeSetup, type TradeSetup } from "@/lib/confluenceEngine";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -58,49 +52,6 @@ function apiCandleToIndicator(c: Candle): IndicatorCandle {
     };
 }
 
-function pointsToLW(points: Point[]): { time: Time; value: number }[] {
-    return points.map((p) => ({ time: p.time as Time, value: p.value }));
-}
-
-interface OverlaySeries {
-    ema200?: ISeriesApi<"Line">;
-    ema50?: ISeriesApi<"Line">;
-    vwap?: ISeriesApi<"Line">;
-    forecastP50?: ISeriesApi<"Line">;
-    forecastUpper?: ISeriesApi<"Area">;
-    forecastLower?: ISeriesApi<"Area">;
-}
-
-const TF_SECONDS: Record<Timeframe, number> = {
-    "1m": 60, "5m": 300, "15m": 900,
-    "1h": 3600, "4h": 14400, "1d": 86400,
-};
-
-function forecastToChartPoints(
-    currentPrice: number,
-    currentTime: number,
-    timeframeSec: number,
-    forecast: Record<string, { p10: number; p50: number; p90: number }>,
-): { p10: { time: Time; value: number }[]; p50: { time: Time; value: number }[]; p90: { time: Time; value: number }[] } {
-    const horizons: [string, number][] = [["t+1", 1], ["t+3", 3], ["t+6", 6], ["t+12", 12]];
-    const origin = { time: currentTime as Time, value: currentPrice };
-
-    const p10 = [origin];
-    const p50 = [origin];
-    const p90 = [origin];
-
-    for (const [key, mult] of horizons) {
-        const h = forecast[key];
-        if (!h) continue;
-        const t = (currentTime + mult * timeframeSec) as Time;
-        p10.push({ time: t, value: currentPrice * (1 + h.p10) });
-        p50.push({ time: t, value: currentPrice * (1 + h.p50) });
-        p90.push({ time: t, value: currentPrice * (1 + h.p90) });
-    }
-
-    return { p10, p50, p90 };
-}
-
 /** Bucket an epoch-second timestamp to the start of its timeframe period. */
 function bucketTime(epochSec: number, tf: Timeframe): number {
     switch (tf) {
@@ -116,29 +67,26 @@ function bucketTime(epochSec: number, tf: Timeframe): number {
 
 interface CandlestickChartProps {
     onTimeframeChange?: (tf: Timeframe) => void;
+    onTradeSetupChange?: (setup: TradeSetup | null) => void;
+    fundingRate?: number;
 }
 
-export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
+export function CandlestickChart({ onTimeframeChange, onTradeSetupChange, fundingRate = 0 }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-    const overlayRef = useRef<OverlaySeries>({});
     const priceLinesRef = useRef<IPriceLine[]>([]);
-    const signalLinesRef = useRef<IPriceLine[]>([]);
-    const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const setupLinesRef = useRef<IPriceLine[]>([]);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
-    const signalHistoryRef = useRef<MLSignal[]>([]);
-    const activeSignalRef = useRef<MLSignal | null>(null);
-    const regimePrimitiveRef = useRef<RegimeBandsPrimitive | null>(null);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
-    const patternPrimitiveRef = useRef<PatternPrimitive | null>(null);
-    const ghostPrimitiveRef = useRef<GhostCandlePrimitive | null>(null);
-    const [scenarios, setScenarios] = useState<PriceScenario[]>([]);
-    const [visibleScenarios, setVisibleScenarios] = useState(new Set(["bull", "base", "bear"]));
+    const obPrimitiveRef = useRef<OrderBlockPrimitive | null>(null);
+    const fvgPrimitiveRef = useRef<FvgPrimitive | null>(null);
+    const volProfilePrimitiveRef = useRef<VolumeProfilePrimitive | null>(null);
+    const liquidityZonesRef = useRef<LiquidityZone[]>([]);
     const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
-    const [currentRegime, setCurrentRegime] = useState<RegimeType | null>(null);
+    const [cvdData, setCvdData] = useState<CvdPoint[]>([]);
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
@@ -182,25 +130,25 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         chartRef.current = chart;
         seriesRef.current = series;
 
-        // Attach regime bands primitive
-        const regimePrimitive = new RegimeBandsPrimitive();
-        series.attachPrimitive(regimePrimitive);
-        regimePrimitiveRef.current = regimePrimitive;
-
         // Attach liquidity zones primitive
         const liquidityPrimitive = new LiquidityZonesPrimitive();
         series.attachPrimitive(liquidityPrimitive);
         liquidityPrimitiveRef.current = liquidityPrimitive;
 
-        // Attach pattern detection primitive
-        const patternPrimitive = new PatternPrimitive();
-        series.attachPrimitive(patternPrimitive);
-        patternPrimitiveRef.current = patternPrimitive;
+        // Attach order block primitive
+        const obPrimitive = new OrderBlockPrimitive();
+        series.attachPrimitive(obPrimitive);
+        obPrimitiveRef.current = obPrimitive;
 
-        // Attach ghost candle primitive
-        const ghostPrimitive = new GhostCandlePrimitive();
-        series.attachPrimitive(ghostPrimitive);
-        ghostPrimitiveRef.current = ghostPrimitive;
+        // Attach fair value gap primitive
+        const fvgPrimitive = new FvgPrimitive();
+        series.attachPrimitive(fvgPrimitive);
+        fvgPrimitiveRef.current = fvgPrimitive;
+
+        // Attach volume profile primitive
+        const volProfilePrimitive = new VolumeProfilePrimitive();
+        series.attachPrimitive(volProfilePrimitive);
+        volProfilePrimitiveRef.current = volProfilePrimitive;
 
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
@@ -216,173 +164,46 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
-            overlayRef.current = {};
             priceLinesRef.current = [];
-            signalLinesRef.current = [];
         };
     }, []);
 
-    // Clear signal price lines
-    const clearSignalLines = useCallback(() => {
+    // Remove all price lines
+    const clearPriceLines = useCallback(() => {
         const candleSeries = seriesRef.current;
         if (!candleSeries) return;
-        for (const pl of signalLinesRef.current) {
+        for (const pl of priceLinesRef.current) {
             candleSeries.removePriceLine(pl);
         }
-        signalLinesRef.current = [];
+        priceLinesRef.current = [];
     }, []);
 
-    // Draw TP/SL lines for an active signal
-    const drawSignalLines = useCallback((signal: MLSignal | null) => {
-        clearSignalLines();
+    // Remove trade setup overlay lines
+    const clearSetupLines = useCallback(() => {
         const candleSeries = seriesRef.current;
-        if (!candleSeries || !signal || signal.outcome !== "pending") return;
-
-        const entry = parseFloat(signal.entryPrice);
-        const tp1 = parseFloat(signal.tp1Price);
-        const tp2 = parseFloat(signal.tp2Price);
-        const tp3 = parseFloat(signal.tp3Price);
-        const sl = parseFloat(signal.stopLossPrice);
-
-        // Entry line
-        signalLinesRef.current.push(
-            candleSeries.createPriceLine({
-                price: entry,
-                color: "#9ca3af",
-                lineWidth: 1,
-                lineStyle: LineStyle.Solid,
-                axisLabelVisible: true,
-                title: "Entry",
-            }),
-        );
-
-        // TP lines
-        signalLinesRef.current.push(
-            candleSeries.createPriceLine({
-                price: tp1,
-                color: "#10b981",
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: `TP1 (${signal.tp1Prob}%)`,
-            }),
-        );
-        signalLinesRef.current.push(
-            candleSeries.createPriceLine({
-                price: tp2,
-                color: "#10b981",
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: `TP2 (${signal.tp2Prob}%)`,
-            }),
-        );
-        signalLinesRef.current.push(
-            candleSeries.createPriceLine({
-                price: tp3,
-                color: "#10b981",
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: `TP3 (${signal.tp3Prob}%)`,
-            }),
-        );
-
-        // SL line
-        signalLinesRef.current.push(
-            candleSeries.createPriceLine({
-                price: sl,
-                color: "#ef4444",
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                axisLabelVisible: true,
-                title: "SL",
-            }),
-        );
-    }, [clearSignalLines]);
-
-    // Remove all overlay series and price lines
-    const clearOverlays = useCallback(() => {
-        const chart = chartRef.current;
-        const candleSeries = seriesRef.current;
-        if (!chart) return;
-
-        const overlay = overlayRef.current;
-        if (overlay.ema200) { chart.removeSeries(overlay.ema200); overlay.ema200 = undefined; }
-        if (overlay.ema50) { chart.removeSeries(overlay.ema50); overlay.ema50 = undefined; }
-        if (overlay.vwap) { chart.removeSeries(overlay.vwap); overlay.vwap = undefined; }
-        if (overlay.forecastP50) { chart.removeSeries(overlay.forecastP50); overlay.forecastP50 = undefined; }
-        if (overlay.forecastUpper) { chart.removeSeries(overlay.forecastUpper); overlay.forecastUpper = undefined; }
-        if (overlay.forecastLower) { chart.removeSeries(overlay.forecastLower); overlay.forecastLower = undefined; }
-
-        // Remove price lines (PDH/PDL)
-        if (candleSeries) {
-            for (const pl of priceLinesRef.current) {
-                candleSeries.removePriceLine(pl);
-            }
+        if (!candleSeries) return;
+        for (const pl of setupLinesRef.current) {
+            candleSeries.removePriceLine(pl);
         }
-        priceLinesRef.current = [];
-
-        // Clear markers (swing + AI combined)
-        if (markersPluginRef.current) {
-            markersPluginRef.current.detach();
-            markersPluginRef.current = null;
-        }
-
-        // Clear signal lines
-        clearSignalLines();
-    }, [clearSignalLines]);
+        setupLinesRef.current = [];
+    }, []);
 
     // Render indicator overlays from raw candle data
     const renderOverlays = useCallback((candles: Candle[]) => {
-        const chart = chartRef.current;
         const candleSeries = seriesRef.current;
-        if (!chart || !candleSeries || candles.length === 0) return;
+        if (!candleSeries || candles.length === 0) return;
 
-        clearOverlays();
+        clearPriceLines();
+        clearSetupLines();
 
         const indCandles = candles.map(apiCandleToIndicator);
 
-        // EMA 200
-        if (indicatorConfig.ema200) {
-            const series = chart.addSeries(LineSeries, {
-                color: "#a855f7",
-                lineWidth: 1,
-                priceLineVisible: false,
-                lastValueVisible: false,
-            });
-            series.setData(pointsToLW(ema(indCandles, 200)));
-            overlayRef.current.ema200 = series;
-        }
-
-        // EMA 50
-        if (indicatorConfig.ema50) {
-            const series = chart.addSeries(LineSeries, {
-                color: "#eab308",
-                lineWidth: 1,
-                priceLineVisible: false,
-                lastValueVisible: false,
-            });
-            series.setData(pointsToLW(ema(indCandles, 50)));
-            overlayRef.current.ema50 = series;
-        }
-
-        // VWAP
-        if (indicatorConfig.vwap) {
-            const series = chart.addSeries(LineSeries, {
-                color: "#06b6d4",
-                lineWidth: 1,
-                priceLineVisible: false,
-                lastValueVisible: false,
-            });
-            series.setData(pointsToLW(vwap(indCandles)));
-            overlayRef.current.vwap = series;
-        }
-
         // Key Levels — PDH/PDL
+        let keyLevels: { pdh: number; pdl: number } | null = null;
         if (indicatorConfig.keyLevels) {
             const levels = prevDayHighLow(indCandles);
             if (levels) {
+                keyLevels = levels;
                 const pdhLine = candleSeries.createPriceLine({
                     price: levels.pdh,
                     color: "#94a3b8",
@@ -403,159 +224,139 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             }
         }
 
-        // Build combined markers: swing points + AI signals
-        const markers: SeriesMarker<Time>[] = [];
-
-        // Swing Points
-        if (indicatorConfig.swingPoints) {
-            const swings = swingPoints(indCandles);
-            for (const h of swings.highs) {
-                markers.push({
-                    time: h.time as Time,
-                    position: "aboveBar",
-                    shape: "arrowDown",
-                    color: "#ef4444",
-                    text: "SH",
-                });
-            }
-            for (const l of swings.lows) {
-                markers.push({
-                    time: l.time as Time,
-                    position: "belowBar",
-                    shape: "arrowUp",
-                    color: "#22c55e",
-                    text: "SL",
-                });
-            }
-        }
-
-        // AI Signal markers
-        if (indicatorConfig.aiSignals && signalHistoryRef.current.length > 0) {
-            for (const sig of signalHistoryRef.current) {
-                const sigTime = Math.floor(new Date(sig.createdAt).getTime() / 1000) as Time;
-                const isBuy = sig.signalType === "BUY";
-
-                markers.push({
-                    time: sigTime,
-                    position: isBuy ? "belowBar" : "aboveBar",
-                    shape: isBuy ? "arrowUp" : "arrowDown",
-                    color: isBuy ? "#10b981" : "#ef4444",
-                    text: `${sig.signalType} ${sig.confidence}%`,
-                });
-            }
-
-            // Draw TP/SL lines for active signal
-            drawSignalLines(activeSignalRef.current);
-        }
-
-        // Sort and render all markers
-        if (markers.length > 0) {
-            markers.sort((a, b) => (a.time as number) - (b.time as number));
-            markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
-        }
-
-        // Forecast cone
-        if (indicatorConfig.forecastCone && activeSignalRef.current?.forecast) {
-            const lastCandle = candles[candles.length - 1];
-            if (lastCandle) {
-                const currentPrice = parseFloat(lastCandle.close);
-                const currentTime = Math.floor(new Date(lastCandle.ts).getTime() / 1000);
-                const tfSec = TF_SECONDS[timeframe] ?? 3600;
-                const { p10, p50, p90 } = forecastToChartPoints(
-                    currentPrice, currentTime, tfSec, activeSignalRef.current.forecast,
-                );
-
-                // p50 median line — dashed cyan
-                const p50Series = chart.addSeries(LineSeries, {
-                    color: "#06b6d4",
-                    lineWidth: 2,
-                    lineStyle: LineStyle.Dashed,
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                p50Series.setData(p50);
-                overlayRef.current.forecastP50 = p50Series;
-
-                // Upper area (p90 → p50 fill)
-                const upperSeries = chart.addSeries(AreaSeries, {
-                    lineColor: "rgba(6,182,212,0.3)",
-                    lineWidth: 1,
-                    topColor: "rgba(6,182,212,0.08)",
-                    bottomColor: "transparent",
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                upperSeries.setData(p90);
-                overlayRef.current.forecastUpper = upperSeries;
-
-                // Lower area (p10 → transparent fill)
-                const lowerSeries = chart.addSeries(AreaSeries, {
-                    lineColor: "rgba(6,182,212,0.3)",
-                    lineWidth: 1,
-                    topColor: "transparent",
-                    bottomColor: "rgba(6,182,212,0.08)",
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                lowerSeries.setData(p10);
-                overlayRef.current.forecastLower = lowerSeries;
-            }
-        }
-
-        // Regime bands
-        if (indicatorConfig.regimeBands) {
-            const segments = detectRegimes(indCandles);
-            regimePrimitiveRef.current?.setSegments(segments);
-            // Set current regime from last segment
-            if (segments.length > 0) {
-                setCurrentRegime(segments[segments.length - 1]!.regime);
-            } else {
-                setCurrentRegime(null);
-            }
-        } else {
-            regimePrimitiveRef.current?.setSegments([]);
-            setCurrentRegime(null);
-        }
-
-        // Liquidity zones are fetched separately and set via primitive ref
-        // (not computed from candle data — they come from the API)
+        // Liquidity zones visibility
         if (!indicatorConfig.liquidityZones) {
             liquidityPrimitiveRef.current?.setZones([]);
         }
 
-        // Patterns are fetched separately via API
-        if (!indicatorConfig.patternDetection) {
-            patternPrimitiveRef.current?.setPatterns([]);
+        // Order Blocks
+        let orderBlocks: OrderBlock[] = [];
+        if (indicatorConfig.orderBlocks) {
+            orderBlocks = detectOrderBlocks(indCandles);
+            obPrimitiveRef.current?.setBlocks(orderBlocks);
+        } else {
+            obPrimitiveRef.current?.setBlocks([]);
         }
 
-        // Ghost candles are fetched separately via API
-        if (!indicatorConfig.ghostCandles) {
-            ghostPrimitiveRef.current?.setScenarios([]);
-        }
-    }, [indicatorConfig, clearOverlays, drawSignalLines, timeframe]);
-
-    // Fetch signals for the current pair + timeframe
-    const needsSignals = indicatorConfig.aiSignals || indicatorConfig.forecastCone;
-
-    const fetchSignals = useCallback(async () => {
-        if (!selectedPairId || !needsSignals) {
-            signalHistoryRef.current = [];
-            activeSignalRef.current = null;
-            return;
+        // Fair Value Gaps
+        let fvgs: FairValueGap[] = [];
+        if (indicatorConfig.fvg) {
+            fvgs = detectFairValueGaps(indCandles);
+            fvgPrimitiveRef.current?.setGaps(fvgs);
+        } else {
+            fvgPrimitiveRef.current?.setGaps([]);
         }
 
-        try {
-            const { data } = await getSignals(selectedPairId, { timeframe, limit: 20 });
-            signalHistoryRef.current = data.history;
-            activeSignalRef.current = data.active;
-        } catch {
-            signalHistoryRef.current = [];
-            activeSignalRef.current = null;
+        // CVD
+        let cvdPoints: CvdPoint[] = [];
+        if (indicatorConfig.cvd) {
+            cvdPoints = computeCVD(candles);
+            setCvdData(cvdPoints);
+        } else {
+            setCvdData([]);
         }
-    }, [selectedPairId, timeframe, needsSignals]);
+
+        // Volume Profile
+        if (indicatorConfig.volumeProfile) {
+            const profile = computeVolumeProfile(candles);
+            volProfilePrimitiveRef.current?.setData(profile);
+        } else {
+            volProfilePrimitiveRef.current?.setData(null);
+        }
+
+        // Trade Setup — confluence engine
+        if (indicatorConfig.tradeSetup) {
+            const lastCandle = candles[candles.length - 1];
+            const currentPrice = lastCandle ? parseFloat(lastCandle.close) : 0;
+            const cvdDivergences = detectCvdDivergence(candles, cvdPoints);
+
+            const setup = computeTradeSetup({
+                candles,
+                orderBlocks,
+                fvgs,
+                cvdDivergences,
+                liquidityZones: liquidityZonesRef.current,
+                keyLevels,
+                fundingRate,
+                currentPrice,
+            });
+
+            onTradeSetupChange?.(setup);
+
+            // Draw overlay lines on chart
+            if (setup && candleSeries) {
+                const isLong = setup.direction === "long";
+
+                // Entry zone — two lines forming a band
+                const entryLowLine = candleSeries.createPriceLine({
+                    price: setup.entryZone.low,
+                    color: isLong ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                    axisLabelVisible: false,
+                    title: "",
+                });
+                const entryHighLine = candleSeries.createPriceLine({
+                    price: setup.entryZone.high,
+                    color: isLong ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dotted,
+                    axisLabelVisible: false,
+                    title: "Entry",
+                });
+
+                // Stop Loss
+                const slLine = candleSeries.createPriceLine({
+                    price: setup.stopLoss,
+                    color: "#ef4444",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: "SL",
+                });
+
+                // TP1
+                const tp1Line = candleSeries.createPriceLine({
+                    price: setup.tp1,
+                    color: "#3b82f6",
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: "TP1",
+                });
+
+                setupLinesRef.current.push(entryLowLine, entryHighLine, slLine, tp1Line);
+
+                // TP2
+                if (setup.tp2 != null) {
+                    const tp2Line = candleSeries.createPriceLine({
+                        price: setup.tp2,
+                        color: "rgba(59,130,246,0.6)",
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: "TP2",
+                    });
+                    setupLinesRef.current.push(tp2Line);
+                }
+
+                // TP3
+                if (setup.tp3 != null) {
+                    const tp3Line = candleSeries.createPriceLine({
+                        price: setup.tp3,
+                        color: "rgba(59,130,246,0.4)",
+                        lineWidth: 1,
+                        lineStyle: LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: "TP3",
+                    });
+                    setupLinesRef.current.push(tp3Line);
+                }
+            }
+        } else {
+            onTradeSetupChange?.(null);
+        }
+    }, [indicatorConfig, clearPriceLines, clearSetupLines, fundingRate, onTradeSetupChange]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
@@ -563,52 +364,35 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
 
         setLoading(true);
         try {
-            // Fetch candles and signals in parallel
-            const [candleRes] = await Promise.all([
-                getCandles(selectedPairId, { timeframe, limit: 300 }),
-                fetchSignals(),
-            ]);
+            const candleRes = await getCandles(selectedPairId, { timeframe, limit: 300 });
 
             rawCandlesRef.current = candleRes.data.candles;
-            liveCandleRef.current = null; // Reset live candle on fresh fetch
+            liveCandleRef.current = null;
             const lwData = candleRes.data.candles.map(candleToLW);
             seriesRef.current.setData(lwData);
 
-            // Render indicator overlays (includes AI signals)
             renderOverlays(candleRes.data.candles);
 
-            // Fit content to show all candles
             chartRef.current?.timeScale().fitContent();
         } catch {
             // Non-fatal — chart shows empty
         } finally {
             setLoading(false);
         }
-    }, [selectedPairId, timeframe, renderOverlays, fetchSignals]);
+    }, [selectedPairId, timeframe, renderOverlays]);
 
     useEffect(() => {
         fetchCandles();
     }, [fetchCandles]);
 
-    // Re-render overlays when indicator config changes (without re-fetching candles)
+    // Re-render overlays when indicator config changes
     useEffect(() => {
         if (rawCandlesRef.current.length > 0) {
-            // If signals are needed but not yet loaded, fetch first
-            if (needsSignals && signalHistoryRef.current.length === 0 && !activeSignalRef.current) {
-                fetchSignals().then(() => {
-                    renderOverlays(rawCandlesRef.current);
-                });
-            } else {
-                if (!needsSignals) {
-                    signalHistoryRef.current = [];
-                    activeSignalRef.current = null;
-                }
-                renderOverlays(rawCandlesRef.current);
-            }
+            renderOverlays(rawCandlesRef.current);
         }
-    }, [renderOverlays, fetchSignals, needsSignals]);
+    }, [renderOverlays]);
 
-    // Live update: price.tick → update current candle with proper OHLC tracking
+    // Live update: price.tick → update current candle
     useEffect(() => {
         if (!selectedPairId) return;
 
@@ -622,12 +406,10 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
 
             const live = liveCandleRef.current;
             if (live && live.time === candleTime) {
-                // Same candle period — preserve open, track high/low, update close
                 live.high = Math.max(live.high, price);
                 live.low = Math.min(live.low, price);
                 live.close = price;
             } else {
-                // New candle period — start fresh
                 liveCandleRef.current = {
                     time: candleTime,
                     open: price,
@@ -644,7 +426,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
     }, [selectedPairId, timeframe]);
 
-    // Live update: candle.closed → append completed candle + update overlays incrementally
+    // Live update: candle.closed → append completed candle
     useEffect(() => {
         if (!selectedPairId) return;
 
@@ -661,10 +443,8 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
                 close: parseFloat(detail.close),
             });
 
-            // Reset live candle so the next tick starts a fresh one
             liveCandleRef.current = null;
 
-            // Append to raw candles and re-render overlays
             const newCandle: Candle = {
                 ts: new Date(detail.ts).toISOString(),
                 open: detail.open,
@@ -681,25 +461,6 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         return () => window.removeEventListener("sse:candle.closed", handleCandleClosed);
     }, [selectedPairId, timeframe, renderOverlays]);
 
-    // Live update: signal.new → refetch signals and re-render
-    useEffect(() => {
-        if (!selectedPairId || !needsSignals) return;
-
-        const handleSignalNew = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail.pairId !== selectedPairId) return;
-
-            fetchSignals().then(() => {
-                if (rawCandlesRef.current.length > 0) {
-                    renderOverlays(rawCandlesRef.current);
-                }
-            });
-        };
-
-        window.addEventListener("sse:signal.new", handleSignalNew);
-        return () => window.removeEventListener("sse:signal.new", handleSignalNew);
-    }, [selectedPairId, needsSignals, fetchSignals, renderOverlays]);
-
     // Liquidity zones: fetch on mount + 60s refresh
     useEffect(() => {
         if (!selectedPairId || !indicatorConfig.liquidityZones) {
@@ -711,6 +472,7 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             try {
                 const { data } = await getLiquidityZones(selectedPairId, { timeframe });
                 liquidityPrimitiveRef.current?.setZones(data.zones);
+                liquidityZonesRef.current = data.zones;
             } catch {
                 // Non-fatal
             }
@@ -720,61 +482,6 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
         const interval = setInterval(fetchZones, 60_000);
         return () => clearInterval(interval);
     }, [selectedPairId, timeframe, indicatorConfig.liquidityZones]);
-
-    // Pattern detection: fetch on mount + 60s refresh
-    useEffect(() => {
-        if (!selectedPairId || !indicatorConfig.patternDetection) {
-            patternPrimitiveRef.current?.setPatterns([]);
-            return;
-        }
-
-        const fetchPatternsData = async () => {
-            try {
-                const { data } = await getPatterns(selectedPairId, { timeframe });
-                patternPrimitiveRef.current?.setPatterns(data.patterns);
-            } catch {
-                // Non-fatal
-            }
-        };
-
-        fetchPatternsData();
-        const interval = setInterval(fetchPatternsData, 60_000);
-        return () => clearInterval(interval);
-    }, [selectedPairId, timeframe, indicatorConfig.patternDetection]);
-
-    // Ghost candles: fetch scenarios + periodic refresh (every 6 candles)
-    useEffect(() => {
-        if (!selectedPairId || !indicatorConfig.ghostCandles) {
-            ghostPrimitiveRef.current?.setScenarios([]);
-            setScenarios([]);
-            return;
-        }
-
-        const fetchScenariosData = async () => {
-            try {
-                const { data } = await getScenarios(selectedPairId, { timeframe });
-                setScenarios(data.scenarios);
-
-                // Get last real candle time for separator line
-                const candles = rawCandlesRef.current;
-                const lastRealTime = candles.length > 0
-                    ? (new Date(candles[candles.length - 1]!.ts).getTime() / 1000) as unknown as Time
-                    : undefined;
-
-                // Filter to visible scenarios
-                const filtered = data.scenarios.filter(s => visibleScenarios.has(s.name));
-                ghostPrimitiveRef.current?.setScenarios(filtered, lastRealTime);
-            } catch {
-                // Non-fatal
-            }
-        };
-
-        fetchScenariosData();
-        // Refresh every 6 candles worth of time
-        const refreshMs = Math.max((TF_SECONDS[timeframe] ?? 3600) * 6 * 1000, 60_000);
-        const interval = setInterval(fetchScenariosData, refreshMs);
-        return () => clearInterval(interval);
-    }, [selectedPairId, timeframe, indicatorConfig.ghostCandles, visibleScenarios]);
 
     const handleTimeframeChange = (tf: Timeframe) => {
         setTimeframe(tf);
@@ -809,57 +516,11 @@ export function CandlestickChart({ onTimeframeChange }: CandlestickChartProps) {
             {/* Chart container */}
             <div className="relative flex-1 min-h-0">
                 <div ref={containerRef} className="absolute inset-0" />
-                {indicatorConfig.regimeBands && currentRegime && (
-                    <div className="absolute top-2 right-2 bg-gray-900/80 px-2 py-1 rounded text-xs flex items-center gap-1.5 z-10">
-                        <span
-                            className="w-2.5 h-2.5 rounded-sm"
-                            style={{ backgroundColor: REGIME_SOLID_COLORS[currentRegime] }}
-                        />
-                        <span className="text-gray-300">
-                            {currentRegime.replace("_", " ")}
-                        </span>
-                    </div>
-                )}
-                {indicatorConfig.ghostCandles && scenarios.length > 0 && (
-                    <div className="absolute top-10 right-2 bg-gray-900/90 border border-gray-700 rounded-lg p-2 z-10 text-xs space-y-1">
-                        <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1">
-                            AI Scenarios
-                        </div>
-                        {scenarios.map(s => (
-                            <button
-                                key={s.name}
-                                onClick={() => {
-                                    setVisibleScenarios(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(s.name)) next.delete(s.name);
-                                        else next.add(s.name);
-                                        return next;
-                                    });
-                                }}
-                                className={`flex items-center gap-2 w-full px-1.5 py-0.5 rounded ${
-                                    visibleScenarios.has(s.name) ? "bg-gray-800" : "opacity-40"
-                                }`}
-                            >
-                                <span className={`w-2 h-2 rounded-full ${
-                                    s.name === "bull" ? "bg-green-500" :
-                                    s.name === "bear" ? "bg-red-500" : "bg-gray-400"
-                                }`} />
-                                <span className="text-gray-300 capitalize">{s.name}</span>
-                                <span className="text-gray-500 ml-auto">{Math.round(s.probability * 100)}%</span>
-                                <span className="text-gray-600">${s.finalPrice.toLocaleString()}</span>
-                            </button>
-                        ))}
-                    </div>
-                )}
             </div>
 
-            {/* Confidence heatmap (40px) */}
-            {indicatorConfig.confidenceHeatmap && selectedPairId && (
-                <ConfidenceHeatmap
-                    pairId={selectedPairId}
-                    timeframe={timeframe}
-                    mainChart={chartRef.current}
-                />
+            {/* CVD sub-panel */}
+            {indicatorConfig.cvd && cvdData.length > 0 && (
+                <CvdPanel cvdData={cvdData} mainChart={chartRef.current} />
             )}
         </div>
     );
