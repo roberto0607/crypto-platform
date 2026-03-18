@@ -1,11 +1,23 @@
 FROM node:20-alpine
+
 WORKDIR /app
+
+# Install pnpm
 RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/
+
+# Install dependencies (lockfile + package.json first for layer caching)
+COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
-COPY apps/api/ ./apps/api/
-RUN pnpm --filter api build
-WORKDIR /app/apps/api
+
+# Copy source + migrations
+COPY tsconfig.json ./
+COPY src/ ./src/
+COPY migrations/ ./migrations/
+
+# Build TypeScript
+RUN pnpm build
+
+# Runtime
+ENV NODE_ENV=production
 EXPOSE 3001
 CMD ["node", "dist/server.js"]
