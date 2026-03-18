@@ -4,7 +4,7 @@ import { useAppStore } from "@/stores/appStore";
 import type { SSEEvent } from "@/types/api";
 
 const SSE_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/events`;
-const RECONNECT_DELAY_MS = 3_000;
+const BACKOFF_STEPS = [2_000, 5_000, 10_000, 30_000];
 
 export interface SSEHandlers {
   onOrderUpdated?: (event: Extract<SSEEvent, { type: "order.updated" }>) => void;
@@ -17,9 +17,11 @@ export interface SSEHandlers {
   onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
   onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
+  onPing?: (ts: number) => void;
 }
 
 let abortController: AbortController | null = null;
+let reconnectAttempt = 0;
 
 export function connectSSE(token: string, handlers: SSEHandlers): () => void {
   // Disconnect any existing connection first
@@ -35,6 +37,7 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
     async onopen(response) {
       if (response.ok && response.headers.get("content-type")?.includes(EventStreamContentType)) {
+        reconnectAttempt = 0;
         useAppStore.getState().setSseConnected(true);
         return;
       }
@@ -43,6 +46,15 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
     onmessage(msg) {
       if (!msg.event || !msg.data) return;
+
+      // Handle ping (not in SSEEvent union — raw from backend)
+      if (msg.event === "ping") {
+        try {
+          const data = JSON.parse(msg.data) as { ts: number };
+          handlers.onPing?.(data.ts);
+        } catch { /* ignore */ }
+        return;
+      }
 
       let event: SSEEvent;
       try {
@@ -102,8 +114,10 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
         throw err;
       }
 
-      // Return reconnect delay — fetchEventSource will retry automatically
-      return RECONNECT_DELAY_MS;
+      // Exponential backoff: 2s → 5s → 10s → 30s (never give up)
+      const delay = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
+      reconnectAttempt++;
+      return delay;
     },
 
     openWhenHidden: true,
@@ -112,10 +126,22 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
   return () => disconnectSSE();
 }
 
+/** Force a reconnect — tears down and re-establishes the SSE connection. */
+export function forceReconnectSSE(): void {
+  const token = useAuthStore.getState().accessToken;
+  if (!token || !abortController) return;
+  // The current handlers are captured in the closure of the running fetchEventSource.
+  // Aborting will trigger onerror → auto-retry with backoff, which is the desired behavior.
+  abortController.abort();
+  abortController = null;
+  useAppStore.getState().setSseConnected(false);
+}
+
 export function disconnectSSE(): void {
   if (abortController) {
     abortController.abort();
     abortController = null;
   }
+  reconnectAttempt = 0;
   useAppStore.getState().setSseConnected(false);
 }

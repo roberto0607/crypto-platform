@@ -178,9 +178,12 @@ export interface LiquidityZone {
     price: number;
     width: number;
     strength: number;
+    structuralScore: number;
+    actionabilityScore: number;
     type: "support" | "resistance";
     sources: string[];
     estimatedLiquidity: string;
+    dollarLiquidity: number;
 }
 
 export function getLiquidityZones(

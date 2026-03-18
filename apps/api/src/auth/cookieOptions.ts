@@ -6,7 +6,7 @@ const baseOptions = {
   httpOnly: true,
   secure: config.isProd,
   sameSite: "lax" as const,
-  path: "/auth",
+  path: "/",
 };
 
 export function refreshCookieSetOptions(expires: Date) {

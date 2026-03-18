@@ -136,13 +136,10 @@ export default function BotPage() {
     }
     let cancelled = false;
     setReplayChecking(true);
-    getReplayState()
+    getReplayState(formPairId)
       .then((res) => {
         if (!cancelled) {
-          setReplayActive(
-            res.data.session.is_active &&
-              res.data.session.pair_id === formPairId,
-          );
+          setReplayActive(res.data.session.is_active);
         }
       })
       .catch(() => {

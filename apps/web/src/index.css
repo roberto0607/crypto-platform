@@ -2,6 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme CSS Variables ── */
+[data-theme="tradr"] {
+  --theme-primary: #00ff41;
+  --theme-primary-dim: #00cc33;
+  --theme-primary-glow: rgba(0, 255, 65, 0.15);
+  --theme-bg: #0a0a0a;
+  --theme-bg-secondary: #0f0f0f;
+  --theme-bg-card: #111111;
+  --theme-border: rgba(0, 255, 65, 0.2);
+  --theme-border-bright: rgba(0, 255, 65, 0.5);
+  --theme-text-accent: #00ff41;
+  --theme-danger: #ff3333;
+  --theme-success: #00ff41;
+}
+
+[data-theme="tradewars"] {
+  --theme-primary: #FF6B00;
+  --theme-primary-dim: #cc5500;
+  --theme-primary-glow: rgba(255, 107, 0, 0.15);
+  --theme-bg: #1a0a00;
+  --theme-bg-secondary: #1f0f00;
+  --theme-bg-card: #261200;
+  --theme-border: rgba(255, 107, 0, 0.2);
+  --theme-border-bright: rgba(255, 107, 0, 0.5);
+  --theme-text-accent: #FF6B00;
+  --theme-danger: #CC0000;
+  --theme-success: #FF6B00;
+}
+
+/* Smooth theme transition — only color properties, no layout repaints */
+html {
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+html * {
+  transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+/* Exclude chart canvases and heavy-repaint elements from transitions */
+canvas, .tv-lightweight-charts, [data-no-theme-transition] {
+  transition: none !important;
+}
+
 /* ── TRADR Landing Page Custom Styles ── */
 
 /* Boot sequence line reveal */
@@ -418,3 +459,84 @@
 .quick-trade-input-cyber:focus {
   border-color: #00ff41;
 }
+
+/* ── WAR MODE (competition theme override) ── */
+/* Applied via data-theme="tradewars" on <html> */
+[data-theme="tradewars"] .grid-bg {
+  background-image:
+    linear-gradient(rgba(255,107,0,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,107,0,0.025) 1px, transparent 1px);
+}
+[data-theme="tradewars"] .card-glow::before {
+  background: linear-gradient(90deg, transparent, #FF6B00, transparent);
+}
+[data-theme="tradewars"] .hero-border-glow::after {
+  background: linear-gradient(to bottom, transparent, #FF6B00, transparent);
+}
+/* Override tailwind green references in war mode */
+[data-theme="tradewars"] .text-tradr-green { color: #FF6B00; }
+[data-theme="tradewars"] .border-tradr-green\/\[0\.18\] { border-color: rgba(255,107,0,0.18); }
+[data-theme="tradewars"] .bg-tradr-green\/\[0\.06\] { background-color: rgba(255,107,0,0.06); }
+[data-theme="tradewars"] .border-l-tradr-green { border-left-color: #FF6B00; }
+[data-theme="tradewars"] .border-l-tradr-green\/30 { border-left-color: rgba(255,107,0,0.3); }
+[data-theme="tradewars"] .shadow-\[0_0_6px_\#00ff41\] { box-shadow: 0 0 6px #FF6B00; }
+[data-theme="tradewars"] .bg-tradr-green { background-color: #FF6B00; }
+[data-theme="tradewars"] .hover\:bg-tradr-green\/10:hover { background-color: rgba(255,107,0,0.1); }
+[data-theme="tradewars"] .border-tradr-green\/30 { border-color: rgba(255,107,0,0.3); }
+
+/* War mode — logo, accents, background effects */
+[data-theme="tradewars"] .t-logo-text span { color: #FF6B00; }
+[data-theme="tradewars"] .t-logo-dot { background: #FF6B00; }
+@keyframes tpulse-war {
+  0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,107,0,0.25); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px transparent; }
+}
+[data-theme="tradewars"] .t-logo-dot { animation-name: tpulse-war; }
+
+/* War mode radial glow */
+[data-theme="tradewars"] .radial-glow-bg {
+  background: radial-gradient(ellipse 70% 60% at 50% 40%, rgba(255,107,0,0.04) 0%, transparent 65%);
+}
+
+/* Card title bar */
+[data-theme="tradewars"] .card-title-bar::before {
+  background: #FF6B00;
+  box-shadow: 0 0 6px #FF6B00;
+}
+
+/* Bracket corners */
+[data-theme="tradewars"] .bracket { border-color: rgba(255,107,0,0.5); }
+[data-theme="tradewars"] .hero-left-hover:hover .bracket { border-color: #FF6B00; }
+
+/* Ticker bar */
+[data-theme="tradewars"] .ticker-label-tag { background: #FF6B00; }
+[data-theme="tradewars"] .ticker-bar-wrap { border-top-color: rgba(255,107,0,0.18); }
+
+/* Quick trade input */
+[data-theme="tradewars"] .quick-trade-input-cyber { border-color: rgba(255,107,0,0.18); }
+[data-theme="tradewars"] .quick-trade-input-cyber:focus { border-color: #FF6B00; }
+
+/* Cyber table */
+[data-theme="tradewars"] .cyber-table th { border-bottom-color: rgba(255,107,0,0.18); }
+[data-theme="tradewars"] .cyber-table tr:hover td { background: rgba(255,107,0,0.06); }
+
+/* Recharts grid */
+[data-theme="tradewars"] .recharts-cartesian-grid line { stroke: rgba(255,107,0,0.08) !important; }
+
+/* SSE dot glow */
+[data-theme="tradewars"] .animate-blink.bg-tradr-green { box-shadow: 0 0 6px #FF6B00; }
+
+/* Auth pages — war mode login accent */
+[data-theme="tradewars"] .login-glow-line::before {
+  background: linear-gradient(90deg, transparent, #FF6B00, transparent);
+}
+[data-theme="tradewars"] .auth-bracket { border-color: rgba(255,107,0,0.5); }
+[data-theme="tradewars"] .auth-btn-loading { background: rgba(255,107,0,0.3) !important; }
+
+/* Cursor (landing page) */
+[data-theme="tradewars"] .cursor-crosshair::before,
+[data-theme="tradewars"] .cursor-crosshair::after { background: #FF6B00; }
+[data-theme="tradewars"] .cursor-dot { background: #FF6B00; box-shadow: 0 0 8px #FF6B00; }
+
+/* Scroll line */
+[data-theme="tradewars"] .scroll-line-anim::after { background: #FF6B00; }

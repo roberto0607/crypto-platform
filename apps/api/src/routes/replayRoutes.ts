@@ -8,16 +8,19 @@ import { findPairById } from "../trading/pairRepo";
 import {
     createOrStartSession,
     getSession,
+    getActiveSession,
     setPaused,
     seek,
     stopSession,
 } from "../replay/replayRepo";
 import { AppError } from "../errors/AppError";
+import { startTicking, stopTicking } from "../replay/replayTicker";
 
 // ── Zod schemas ──
 const startBody = z.object({
     pairId: z.string().uuid(),
     startTs: z.string().datetime(),
+    endTs: z.string().datetime().optional(),
     timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).default("1m"),
     speed: z.number().min(0.1).max(100).default(1),
 });
@@ -39,7 +42,7 @@ const stateQuery = z.object ({
 const replayRoutes: FastifyPluginAsync = async (app) => {
 
     // POST /replay/start
-    app.post("/start", { schema: { tags: ["Replay"], summary: "Start replay session", description: "Creates or restarts a historical replay session for a trading pair.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "startTs"], properties: { pairId: { type: "string", format: "uuid" }, startTs: { type: "string", format: "date-time" }, timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }, speed: { type: "number", minimum: 0.1, maximum: 100, default: 1 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/start", { schema: { tags: ["Replay"], summary: "Start replay session", description: "Creates or restarts a historical replay session for a trading pair.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "startTs"], properties: { pairId: { type: "string", format: "uuid" }, startTs: { type: "string", format: "date-time" }, endTs: { type: "string", format: "date-time" }, timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }, speed: { type: "number", minimum: 0.1, maximum: 100, default: 1 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
         const parsed = startBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -56,8 +59,12 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             parsed.data.pairId,
             parsed.data.startTs,
             parsed.data.timeframe,
-            parsed.data.speed
+            parsed.data.speed,
+            parsed.data.endTs
         );
+
+        // Start the replay tick loop
+        startTicking(actor.id, parsed.data.pairId);
 
         await auditLog({
             actorUserId: actor.id,
@@ -86,6 +93,8 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             return handleError(reply, new AppError("replay_not_found"));
         }
 
+        stopTicking(actor.id, parsed.data.pairId);
+
         await auditLog({
             actorUserId: actor.id,
             action: "replay.pause",
@@ -112,6 +121,8 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
         if (!session) {
             return handleError(reply, new AppError("replay_not_found"));
         }
+
+        startTicking(actor.id, parsed.data.pairId);
 
         await auditLog({
             actorUserId: actor.id,
@@ -161,6 +172,8 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const actor = req.user!;
+        stopTicking(actor.id, parsed.data.pairId);
+
         const deleted = await stopSession(actor.id, parsed.data.pairId);
         if (!deleted) {
             return handleError(reply, new AppError("replay_not_found"));
@@ -178,6 +191,13 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
         });
 
         return reply.send({ ok: true, stopped: true });
+    });
+
+    // GET /replay/active — find any active session for the current user (no pairId needed)
+    app.get("/active", { schema: { tags: ["Replay"], summary: "Active replay session", description: "Returns the user's currently active replay session, if any.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { oneOf: [{ type: "object", additionalProperties: true }, { type: "null" }] } } } } }, preHandler: requireUser }, async (req, reply) => {
+        const actor = req.user!;
+        const session = await getActiveSession(actor.id);
+        return reply.send({ ok: true, session: session ?? null });
     });
 
     // GET /replay/state?pairId=

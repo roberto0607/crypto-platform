@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useNotificationStore } from "@/stores/notificationStore";
-import { connectSSE, disconnectSSE, type SSEHandlers } from "@/api/sse";
+import { connectSSE, disconnectSSE, forceReconnectSSE, type SSEHandlers } from "@/api/sse";
+
+const STALE_THRESHOLD_MS = 15_000; // force reconnect if no ping/tick for 15s
 
 export function useSSE() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -11,6 +13,7 @@ export function useSSE() {
   const sseConnected = useAppStore((s) => s.sseConnected);
   const disconnectRef = useRef<(() => void) | null>(null);
 
+  // ── Main SSE connection ──
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
       disconnectSSE();
@@ -64,7 +67,8 @@ export function useSSE() {
             source: "live",
           });
         }
-        // Update last_price on the pair in appStore
+        // Update last_price on the pair in appStore + track tick time
+        useAppStore.getState().setLastPriceTickAt(Date.now());
         const pairs = useAppStore.getState().pairs;
         const updatedPairs = pairs.map((p) =>
           p.id === d.pairId ? { ...p, last_price: d.last } : p,
@@ -124,6 +128,11 @@ export function useSSE() {
           new CustomEvent("sse:signal.new", { detail: event.data }),
         );
       },
+
+      // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing
+      onPing: () => {
+        useAppStore.getState().setLastPriceTickAt(Date.now());
+      },
     };
 
     disconnectRef.current = connectSSE(accessToken, handlers);
@@ -133,6 +142,31 @@ export function useSSE() {
       disconnectRef.current = null;
     };
   }, [isAuthenticated, accessToken]);
+
+  // ── Visibility / focus watchdog ──
+  // When the tab becomes visible or regains focus, check if SSE is stale
+  const checkAndReconnect = useCallback(() => {
+    const { lastPriceTickAt, sseConnected: connected } = useAppStore.getState();
+    const { isAuthenticated: authed } = useAuthStore.getState();
+    if (!authed || !connected) return;
+    if (lastPriceTickAt > 0 && Date.now() - lastPriceTickAt > STALE_THRESHOLD_MS) {
+      forceReconnectSSE();
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") checkAndReconnect();
+    };
+    const handleFocus = () => checkAndReconnect();
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [checkAndReconnect]);
 
   return { sseConnected };
 }

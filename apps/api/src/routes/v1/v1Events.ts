@@ -15,6 +15,7 @@ import {
 } from "../../metrics";
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
+const PING_INTERVAL_MS = 5_000;
 
 const v1Events: FastifyPluginAsync = async (app) => {
   app.get("/events", {
@@ -58,7 +59,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
     // Subscribe for this user's events
     subscribe(userId, handler);
 
-    // Heartbeat to keep connection alive
+    // Heartbeat to keep connection alive (SSE comment — invisible to fetchEventSource)
     const heartbeat = setInterval(() => {
       try {
         reply.raw.write(": heartbeat\n\n");
@@ -67,9 +68,20 @@ const v1Events: FastifyPluginAsync = async (app) => {
       }
     }, HEARTBEAT_INTERVAL_MS);
 
+    // Ping — typed SSE event the frontend can detect for liveness
+    const ping = setInterval(() => {
+      try {
+        const frame = `event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
+        reply.raw.write(frame);
+      } catch {
+        cleanup();
+      }
+    }, PING_INTERVAL_MS);
+
     // Cleanup function
     const cleanup = () => {
       clearInterval(heartbeat);
+      clearInterval(ping);
       unsubscribe(handler);
       eventConnectionsActive.dec();
     };

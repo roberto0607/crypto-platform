@@ -2,13 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 
 const OVERLAY_INDICATORS = [
-  { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#94a3b8" },
+  { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#ff4d4d" },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
-  { key: "orderBlocks", label: "Order Blocks", color: "#22c55e" },
-  { key: "fvg", label: "Fair Value Gaps", color: "#06b6d4" },
+  { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
   { key: "cvd", label: "CVD", color: "#06b6d4" },
-  { key: "volumeProfile", label: "Volume Profile", color: "#8b5cf6" },
-  { key: "tradeSetup", label: "Trade Setup", color: "#10b981" },
+  { key: "marketIntelligence", label: "Market Intelligence", color: "rgba(147,51,234,1)" },
 ] as const;
 
 export function IndicatorToolbar() {
@@ -33,46 +31,81 @@ export function IndicatorToolbar() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="px-2 py-1 text-xs rounded transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-800 flex items-center gap-1"
+        style={{
+          padding: "4px 8px", fontSize: 12, borderRadius: 2,
+          transition: "all 0.15s",
+          color: "rgba(255,255,255,0.5)",
+          background: "transparent",
+          border: "1px solid rgba(0,255,65,0.16)",
+          display: "flex", alignItems: "center", gap: 4,
+          fontFamily: "'Space Mono', monospace",
+          letterSpacing: 1,
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; e.currentTarget.style.color = "#fff"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.5)"; }}
       >
         Indicators
         {activeCount > 0 && (
-          <span className="bg-blue-600 text-white text-[10px] rounded-full px-1.5 leading-4">
+          <span style={{
+            background: "#00ff41", color: "#000",
+            fontSize: 10, borderRadius: 9, padding: "0 6px",
+            lineHeight: "16px", fontWeight: 700,
+          }}>
             {activeCount}
           </span>
         )}
-        <span className="text-[10px]">&#9662;</span>
+        <span style={{ fontSize: 10 }}>&#9662;</span>
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 bg-gray-900 border border-gray-700 rounded shadow-lg z-50 min-w-[200px] py-1">
-          <div className="px-3 py-1 text-[10px] text-gray-500 uppercase tracking-widest">
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 4,
+          background: "#080808",
+          border: "1px solid rgba(0,255,65,0.16)",
+          borderRadius: 2,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
+          zIndex: 50, minWidth: 200, padding: "4px 0",
+        }}>
+          <div style={{
+            padding: "4px 12px", fontSize: 10,
+            color: "rgba(255,255,255,0.25)", letterSpacing: 3,
+            textTransform: "uppercase",
+          }}>
             On Chart
           </div>
           {OVERLAY_INDICATORS.map((ind) => (
             <button
               key={ind.key}
               onClick={() => toggle(ind.key)}
-              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-800 cursor-pointer w-full text-left"
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 12px", cursor: "pointer",
+                width: "100%", textAlign: "left",
+                background: "transparent", border: "none",
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
-              <span
-                className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
-                  config[ind.key]
-                    ? "bg-blue-600 border-blue-600"
-                    : "border-gray-600 bg-gray-800"
-                }`}
-              >
+              <span style={{
+                width: 14, height: 14, borderRadius: 2, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: config[ind.key] ? "#00ff41" : "rgba(255,255,255,0.04)",
+                border: config[ind.key] ? "1px solid #00ff41" : "1px solid rgba(255,255,255,0.15)",
+              }}>
                 {config[ind.key] && (
-                  <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#000" strokeWidth="2">
                     <path d="M2 6l3 3 5-5" />
                   </svg>
                 )}
               </span>
               <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: ind.color }}
+                style={{
+                  width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                  backgroundColor: ind.color,
+                }}
               />
-              <span className="text-xs text-gray-300">{ind.label}</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "'Space Mono', monospace" }}>{ind.label}</span>
             </button>
           ))}
         </div>

@@ -29,9 +29,8 @@ COPY migrations/ ./migrations/
 
 # Runtime config
 USER appuser
-EXPOSE 3001
 ENV NODE_ENV=production
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3001/health || exit 1
+  CMD wget -qO- http://localhost:${PORT:-3001}/health || exit 1
 
 CMD ["node", "dist/server.js"]

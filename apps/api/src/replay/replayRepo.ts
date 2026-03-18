@@ -4,6 +4,7 @@ export type ReplaySessionRow = {
     user_id: string;
     pair_id: string;
     current_ts: string;
+    end_ts: string | null;
     speed: string;
     is_active: boolean;
     is_paused: boolean;
@@ -12,28 +13,30 @@ export type ReplaySessionRow = {
     updated_at: string;
 };
 
-const SESSION_COLUMNS = `user_id, pair_id, current_ts, speed, is_active, is_paused, timeframe, created_at, updated_at`;
+const SESSION_COLUMNS = `user_id, pair_id, current_ts, end_ts, speed, is_active, is_paused, timeframe, created_at, updated_at`;
 
 export async function createOrStartSession(
     userId: string,
     pairId: string,
     startTs: string,
     timeframe: string,
-    speed: number
+    speed: number,
+    endTs?: string | null
 ): Promise<ReplaySessionRow> {
     const result = await pool.query<ReplaySessionRow>(
         `
-        INSERT INTO replay_sessions (user_id, pair_id, current_ts, timeframe, speed, is_active, is_paused)
-        VALUES ($1, $2, $3, $4, $5, true, false)
+        INSERT INTO replay_sessions (user_id, pair_id, current_ts, end_ts, timeframe, speed, is_active, is_paused)
+        VALUES ($1, $2, $3, $6, $4, $5, true, false)
         ON CONFLICT (user_id, pair_id) DO UPDATE
             SET current_ts = $3,
+                end_ts = $6,
                 timeframe = $4,
                 speed = $5,
                 is_active = true,
                 is_paused = false
         RETURNING ${SESSION_COLUMNS}
         `,
-        [userId, pairId, startTs, timeframe, speed]
+        [userId, pairId, startTs, timeframe, speed, endTs ?? null]
     );
 
     return result.rows[0];
@@ -48,6 +51,21 @@ export async function getSession(userid: string, pairId: string): Promise<Replay
         LIMIT 1
         `,
         [userid, pairId]
+    );
+
+    return result.rows[0] ?? null;
+}
+
+export async function getActiveSession(userId: string): Promise<ReplaySessionRow | null> {
+    const result = await pool.query<ReplaySessionRow>(
+        `
+        SELECT ${SESSION_COLUMNS}
+        FROM replay_sessions
+        WHERE user_id = $1 AND is_active = true
+        ORDER BY updated_at DESC
+        LIMIT 1
+        `,
+        [userId]
     );
 
     return result.rows[0] ?? null;

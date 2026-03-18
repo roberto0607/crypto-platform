@@ -1,10 +1,17 @@
 import { create } from "zustand";
-import axios from "axios";
-import type { User, RefreshResponse } from "@/types/api";
-import { bindAuthStore, setActiveCompetitionId } from "@/api/client";
+import type { User } from "@/types/api";
+import { bindAuthStore, setActiveCompetitionId, refreshAccessToken } from "@/api/client";
 import { me, logout } from "@/api/endpoints/auth";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
+// HMR-safe guard: stored on globalThis so Vite hot reloads don't reset it.
+// Ensures initialize() runs exactly once across StrictMode remounts AND HMR.
+const _global = globalThis as any;
+if (!("__tradrInitOnce" in _global)) _global.__tradrInitOnce = null;
+
+// Session hint: the refresh_token cookie is httpOnly (invisible to JS).
+// This localStorage flag lets us skip the POST /auth/refresh call entirely
+// on fresh page loads where no session ever existed — avoids a noisy 401.
+const SESSION_KEY = "tradr_session";
 
 interface AuthState {
   accessToken: string | null;
@@ -39,19 +46,24 @@ export const useAuthStore = create<AuthState>((set, get) => {
     isInitializing: false,
     isAdmin: false,
 
-    setAuth: (token: string, user: User) =>
+    setAuth: (token: string, user: User) => {
+      localStorage.setItem(SESSION_KEY, "1");
       set({
         accessToken: token,
         user,
         isAuthenticated: true,
         isAdmin: user.role === "ADMIN",
-      }),
+      });
+    },
 
     clearAuth: () => {
       // Fire-and-forget logout — don't block UI on failure
       logout().catch(() => {});
       // Reset competition context
       setActiveCompetitionId(null);
+      // Allow a fresh initialize cycle on next login
+      _global.__tradrInitOnce = null;
+      localStorage.removeItem(SESSION_KEY);
       set({
         accessToken: null,
         user: null,
@@ -60,34 +72,48 @@ export const useAuthStore = create<AuthState>((set, get) => {
       });
     },
 
-    initialize: async () => {
-      set({ isInitializing: true });
-      try {
-        // Raw axios bypasses 401 interceptor — silent fail if no cookie
-        const refreshRes = await axios.post<RefreshResponse>(
-          `${API_BASE}/auth/refresh`,
-          {},
-          { withCredentials: true },
-        );
-        const token = refreshRes.data.accessToken;
+    initialize: () => {
+      if (_global.__tradrInitOnce) return _global.__tradrInitOnce;
 
-        // Set token so subsequent client calls include Bearer header
-        set({ accessToken: token });
+      _global.__tradrInitOnce = (async () => {
+        // No session hint → user never logged in (or logged out).
+        // Skip the refresh call entirely to avoid a pointless 401.
+        if (!localStorage.getItem(SESSION_KEY)) {
+          set({ isInitializing: false });
+          return;
+        }
 
-        // Fetch user profile via the interceptor-enabled client
-        const meRes = await me();
-        const user = meRes.data.user;
+        set({ isInitializing: true });
+        try {
+          // Uses shared mutex — if interceptor is also refreshing, we wait on same promise
+          const token = await refreshAccessToken();
+          if (!token) {
+            // Cookie expired or DB was wiped — clear stale hint
+            localStorage.removeItem(SESSION_KEY);
+            set({ isInitializing: false });
+            return;
+          }
 
-        set({
-          user,
-          isAuthenticated: true,
-          isAdmin: user.role === "ADMIN",
-          isInitializing: false,
-        });
-      } catch {
-        // Refresh failed — stay unauthenticated, no redirect
-        set({ isInitializing: false });
-      }
+          // Set token so subsequent client calls include Bearer header
+          set({ accessToken: token });
+
+          // Fetch user profile via the interceptor-enabled client
+          const meRes = await me();
+          const user = meRes.data.user;
+
+          set({
+            user,
+            isAuthenticated: true,
+            isAdmin: user.role === "ADMIN",
+            isInitializing: false,
+          });
+        } catch {
+          // Refresh failed — stay unauthenticated, no redirect
+          set({ isInitializing: false });
+        }
+      })();
+
+      return _global.__tradrInitOnce;
     },
   };
 });

@@ -1,5 +1,6 @@
 import { pool } from "../db/pool.js";
 import { getOrderFlow } from "./orderFlowFeatures.js";
+import { getDollarLiquidityAtPrice } from "./orderBookService.js";
 
 interface SimpleCandle {
     ts: string;
@@ -21,9 +22,12 @@ export interface LiquidityZone {
     price: number;
     width: number;
     strength: number;
+    structuralScore: number;
+    actionabilityScore: number;
     type: "support" | "resistance";
     sources: string[];
     estimatedLiquidity: string;
+    dollarLiquidity: number;
 }
 
 // ── Helpers ──
@@ -238,40 +242,60 @@ export async function computeLiquidityZones(
         const rawWeight = m.weights.reduce((a, b) => a + b, 0);
         const avgRecency = m.recencies.reduce((a, b) => a + b, 0) / m.recencies.length;
 
-        let score = rawWeight;
-
-        // Proximity bonus
-        const distance = Math.abs(avgPrice - currentPrice) / atr;
-        if (distance < 1) score *= 1.5;
-        else if (distance < 2) score *= 1.3;
+        let structural = rawWeight;
 
         // Multi-source confluence bonus
-        if (m.sources.size >= 3) score *= 1.4;
-        else if (m.sources.size >= 2) score *= 1.2;
+        if (m.sources.size >= 3) structural *= 1.4;
+        else if (m.sources.size >= 2) structural *= 1.2;
 
         // Recency factor
-        score *= avgRecency;
+        structural *= avgRecency;
 
-        score = Math.min(Math.round(score), 100);
+        const structuralScore = Math.min(Math.round(structural), 100);
+
+        // Proximity bonus (actionability only)
+        const distance = Math.abs(avgPrice - currentPrice) / atr;
+        let proximityMult = 1;
+        if (distance < 1) proximityMult = 1.5;
+        else if (distance < 2) proximityMult = 1.3;
+        const actionabilityScore = Math.min(Math.round(structural * proximityMult), 100);
 
         // Filter
-        if (score < 20) continue;
-        if (distance > 5) continue;
+        if (actionabilityScore < 20) continue;
+        if (distance > 3) continue;
 
         const type = avgPrice < currentPrice ? "support" : "resistance";
-        const estimatedLiquidity = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+        const estimatedLiquidity = structuralScore >= 85 ? "high" : structuralScore >= 55 ? "medium" : "low";
 
         zones.push({
             price: Math.round(avgPrice * 100) / 100,
             width: atr * 0.2,
-            strength: score,
+            strength: actionabilityScore,
+            structuralScore,
+            actionabilityScore,
             type,
             sources: Array.from(m.sources),
             estimatedLiquidity,
+            dollarLiquidity: 0,
         });
     }
 
-    // Sort by strength, return top 8
+    // Sort by strength, return top 10
     zones.sort((a, b) => b.strength - a.strength);
-    return { zones: zones.slice(0, 8), currentPrice };
+    const result = zones.slice(0, 10);
+
+    // Enrich top 4 zones with real dollar liquidity from Coinbase order book
+    const toEnrich = result.slice(0, 4);
+    const dollarValues = await Promise.all(
+        toEnrich.map((z) => getDollarLiquidityAtPrice(z.price).catch(() => 0)),
+    );
+    for (let i = 0; i < toEnrich.length; i++) {
+        toEnrich[i]!.dollarLiquidity = dollarValues[i]!;
+    }
+
+    const high = result.filter((z) => z.estimatedLiquidity === "high").length;
+    const med = result.filter((z) => z.estimatedLiquidity === "medium").length;
+    const low = result.filter((z) => z.estimatedLiquidity === "low").length;
+    console.log(`[LiqZones] Score distribution: ${high} HIGH, ${med} MED, ${low} LOW (${result.length} total)`);
+    return { zones: result, currentPrice };
 }

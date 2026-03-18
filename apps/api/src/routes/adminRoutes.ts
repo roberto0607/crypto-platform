@@ -10,10 +10,7 @@ import { findWalletById, creditWallet, debitWallet } from "../wallets/walletRepo
 import { createPair, findPairById, setLastPrice } from "../trading/pairRepo";
 import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
-import { runFullReconciliation } from "../reconciliation/reconciliationService";
 import { pool } from "../db/pool";
-import { listRiskLimits, upsertRiskLimit } from "../risk/riskLimitRepo";
-import { listBreakers, resetBreaker } from "../risk/breakerRepo";
 import { getQueueStats } from "../queue/queueManager";
 
 // ── Zod schemas ──
@@ -47,18 +44,6 @@ const setPriceBody = z.object({
   price: z.string().regex(/^\d+(\.\d{1,8})?$/),
 });
 
-const upsertRiskLimitBody = z.object({
-  user_id: z.string().uuid().nullable().default(null),
-  pair_id: z.string().uuid().nullable().default(null),
-  max_order_notional_quote: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
-  max_position_base_qty: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
-  max_open_orders_per_pair: z.number().int().min(1).optional(),
-  max_price_deviation_bps: z.number().int().min(1).optional(),
-});
-
-const resetBreakerBody = z.object({
-  breaker_key: z.string().optional(),
-});
 
 // ── Plugin (registered with prefix "/admin") ──
 const adminRoutes: FastifyPluginAsync = async (app) => {
@@ -310,109 +295,6 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send({ ok: true, pair });
-  });
-
-  // GET /admin/reconcile
-  app.get("/reconcile", { schema: { tags: ["Admin"], summary: "Run full reconciliation", description: "Runs a full balance/position reconciliation and returns the report. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, report: { type: "object", additionalProperties: true } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
-    const report = await runFullReconciliation();
-    return reply.send({ ok: true, report });
-  });
-
-  // GET /admin/risk-limits
-  app.get("/risk-limits", { schema: { tags: ["Admin"], summary: "List risk limits", description: "Returns all configured risk limits (global and per-user/pair). Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, limits: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
-    const client = await pool.connect();
-    try {
-      const limits = await listRiskLimits(client);
-      return reply.send({ ok: true, limits });
-    } finally {
-      client.release();
-    }
-  });
-
-  // PUT /admin/risk-limits
-  app.put("/risk-limits", { schema: { tags: ["Admin"], summary: "Upsert risk limit", description: "Creates or updates a risk limit rule (global, per-user, or per-pair). Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", properties: { user_id: { type: "string", format: "uuid", nullable: true }, pair_id: { type: "string", format: "uuid", nullable: true }, max_order_notional_quote: { type: "string" }, max_position_base_qty: { type: "string" }, max_open_orders_per_pair: { type: "integer" }, max_price_deviation_bps: { type: "integer" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, limit: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
-    const parsed = upsertRiskLimitBody.safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
-    }
-
-    const actor = req.user!;
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const limit = await upsertRiskLimit(client, {
-        userId: parsed.data.user_id,
-        pairId: parsed.data.pair_id,
-        maxOrderNotionalQuote: parsed.data.max_order_notional_quote,
-        maxPositionBaseQty: parsed.data.max_position_base_qty,
-        maxOpenOrdersPerPair: parsed.data.max_open_orders_per_pair,
-        maxPriceDeviationBps: parsed.data.max_price_deviation_bps,
-      });
-      await client.query("COMMIT");
-
-      await auditLog({
-        actorUserId: actor.id,
-        action: "admin.risk_limit_update",
-        targetType: "risk_limit",
-        targetId: limit.id,
-        requestId: req.id,
-        ip: req.ip,
-        userAgent: req.headers["user-agent"] ?? null,
-        metadata: { userId: parsed.data.user_id, pairId: parsed.data.pair_id, ...parsed.data },
-      });
-
-      return reply.send({ ok: true, limit });
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
-  });
-
-  // GET /admin/breakers
-  app.get("/breakers", { schema: { tags: ["Risk"], summary: "List circuit breakers", description: "Returns all circuit breaker states. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, breakers: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
-    const client = await pool.connect();
-    try {
-      const breakers = await listBreakers(client);
-      return reply.send({ ok: true, breakers });
-    } finally {
-      client.release();
-    }
-  });
-
-  // POST /admin/breakers/reset
-  app.post("/breakers/reset", { schema: { tags: ["Risk"], summary: "Reset circuit breakers", description: "Resets one or all circuit breakers. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", properties: { breaker_key: { type: "string", description: "Specific breaker key to reset. Omit to reset all." } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, reset_count: { type: "integer" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
-    const parsed = resetBreakerBody.safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
-    }
-
-    const actor = req.user!;
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const resetCount = await resetBreaker(client, parsed.data.breaker_key ?? null);
-      await client.query("COMMIT");
-
-      await auditLog({
-        actorUserId: actor.id,
-        action: "admin.breaker_reset",
-        targetType: "circuit_breaker",
-        targetId: parsed.data.breaker_key ?? "ALL",
-        requestId: req.id,
-        ip: req.ip,
-        userAgent: req.headers["user-agent"] ?? null,
-        metadata: { breakerKey: parsed.data.breaker_key ?? null, resetCount },
-      });
-
-      return reply.send({ ok: true, reset_count: resetCount });
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
   });
 
   // GET /admin/queue — Queue stats per trading pair

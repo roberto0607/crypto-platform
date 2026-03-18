@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
+import { useThemeStore } from "@/stores/themeStore";
 import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import SystemBanner from "@/components/SystemBanner";
@@ -10,22 +11,15 @@ import { NotificationBell } from "@/components/NotificationBell";
 import TickerBar from "@/components/TickerBar";
 import { useSSE } from "@/hooks/useSSE";
 
-// ── Sidebar nav with section groupings ──
+// ── Sidebar nav — Trade Wars ──
 const NAV_SECTIONS = [
   {
-    label: "Overview",
+    label: "Main",
     items: [
-      { to: "/dashboard", label: "Dashboard", icon: "\u25C7" },
       { to: "/trade", label: "Trade", icon: "\u25C8" },
-      { to: "/portfolio", label: "Portfolio", icon: "\u25A4" },
-    ],
-  },
-  {
-    label: "Activity",
-    items: [
-      { to: "/competitions", label: "Compete", icon: "\u2691" },
-      { to: "/journal", label: "Journal", icon: "\u270E" },
-      { to: "/replay", label: "Replay", icon: "\u25B6" },
+      { to: "/arena", label: "Arena", icon: "\u2694" },
+      { to: "/history", label: "History", icon: "\u270E" },
+      { to: "/profile", label: "Profile", icon: "\u2666" },
     ],
   },
   {
@@ -39,13 +33,11 @@ const NAV_SECTIONS = [
 function breadcrumbLabel(pathname: string): string {
   if (pathname.startsWith("/admin")) return "ADMIN";
   if (pathname.startsWith("/trade")) return "TRADE";
-  if (pathname.startsWith("/portfolio")) return "PORTFOLIO";
-  if (pathname.startsWith("/competitions")) return "COMPETE";
-  if (pathname.startsWith("/journal")) return "JOURNAL";
-  if (pathname.startsWith("/replay")) return "REPLAY";
+  if (pathname.startsWith("/arena")) return "ARENA";
+  if (pathname.startsWith("/history")) return "HISTORY";
+  if (pathname.startsWith("/profile")) return "PROFILE";
   if (pathname.startsWith("/settings")) return "SETTINGS";
-  if (pathname.startsWith("/bot")) return "BOT";
-  return "DASHBOARD";
+  return "TRADE";
 }
 
 export default function AppLayout() {
@@ -56,12 +48,25 @@ export default function AppLayout() {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const riskStatus = useAppStore((s) => s.riskStatus);
   const userTier = useCompetitionStore((s) => s.userTier);
+  const currentTheme = useThemeStore((s) => s.currentTheme);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isTradePage = location.pathname === "/trade";
+  const isWarTheme = currentTheme === "tradewars";
 
   useSystemStatusPolling();
   useRefreshTokenKeepAlive();
   const { sseConnected } = useSSE();
+  const lastPriceTickAt = useAppStore((s) => s.lastPriceTickAt);
+  const [priceStale, setPriceStale] = useState(false);
+
+  useEffect(() => {
+    if (!sseConnected) { setPriceStale(false); return; }
+    const id = setInterval(() => {
+      const stale = lastPriceTickAt > 0 && Date.now() - lastPriceTickAt > 10_000;
+      setPriceStale(stale);
+    }, 3_000);
+    return () => clearInterval(id);
+  }, [sseConnected, lastPriceTickAt]);
 
   function handleLogout() {
     clearAuth();
@@ -80,7 +85,7 @@ export default function AppLayout() {
     <div className={`min-h-screen flex flex-col bg-tradr-bg text-white/85 ${isTradePage ? "trade-layout h-screen" : ""}`}>
       {/* Background effects */}
       <div className="fixed inset-0 pointer-events-none z-0 grid-bg" />
-      <div className="fixed inset-0 pointer-events-none z-0" style={{ background: "radial-gradient(ellipse 70% 60% at 50% 40%, rgba(0,255,65,0.04) 0%, transparent 65%)" }} />
+      <div className="fixed inset-0 pointer-events-none z-0 radial-glow-bg" style={{ background: isWarTheme ? "radial-gradient(ellipse 70% 60% at 50% 40%, rgba(255,107,0,0.04) 0%, transparent 65%)" : "radial-gradient(ellipse 70% 60% at 50% 40%, rgba(0,255,65,0.04) 0%, transparent 65%)" }} />
       <div className="fixed inset-0 pointer-events-none z-[1]" style={{ background: "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 40%, rgba(0,0,0,0.7) 100%)" }} />
       <div className="fixed inset-0 pointer-events-none z-[2] scanlines-bg" />
 
@@ -96,7 +101,11 @@ export default function AppLayout() {
         `}>
           {/* Logo */}
           <div className={`${isTradePage ? "px-0 justify-center" : "px-5"} py-6 border-b border-tradr-green/[0.18] flex items-center gap-2.5`}>
-            {!isTradePage && <span className="t-logo-text">TR<span>A</span>DR</span>}
+            {!isTradePage && (
+              <span className="t-logo-text">
+                {isWarTheme ? <>TR<span>A</span>DE W<span>A</span>RS</> : <>TR<span>A</span>DR</>}
+              </span>
+            )}
             <div className="t-logo-dot" />
           </div>
 
@@ -172,9 +181,6 @@ export default function AppLayout() {
                   <div className="text-[10px] text-white/85 tracking-[1px] truncate font-mono">
                     {user?.displayName || user?.email?.split("@")[0] || "user"}
                   </div>
-                  <div className="text-[8px] text-white/30 tracking-[2px] uppercase font-mono">
-                    {userTier} TIER
-                  </div>
                 </div>
                 <button
                   onClick={handleLogout}
@@ -219,9 +225,9 @@ export default function AppLayout() {
             </div>
 
             <div className="flex items-center gap-5">
-              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] text-tradr-green font-mono">
-                <span className={`w-[5px] h-[5px] rounded-full shadow-[0_0_6px_#00ff41] animate-blink ${sseConnected ? "bg-tradr-green" : "bg-gray-600"}`} />
-                {sseConnected ? "MARKETS LIVE" : "OFFLINE"}
+              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#6b7280" }}>
+                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-gray-600"}`} style={sseConnected && !priceStale ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
+                {priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
               </div>
 
               <NotificationBell />
@@ -234,8 +240,14 @@ export default function AppLayout() {
               )}
 
               {user && (
-                <div className="text-[9px] text-yellow-400 tracking-[2px] flex items-center gap-1.5 font-mono">
-                  ★ {userTier}
+                <div className="flex items-center gap-2.5 font-mono">
+                  <span className="text-[9px] text-white/50 tracking-[1px]">
+                    {user.displayName || user.email?.split("@")[0] || "user"}
+                  </span>
+                  <span className="text-[9px] text-yellow-400 tracking-[2px] border border-yellow-400/30 px-1.5 py-0.5 bg-yellow-400/[0.06]"
+                    style={{ clipPath: "polygon(3px 0%,100% 0%,calc(100% - 3px) 100%,0% 100%)" }}>
+                    ★ {userTier}
+                  </span>
                 </div>
               )}
             </div>

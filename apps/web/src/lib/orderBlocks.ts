@@ -134,6 +134,6 @@ export function detectOrderBlocks(candles: Candle[]): OrderBlock[] {
     }
   }
 
-  // Return only unmitigated OBs
-  return unique.filter((ob) => !ob.mitigated);
+  // Return only unmitigated, tight OBs (< 0.8% of price = institutional quality)
+  return unique.filter((ob) => !ob.mitigated && (ob.top - ob.bottom) / ob.bottom <= 0.008);
 }

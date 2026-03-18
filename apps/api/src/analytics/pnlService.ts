@@ -46,6 +46,7 @@ export async function getPositions(
         conditions.push(`competition_id = $${params.length}`);
     }
 
+    conditions.push(`base_qty != 0`);
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
     const result = await pool.query<PositionRow>(
@@ -62,15 +63,6 @@ export async function getPositions(
 
     for (const pos of result.rows) {
         const baseQty = D(pos.base_qty);
-
-        if (baseQty.eq(ZERO)) {
-            positions.push({
-                ...pos,
-                unrealized_pnl_quote: "0.00000000",
-                current_price: "0.00000000",
-            });
-            continue;
-        }
 
         // Get current price from snapshot cascade
         const snapshot = await getSnapshotForUser(userId, pos.pair_id);

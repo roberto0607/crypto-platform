@@ -9,11 +9,8 @@ import v1Triggers from "./v1Triggers";
 import v1Bot from "./v1Bot";
 import v1Portfolio from "./v1Portfolio";
 import v1Sim from "./v1Sim";
-import v1Governance from "./v1Governance";
 import v1Jobs from "./v1Jobs";
 import v1Retention from "./v1Retention";
-import v1Reconciliation from "./v1Reconciliation";
-import v1Repair from "./v1Repair";
 import v1Incidents from "./v1Incidents";
 import v1EventStream from "./v1EventStream";
 import v1Outbox from "./v1Outbox";
@@ -23,6 +20,7 @@ import v1Profile from "./v1Profile";
 import v1Notifications from "./v1Notifications";
 import v1Journal from "./v1Journal";
 import v1Signals from "./v1Signals";
+import v1Matches from "./v1Matches";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -34,11 +32,8 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Bot);
     await app.register(v1Portfolio);
     await app.register(v1Sim);
-    await app.register(v1Governance);
     await app.register(v1Jobs);
     await app.register(v1Retention);
-    await app.register(v1Reconciliation);
-    await app.register(v1Repair);
     await app.register(v1Incidents);
     await app.register(v1EventStream);
     await app.register(v1Outbox);
@@ -48,6 +43,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Notifications);
     await app.register(v1Journal);
     await app.register(v1Signals);
+    await app.register(v1Matches);
 };
 
 export default v1Routes;

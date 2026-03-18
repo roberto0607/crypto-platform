@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import axios from "axios";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useThemeStore } from "@/stores/themeStore";
+import { useThemeDetector } from "@/hooks/useThemeDetector";
 import { getSystemStatus, getUserStatus } from "@/api/endpoints/status";
 import { getStatus as getRiskStatus } from "@/api/endpoints/risk";
 import { listPairs } from "@/api/endpoints/trading";
@@ -15,15 +18,11 @@ import AdminRoute from "@/components/AdminRoute";
 import Spinner from "@/components/Spinner";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
-import DashboardPage from "@/pages/DashboardPage";
 import TradingPage from "@/pages/TradingPage";
-import BotPage from "@/pages/BotPage";
-import ReplayPage from "@/pages/ReplayPage";
-import PortfolioPage from "@/pages/PortfolioPage";
 import SettingsPage from "@/pages/SettingsPage";
-import CompetitionsPage from "@/pages/CompetitionsPage";
-import CompetitionDetailPage from "@/pages/CompetitionDetailPage";
+import ArenaPage from "@/pages/ArenaPage";
 import JournalPage from "@/pages/JournalPage";
+import ProfilePage from "@/pages/ProfilePage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import LandingPage from "@/pages/LandingPage";
 
@@ -44,8 +43,19 @@ import AdminEventStreamPage from "@/pages/admin/AdminEventStreamPage";
 import AdminOutboxPage from "@/pages/admin/AdminOutboxPage";
 
 export default function App() {
+  // ── Theme auto-detection (route + active match) ──
+  useThemeDetector();
+  const currentTheme = useThemeStore((s) => s.currentTheme);
+
+  // Apply data-theme attribute to <html> for CSS variable switching
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", currentTheme);
+  }, [currentTheme]);
+
   const initialized = useAppStore((s) => s.initialized);
+  const serverOffline = useAppStore((s) => s.serverOffline);
   const setInitialized = useAppStore((s) => s.setInitialized);
+  const setServerOffline = useAppStore((s) => s.setServerOffline);
   const setSystemStatus = useAppStore((s) => s.setSystemStatus);
   const setUserStatus = useAppStore((s) => s.setUserStatus);
   const setRiskStatus = useAppStore((s) => s.setRiskStatus);
@@ -60,6 +70,19 @@ export default function App() {
     let cancelled = false;
 
     async function init() {
+      // 0. Health check — verify backend is reachable
+      try {
+        const apiBase = import.meta.env.VITE_API_BASE ?? "/api";
+        await axios.get(`${apiBase}/health`, { timeout: 5000 });
+        if (!cancelled) setServerOffline(false);
+      } catch {
+        if (!cancelled) {
+          setServerOffline(true);
+          setInitialized(true);
+        }
+        return;
+      }
+
       // 1. Fetch system status (public, always)
       try {
         const sysRes = await getSystemStatus();
@@ -148,9 +171,27 @@ export default function App() {
     );
   }
 
+  if (serverOffline) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-950 text-white font-mono gap-4">
+        <div className="text-tradr-green text-2xl tracking-[6px]">TRADR</div>
+        <div className="text-red-500 text-sm tracking-[3px]">SERVER OFFLINE</div>
+        <div className="text-white/30 text-xs tracking-[1px] max-w-sm text-center leading-5">
+          Cannot reach the backend API. Start your server and refresh.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 px-6 py-2 text-xs tracking-[2px] border border-tradr-green/30 text-tradr-green hover:bg-tradr-green/10 transition-colors"
+        >
+          RETRY
+        </button>
+      </div>
+    );
+  }
+
   return (
     <Routes>
-      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
+      <Route path="/" element={isAuthenticated ? <Navigate to="/trade" replace /> : <LandingPage />} />
 
       {/* Public auth routes */}
       <Route element={<AuthLayout />}>
@@ -161,20 +202,21 @@ export default function App() {
       {/* Protected app routes */}
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/trade" element={<TradingPage />} />
-          {/* Redirects for consolidated nav items */}
-          <Route path="/orders" element={<Navigate to="/trade?tab=orders" replace />} />
-          <Route path="/wallets" element={<Navigate to="/portfolio" replace />} />
-          <Route path="/positions" element={<Navigate to="/trade?tab=positions" replace />} />
-          <Route path="/triggers" element={<Navigate to="/trade?tab=triggers" replace />} />
-          <Route path="/bot" element={<BotPage />} />
-          <Route path="/replay" element={<ReplayPage />} />
-          <Route path="/portfolio" element={<PortfolioPage />} />
-          <Route path="/competitions" element={<CompetitionsPage />} />
-          <Route path="/competitions/:id" element={<CompetitionDetailPage />} />
-          <Route path="/journal" element={<JournalPage />} />
+          <Route path="/arena" element={<ArenaPage />} />
+          <Route path="/history" element={<JournalPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          {/* Legacy redirects */}
+          <Route path="/dashboard" element={<Navigate to="/trade" replace />} />
+          <Route path="/portfolio" element={<Navigate to="/trade" replace />} />
+          <Route path="/competitions" element={<Navigate to="/arena" replace />} />
+          <Route path="/competitions/:id" element={<Navigate to="/arena" replace />} />
+          <Route path="/journal" element={<Navigate to="/history" replace />} />
+          <Route path="/replay" element={<Navigate to="/trade" replace />} />
+          <Route path="/orders" element={<Navigate to="/trade" replace />} />
+          <Route path="/positions" element={<Navigate to="/trade" replace />} />
+          <Route path="/triggers" element={<Navigate to="/trade" replace />} />
         </Route>
       </Route>
 

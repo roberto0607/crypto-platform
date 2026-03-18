@@ -52,8 +52,30 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
+// ── Refresh mutex — singleton promise so only ONE refresh runs at a time ──
+let refreshPromise: Promise<string | null> | null = null;
+
+export function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = axios
+    .post<{ ok: true; accessToken: string }>(
+      `${client.defaults.baseURL}/auth/refresh`,
+      {},
+      { withCredentials: true },
+    )
+    .then((res) => {
+      const token = res.data.accessToken;
+      setToken(token);
+      return token;
+    })
+    .catch(() => null)
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
+}
+
 // ── Response interceptor: 401 → refresh → retry ────────────
-let isRefreshing = false;
 let pendingQueue: Array<{
   resolve: (token: string) => void;
   reject: (err: unknown) => void;
@@ -79,41 +101,32 @@ client.interceptors.response.use(undefined, async (error: AxiosError) => {
   // Don't retry the refresh call itself
   if ((original as RetryableConfig)._isRetry) {
     clearAuth();
-    window.location.href = "/login";
     return Promise.reject(error);
   }
 
-  if (isRefreshing) {
-    // Queue concurrent 401s while a refresh is in flight
-    return new Promise<string>((resolve, reject) => {
-      pendingQueue.push({ resolve, reject });
-    }).then((token) => {
+  // If a refresh is already in flight (from init or another 401), queue this request
+  if (refreshPromise) {
+    return refreshPromise.then((token) => {
+      if (!token) {
+        clearAuth();
+        return Promise.reject(error);
+      }
       original.headers.Authorization = `Bearer ${token}`;
       return client(original);
     });
   }
 
-  isRefreshing = true;
   (original as RetryableConfig)._isRetry = true;
 
-  try {
-    const res = await axios.post<{ ok: true; accessToken: string }>(
-      `${client.defaults.baseURL}/auth/refresh`,
-      {},
-      { withCredentials: true },
-    );
-    const newToken = res.data.accessToken;
-    setToken(newToken);
-    processQueue(null, newToken);
-    original.headers.Authorization = `Bearer ${newToken}`;
+  const token = await refreshAccessToken();
+  if (token) {
+    processQueue(null, token);
+    original.headers.Authorization = `Bearer ${token}`;
     return client(original);
-  } catch (refreshError) {
-    processQueue(refreshError, null);
+  } else {
+    processQueue(error, null);
     clearAuth();
-    window.location.href = "/login";
-    return Promise.reject(refreshError);
-  } finally {
-    isRefreshing = false;
+    return Promise.reject(error);
   }
 });
 

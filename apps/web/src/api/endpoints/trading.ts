@@ -47,11 +47,17 @@ export function getOrder(orderId: UUID) {
 }
 
 export function cancelOrder(orderId: UUID) {
-  return client.post<{ ok: true; order: Order }>(`/orders/${orderId}/cancel`);
+  return client.delete<{ ok: true; order: Order }>(`/orders/${orderId}`);
 }
 
 export function getOrderBook(pairId: UUID) {
   return client.get<{ ok: true; book: OrderBook }>(`/pairs/${pairId}/book`);
+}
+
+/** Fetch cached Kraken order book by symbol (e.g. "BTC/USD" → "BTC-USD" in URL) */
+export function getKrakenBook(symbol: string) {
+  const urlSymbol = symbol.replace("/", "-");
+  return client.get<{ ok: true; book: OrderBook }>(`/market/book/${urlSymbol}`);
 }
 
 export function getSnapshot(pairId: UUID) {

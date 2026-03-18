@@ -18,11 +18,13 @@ import pino from "pino";
 const poolLogger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
 const connectionString = requireEnv("DATABASE_URL");
+const isRemote = !connectionString.includes("localhost") && !connectionString.includes("127.0.0.1");
 
 export const pool = new Pool({
     connectionString,
     max: config.dbPoolMax, // env DB_POOL_MAX, default 20
     idleTimeoutMillis: 30_000,  // release idle clients after 30s to free PG slots
+    ...(isRemote && { ssl: { rejectUnauthorized: false } }),
 });
 
 // Catch unexpected backend disconnections (e.g. PG restart) so they surface

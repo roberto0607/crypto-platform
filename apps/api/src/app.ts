@@ -31,23 +31,24 @@ import v1Routes from "./routes/v1/index";
 import betaAdminRoutes from "./routes/betaAdminRoutes";
 import statusRoutes from "./routes/statusRoutes";
 import apiKeyRoutes from "./routes/apiKeyRoutes";
+import basisRoutes from "./routes/basisRoutes";
+import krakenBookRoutes from "./routes/krakenBookRoutes";
+import orderBookSignalRoutes from "./routes/orderBookSignalRoutes";
+import macroRoutes from "./routes/macroRoutes";
+import gammaRoutes from "./routes/gammaRoutes";
+import onChainRoutes from "./routes/onChainRoutes";
+import signalRoutes from "./routes/signalRoutes";
+import regimeRoutes from "./routes/regimeRoutes";
+import intelligenceRoutes from "./routes/intelligenceRoutes";
+import learningRoutes from "./routes/learningRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
+import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
 import { startLockSampler } from "./observability/lockSampler";
-import { getCurrentLoadState } from "./governance/loadState";
-import { getRoutePriority } from "./governance/priorityClasses";
-import { evaluateRequestPolicy, PolicyDecision } from "./governance/loadShedding";
-import {
-  loadSheddingRejectionsTotal,
-  loadStateOverloadedGauge,
-  priorityRejectionTotal,
-  readOnlyRejectionsTotal,
-} from "./metrics";
-import { isReadOnlyMode } from "./governance/systemFlagService";
 
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
@@ -64,8 +65,6 @@ export interface BuildAppOptions {
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
   disableOutboxWorker?: boolean;
-  /** Disable load shedding (useful for tests). */
-  disableLoadShedding?: boolean;
   /** Skip starting lock sampler (orchestrator manages it). */
   disableLockSampler?: boolean;
   /** Disable orchestrator (useful for scripts). */
@@ -194,57 +193,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // ── Observability ──
   await app.register(metricsPlugin);
 
-  // ── Load shedding hook (after metrics so inflight gauge is already incremented) ──
-  if (config.loadSheddingEnabled && !opts.disableLoadShedding) {
-    app.addHook("onRequest", async (req, reply) => {
-      const route = req.routeOptions?.url ?? req.url;
-      const state = getCurrentLoadState();
-
-      loadStateOverloadedGauge.set(state.isOverloaded ? 1 : 0);
-
-      const priority = getRoutePriority(req.method, route);
-      const result = evaluateRequestPolicy(req.method, priority, state);
-
-      if (result.decision === PolicyDecision.REJECT_TEMPORARILY) {
-        loadSheddingRejectionsTotal.inc({ reason: result.reason! });
-        priorityRejectionTotal.inc({ priority });
-        req.log.warn({
-          eventType: "load_shedding.reject",
-          reason: result.reason,
-          priority,
-          route,
-          method: req.method,
-          dbPoolWaiting: state.dbPoolWaitingCount,
-          inflightRequests: state.inflightRequests,
-        }, `Load shedding: rejected ${req.method} ${route} (${result.reason})`);
-
-        reply.code(503).send({
-          error: {
-            code: "SYSTEM_OVERLOADED",
-            message: "System under high load. Please retry shortly.",
-            details: { reason: result.reason },
-          },
-        });
-        return;
-      }
-    });
-  }
-
-  // ── Read-only mode hook (PR6) ──
-  app.addHook("onRequest", async (req, reply) => {
-    if (req.method !== "POST" && req.method !== "PUT" && req.method !== "DELETE") return;
-    const url = req.url;
-    if (url.startsWith("/auth") || url.startsWith("/admin") || url.startsWith("/v1/admin")) return;
-    const readOnly = await isReadOnlyMode();
-    if (readOnly) {
-      readOnlyRejectionsTotal.inc();
-      reply.code(503).send({
-        error: { code: "READ_ONLY_MODE", message: "System is in read-only mode." },
-      });
-      return;
-    }
-  });
-
   // ── Route modules ──
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/auth" });
@@ -259,6 +207,16 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(betaAdminRoutes, { prefix: "/v1/admin" });
   await app.register(statusRoutes, { prefix: "/status" });
   await app.register(apiKeyRoutes, { prefix: "/api-keys" });
+  await app.register(basisRoutes);
+  await app.register(krakenBookRoutes);
+  await app.register(orderBookSignalRoutes);
+  await app.register(macroRoutes);
+  await app.register(gammaRoutes);
+  await app.register(onChainRoutes);
+  await app.register(signalRoutes);
+  await app.register(regimeRoutes);
+  await app.register(intelligenceRoutes);
+  await app.register(learningRoutes);
 
   // ── Error code reference (documentation endpoint) ──
   app.get("/api/errors", {
@@ -314,6 +272,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Kraken live feed --
   if (!opts.disableKrakenFeed) {
     app.addHook("onReady", () => { startKrakenFeed(); });
+  }
+
+  // -- Coinbase live feed (buy/sell trade flow for CVD) --
+  if (!opts.disableKrakenFeed) {
+    app.addHook("onReady", () => {
+      try { startCoinbaseFeed(); } catch (err) { console.error("[coinbaseWs] failed to start", err); }
+    });
   }
 
   // -- Trigger engine --

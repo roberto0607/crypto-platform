@@ -9,7 +9,6 @@ import {
   outboxProcessingDurationMs,
   outboxQueueDepth,
 } from "../metrics";
-import { getCurrentLoadState } from "../governance/loadState";
 
 /**
  * Process one batch of outbox events.
@@ -72,12 +71,6 @@ export function startOutboxWorker(): { stop: () => void } {
 
   const intervalId = setInterval(async () => {
     try {
-      // Backpressure: skip batch if DB pool is saturated to avoid deepening contention
-      const state = getCurrentLoadState();
-      if (state.isDbSaturated) {
-        logger.warn({ eventType: "outbox.backpressure_skip", dbPoolWaiting: state.dbPoolWaitingCount }, "Outbox: skipping batch (DB pool saturated)");
-        return;
-      }
       await processBatch();
     } catch (err) {
       logger.error({ err }, "Outbox worker tick failed");

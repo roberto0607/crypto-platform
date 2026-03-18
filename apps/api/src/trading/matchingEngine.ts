@@ -83,10 +83,10 @@ import {
     releaseReserved,
     creditWalletTx,
     debitAvailableTx,
+    debitUnconstrainedTx,
     consumeReservedAndDebitTx,
 } from "../wallets/walletRepo";
 import type { WalletRow } from "../wallets/walletRepo";
-import { verifyPostTradeInvariants } from "./invariants";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
 
@@ -194,8 +194,12 @@ async function placeOrderInternal(
             const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
             if (available.lt(totalCost)) throw new Error("insufficient_balance");
         } else {
-            const available = D(baseWallet.balance).minus(D(baseWallet.reserved));
-            if (available.lt(D(qty))) throw new Error("insufficient_balance");
+            // Short sell: check USD margin (notional + fees) instead of base holdings
+            let totalCost = ZERO;
+            for (const entry of plan) totalCost = totalCost.plus(entry.quoteAmt).plus(entry.feeAmt);
+            if (systemFill) totalCost = totalCost.plus(systemFill.quoteAmt).plus(systemFill.feeAmt);
+            const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
+            if (available.lt(totalCost)) throw new Error("insufficient_balance");
         }
     }
 
@@ -208,9 +212,12 @@ async function placeOrderInternal(
             if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
             reserveWalletId = quoteWallet.id;
         } else {
+            // Short sell LIMIT: check USD margin affordability, but reserve base.
+            // Base will be minted (margin loan) in Phase G2 before the reserve.
+            const notional = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(pair.fee_bps))).div(BPS_DIVISOR);
+            const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
+            if (available.lt(notional)) throw new Error("insufficient_balance");
             reserveAmount = D(qty);
-            const available = D(baseWallet.balance).minus(D(baseWallet.reserved));
-            if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
             reserveWalletId = baseWallet.id;
         }
     }
@@ -265,6 +272,7 @@ async function placeOrderInternal(
 
     // ── Phase G: Reserve funds for LIMIT orders ──
     let reservedConsumed = ZERO;
+
     if (type === "LIMIT") {
         await reserveFunds(client, reserveWalletId!, toFixed8(reserveAmount));
     }
@@ -346,7 +354,7 @@ async function placeOrderInternal(
             //Taker (seller): debit base, credit quote minus fee
             const costMinusFee = toFixed8(D(quoteStr).minus(D(feeStr)));
             if (type === "MARKET") {
-                await debitAvailableTx(client, baseWallet.id, qtyStr,
+                await debitUnconstrainedTx(client, baseWallet.id, qtyStr,
                     "TRADE_SELL", trade.id, "TRADE");
             } else {
                 await consumeReservedAndDebitTx(client, baseWallet.id, qtyStr,
@@ -407,7 +415,7 @@ async function placeOrderInternal(
                 "TRADE_BUY", trade.id, "TRADE");
         } else {
             const sysCostMinusFee = toFixed8(D(sysQuoteStr).minus(D(sysFeeStr)));
-            await debitAvailableTx(client, baseWallet.id, sysQtyStr,
+            await debitUnconstrainedTx(client, baseWallet.id, sysQtyStr,
                 "TRADE_SELL", trade.id, "TRADE");
             await creditWalletTx(client, quoteWallet.id, sysCostMinusFee,
                 "TRADE_SELL", trade.id, "TRADE", { fee: sysFeeStr });
@@ -444,17 +452,6 @@ async function placeOrderInternal(
         await client.query(
             `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
             [toFixed8(lastFillPrice), pairId]
-        );
-    }
-
-    // ── Phase M: Post-trade financial integrity verification ──
-    if (fills.length > 0) {
-        const involvedOrderIds = [order.id, ...plan.map((e) => e.resting.id)];
-        await verifyPostTradeInvariants(
-            client,
-            [...walletIdSet],
-            involvedOrderIds,
-            fills.map((f) => f.id),
         );
     }
 

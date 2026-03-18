@@ -379,11 +379,11 @@ describe("placeOrder", () => {
 
     it("fills across 3 resting orders at different price levels", async () => {
       await setFee(pair.id, 0);
-      // Create 2 additional sellers
+      // Create 2 additional sellers (need USD for margin on short-sell model)
       const s2 = await createTestUser(pool);
       const s3 = await createTestUser(pool);
-      await createTestWallets(pool, s2.id, btcAsset.id, usdAsset.id, "10.00000000", "0.00000000");
-      await createTestWallets(pool, s3.id, btcAsset.id, usdAsset.id, "10.00000000", "0.00000000");
+      await createTestWallets(pool, s2.id, btcAsset.id, usdAsset.id, "10.00000000", "500000.00000000");
+      await createTestWallets(pool, s3.id, btcAsset.id, usdAsset.id, "10.00000000", "500000.00000000");
 
       await placeOrder(seller.id, pair.id, "SELL", "LIMIT", "1.00000000", "48000.00000000");
       await placeOrder(s2.id, pair.id, "SELL", "LIMIT", "1.00000000", "49000.00000000");
@@ -469,7 +469,7 @@ describe("placeOrder", () => {
       await setFee(pair.id, 0);
       // 2 fills at different prices
       const s2 = await createTestUser(pool);
-      await createTestWallets(pool, s2.id, btcAsset.id, usdAsset.id, "10.00000000", "0.00000000");
+      await createTestWallets(pool, s2.id, btcAsset.id, usdAsset.id, "10.00000000", "500000.00000000");
 
       await placeOrder(seller.id, pair.id, "SELL", "LIMIT", "1.00000000", "48000.00000000");
       await placeOrder(s2.id, pair.id, "SELL", "LIMIT", "1.00000000", "49000.00000000");
@@ -540,7 +540,7 @@ describe("placeOrder", () => {
       // Users for pair2
       const s2 = await createTestUser(pool);
       const b2 = await createTestUser(pool);
-      await createTestWallets(pool, s2.id, ethId, usdAsset.id, "10.00000000", "0.00000000");
+      await createTestWallets(pool, s2.id, ethId, usdAsset.id, "10.00000000", "500000.00000000");
       await createTestWallets(pool, b2.id, ethId, usdAsset.id, "0.00000000", "100000.00000000");
 
       // Resting sells on both pairs

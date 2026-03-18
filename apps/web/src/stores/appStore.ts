@@ -17,8 +17,11 @@ interface AppState {
   wallets: Wallet[];
   selectedPairId: string | null;
   initialized: boolean;
+  serverOffline: boolean;
   sseConnected: boolean;
+  lastPriceTickAt: number;
   setInitialized: (initialized: boolean) => void;
+  setServerOffline: (offline: boolean) => void;
   setSystemStatus: (status: SystemStatus) => void;
   setUserStatus: (status: UserStatus) => void;
   setRiskStatus: (status: RiskStatus) => void;
@@ -27,6 +30,7 @@ interface AppState {
   setWallets: (wallets: Wallet[]) => void;
   setSelectedPairId: (id: string | null) => void;
   setSseConnected: (connected: boolean) => void;
+  setLastPriceTickAt: (ts: number) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -38,8 +42,11 @@ export const useAppStore = create<AppState>((set) => ({
   wallets: [],
   selectedPairId: null,
   initialized: false,
+  serverOffline: false,
   sseConnected: false,
+  lastPriceTickAt: 0,
   setInitialized: (initialized) => set({ initialized }),
+  setServerOffline: (serverOffline) => set({ serverOffline }),
   setSystemStatus: (systemStatus) => set({ systemStatus }),
   setUserStatus: (userStatus) => set({ userStatus }),
   setRiskStatus: (riskStatus) => set({ riskStatus }),
@@ -48,4 +55,5 @@ export const useAppStore = create<AppState>((set) => ({
   setWallets: (wallets) => set({ wallets }),
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
   setSseConnected: (sseConnected) => set({ sseConnected }),
+  setLastPriceTickAt: (lastPriceTickAt) => set({ lastPriceTickAt }),
 }));

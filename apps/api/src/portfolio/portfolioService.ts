@@ -55,20 +55,41 @@ export async function getPortfolioSummary(
         cashQuote = D(rows[0].total);
     }
 
-    // 2. Positions (with unrealized PnL + current_price via pnlService)
-    const positions = await getPositions(userId, pairId, competitionId);
+    // 2. Open positions (with unrealized PnL via pnlService — excludes base_qty=0)
+    const openPositions = await getPositions(userId, pairId, competitionId);
+
+    // 3. Sum realized PnL + fees from ALL positions (including closed base_qty=0 rows)
+    const allConds = [`user_id = $1`];
+    const allParams: (string | null)[] = [userId];
+    if (pairId) {
+        allParams.push(pairId);
+        allConds.push(`pair_id = $${allParams.length}`);
+    }
+    if (compId === null) {
+        allConds.push(`competition_id IS NULL`);
+    } else {
+        allParams.push(compId);
+        allConds.push(`competition_id = $${allParams.length}`);
+    }
+    const { rows: allPosRows } = await pool.query<{
+        total_realized: string; total_fees: string;
+    }>(
+        `SELECT COALESCE(SUM(realized_pnl_quote), 0) AS total_realized,
+                COALESCE(SUM(fees_paid_quote), 0) AS total_fees
+         FROM positions
+         WHERE ${allConds.join(" AND ")}`,
+        allParams,
+    );
 
     let holdingsQuote = ZERO;
     let unrealizedPnl = ZERO;
-    let realizedPnl = ZERO;
-    let feesPaid = ZERO;
+    const realizedPnl = D(allPosRows[0].total_realized);
+    const feesPaid = D(allPosRows[0].total_fees);
 
-    for (const pos of positions) {
+    for (const pos of openPositions) {
         const baseQty = D(pos.base_qty);
         holdingsQuote = holdingsQuote.plus(baseQty.mul(D(pos.current_price)));
         unrealizedPnl = unrealizedPnl.plus(D(pos.unrealized_pnl_quote));
-        realizedPnl = realizedPnl.plus(D(pos.realized_pnl_quote));
-        feesPaid = feesPaid.plus(D(pos.fees_paid_quote));
     }
 
     const equityQuote = cashQuote.plus(holdingsQuote);

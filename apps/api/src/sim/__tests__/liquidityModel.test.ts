@@ -12,8 +12,8 @@ const defaultConfig: SimulationConfig = {
 
 describe("liquidityModel — computeAvailableLiquidity", () => {
     it("volume-based < cap → returns volume-based", () => {
-        // volume=1, last=50000 → volumeBased = 1 * 50000 * 0.1 = 5000 < 50000
-        const result = computeAvailableLiquidity(defaultConfig, "1", "50000.00000000");
+        // volume=0.1, last=50000 → volumeBased = 0.1 * 50000 * 1.0 = 5000 < 50000
+        const result = computeAvailableLiquidity(defaultConfig, "0.1", "50000.00000000");
         expect(result).toBe("5000.00000000");
     });
 

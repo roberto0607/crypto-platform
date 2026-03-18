@@ -17,7 +17,7 @@ import type { LeaderboardEntry } from "@/api/endpoints/competitions";
    INJECT FONTS + GLOBAL STYLES ONCE
 ───────────────────────────────────────── */
 const GLOBAL_CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oxanium:wght@400;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
 
   :root {
     --g:      #00ff41;
@@ -179,9 +179,9 @@ const GLOBAL_CSS = `
   /* trades */
   .t-tbl { width:100%;border-collapse:collapse; }
   .t-tbl th {
-    font-size:7px;color:rgba(255,255,255,0.18);letter-spacing:3px;
+    font-size:9px;color:rgba(255,255,255,0.45);letter-spacing:3px;
     text-transform:uppercase;padding:9px 16px;border-bottom:1px solid var(--borderW);
-    text-align:left;font-weight:400;
+    text-align:left;font-weight:700;
   }
   .t-tbl td { padding:10px 16px;font-size:10px;border-bottom:1px solid var(--faint); }
   .t-tbl tr:last-child td { border-bottom:none; }
@@ -525,7 +525,11 @@ function QuickTrade({ pairs, cashBalance, onTrade }: {
     <div className="t-card t-fade-up d6" style={{ display: "flex", flexDirection: "column" }}>
       <div className="t-ch">
         <span className="t-ch-title">Quick Trade</span>
-        <span style={{ fontSize: 8, color: "rgba(0,255,65,0.4)", letterSpacing: 2 }}>PAPER</span>
+        <span style={{
+          fontSize: 10, color: "#000", letterSpacing: 3, fontWeight: 700,
+          background: "var(--g)", padding: "2px 8px",
+          clipPath: "polygon(4px 0%,100% 0%,calc(100% - 4px) 100%,0% 100%)",
+        }}>PAPER</span>
       </div>
       <div className="t-qt-body">
         <div className="t-at">
@@ -541,7 +545,7 @@ function QuickTrade({ pairs, cashBalance, onTrade }: {
           <span className="t-qt-price">{priceDisplay}</span>
         </div>
         <div className="t-qt-inp">
-          <span className="t-qt-lbl">AMT $</span>
+          <span className="t-qt-lbl">SIZE $</span>
           <input
             type="number"
             placeholder="0.00"
@@ -613,7 +617,7 @@ export default function DashboardPage() {
       const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
       const mos = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
       const pad = (v: number) => String(v).padStart(2, "0");
-      setClock(`SEASON 01 \u00B7 ${days[n.getDay()]} ${pad(n.getDate())} ${mos[n.getMonth()]} ${n.getFullYear()} \u00B7 ${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())} EST`);
+      setClock(`SEASON 01 \u00B7 ${days[n.getDay()]} \u00B7 ${pad(n.getDate())} ${mos[n.getMonth()]} ${n.getFullYear()} \u00B7 ${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())} EST`);
     };
     tick();
     const id = setInterval(tick, 1000);
@@ -626,7 +630,7 @@ export default function DashboardPage() {
     async function load() {
       const results = await Promise.allSettled([
         getSummary(),
-        getEquityCurve({ from: subDays(new Date(), 7).toISOString() }),
+        getEquityCurve({ from: subDays(new Date(), 7).getTime() }),
         getJournal({ limit: 5 }),
         getPositions(),
         getJournalSummary(),
@@ -634,7 +638,7 @@ export default function DashboardPage() {
       if (cancelled) return;
       const [pRes, eqRes, jRes, posRes, jsRes] = results;
       if (pRes.status === "fulfilled") setPortfolio(pRes.value.data.summary);
-      if (eqRes.status === "fulfilled") setSnapshots(eqRes.value.data.snapshots);
+      if (eqRes.status === "fulfilled") setSnapshots(eqRes.value.data.snapshots ?? []);
       if (jRes.status === "fulfilled") setRecentTrades(jRes.value.data.trades ?? []);
       if (posRes.status === "fulfilled") setPositions(posRes.value.data.positions);
       if (jsRes.status === "fulfilled") {
@@ -666,7 +670,7 @@ export default function DashboardPage() {
   const activePairs = pairs.filter(p => p.is_active);
 
   const equityData = snapshots.map(s => ({
-    ts: new Date(s.ts).getTime(),
+    ts: Number(s.ts),
     equity: parseFloat(s.equity_quote),
   }));
 
@@ -674,7 +678,7 @@ export default function DashboardPage() {
   let todayPnl: number | null = null;
   if (portfolio && snapshots.length > 0) {
     const todayStart = startOfDay(new Date()).getTime();
-    const todaySnaps = snapshots.filter(s => new Date(s.ts).getTime() >= todayStart);
+    const todaySnaps = snapshots.filter(s => Number(s.ts) >= todayStart);
     if (todaySnaps.length > 0) {
       const startEq = parseFloat(todaySnaps[0]!.equity_quote);
       todayPnl = parseFloat(portfolio.equity_quote) - startEq;
@@ -887,7 +891,7 @@ export default function DashboardPage() {
                 <div className="t-lb-av open">?</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 8, color: "var(--g)", letterSpacing: 2 }}>UNCLAIMED</div>
-                  <div style={{ fontSize: 7, color: "rgba(0,255,65,0.35)", letterSpacing: 1, marginTop: 2 }}>YOURS TO TAKE</div>
+                  <div style={{ fontSize: 7, color: "rgba(0,255,65,0.35)", letterSpacing: 1, marginTop: 2 }}>PRIZE UNCLAIMED — MAKE A TRADE TO ENTER</div>
                 </div>
                 <div style={{ fontSize: 10, color: "rgba(0,255,65,0.2)" }}>{"\u2014"}%</div>
               </div>

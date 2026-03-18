@@ -345,6 +345,42 @@ export async function debitAvailableTx(
     );
 }
 
+/**
+ * Debit a wallet without checking available balance.
+ * Used for paper-trading short sells where the base balance may go negative.
+ */
+export async function debitUnconstrainedTx(
+    client: PoolClient,
+    walletId: string,
+    amount: string,
+    entryType: string,
+    refId?: string,
+    refType?: string,
+    metadata: any = {}
+): Promise<void> {
+    const result = await timedQuery<{ balance: string }>(
+        client,
+        "walletRepo.debitUnconstrainedTx.update",
+        `UPDATE wallets
+         SET balance = balance - $1
+         WHERE id = $2
+         RETURNING balance`,
+        [amount, walletId]
+    );
+
+    if (result.rowCount === 0) {
+        throw new Error("wallet_not_found");
+    }
+
+    const balanceAfter = result.rows[0].balance;
+
+    await timedQuery(client, "walletRepo.debitUnconstrainedTx.ledger",
+        `INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+        [walletId, entryType, `-${amount}`, balanceAfter, refId ?? null, refType ?? null, JSON.stringify(metadata)]
+    );
+}
+
 export async function consumeReservedAndDebitTx(
     client: PoolClient,
     walletId: string,

@@ -76,21 +76,8 @@ beforeAll(async () => {
   });
 
   // 6. Create wallets for trader
-  const baseWalletRes = await app.inject({
-    method: "POST",
-    url: "/wallets",
-    headers: { authorization: `Bearer ${traderToken}` },
-    payload: { assetId: baseAssetId },
-  });
-  traderBaseWalletId = baseWalletRes.json().wallet.id;
-
-  const quoteWalletRes = await app.inject({
-    method: "POST",
-    url: "/wallets",
-    headers: { authorization: `Bearer ${traderToken}` },
-    payload: { assetId: quoteAssetId },
-  });
-  traderQuoteWalletId = quoteWalletRes.json().wallet.id;
+  traderBaseWalletId = await getOrCreateWallet(traderToken, baseAssetId);
+  traderQuoteWalletId = await getOrCreateWallet(traderToken, quoteAssetId);
 
   // 7. Credit wallets via admin
   await app.inject({
@@ -111,6 +98,23 @@ beforeAll(async () => {
 afterAll(async () => {
   await closeTestApp();
 });
+
+/** Find (or create) a wallet for a given asset — handles auto-wallet races. */
+async function getOrCreateWallet(token: string, assetId: string): Promise<string> {
+  const createRes = await app.inject({
+    method: "POST", url: "/wallets",
+    headers: { authorization: `Bearer ${token}` },
+    payload: { assetId },
+  });
+  if (createRes.json().wallet) return createRes.json().wallet.id;
+
+  const listRes = await app.inject({
+    method: "GET", url: "/wallets",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const wallets = listRes.json().wallets as Array<{ id: string; asset_id: string }>;
+  return wallets.find((w) => w.asset_id === assetId)!.id;
+}
 
 /** Helper: get wallet balance + reserved from GET /wallets */
 async function getWalletState(walletId: string) {
@@ -269,24 +273,16 @@ describe("Price-time priority — deterministic matching", () => {
 
     // Create wallets and fund both users
     for (const { token, base, quote } of [
-      { token: sellerToken, base: "100", quote: "0" },
+      { token: sellerToken, base: "100", quote: "10000000" },
       { token: buyerToken, base: "0", quote: "10000000" },
     ]) {
-      const bw = await app.inject({
-        method: "POST", url: "/wallets",
-        headers: { authorization: `Bearer ${token}` },
-        payload: { assetId: ptBaseId },
-      });
-      const qw = await app.inject({
-        method: "POST", url: "/wallets",
-        headers: { authorization: `Bearer ${token}` },
-        payload: { assetId: ptQuoteId },
-      });
+      const bwId = await getOrCreateWallet(token, ptBaseId);
+      const qwId = await getOrCreateWallet(token, ptQuoteId);
 
       if (parseFloat(base) > 0) {
         await app.inject({
           method: "POST",
-          url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+          url: `/admin/wallets/${bwId}/credit`,
           headers: { authorization: `Bearer ${adminToken}` },
           payload: { amount: base },
         });
@@ -294,7 +290,7 @@ describe("Price-time priority — deterministic matching", () => {
       if (parseFloat(quote) > 0) {
         await app.inject({
           method: "POST",
-          url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+          url: `/admin/wallets/${qwId}/credit`,
           headers: { authorization: `Bearer ${adminToken}` },
           payload: { amount: quote },
         });
@@ -489,26 +485,18 @@ describe("Self-trade prevention", () => {
     });
 
     // Create + fund wallets for the user
-    const bw = await app.inject({
-      method: "POST", url: "/wallets",
-      headers: { authorization: `Bearer ${stpToken}` },
-      payload: { assetId: stpBaseId },
-    });
-    const qw = await app.inject({
-      method: "POST", url: "/wallets",
-      headers: { authorization: `Bearer ${stpToken}` },
-      payload: { assetId: stpQuoteId },
-    });
+    const bwId = await getOrCreateWallet(stpToken, stpBaseId);
+    const qwId = await getOrCreateWallet(stpToken, stpQuoteId);
 
     await app.inject({
       method: "POST",
-      url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+      url: `/admin/wallets/${bwId}/credit`,
       headers: { authorization: `Bearer ${adminToken}` },
       payload: { amount: "100" },
     });
     await app.inject({
       method: "POST",
-      url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+      url: `/admin/wallets/${qwId}/credit`,
       headers: { authorization: `Bearer ${adminToken}` },
       payload: { amount: "10000000" },
     });
@@ -647,23 +635,15 @@ describe("Financial integrity — precision & invariants", () => {
       { token: makerToken, base: "1000", quote: "100000000" },
       { token: takerToken, base: "1000", quote: "100000000" },
     ]) {
-      const bw = await app.inject({
-        method: "POST", url: "/wallets",
-        headers: { authorization: `Bearer ${token}` },
-        payload: { assetId: fiBaseId },
-      });
-      const qw = await app.inject({
-        method: "POST", url: "/wallets",
-        headers: { authorization: `Bearer ${token}` },
-        payload: { assetId: fiQuoteId },
-      });
+      const bwId = await getOrCreateWallet(token, fiBaseId);
+      const qwId = await getOrCreateWallet(token, fiQuoteId);
       await app.inject({
-        method: "POST", url: `/admin/wallets/${bw.json().wallet.id}/credit`,
+        method: "POST", url: `/admin/wallets/${bwId}/credit`,
         headers: { authorization: `Bearer ${adminToken}` },
         payload: { amount: base },
       });
       await app.inject({
-        method: "POST", url: `/admin/wallets/${qw.json().wallet.id}/credit`,
+        method: "POST", url: `/admin/wallets/${qwId}/credit`,
         headers: { authorization: `Bearer ${adminToken}` },
         payload: { amount: quote },
       });

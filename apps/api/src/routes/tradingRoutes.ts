@@ -12,7 +12,6 @@ import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
-import { enforcePreOrderChecks } from "../governance/quotaService";
 
 
 // ── Zod schemas ──
@@ -63,12 +62,19 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
               type: "array",
               items: {
                 type: "object",
+                additionalProperties: true,
                 properties: {
                   id: { type: "string", format: "uuid" },
                   base_asset_id: { type: "string", format: "uuid" },
                   quote_asset_id: { type: "string", format: "uuid" },
                   symbol: { type: "string" },
-                  status: { type: "string", enum: ["ACTIVE", "INACTIVE"] },
+                  is_active: { type: "boolean" },
+                  last_price: { type: ["string", "null"] },
+                  fee_bps: { type: "number" },
+                  maker_fee_bps: { type: "number" },
+                  taker_fee_bps: { type: "number" },
+                  trading_enabled: { type: "boolean" },
+                  created_at: { type: "string" },
                 },
               },
             },
@@ -175,9 +181,6 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     const actor = req.user!;
 
         try {
-        // ── PR6: Pre-order enforcement layer ──
-        await enforcePreOrderChecks(actor.id, parsed.data.pairId);
-
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
         const competitionId = req.headers["x-competition-id"] as string | undefined;
 

@@ -1,0 +1,1 @@
+ALTER TABLE replay_sessions ADD COLUMN end_ts TIMESTAMPTZ;

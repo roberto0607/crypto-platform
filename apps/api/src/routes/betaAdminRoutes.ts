@@ -7,8 +7,7 @@ import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { AppError } from "../errors/AppError";
 import { createInvite, listInvites, disableInvite } from "../beta/inviteRepo";
-import { getOrCreateQuota, updateQuotas } from "../governance/quotaService";
-import { getFlag, setFlag, setPairTradingEnabled } from "../governance/systemFlagService";
+import { setFlag, setPairTradingEnabled } from "../system/systemFlagService";
 
 // ── Zod schemas ──
 const createInviteBody = z.object({
@@ -21,12 +20,6 @@ const idParams = z.object({ id: z.string().uuid() });
 
 const enabledBody = z.object({ enabled: z.boolean() });
 
-const updateQuotaBody = z.object({
-  maxOrdersPerMin: z.number().int().min(1).optional(),
-  maxOpenOrders: z.number().int().min(1).optional(),
-  maxDailyOrders: z.number().int().min(1).optional(),
-  tradingEnabled: z.boolean().optional(),
-});
 
 // ── Plugin ──
 const betaAdminRoutes: FastifyPluginAsync = async (app) => {
@@ -145,41 +138,6 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send({ ok: true });
-  });
-
-  // ── User quotas ──
-
-  // POST /v1/admin/users/:id/quotas
-  app.post("/users/:id/quotas", { schema: { tags: ["Admin"], summary: "Update user quotas", description: "Updates trading quotas for a specific user. Requires ADMIN role.", security: [{ bearerAuth: [] }], params: { type: "object", required: ["id"], properties: { id: { type: "string", format: "uuid" } } }, body: { type: "object", properties: { maxOrdersPerMin: { type: "integer", minimum: 1 }, maxOpenOrders: { type: "integer", minimum: 1 }, maxDailyOrders: { type: "integer", minimum: 1 }, tradingEnabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, quotas: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
-    const paramsParsed = idParams.safeParse(req.params);
-    if (!paramsParsed.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_input" });
-    }
-
-    const parsed = updateQuotaBody.safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
-    }
-
-    const quotas = await updateQuotas(paramsParsed.data.id, {
-      max_orders_per_min: parsed.data.maxOrdersPerMin,
-      max_open_orders: parsed.data.maxOpenOrders,
-      max_daily_orders: parsed.data.maxDailyOrders,
-      trading_enabled: parsed.data.tradingEnabled,
-    });
-
-    await auditLog({
-      actorUserId: req.user!.id,
-      action: "admin.quota.update",
-      targetType: "user",
-      targetId: paramsParsed.data.id,
-      requestId: req.id,
-      ip: req.ip,
-      userAgent: req.headers["user-agent"] ?? null,
-      metadata: parsed.data,
-    });
-
-    return reply.send({ ok: true, quotas });
   });
 
   // ── Pair trading toggle ──

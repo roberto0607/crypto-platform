@@ -280,6 +280,7 @@ export interface ReplaySession {
   user_id: UUID;
   pair_id: UUID;
   current_ts: string;
+  end_ts: string | null;
   speed: string;
   is_active: boolean;
   is_paused: boolean;

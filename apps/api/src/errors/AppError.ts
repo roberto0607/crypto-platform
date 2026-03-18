@@ -64,8 +64,13 @@ const ERROR_STATUS: Record<string, number> = {
   already_joined: 400,
   wallet_creation_failed: 400,
   not_participating: 400,
+  // 400 (matches)
+  match_already_active: 400,
+  match_not_pending: 400,
+  match_not_active: 400,
   // 404 (competitions)
   competition_not_found: 404,
+  match_not_found: 404,
   // 429
   quota_exceeded: 429,
   suspicious_activity: 429,

@@ -11,9 +11,6 @@ import type { OrderRow } from "./orderRepo";
 import type { TradeRow } from "./tradeRepo";
 import type { Snapshot } from "../market/snapshotStore";
 import { D, toFixed8 } from "../utils/decimal";
-import { evaluateOrderRisk } from "../risk/riskEngine";
-import { evaluateAccountGovernance } from "../governance/governanceEngine";
-import { recordOrderAttempt, checkPriceDislocation } from "../risk/breakerService";
 import { AppError } from "../errors/AppError";
 import { createEvent } from "../events/eventTypes";
 import { buildLogContext, logger } from "../observability/logContext";
@@ -102,8 +99,6 @@ export async function placeOrderWithSnapshot(
 
     // ── 2. Resolve snapshot (outside transaction) ──
     const snapshot = await resolveSnapshot(userId, body.pairId);
-    const estimatedNotional = D(body.qty).mul(D(snapshot.last)).toFixed(8);
-
     // ── 2c. Simulation reads (MARKET only, outside transaction) ──
     let simExecPrice: string | null = null;
     if (body.type === "MARKET") {
@@ -150,64 +145,6 @@ export async function placeOrderWithSnapshot(
     // ── 3–8. Single transaction: risk + matching + post-fill ──
     const { result, idempotencyRowCount } = await txWithEvents(async (client, pendingEvents) => {
         let idempRowCount = 1;
-
-        // ── 3. Risk checks ──
-        const govDecision = await evaluateAccountGovernance(client, {
-            userId,
-            pairId: body.pairId,
-            side: body.side,
-            qty: body.qty,
-            estimatedNotional,
-            snapshotTs: snapshot.ts,
-        });
-
-        if (!govDecision.ok) {
-            ordersRejectedTotal.inc({ reason: govDecision.code ?? "governance" });
-            logger.warn({ ...logCtx, eventType: "order.rejected", reason: govDecision.code }, "Order rejected by governance");
-            orderPlacementLatency.observe(performance.now() - startMs);
-            throw new AppError("governance_check_failed", {
-                code: govDecision.code,
-                message: govDecision.message,
-                ...govDecision.details,
-            });
-        }
-
-        await recordOrderAttempt(client, userId);
-
-        const { rows: pairRows } = await client.query<{ last_price: string | null }>(
-            `SELECT last_price FROM trading_pairs WHERE id = $1`,
-            [body.pairId],
-        );
-        const dbLastPrice = pairRows[0]?.last_price;
-        if (dbLastPrice) {
-            await checkPriceDislocation(
-                client,
-                body.pairId,
-                snapshot.last,
-                dbLastPrice
-            );
-        }
-
-        const decision = await evaluateOrderRisk(client, {
-            userId,
-            pairId: body.pairId,
-            side: body.side,
-            type: body.type,
-            qty: body.qty,
-            limitPrice: body.limitPrice,
-            snapshot,
-        });
-
-        if (!decision.ok) {
-            ordersRejectedTotal.inc({ reason: decision.code ?? "unknown" });
-            logger.warn({ ...logCtx, eventType: "order.rejected", reason: decision.code }, "Order rejected by risk controls");
-            orderPlacementLatency.observe(performance.now() - startMs);
-            throw new AppError("risk_check_failed", {
-                code: decision.code,
-                reason: decision.reason,
-                ...decision.details,
-            });
-        }
 
         // ── Simulation UPDATE (inside transaction) ──
         if (simExecPrice) {

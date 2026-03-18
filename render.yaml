@@ -1,0 +1,31 @@
+databases:
+  - name: tradr-production
+    plan: starter
+    region: ohio
+    databaseName: tradr_production_oiq8
+    user: tradr_user
+
+services:
+  - type: web
+    name: tradr-api
+    runtime: docker
+    region: ohio
+    plan: starter
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradr-production
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: RUN_MIGRATIONS_ON_BOOT
+        value: "true"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: REDIS_URL
+        sync: false

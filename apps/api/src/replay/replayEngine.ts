@@ -83,6 +83,20 @@ export async function advanceReplayLoop(
     const session = await getSession(userId, pairId);
     if (!session || !session.is_active || session.is_paused) return null;
 
+    // Auto-stop if end_ts is set and current_ts has reached it
+    if (session.end_ts) {
+        const currentMs = new Date(session.current_ts).getTime();
+        const endMs = new Date(session.end_ts).getTime();
+        if (currentMs >= endMs) {
+            // Mark session inactive
+            await pool.query(
+                `UPDATE replay_sessions SET is_active = false WHERE user_id = $1 AND pair_id = $2`,
+                [userId, pairId]
+            );
+            return null;
+        }
+    }
+
     // Fetch candle at current_ts
     const candleResult = await pool.query<{
         pair_id: string;

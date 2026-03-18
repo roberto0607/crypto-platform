@@ -1,7 +1,10 @@
 import type { Candle } from "@/api/endpoints/candles";
 
+// Lightweight Charts treats timestamps as UTC — offset to local timezone
+const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
+
 export interface CvdPoint {
-    time: number; // epoch seconds
+    time: number; // epoch seconds (local-adjusted for Lightweight Charts)
     value: number;
 }
 
@@ -11,36 +14,86 @@ export interface CvdDivergence {
     type: "bullish" | "bearish";
 }
 
+export type CvdDataSource = "REAL" | "PROXY" | "MIXED";
+
+export interface CvdResult {
+    values: CvdPoint[];
+    divergences: CvdDivergence[];
+    dataSource: CvdDataSource;
+    realCount: number;
+    totalCount: number;
+}
+
 /**
  * Compute Cumulative Volume Delta from candle data.
- * CVD[i] = CVD[i-1] + (buyVolume[i] - sellVolume[i])
+ *
+ * Path A (real): uses buy_volume - sell_volume when side data exists.
+ * Path B (proxy): wick-weighted price action estimate when side data is missing.
  */
-export function computeCVD(candles: Candle[]): CvdPoint[] {
-    const points: CvdPoint[] = [];
+export function computeCVD(candles: Candle[]): CvdResult {
+    const values: CvdPoint[] = [];
     let cumulative = 0;
+    let realCount = 0;
 
     for (const c of candles) {
         const buyVol = parseFloat(c.buy_volume ?? "0");
         const sellVol = parseFloat(c.sell_volume ?? "0");
-        cumulative += buyVol - sellVol;
+        const hasRealData = buyVol > 0 || sellVol > 0;
 
-        points.push({
-            time: new Date(c.ts).getTime() / 1000,
+        let delta: number;
+
+        if (hasRealData) {
+            // Path A — real buy/sell volume from exchange trades
+            delta = buyVol - sellVol;
+            realCount++;
+        } else {
+            // Path B — wick-weighted price action proxy
+            const open = parseFloat(c.open);
+            const high = parseFloat(c.high);
+            const low = parseFloat(c.low);
+            const close = parseFloat(c.close);
+            const volume = parseFloat(c.volume);
+            const candleRange = high - low;
+
+            if (candleRange === 0 || volume === 0) {
+                delta = 0;
+            } else {
+                const bodyTop = Math.max(open, close);
+                const bodyBottom = Math.min(open, close);
+                const upperWick = high - bodyTop;
+                const lowerWick = bodyBottom - low;
+                const bodyMove = close - open;
+
+                const wickBias = (lowerWick - upperWick) / candleRange;
+                const bodyBias = bodyMove / candleRange;
+                const bias = wickBias * 0.4 + bodyBias * 0.6;
+                delta = bias * volume;
+            }
+        }
+
+        cumulative += delta;
+        values.push({
+            time: new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC,
             value: cumulative,
         });
     }
 
-    return points;
+    const totalCount = candles.length;
+    const realRatio = totalCount > 0 ? realCount / totalCount : 0;
+    const dataSource: CvdDataSource =
+        realRatio > 0.8 ? "REAL" : realCount > 0 ? "MIXED" : "PROXY";
+
+    const divergences = detectCvdDivergence(candles, values);
+
+    return { values, divergences, dataSource, realCount, totalCount };
 }
 
 /**
  * Detect divergences between price and CVD.
  * - Bullish divergence: price makes a lower low but CVD makes a higher low
  * - Bearish divergence: price makes a higher high but CVD makes a lower high
- *
- * Uses swing-point comparison over a lookback window.
  */
-export function detectCvdDivergence(
+function detectCvdDivergence(
     candles: Candle[],
     cvd: CvdPoint[],
     lookback = 20,
@@ -49,13 +102,11 @@ export function detectCvdDivergence(
 
     const divergences: CvdDivergence[] = [];
 
-    // Find swing lows and highs in both price and CVD
     for (let i = lookback; i < candles.length - 5; i++) {
         const priceNow = parseFloat(candles[i]!.close);
         const cvdNow = cvd[i]?.value ?? 0;
         const timeNow = cvd[i]?.time ?? 0;
 
-        // Look back for a previous comparable point
         for (let j = i - lookback; j < i - 5; j++) {
             if (j < 0) continue;
             const pricePrev = parseFloat(candles[j]!.close);
@@ -64,34 +115,21 @@ export function detectCvdDivergence(
 
             // Bullish divergence: price lower low, CVD higher low
             if (priceNow < pricePrev && cvdNow > cvdPrev) {
-                // Verify these are actual lows (price below neighbors)
-                const isLowNow = isLocalLow(candles, i, 3);
-                const isLowPrev = isLocalLow(candles, j, 3);
-                if (isLowNow && isLowPrev) {
-                    divergences.push({
-                        startTime: timePrev,
-                        endTime: timeNow,
-                        type: "bullish",
-                    });
+                if (isLocalLow(candles, i, 3) && isLocalLow(candles, j, 3)) {
+                    divergences.push({ startTime: timePrev, endTime: timeNow, type: "bullish" });
                 }
             }
 
             // Bearish divergence: price higher high, CVD lower high
             if (priceNow > pricePrev && cvdNow < cvdPrev) {
-                const isHighNow = isLocalHigh(candles, i, 3);
-                const isHighPrev = isLocalHigh(candles, j, 3);
-                if (isHighNow && isHighPrev) {
-                    divergences.push({
-                        startTime: timePrev,
-                        endTime: timeNow,
-                        type: "bearish",
-                    });
+                if (isLocalHigh(candles, i, 3) && isLocalHigh(candles, j, 3)) {
+                    divergences.push({ startTime: timePrev, endTime: timeNow, type: "bearish" });
                 }
             }
         }
     }
 
-    // Deduplicate overlapping divergences — keep the most recent
+    // Deduplicate overlapping divergences
     const deduped: CvdDivergence[] = [];
     for (const d of divergences) {
         const overlaps = deduped.some(

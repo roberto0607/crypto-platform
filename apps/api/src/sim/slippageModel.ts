@@ -16,9 +16,10 @@ export function computeMarketExecution(
     const quantity = D(qty);
     const requestedNotional = quantity.mul(last);
 
-    // Liquidity check
+    // Liquidity check (floor of $10,000 for paper trading)
     const availStr = computeAvailableLiquidity(config, candleVolume, snapshot.last);
-    const availableLiquidityQuote = D(availStr);
+    const MIN_LIQUIDITY = D("10000");
+    const availableLiquidityQuote = D(availStr).lt(MIN_LIQUIDITY) ? MIN_LIQUIDITY : D(availStr);
 
     if (requestedNotional.gt(availableLiquidityQuote)) {
         return null;

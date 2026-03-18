@@ -1,4 +1,3 @@
-import { reconciliationJob } from "./reconciliationJob";
 import { cleanupRefreshTokensJob } from "./cleanupRefreshTokensJob";
 import { cleanupReplaySessionsJob } from "./cleanupReplaySessionsJob";
 import { cleanupIdempotencyKeysJob } from "./cleanupIdempotencyKeysJob";
@@ -18,7 +17,6 @@ import { krakenCandleSyncJob } from "./krakenCandleSyncJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
-    reconciliationJob,
     cleanupRefreshTokensJob,
     cleanupReplaySessionsJob,
     cleanupIdempotencyKeysJob,

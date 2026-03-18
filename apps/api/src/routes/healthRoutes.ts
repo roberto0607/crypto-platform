@@ -4,6 +4,7 @@ import { pool } from "../db/pool";
 import { getStats } from "../events/eventBus";
 import { getLeadershipStatus } from "../coordination/leaderElection";
 import { getRedis } from "../db/redis";
+import { getKrakenWsHealth } from "../market/krakenWs";
 
 type CheckStatus = "OK" | "DEGRADED" | "CRITICAL" | "WARNING" | "UNKNOWN";
 
@@ -19,8 +20,8 @@ interface DeepHealthResult {
 }
 
 const healthRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/health", { schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" } } } } } }, async () => {
-    return { ok: true, service: "api", timestamp: new Date().toISOString() };
+  app.get("/health", { schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: { type: "object", properties: { connected: { type: "boolean" }, lastTickAt: { type: "number" }, secondsSinceLastTick: { type: "number" }, status: { type: "string" } } } } } } } }, async () => {
+    return { ok: true, service: "api", timestamp: new Date().toISOString(), krakenWs: getKrakenWsHealth() };
   });
 
   app.get("/health/db", { schema: { tags: ["Health"], summary: "Database health", description: "Checks PostgreSQL connectivity.", response: { 200: { type: "object", properties: { ok: { type: "boolean" } } } } } }, async () => {

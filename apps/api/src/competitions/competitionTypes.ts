@@ -29,10 +29,11 @@ export interface CompetitionRow {
     created_by: string | null;
     created_at: string;
     updated_at: string;
-    competition_type: "CUSTOM" | "WEEKLY";
+    competition_type: "CUSTOM" | "WEEKLY" | "SEASON";
     tier: TierName | null;
     week_id: string | null;
     tier_adjustments_processed: boolean;
+    season_number: number | null;
 }
 
 export interface ParticipantRow {
@@ -58,6 +59,9 @@ export interface LeaderboardRow {
     max_drawdown_pct: string;
     current_drawdown_pct: string;
     trades_count: number;
+    win_rate: number;
+    consistency: number;
+    nuanced_score: number;
     updated_at: string;
     display_name?: string | null;  // from JOIN
     user_tier?: TierName;          // from JOIN

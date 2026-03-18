@@ -11,11 +11,13 @@ import type {
 } from "@/types/api";
 import {
   getOrderBook,
+  getKrakenBook,
   getSnapshot,
   listOrders,
   placeOrder,
   cancelOrder as cancelOrderApi,
 } from "@/api/endpoints/trading";
+import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
 
 export interface RecentTrade {
@@ -35,11 +37,9 @@ const INDICATOR_STORAGE_KEY = "indicator-config";
 const defaultIndicatorConfig = {
   keyLevels: false,
   liquidityZones: false,
-  orderBlocks: true,
-  fvg: true,
+  orderBlocks: false,
   cvd: true,
-  volumeProfile: true,
-  tradeSetup: true,
+  marketIntelligence: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;
@@ -177,8 +177,17 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     if (!pairId) return;
     set({ bookLoading: true });
     try {
+      // Try Kraken cached book first (real exchange data)
+      const pair = useAppStore.getState().pairs.find((p) => p.id === pairId);
+      if (pair) {
+        const res = await getKrakenBook(pair.symbol);
+        if (get().selectedPairId === pairId && res.data.book.bids.length > 0) {
+          set({ orderBook: res.data.book, bookLoading: false });
+          return;
+        }
+      }
+      // Fallback to internal order book
       const res = await getOrderBook(pairId);
-      // Only apply if pair hasn't changed while loading
       if (get().selectedPairId === pairId) {
         set({ orderBook: res.data.book, bookLoading: false });
       }

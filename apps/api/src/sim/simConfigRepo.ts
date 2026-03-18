@@ -5,7 +5,7 @@ const DEFAULTS: SimulationConfig = {
     base_spread_bps: 5,
     base_slippage_bps: 2,
     impact_bps_per_10k_quote: 10,
-    liquidity_quote_per_tick: 50000,
+    liquidity_quote_per_tick: 500000,
     volatility_widening_k: 0.5,
 };
 

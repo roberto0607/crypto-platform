@@ -4,7 +4,7 @@ import type { CompetitionRow, TierName } from "./competitionTypes.js";
 
 const COLUMNS = `id, name, description, start_at, end_at, starting_balance_usd,
     status, max_participants, pairs_allowed, created_by, created_at, updated_at,
-    competition_type, tier, week_id, tier_adjustments_processed`;
+    competition_type, tier, week_id, tier_adjustments_processed, season_number`;
 
 export async function createCompetition(
     params: {

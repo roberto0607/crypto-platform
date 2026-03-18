@@ -1,7 +1,7 @@
 import { D, toFixed8 } from "../utils/decimal";
 import type { SimulationConfig } from "./simTypes";
 
-const LIQUIDITY_FACTOR = D("0.1");
+const LIQUIDITY_FACTOR = D("1.0");
 
 export function computeAvailableLiquidity(
     config: SimulationConfig,

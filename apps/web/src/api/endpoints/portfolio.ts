@@ -7,21 +7,21 @@ import type {
 
 export function getSummary(competitionId?: string | null) {
   return client.get<{ ok: true; summary: PortfolioSummary }>(
-    "/portfolio/summary",
+    "/v1/portfolio/summary",
     { params: competitionId ? { competitionId } : undefined },
   );
 }
 
-export function getEquityCurve(params?: { from?: string; to?: string; competitionId?: string }) {
+export function getEquityCurve(params?: { from?: number; to?: number; competitionId?: string }) {
   return client.get<{ ok: true; snapshots: PortfolioSnapshot[] }>(
-    "/portfolio/equity",
+    "/v1/portfolio/equity",
     { params },
   );
 }
 
 export function getPerformance(params?: { from?: string; to?: string; competitionId?: string }) {
   return client.get<{ ok: true; performance: PerformanceSummary }>(
-    "/portfolio/performance",
+    "/v1/portfolio/performance",
     { params },
   );
 }

@@ -73,24 +73,31 @@ async function createPair(): Promise<PairCtx> {
   return { pairId, baseId, quoteId };
 }
 
+/** Find (or create) a wallet for a given asset — handles auto-wallet races. */
+async function getOrCreateWallet(token: string, assetId: string): Promise<string> {
+  const createRes = await app.inject({
+    method: "POST", url: "/wallets",
+    headers: { authorization: `Bearer ${token}` },
+    payload: { assetId },
+  });
+  if (createRes.json().wallet) return createRes.json().wallet.id;
+
+  const listRes = await app.inject({
+    method: "GET", url: "/wallets",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const wallets = listRes.json().wallets as Array<{ id: string; asset_id: string }>;
+  return wallets.find((w) => w.asset_id === assetId)!.id;
+}
+
 /** Create a user with funded wallets for a specific pair's assets. */
 async function createFundedUser(
   prefix: string, pair: PairCtx, base: string, quote: string,
 ): Promise<UserCtx> {
   const user = await registerAndLogin(app, prefix);
 
-  const bw = await app.inject({
-    method: "POST", url: "/wallets",
-    headers: { authorization: `Bearer ${user.accessToken}` },
-    payload: { assetId: pair.baseId },
-  });
-  const qw = await app.inject({
-    method: "POST", url: "/wallets",
-    headers: { authorization: `Bearer ${user.accessToken}` },
-    payload: { assetId: pair.quoteId },
-  });
-  const baseWalletId = bw.json().wallet.id;
-  const quoteWalletId = qw.json().wallet.id;
+  const baseWalletId = await getOrCreateWallet(user.accessToken, pair.baseId);
+  const quoteWalletId = await getOrCreateWallet(user.accessToken, pair.quoteId);
 
   if (parseFloat(base) > 0) {
     await app.inject({
@@ -143,9 +150,9 @@ describe("Concurrency — 10 concurrent LIMIT orders", () => {
   it("no deadlocks, no duplicate fills, balances consistent", async () => {
     const pair = await createPair();
 
-    // 5 sellers (10 BTC each), 5 buyers (1M USD each)
+    // 5 sellers (10 BTC each + USD margin), 5 buyers (1M USD each)
     const sellers = await Promise.all(
-      Array.from({ length: 5 }, (_, i) => createFundedUser(`cc-ls-${i}`, pair, "10", "0")),
+      Array.from({ length: 5 }, (_, i) => createFundedUser(`cc-ls-${i}`, pair, "10", "10000000")),
     );
     const buyers = await Promise.all(
       Array.from({ length: 5 }, (_, i) => createFundedUser(`cc-lb-${i}`, pair, "0", "1000000")),
@@ -205,7 +212,7 @@ describe("Concurrency — 10 concurrent MARKET orders", () => {
     const pair = await createPair();
 
     // Maker: place 10 resting LIMIT SELL (1 BTC each @ 50000)
-    const maker = await createFundedUser("cc-maker", pair, "100", "0");
+    const maker = await createFundedUser("cc-maker", pair, "100", "10000000");
     for (let i = 0; i < 10; i++) {
       const res = await app.inject({
         method: "POST", url: "/orders",
@@ -282,7 +289,7 @@ describe("Concurrency — cancel while matching", () => {
   it("cancel either succeeds or is rejected, no corruption", { timeout: 15000 }, async () => {
     const pair = await createPair();
 
-    const seller = await createFundedUser("cc-cseller", pair, "10", "0");
+    const seller = await createFundedUser("cc-cseller", pair, "10", "10000000");
     const buyer = await createFundedUser("cc-cbuyer", pair, "0", "10000000");
 
     // Seller places 5 LIMIT SELL (1 BTC each @ 50000)

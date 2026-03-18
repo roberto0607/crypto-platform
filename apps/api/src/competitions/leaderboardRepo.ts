@@ -9,6 +9,7 @@ export async function getLeaderboard(
     const { rows } = await pool.query<LeaderboardRow>(
         `SELECT lb.competition_id, lb.user_id, lb.rank, lb.equity, lb.return_pct,
                 lb.max_drawdown_pct, lb.current_drawdown_pct, lb.trades_count,
+                lb.win_rate, lb.consistency, lb.nuanced_score,
                 lb.updated_at,
                 COALESCE(u.display_name, SPLIT_PART(u.email, '@', 1)) AS display_name,
                 COALESCE(ut.tier, 'ROOKIE') AS user_tier,

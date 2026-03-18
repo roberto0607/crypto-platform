@@ -33,7 +33,7 @@ for (const [ours, kraken] of Object.entries(SYMBOL_MAP)) {
 }
 
 // Lazy cache: our symbol → pair UUID (populated on first connect)
-let symbolToPairId: Record<string, string> = {};
+export let symbolToPairId: Record<string, string> = {};
 let pairCacheReady = false;
 
 async function loadPairCache(): Promise<void> {
@@ -52,11 +52,35 @@ async function loadPairCache(): Promise<void> {
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 1000;
-const MAX_RECONNECT_DELAY = 30_000;
+let reconnectDelay = 2000;
+const RECONNECT_DELAYS = [2_000, 5_000, 30_000]; // exponential backoff steps
+let reconnectAttempt = 0;
 let stopped = false;
 let flushInterval: ReturnType<typeof setInterval> | null = null;
+let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let backfillDone = false;
+
+// ── Watchdog: detect stale connections ──
+const WATCHDOG_TIMEOUT_MS = 30_000;
+let lastTickAt = 0;
+let wsConnected = false;
+
+export function getKrakenWsHealth(): {
+    connected: boolean;
+    lastTickAt: number;
+    secondsSinceLastTick: number;
+    status: "connected" | "stale" | "disconnected";
+} {
+    const secondsSinceLastTick = lastTickAt > 0
+        ? Math.round((Date.now() - lastTickAt) / 1000)
+        : -1;
+    const status = !wsConnected
+        ? "disconnected"
+        : secondsSinceLastTick > 30
+            ? "stale"
+            : "connected";
+    return { connected: wsConnected, lastTickAt, secondsSinceLastTick, status };
+}
 
 function subscribe(socket: WebSocket): void {
     const symbols = Object.values(SYMBOL_MAP);
@@ -81,6 +105,7 @@ function subscribe(socket: WebSocket): void {
 }
 
 async function handleTickerMessage(data: any[]): Promise<void> {
+    lastTickAt = Date.now();
     for (const tick of data) {
         const krakenSymbol = tick.symbol;
         const ourSymbol = REVERSE_MAP[krakenSymbol];
@@ -153,7 +178,60 @@ function handleTradeMessage(data: any[]): void {
     }
 }
 
-function handleBookMessage(data: any[]): void {
+const BOOK_DEPTH = 25;
+
+function handleBookSnapshot(pairId: string, rawBids: any[], rawAsks: any[]): void {
+    const bids: BookLevel[] = rawBids.map((b: any) => ({
+        price: parseFloat(b.price),
+        qty: parseFloat(b.qty),
+    }));
+    const asks: BookLevel[] = rawAsks.map((a: any) => ({
+        price: parseFloat(a.price),
+        qty: parseFloat(a.qty),
+    }));
+    bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
+    const features = computeOrderFlowFeatures(bids, asks);
+    orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+}
+
+function applyBookUpdate(pairId: string, rawBids: any[], rawAsks: any[]): void {
+    const existing = bookSnapshots.get(pairId);
+    if (!existing) return; // No snapshot yet, skip incremental
+
+    // Apply bid updates
+    const bidMap = new Map(existing.bids.map((b) => [b.price, b.qty]));
+    for (const b of rawBids) {
+        const price = parseFloat(b.price);
+        const qty = parseFloat(b.qty);
+        if (qty === 0) bidMap.delete(price);
+        else bidMap.set(price, qty);
+    }
+    // Sort bids descending, truncate to depth
+    const bids = Array.from(bidMap.entries())
+        .map(([price, qty]) => ({ price, qty }))
+        .sort((a, b) => b.price - a.price)
+        .slice(0, BOOK_DEPTH);
+
+    // Apply ask updates
+    const askMap = new Map(existing.asks.map((a) => [a.price, a.qty]));
+    for (const a of rawAsks) {
+        const price = parseFloat(a.price);
+        const qty = parseFloat(a.qty);
+        if (qty === 0) askMap.delete(price);
+        else askMap.set(price, qty);
+    }
+    // Sort asks ascending, truncate to depth
+    const asks = Array.from(askMap.entries())
+        .map(([price, qty]) => ({ price, qty }))
+        .sort((a, b) => a.price - b.price)
+        .slice(0, BOOK_DEPTH);
+
+    bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
+    const features = computeOrderFlowFeatures(bids, asks);
+    orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+}
+
+function handleBookMessage(data: any[], type: string): void {
     for (const entry of data) {
         const krakenSymbol = entry.symbol;
         if (!krakenSymbol) continue;
@@ -167,21 +245,11 @@ function handleBookMessage(data: any[]): void {
         const rawBids: any[] = entry.bids || [];
         const rawAsks: any[] = entry.asks || [];
 
-        const bids: BookLevel[] = rawBids.map((b: any) => ({
-            price: parseFloat(b.price),
-            qty: parseFloat(b.qty),
-        }));
-        const asks: BookLevel[] = rawAsks.map((a: any) => ({
-            price: parseFloat(a.price),
-            qty: parseFloat(a.qty),
-        }));
-
-        // Store raw snapshot
-        bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
-
-        // Compute and cache order flow features
-        const features = computeOrderFlowFeatures(bids, asks);
-        orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+        if (type === "snapshot") {
+            handleBookSnapshot(pairId, rawBids, rawAsks);
+        } else {
+            applyBookUpdate(pairId, rawBids, rawAsks);
+        }
     }
 }
 
@@ -196,7 +264,7 @@ async function handleMessage(raw: WebSocket.Data): Promise<void> {
         } else if (msg.channel === "trade") {
             handleTradeMessage(msg.data);
         } else if (msg.channel === "book") {
-            handleBookMessage(msg.data);
+            handleBookMessage(msg.data, msg.type);
         }
     } catch {
         // Ignore unparseable messages (heartbeats, etc.)
@@ -210,7 +278,8 @@ function connect(): void {
 
     ws.on("open", async () => {
         console.log("[krakenWs] connected");
-        reconnectDelay = 1000;
+        wsConnected = true;
+        reconnectAttempt = 0;
         if (!pairCacheReady) await loadPairCache();
         subscribe(ws!);
         if (!flushInterval) {
@@ -228,11 +297,23 @@ function connect(): void {
                 .then((r) => logger.info(r, "candle_backfill_complete"))
                 .catch((e) => logger.error({ err: e }, "candle_backfill_failed"));
         }
+
+        // Start watchdog to detect stale connections
+        if (!watchdogInterval) {
+            watchdogInterval = setInterval(() => {
+                if (lastTickAt > 0 && Date.now() - lastTickAt > WATCHDOG_TIMEOUT_MS && wsConnected) {
+                    console.log("[krakenWs] No ticks for 30s — reconnecting...");
+                    wsConnected = false;
+                    ws?.close();
+                }
+            }, 10_000);
+        }
     });
 
     ws.on("message", handleMessage);
 
     ws.on("close", () => {
+        wsConnected = false;
         scheduleReconnect();
     });
 
@@ -246,12 +327,13 @@ function scheduleReconnect(): void {
     if (stopped) return;
     if (reconnectTimer) return;
 
-    console.log(`[krakenWs] reconnecting in ${reconnectDelay}ms`);
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
+    reconnectAttempt++;
+    console.log(`[krakenWs] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
-        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
-    }, reconnectDelay);
+    }, delay);
 }
 
 export function startKrakenFeed(): void {
@@ -265,9 +347,14 @@ export function startKrakenFeed(): void {
 
 export function stopKrakenFeed(): void {
     stopped = true;
+    wsConnected = false;
     if (flushInterval) {
         clearInterval(flushInterval);
         flushInterval = null;
+    }
+    if (watchdogInterval) {
+        clearInterval(watchdogInterval);
+        watchdogInterval = null;
     }
     flushDueCandles().catch(() => {});
     if (reconnectTimer) {

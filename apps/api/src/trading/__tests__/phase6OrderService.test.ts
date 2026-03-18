@@ -20,9 +20,6 @@ vi.mock("../idempotencyRepo", () => ({ getIdempotencyKey: vi.fn(), putIdempotenc
 vi.mock("../orderRepo", () => ({ findOrderById: vi.fn() }));
 vi.mock("../tradeRepo", () => ({ listTradesByOrderId: vi.fn() }));
 vi.mock("../pairRepo", () => ({ findPairById: vi.fn() }));
-vi.mock("../../risk/riskEngine", () => ({ evaluateOrderRisk: vi.fn() }));
-vi.mock("../../governance/governanceEngine", () => ({ evaluateAccountGovernance: vi.fn() }));
-vi.mock("../../risk/breakerService", () => ({ recordOrderAttempt: vi.fn(), checkPriceDislocation: vi.fn() }));
 vi.mock("../../outbox/outboxRepo", () => ({ insertOutboxEventTx: vi.fn() }));
 vi.mock("../../portfolio/portfolioService", () => ({ writePortfolioSnapshotTx: vi.fn() }));
 vi.mock("../../sim/simConfigRepo", () => ({ resolveSimulationConfig: vi.fn() }));
@@ -54,15 +51,11 @@ import { getIdempotencyKey, putIdempotencyKeyTx } from "../idempotencyRepo";
 import { findOrderById } from "../orderRepo";
 import { listTradesByOrderId } from "../tradeRepo";
 import { findPairById } from "../pairRepo";
-import { evaluateOrderRisk } from "../../risk/riskEngine";
-import { evaluateAccountGovernance } from "../../governance/governanceEngine";
-import { recordOrderAttempt, checkPriceDislocation } from "../../risk/breakerService";
 import { insertOutboxEventTx } from "../../outbox/outboxRepo";
 import { writePortfolioSnapshotTx } from "../../portfolio/portfolioService";
 import { resolveSimulationConfig } from "../../sim/simConfigRepo";
 import { computeMarketExecution } from "../../sim/slippageModel";
 import { computeAvailableLiquidity } from "../../sim/liquidityModel";
-import { AppError } from "../../errors/AppError";
 
 /* ── Test data ──────────────────────────────────────────── */
 
@@ -163,10 +156,6 @@ function setupDefaultMocks() {
   vi.mocked(findOrderById).mockResolvedValue(ORDER);
   vi.mocked(listTradesByOrderId).mockResolvedValue([FILL]);
   vi.mocked(findPairById).mockResolvedValue(PAIR as any);
-  vi.mocked(evaluateAccountGovernance).mockResolvedValue({ ok: true });
-  vi.mocked(evaluateOrderRisk).mockResolvedValue({ ok: true, code: "PASS", reason: "All checks passed" });
-  vi.mocked(recordOrderAttempt).mockResolvedValue(undefined);
-  vi.mocked(checkPriceDislocation).mockResolvedValue(undefined);
   vi.mocked(computeFee).mockReturnValue({ feeAmount: "25.00000000", feeAssetId: "usd-id", role: "TAKER" });
   vi.mocked(applyFillToPositionTx).mockResolvedValue({} as any);
   vi.mocked(insertOutboxEventTx).mockResolvedValue(undefined);
@@ -235,94 +224,6 @@ describe("placeOrderWithSnapshot", () => {
 
       expect(result.fromIdempotencyCache).toBe(true);
       expect(result.order.id).toBe("winner-order");
-    });
-  });
-
-  /* ── governance + risk checks ─────────────────────────── */
-
-  describe("governance + risk checks", () => {
-
-    it("rejects order when evaluateAccountGovernance returns !ok", async () => {
-      vi.mocked(evaluateAccountGovernance).mockResolvedValue({
-        ok: false,
-        code: "ACCOUNT_QUARANTINED",
-        message: "Account is quarantined",
-      });
-
-      await expect(
-        placeOrderWithSnapshot("user-1", BODY),
-      ).rejects.toThrow(AppError);
-
-      await expect(
-        placeOrderWithSnapshot("user-1", BODY),
-      ).rejects.toMatchObject({ code: "governance_check_failed" });
-    });
-
-    it("rejects order when evaluateOrderRisk returns !ok", async () => {
-      vi.mocked(evaluateOrderRisk).mockResolvedValue({
-        ok: false,
-        code: "MAX_NOTIONAL_EXCEEDED",
-        reason: "Order exceeds max notional",
-        details: { max: "100000", actual: "150000" },
-      });
-
-      await expect(
-        placeOrderWithSnapshot("user-1", BODY),
-      ).rejects.toThrow(AppError);
-
-      await expect(
-        placeOrderWithSnapshot("user-1", BODY),
-      ).rejects.toMatchObject({ code: "risk_check_failed" });
-    });
-
-    it("passes governance code and risk details in error response", async () => {
-      vi.mocked(evaluateOrderRisk).mockResolvedValue({
-        ok: false,
-        code: "BREAKER_OPEN",
-        reason: "Circuit breaker is open",
-        details: { breakerKey: "RATE_ABUSE:USER:user-1" },
-      });
-
-      try {
-        await placeOrderWithSnapshot("user-1", BODY);
-        expect.fail("Should have thrown");
-      } catch (err: any) {
-        expect(err).toBeInstanceOf(AppError);
-        expect(err.code).toBe("risk_check_failed");
-        expect(err.details).toMatchObject({
-          code: "BREAKER_OPEN",
-          reason: "Circuit breaker is open",
-        });
-      }
-    });
-  });
-
-  /* ── price dislocation ────────────────────────────────── */
-
-  describe("price dislocation", () => {
-
-    it("calls checkPriceDislocation with snapshot and DB prices", async () => {
-      await placeOrderWithSnapshot("user-1", BODY);
-
-      expect(checkPriceDislocation).toHaveBeenCalledWith(
-        expect.anything(), // client
-        "pair-1",
-        SNAPSHOT.last,
-        "50000.00000000",
-      );
-    });
-
-    it("skips checkPriceDislocation when DB has no last_price", async () => {
-      vi.mocked(txWithEvents).mockImplementation(async (fn: any) => {
-        const mockClient = {
-          query: vi.fn().mockResolvedValue({ rows: [{ last_price: null }] }),
-        };
-        return fn(mockClient, capturedEvents);
-      });
-
-      await placeOrderWithSnapshot("user-1", BODY);
-
-      expect(checkPriceDislocation).not.toHaveBeenCalled();
     });
   });
 

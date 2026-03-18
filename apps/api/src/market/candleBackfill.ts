@@ -76,7 +76,12 @@ async function insertCandleBatch(
 
     const sql = `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
                  VALUES ${values.join(", ")}
-                 ON CONFLICT (pair_id, timeframe, ts) DO NOTHING`;
+                 ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
+                     open = EXCLUDED.open,
+                     high = EXCLUDED.high,
+                     low = EXCLUDED.low,
+                     close = EXCLUDED.close,
+                     volume = EXCLUDED.volume`;
 
     const result = await pool.query(sql, params);
     return result.rowCount ?? 0;

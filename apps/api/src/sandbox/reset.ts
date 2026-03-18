@@ -48,7 +48,6 @@ async function reset(): Promise<void> {
     await client.query("TRUNCATE idempotency_keys CASCADE");
     await client.query("TRUNCATE replay_sessions CASCADE");
     await client.query("TRUNCATE ledger_entries CASCADE");
-    await client.query("TRUNCATE circuit_breakers CASCADE");
 
     // Reset wallet balances to zero (wallets themselves preserved)
     await client.query("UPDATE wallets SET balance = '0.00000000', reserved = '0.00000000'");

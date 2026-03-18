@@ -16,6 +16,7 @@ import { config } from "./config";
 import { pool } from "./db/pool";
 import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
+import { stopCoinbaseFeed } from "./feeds/coinbaseWs";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
@@ -24,6 +25,13 @@ import { initRedis, shutdownRedis } from "./db/redis";
 import { startEventBus, stopEventBus } from "./events/eventBus";
 import { initRedisQueue } from "./queue/redisQueue";
 import { initEmailTransport } from "./email/emailTransport";
+import { initPerpetualBasis, stopPerpetualBasis } from "./market/perpetualBasisService";
+import { initOrderBookAggregator, stopOrderBookAggregator } from "./market/orderBookAggregator";
+import { initMacroCorrelation, stopMacroCorrelation } from "./market/macroCorrelationService";
+import { initOptionsGamma, stopOptionsGamma } from "./market/optionsGammaService";
+import { initOnChainFlow, stopOnChainFlow } from "./market/onChainFlowService";
+import { initRegimeClassifier, stopRegimeClassifier } from "./market/regimeClassifier";
+import { initOutcomeTracker, stopOutcomeTracker } from "./market/outcomeTracker";
 
 function getGitCommit(): string {
   try {
@@ -70,6 +78,10 @@ async function start() {
     nodeEnv: config.nodeEnv,
     instanceId: config.instanceId,
     instanceRole: config.instanceRole,
+    devMode: {
+      disableRateLimit: config.disableRateLimit,
+      disableJobRunner: config.disableJobRunner,
+    },
   });
 
   // ── Start orchestrator (leader election for background jobs) ──
@@ -82,6 +94,14 @@ async function start() {
     await stopEventBus();
     stopTriggerEngine();
     stopKrakenFeed();
+    stopCoinbaseFeed();
+    stopPerpetualBasis();
+    stopOrderBookAggregator();
+    stopMacroCorrelation();
+    stopOptionsGamma();
+    stopOnChainFlow();
+    stopRegimeClassifier();
+    stopOutcomeTracker();
     await shutdownQueues(10_000);
     try {
       await app.close();
@@ -112,6 +132,21 @@ async function start() {
   const host = config.host;
 
   await app.listen({ port, host });
+
+  // ── Start market data polling ──
+  initPerpetualBasis();
+  initOrderBookAggregator();
+  initMacroCorrelation();
+  initOptionsGamma();
+  initOnChainFlow();
+  initRegimeClassifier();
+
+  // Phase 4 adaptive learning — non-critical, must never crash core server
+  try {
+    initOutcomeTracker();
+  } catch (err) {
+    console.warn("[Phase4] OutcomeTracker failed to init:", (err as Error).message);
+  }
 }
 
 start().catch((err) => {

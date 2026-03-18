@@ -53,7 +53,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
             const q = parsed.success ? parsed.data : {};
 
             const summary = await getPortfolioSummary(actor.id, q.pairId, q.competitionId);
-            return reply.send(summary);
+            return reply.send({ summary });
         } catch (err) {
             return v1HandleError(reply, err);
         }
@@ -79,7 +79,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
                 200: {
                     type: "object",
                     properties: {
-                        data: { type: "array", items: { type: "object", additionalProperties: true } },
+                        snapshots: { type: "array", items: { type: "object", additionalProperties: true } },
                         nextCursor: { type: "string", nullable: true },
                     },
                 },
@@ -101,7 +101,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
                 ts: Number(row.ts),
             }));
 
-            return reply.send(page);
+            return reply.send({ snapshots: page.data, nextCursor: page.nextCursor });
         } catch (err) {
             return v1HandleError(reply, err);
         }
@@ -131,7 +131,7 @@ const v1Portfolio: FastifyPluginAsync = async (app) => {
             const q = parsed.success ? parsed.data : {};
 
             const perf = await getPerformance(actor.id, q.from, q.to, q.competitionId);
-            return reply.send(perf);
+            return reply.send({ performance: perf });
         } catch (err) {
             return v1HandleError(reply, err);
         }
