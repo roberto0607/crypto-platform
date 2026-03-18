@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd ../.. && pnpm install && pnpm --filter api build"
+buildCommand = "npm install -g pnpm && pnpm install && pnpm --filter api build"
 
 [deploy]
 startCommand = "node dist/server.js"
