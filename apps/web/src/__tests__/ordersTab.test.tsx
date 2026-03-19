@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
@@ -48,7 +48,7 @@ import TradingPage from "@/pages/TradingPage";
 import type { Order, TradingPair } from "@/types/api";
 
 // ── Test fixtures ──
-const PAIR: TradingPair = {
+const PAIR = {
   id: "pair-1",
   base_asset_id: "btc-asset",
   quote_asset_id: "usd-asset",
@@ -59,9 +59,11 @@ const PAIR: TradingPair = {
   maker_fee_bps: 5,
   min_qty: "0.0001",
   tick_size: "0.01",
+  fee_bps: 10,
+  trading_enabled: true,
   created_at: "",
   updated_at: "",
-} as TradingPair;
+} as unknown as TradingPair;
 
 function makeOrder(overrides: Partial<Order>): Order {
   return {

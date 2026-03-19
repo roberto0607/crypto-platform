@@ -290,8 +290,6 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                     if (!ex) days.set(day, { high: ic.high, low: ic.low });
                     else { ex.high = Math.max(ex.high, ic.high); ex.low = Math.min(ex.low, ic.low); }
                 }
-                const sortedDays = [...days.keys()].sort((a, b) => a - b);
-                const prevDayKey = sortedDays[sortedDays.length - 2];
                 const lastCandle = candles[candles.length - 1];
                 const price = lastCandle ? parseFloat(lastCandle.close) : 0;
 
