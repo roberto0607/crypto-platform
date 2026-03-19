@@ -17,7 +17,7 @@ COPY migrations/ ./migrations/
 # Build TypeScript
 RUN pnpm build
 
-# Runtime
+# Runtime — tsx resolves extensionless ESM imports that Node rejects
 ENV NODE_ENV=production
 EXPOSE 3001
-CMD ["node", "dist/server.js"]
+CMD ["npx", "tsx", "dist/server.js"]
