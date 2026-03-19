@@ -1,7 +1,0 @@
-[build]
-builder = "nixpacks"
-buildCommand = "cd ../.. && pnpm install && pnpm --filter web build"
-
-[deploy]
-startCommand = "npx serve dist -p $PORT"
-restartPolicyType = "ON_FAILURE"
