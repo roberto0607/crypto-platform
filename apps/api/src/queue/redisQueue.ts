@@ -179,16 +179,16 @@ async function startConsumer(pairId: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
 
-  // Try to acquire per-pair lock
-  const locked = await redis.set(lockKeyName(pairId), config.instanceId, "EX", LOCK_TTL_S, "NX");
-  if (!locked) return; // Another instance holds the lock
-
-  // Create consumer group (ignore if exists)
+  // Ensure stream + consumer group exist before anything else
   try {
     await redis.xgroup("CREATE", streamKey(pairId), GROUP_NAME, "0", "MKSTREAM");
   } catch {
-    // Group already exists
+    // Group already exists — expected
   }
+
+  // Try to acquire per-pair lock
+  const locked = await redis.set(lockKeyName(pairId), config.instanceId, "EX", LOCK_TTL_S, "NX");
+  if (!locked) return; // Another instance holds the lock
 
   const state: ConsumerState = {
     stopped: false,
