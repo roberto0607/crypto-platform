@@ -77,9 +77,46 @@ const RELEASE_LOCK_SCRIPT = `
 
 // ── Result listener ──
 
+/**
+ * Flush stale messages from all queue streams.
+ * Called on boot to clear orphaned orders from previous crashed deployments.
+ * Also available via admin endpoint for manual recovery.
+ */
+export async function flushStaleStreams(): Promise<number> {
+  const redis = getRedis();
+  if (!redis) return 0;
+
+  // Scan for all queue:* streams
+  let cursor = "0";
+  let totalFlushed = 0;
+
+  do {
+    const [nextCursor, keys] = await redis.scan(cursor, "MATCH", "queue:*", "COUNT", "100");
+    cursor = nextCursor;
+
+    for (const key of keys) {
+      const len = await redis.xlen(key);
+      if (len > 0) {
+        // XTRIM to 0 — removes all messages
+        await redis.xtrim(key, "MAXLEN", 0);
+        logger.info({ stream: key, flushed: len }, "flushed_stale_queue_stream");
+        totalFlushed += len;
+      }
+    }
+  } while (cursor !== "0");
+
+  if (totalFlushed > 0) {
+    logger.info({ totalFlushed }, "stale_queue_flush_complete");
+  }
+  return totalFlushed;
+}
+
 export async function initRedisQueue(): Promise<void> {
   const sub = getRedisSub();
   if (!sub) return;
+
+  // Flush stale messages from previous deployments on boot
+  await flushStaleStreams();
 
   const channel = `cp:results:${config.instanceId}`;
 

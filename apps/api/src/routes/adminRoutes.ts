@@ -12,6 +12,7 @@ import { AppError } from "../errors/AppError";
 import { handleError } from "../http/handleError";
 import { pool } from "../db/pool";
 import { getQueueStats } from "../queue/queueManager";
+import { flushStaleStreams } from "../queue/redisQueue";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -301,6 +302,12 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get("/queue", { schema: { tags: ["Admin"], summary: "Queue statistics", description: "Returns order queue depth per trading pair. Requires ADMIN role.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, queues: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
     const queues = await getQueueStats();
     return reply.send({ ok: true, queues });
+  });
+
+  // POST /admin/queue/flush — flush all stale order queue streams
+  app.post("/queue/flush", { schema: { tags: ["Admin"], summary: "Flush stale queue streams", description: "Trims all Redis order queue streams to 0. Use after failed deployments.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, flushed: { type: "number" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (_req, reply) => {
+    const flushed = await flushStaleStreams();
+    return reply.send({ ok: true, flushed });
   });
 };
 
