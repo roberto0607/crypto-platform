@@ -229,17 +229,7 @@ async function ensureBotSetup(ctx: JobContext): Promise<void> {
         }
     }
 
-    // 3. Set high quota limits so burst detection doesn't suspend the bot
-    await pool.query(
-        `INSERT INTO user_quotas (user_id, max_orders_per_min, max_open_orders, max_daily_orders, trading_enabled)
-         VALUES ($1, 10000, 500, 100000, true)
-         ON CONFLICT (user_id) DO UPDATE SET
-             max_orders_per_min = 10000,
-             max_open_orders = 500,
-             max_daily_orders = 100000,
-             trading_enabled = true`,
-        [BOT_USER_ID],
-    );
+    // 3. user_quotas table was removed in migration 059 — no-op
 
     ctx.logger.info("market_maker_bot_initialized");
 }

@@ -124,6 +124,13 @@ export async function enqueueRedis(
   const timeout = timeoutMs ?? config.queueTimeoutMs;
   const key = streamKey(pairId);
 
+  // Ensure consumer group exists (idempotent — ignore if already created)
+  try {
+    await redis.xgroup("CREATE", key, GROUP_NAME, "0", "MKSTREAM");
+  } catch {
+    // Group already exists — expected
+  }
+
   // Check queue depth
   const depth = await redis.xlen(key);
   if (depth >= config.maxQueueDepth) {

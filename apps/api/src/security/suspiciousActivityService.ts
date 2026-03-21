@@ -97,10 +97,11 @@ export async function recordCancelReplace(userId: string): Promise<boolean> {
  * Disable trading for a user flagged as suspicious.
  */
 export async function flagSuspiciousUser(userId: string, reason: string): Promise<void> {
+  // user_quotas table was removed in migration 059 — disable via account_limits instead
   await pool.query(
-    `UPDATE user_quotas SET trading_enabled = false WHERE user_id = $1`,
+    `UPDATE account_limits SET account_status = 'SUSPENDED' WHERE user_id = $1`,
     [userId],
-  );
+  ).catch(() => { /* account_limits row may not exist */ });
   suspiciousActivityTotal.inc();
   await auditLog({
     actorUserId: userId,
