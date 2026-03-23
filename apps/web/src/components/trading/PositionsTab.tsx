@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { getPositions, getPnlSummary } from "@/api/endpoints/analytics";
+import { placeOrder } from "@/api/endpoints/trading";
 import { useAppStore } from "@/stores/appStore";
 import type { Position, PnlSummary } from "@/types/api";
 import { formatUsd, formatDecimal } from "@/lib/decimal";
@@ -25,6 +26,8 @@ export default function PositionsTab() {
   const [filterPairId, setFilterPairId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [closingPairId, setClosingPairId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,7 +54,27 @@ export default function PositionsTab() {
     return () => {
       cancelled = true;
     };
-  }, [filterPairId]);
+  }, [filterPairId, refreshKey]);
+
+  const handleClosePosition = async (pos: Position) => {
+    const qty = parseFloat(pos.base_qty);
+    if (qty === 0) return;
+    const side = qty > 0 ? "SELL" : "BUY";
+    const absQty = Math.abs(qty).toFixed(8);
+
+    setClosingPairId(pos.pair_id);
+    try {
+      await placeOrder(
+        { pairId: pos.pair_id, side, type: "MARKET", qty: absQty },
+        crypto.randomUUID(),
+      );
+      setRefreshKey((k) => k + 1);
+    } catch {
+      setError("Failed to close position");
+    } finally {
+      setClosingPairId(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -98,7 +121,8 @@ export default function PositionsTab() {
                     <th className="pb-2 pr-4 text-right">Unrealized PnL</th>
                     <th className="pb-2 pr-4 text-right">Realized PnL</th>
                     <th className="pb-2 pr-4 text-right">Fees</th>
-                    <th className="pb-2 text-right">Last Updated</th>
+                    <th className="pb-2 pr-4 text-right">Last Updated</th>
+                    <th className="pb-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -134,8 +158,19 @@ export default function PositionsTab() {
                         <td className="py-2 pr-4 text-right">
                           {formatUsd(pos.fees_paid_quote)}
                         </td>
-                        <td className="py-2 text-right text-xs text-gray-500">
+                        <td className="py-2 pr-4 text-right text-xs text-gray-500">
                           {format(new Date(pos.updated_at), "MMM d HH:mm")}
+                        </td>
+                        <td className="py-2 text-right">
+                          <button
+                            onClick={() => handleClosePosition(pos)}
+                            disabled={closingPairId === pos.pair_id}
+                            className="rounded bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {closingPairId === pos.pair_id
+                              ? "Closing..."
+                              : `Close ${parseFloat(pos.base_qty) > 0 ? "Long" : "Short"}`}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -162,9 +197,10 @@ export default function PositionsTab() {
                       <td className="pt-3 pr-4 text-right">
                         {formatUsd(pnlSummary.total_fees_paid)}
                       </td>
-                      <td className={`pt-3 text-right ${pnlColor(pnlSummary.net_pnl)}`}>
+                      <td className={`pt-3 pr-4 text-right ${pnlColor(pnlSummary.net_pnl)}`}>
                         Net: {formatUsd(pnlSummary.net_pnl)}
                       </td>
+                      <td />
                     </tr>
                   </tfoot>
                 )}
