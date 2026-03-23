@@ -704,6 +704,7 @@ function OrderPanel({
   const [pct, setPct] = useState<number | null>(null);
   const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [closing, setClosing] = useState(false);
 
   // Clear stale error state on pair change or remount
   useEffect(() => {
@@ -984,6 +985,38 @@ function OrderPanel({
               {hasPosition ? (pnlValue >= 0 ? "+" : "") + formatUsd(String(pnlValue.toFixed(2))) : "\u2014"}
             </span>
           </div>
+          {hasPosition && (
+            <button
+              disabled={closing}
+              onClick={async () => {
+                setClosing(true);
+                try {
+                  const closeSide = posQty > 0 ? "SELL" : "BUY";
+                  await placeOrder(
+                    { pairId: pair.id, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8) },
+                    crypto.randomUUID(),
+                  );
+                  onOrderFilled();
+                } catch { /* handled by position refresh */ }
+                setClosing(false);
+              }}
+              style={{
+                width: "100%",
+                marginTop: 8,
+                padding: "8px 0",
+                background: "rgba(255,59,59,0.15)",
+                border: "1px solid rgba(255,59,59,0.4)",
+                color: "#ff3b3b",
+                fontSize: 10,
+                fontFamily: "var(--bebas)",
+                letterSpacing: 3,
+                cursor: closing ? "not-allowed" : "pointer",
+                opacity: closing ? 0.5 : 1,
+              }}
+            >
+              {closing ? "CLOSING..." : `CLOSE ${posDirection}`}
+            </button>
+          )}
         </div>
       </div>
     </>
