@@ -55,6 +55,16 @@ function streamKey(pairId: string): string {
   return `queue:${pairId}`;
 }
 
+/**
+ * ioredis keyPrefix ("cp:") is auto-applied to most commands (XADD, XLEN,
+ * XTRIM, XREADGROUP, XACK) but NOT to subcommand-style commands where the
+ * key sits at position 2+ (XGROUP CREATE key, XINFO GROUPS key).
+ * Use this for those commands so the key matches the prefixed stream.
+ */
+function rawStreamKey(pairId: string): string {
+  return `cp:${streamKey(pairId)}`;
+}
+
 function lockKeyName(pairId: string): string {
   return `pairlock:${pairId}`;
 }
@@ -162,15 +172,17 @@ export async function enqueueRedis(
   const key = streamKey(pairId);
 
   // Ensure consumer group exists (idempotent — ignore if already created)
+  // NOTE: XGROUP does not get ioredis keyPrefix — use rawStreamKey
+  const rawKey = rawStreamKey(pairId);
   try {
-    await redis.xgroup("CREATE", key, GROUP_NAME, "0", "MKSTREAM");
-    logger.debug({ key, group: GROUP_NAME }, "xgroup_created_in_enqueue");
+    await redis.xgroup("CREATE", rawKey, GROUP_NAME, "0", "MKSTREAM");
+    logger.debug({ rawKey, group: GROUP_NAME }, "xgroup_created_in_enqueue");
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("BUSYGROUP")) {
-      logger.debug({ key, group: GROUP_NAME }, "xgroup_already_exists_in_enqueue");
+      logger.debug({ rawKey, group: GROUP_NAME }, "xgroup_already_exists_in_enqueue");
     } else {
-      logger.error({ err, key, group: GROUP_NAME }, "xgroup_create_failed_in_enqueue");
+      logger.error({ err, rawKey, group: GROUP_NAME }, "xgroup_create_failed_in_enqueue");
       throw err; // Non-BUSYGROUP error — do not swallow
     }
   }
@@ -224,26 +236,28 @@ async function startConsumer(pairId: string): Promise<void> {
   if (!redis) return;
 
   // Ensure stream + consumer group exist before anything else
+  // NOTE: XGROUP/XINFO do not get ioredis keyPrefix — use rawStreamKey
   const sk = streamKey(pairId);
+  const rawKey = rawStreamKey(pairId);
   try {
-    await redis.xgroup("CREATE", sk, GROUP_NAME, "0", "MKSTREAM");
-    logger.info({ pairId, streamKey: sk, group: GROUP_NAME }, "xgroup_created_in_startConsumer");
+    await redis.xgroup("CREATE", rawKey, GROUP_NAME, "0", "MKSTREAM");
+    logger.info({ pairId, rawKey, group: GROUP_NAME }, "xgroup_created_in_startConsumer");
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("BUSYGROUP")) {
-      logger.debug({ pairId, streamKey: sk }, "xgroup_already_exists_in_startConsumer");
+      logger.debug({ pairId, rawKey }, "xgroup_already_exists_in_startConsumer");
     } else {
-      logger.error({ err, pairId, streamKey: sk, group: GROUP_NAME }, "xgroup_create_failed_in_startConsumer — consumer will NOT start");
+      logger.error({ err, pairId, rawKey, group: GROUP_NAME }, "xgroup_create_failed_in_startConsumer — consumer will NOT start");
       return; // Cannot consume without a group
     }
   }
 
-  // Verify group actually exists before proceeding (catches keyPrefix mismatch)
+  // Verify group actually exists before proceeding
   try {
-    const groups = await redis.xinfo("GROUPS", sk) as unknown[];
-    logger.info({ pairId, streamKey: sk, groupCount: groups.length }, "xinfo_groups_before_lock");
+    const groups = await redis.xinfo("GROUPS", rawKey) as unknown[];
+    logger.info({ pairId, rawKey, groupCount: groups.length }, "xinfo_groups_before_lock");
   } catch (err) {
-    logger.error({ err, pairId, streamKey: sk }, "xinfo_groups_failed — stream may not exist at expected key");
+    logger.error({ err, pairId, rawKey }, "xinfo_groups_failed — stream may not exist at expected key");
   }
 
   // Try to acquire per-pair lock
@@ -270,7 +284,7 @@ async function startConsumer(pairId: string): Promise<void> {
   consumers.set(pairId, state);
 
   try {
-    logger.info({ pairId, streamKey: sk, group: GROUP_NAME, consumer: config.instanceId }, "consumer_loop_starting");
+    logger.info({ pairId, rawKey, group: GROUP_NAME, consumer: config.instanceId }, "consumer_loop_starting");
     while (!state.stopped && accepting) {
       try {
         const entries = await redis.xreadgroup(
@@ -291,15 +305,15 @@ async function startConsumer(pairId: string): Promise<void> {
         if (state.stopped || !accepting) break;
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("NOGROUP")) {
-          logger.error({ err, pairId, streamKey: sk, group: GROUP_NAME }, "NOGROUP in xreadgroup — group missing despite prior xgroup create");
-          // Attempt recovery: re-create group
+          logger.error({ err, pairId, rawKey, group: GROUP_NAME }, "NOGROUP in xreadgroup — group missing despite prior xgroup create");
+          // Attempt recovery: re-create group using raw key (no ioredis prefix)
           try {
-            await redis.xgroup("CREATE", sk, GROUP_NAME, "0", "MKSTREAM");
-            logger.info({ pairId, streamKey: sk }, "xgroup_recreated_after_nogroup");
+            await redis.xgroup("CREATE", rawKey, GROUP_NAME, "0", "MKSTREAM");
+            logger.info({ pairId, rawKey }, "xgroup_recreated_after_nogroup");
           } catch (recreateErr: unknown) {
             const rm = recreateErr instanceof Error ? recreateErr.message : String(recreateErr);
             if (!rm.includes("BUSYGROUP")) {
-              logger.error({ err: recreateErr, pairId, streamKey: sk }, "xgroup_recreate_also_failed");
+              logger.error({ err: recreateErr, pairId, rawKey }, "xgroup_recreate_also_failed");
               break; // Cannot recover
             }
           }
