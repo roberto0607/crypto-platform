@@ -69,7 +69,7 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
                         enum: ["1m", "5m", "15m", "1h", "4h", "1d"],
                         default: "1h",
                     },
-                    limit: { type: "integer", minimum: 1, maximum: 500, default: 200 },
+                    limit: { type: "integer", minimum: 1, maximum: 5000, default: 200 },
                     before: { type: "string", description: "ISO timestamp — fetch candles before this time" },
                 },
             },
@@ -103,7 +103,7 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
             const query = req.query as { timeframe?: string; limit?: number; before?: string };
 
             const timeframe = query.timeframe ?? "1h";
-            const limit = Math.min(query.limit ?? 200, 500);
+            const limit = Math.min(query.limit ?? 200, 5000);
 
             let sql = `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
                        FROM candles

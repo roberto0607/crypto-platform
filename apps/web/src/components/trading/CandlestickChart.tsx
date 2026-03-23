@@ -123,6 +123,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const priceLinesRef = useRef<IPriceLine[]>([]);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
+    const fetchingOlderRef = useRef(false);
+    const hasMoreRef = useRef(true);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
@@ -358,6 +360,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         if (!selectedPairId || !seriesRef.current) return;
 
         setLoading(true);
+        hasMoreRef.current = true;
+        fetchingOlderRef.current = false;
         try {
             const candleRes = await getCandles(selectedPairId, { timeframe, limit: 300 });
 
@@ -379,6 +383,70 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     useEffect(() => {
         fetchCandles();
     }, [fetchCandles]);
+
+    // Scroll-back: lazy-load older candles when the user scrolls near the left edge
+    useEffect(() => {
+        const chart = chartRef.current;
+        if (!chart) return;
+
+        const handler = () => {
+            if (fetchingOlderRef.current || !hasMoreRef.current || !selectedPairId) return;
+
+            const logicalRange = chart.timeScale().getVisibleLogicalRange();
+            if (!logicalRange) return;
+
+            // Trigger when the user has scrolled within 10 bars of the left edge
+            if (logicalRange.from > 10) return;
+
+            fetchingOlderRef.current = true;
+
+            const oldest = rawCandlesRef.current[0];
+            if (!oldest) {
+                fetchingOlderRef.current = false;
+                return;
+            }
+
+            getCandles(selectedPairId, {
+                timeframe,
+                limit: 500,
+                before: oldest.ts,
+            })
+                .then((res) => {
+                    const olderCandles = res.data.candles;
+                    if (olderCandles.length === 0) {
+                        hasMoreRef.current = false;
+                        return;
+                    }
+
+                    // Prepend to raw candles
+                    rawCandlesRef.current = [...olderCandles, ...rawCandlesRef.current];
+
+                    // Rebuild full series data (setData preserves scroll position)
+                    const allLW = rawCandlesRef.current.map(candleToLW);
+                    // Re-append live candle if present
+                    if (liveCandleRef.current) {
+                        allLW.push(liveCandleRef.current);
+                    }
+                    seriesRef.current?.setData(allLW);
+
+                    if (olderCandles.length < 500) {
+                        hasMoreRef.current = false;
+                    }
+                })
+                .catch(() => {
+                    // Non-fatal — stop trying on error
+                    hasMoreRef.current = false;
+                })
+                .finally(() => {
+                    fetchingOlderRef.current = false;
+                });
+        };
+
+        chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        return () => {
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+        };
+    }, [selectedPairId, timeframe]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {
