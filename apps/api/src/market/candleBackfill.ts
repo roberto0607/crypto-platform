@@ -1,17 +1,20 @@
 /**
- * On-boot historical candle backfill from Kraken REST API.
+ * On-boot historical candle backfill from Coinbase Advanced Trade REST API.
  *
- * Fetches complete OHLC history for all active trading pairs and upserts into
- * the `candles` table. Runs once on startup to fill gaps from server downtime.
+ * Fetches the last 7 days of OHLC data for all active trading pairs and upserts
+ * into the `candles` table. Runs once on startup to fill gaps from server downtime.
  *
- * Paginates through all available history per timeframe (same as the standalone
- * CLI script). Higher timeframes fetch full history; lower timeframes are
- * time-capped to what Kraken retains (7d for 1m, 30d for 5m, etc.).
- *
- * Uses ON CONFLICT DO NOTHING — never overwrites live candle data.
+ * Uses ON CONFLICT DO UPDATE — overwrites stale candle data with fresh exchange data.
+ * The 4h timeframe is rolled up from 1h data since Coinbase has no native 4h.
  */
 import { pool } from "../db/pool.js";
-import { fetchOHLC, sleep, REST_PAIR_MAP } from "./krakenRest.js";
+import {
+    fetchCoinbaseCandles,
+    sleep,
+    CB_PAIR_MAP,
+    TF_TO_GRANULARITY,
+    type CoinbaseGranularity,
+} from "../marketData/coinbaseRest.js";
 import { listActivePairs } from "../trading/pairRepo.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 
@@ -19,41 +22,31 @@ const logger = rootLogger.child({ module: "candleBackfill" });
 
 interface TimeframePlan {
     ourTf: string;
-    krakenInterval: number;
-    sinceCap: number; // 0 = full history, or Unix timestamp lower bound
+    granularity: CoinbaseGranularity;
+    candleSeconds: number;
+    lookbackSeconds: number;
 }
 
-function buildTimeframePlans(): TimeframePlan[] {
-    const TWO_YEARS_AGO = Math.floor(Date.now() / 1000) - 2 * 365 * 86400;
-    const THIRTY_DAYS_AGO = Math.floor(Date.now() / 1000) - 30 * 86400;
-    const SEVEN_DAYS_AGO = Math.floor(Date.now() / 1000) - 7 * 86400;
+const SEVEN_DAYS = 7 * 86400;
 
+function buildTimeframePlans(): TimeframePlan[] {
     return [
-        { ourTf: "1d",  krakenInterval: 1440, sinceCap: 0 },
-        { ourTf: "4h",  krakenInterval: 240,  sinceCap: 0 },
-        { ourTf: "1h",  krakenInterval: 60,   sinceCap: 0 },
-        { ourTf: "15m", krakenInterval: 15,   sinceCap: TWO_YEARS_AGO },
-        { ourTf: "5m",  krakenInterval: 5,    sinceCap: THIRTY_DAYS_AGO },
-        { ourTf: "1m",  krakenInterval: 1,    sinceCap: SEVEN_DAYS_AGO },
+        { ourTf: "1d",  ...TF_TO_GRANULARITY["1d"]!,  lookbackSeconds: SEVEN_DAYS },
+        { ourTf: "1h",  ...TF_TO_GRANULARITY["1h"]!,  lookbackSeconds: SEVEN_DAYS },
+        { ourTf: "15m", ...TF_TO_GRANULARITY["15m"]!, lookbackSeconds: SEVEN_DAYS },
+        { ourTf: "5m",  ...TF_TO_GRANULARITY["5m"]!,  lookbackSeconds: SEVEN_DAYS },
+        { ourTf: "1m",  ...TF_TO_GRANULARITY["1m"]!,  lookbackSeconds: SEVEN_DAYS },
     ];
 }
 
-const RATE_LIMIT_MS = 1500;
+const MAX_CANDLES_PER_REQUEST = 300;
+const RATE_LIMIT_MS = 120;
 const MAX_RETRIES = 3;
 
 export interface BackfillResult {
     totalInserted: number;
     totalErrors: number;
     durationMs: number;
-}
-
-async function getLatestCandleTs(pairId: string, timeframe: string): Promise<number> {
-    const { rows } = await pool.query<{ ts: string }>(
-        `SELECT ts FROM candles WHERE pair_id = $1 AND timeframe = $2 ORDER BY ts DESC LIMIT 1`,
-        [pairId, timeframe],
-    );
-    if (rows.length === 0) return 0;
-    return Math.floor(new Date(rows[0]!.ts).getTime() / 1000);
 }
 
 async function insertCandleBatch(
@@ -88,14 +81,15 @@ async function insertCandleBatch(
 }
 
 async function fetchWithRetry(
-    krakenPair: string,
-    interval: number,
-    since: number,
-): ReturnType<typeof fetchOHLC> {
+    productId: string,
+    granularity: CoinbaseGranularity,
+    start: number,
+    end: number,
+): ReturnType<typeof fetchCoinbaseCandles> {
     let lastErr: Error | undefined;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            return await fetchOHLC(krakenPair, interval, since);
+            return await fetchCoinbaseCandles(productId, granularity, start, end);
         } catch (err) {
             lastErr = err as Error;
             if (attempt < MAX_RETRIES) {
@@ -109,59 +103,40 @@ async function fetchWithRetry(
 }
 
 /**
- * Backfill a single (pair, timeframe) combination.
- * Paginates through all available Kraken history until caught up.
+ * Backfill a single (pair, timeframe) combination for the last 7 days.
  */
 async function backfillPairTimeframe(
     pairId: string,
     pairSymbol: string,
-    krakenPair: string,
+    productId: string,
     plan: TimeframePlan,
 ): Promise<number> {
-    // Always start from sinceCap to fill any gaps from server downtime.
-    // ON CONFLICT DO NOTHING makes re-fetching existing candles harmless.
-    // For full-history timeframes (sinceCap=0), look back from the latest
-    // existing candle minus a buffer to catch downtime gaps.
-    const latestExisting = await getLatestCandleTs(pairId, plan.ourTf);
-    let since: number;
-    if (plan.sinceCap > 0) {
-        // Capped timeframes (1m/5m/15m): always scan the full retention window
-        since = plan.sinceCap;
-    } else if (latestExisting > 0) {
-        // Full-history timeframes (1h/4h/1d): look back 7 days from latest
-        // candle to fill any gaps from recent downtime
-        since = latestExisting - 7 * 86400;
-    } else {
-        // No existing candles at all — fetch full history
-        since = 0;
-    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const start = nowSec - plan.lookbackSeconds;
+    const currentBucket = Math.floor(nowSec / plan.candleSeconds) * plan.candleSeconds;
 
     let totalInserted = 0;
+    let cursor = start;
     let page = 0;
 
-    while (true) {
+    while (cursor < nowSec) {
         page++;
-        const result = await fetchWithRetry(krakenPair, plan.krakenInterval, since);
+        const pageEnd = Math.min(cursor + MAX_CANDLES_PER_REQUEST * plan.candleSeconds, nowSec);
 
-        // Drop the last entry (current in-progress candle)
-        const completed = result.candles.slice(0, -1);
+        const candles = await fetchWithRetry(productId, plan.granularity, cursor, pageEnd);
+        const completed = candles.filter((c) => c.time < currentBucket);
 
-        if (completed.length === 0) break;
+        if (completed.length > 0) {
+            const inserted = await insertCandleBatch(pairId, plan.ourTf, completed);
+            totalInserted += inserted;
 
-        const inserted = await insertCandleBatch(pairId, plan.ourTf, completed);
-        totalInserted += inserted;
+            logger.info(
+                { pair: pairSymbol, tf: plan.ourTf, page, fetched: completed.length, inserted },
+                "backfill_page_done",
+            );
+        }
 
-        logger.info(
-            { pair: pairSymbol, tf: plan.ourTf, page, fetched: completed.length, inserted },
-            "backfill_page_done",
-        );
-
-        // If we got fewer than 719 entries (720 minus the in-progress one), we've caught up
-        if (completed.length < 719) break;
-
-        // Advance cursor to next page
-        since = result.last;
-
+        cursor = pageEnd;
         await sleep(RATE_LIMIT_MS);
     }
 
@@ -176,9 +151,43 @@ async function backfillPairTimeframe(
 }
 
 /**
+ * Roll up 4h candles from 1h data for the last 7 days.
+ */
+async function rollup4hFromHourly(pairId: string): Promise<number> {
+    const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS * 1000).toISOString();
+
+    const result = await pool.query(
+        `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+         SELECT
+             pair_id,
+             '4h',
+             date_trunc('day', ts) + (FLOOR(EXTRACT(HOUR FROM ts) / 4) * INTERVAL '4 hours') AS bucket,
+             (ARRAY_AGG(open ORDER BY ts ASC))[1],
+             MAX(high),
+             MIN(low),
+             (ARRAY_AGG(close ORDER BY ts DESC))[1],
+             SUM(volume)
+         FROM candles
+         WHERE pair_id = $1
+           AND timeframe = '1h'
+           AND ts >= $2
+         GROUP BY pair_id, bucket
+         HAVING COUNT(*) >= 3
+         ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
+             open = EXCLUDED.open,
+             high = EXCLUDED.high,
+             low = EXCLUDED.low,
+             close = EXCLUDED.close,
+             volume = EXCLUDED.volume`,
+        [pairId, sevenDaysAgo],
+    );
+
+    return result.rowCount ?? 0;
+}
+
+/**
  * Run the candle backfill for all active pairs and timeframes.
- * Paginates through complete Kraken history for each (pair, timeframe).
- * Returns summary stats.
+ * Fetches the last 7 days from Coinbase, then rolls up 4h from 1h.
  */
 export async function runBackfill(): Promise<BackfillResult> {
     const start = Date.now();
@@ -186,10 +195,10 @@ export async function runBackfill(): Promise<BackfillResult> {
     let totalErrors = 0;
 
     const pairs = await listActivePairs();
-    const mappedPairs = pairs.filter((p) => REST_PAIR_MAP[p.symbol]);
+    const mappedPairs = pairs.filter((p) => CB_PAIR_MAP[p.symbol]);
 
     if (mappedPairs.length === 0) {
-        logger.warn("No active pairs with Kraken REST mapping found");
+        logger.warn("No active pairs with Coinbase REST mapping found");
         return { totalInserted: 0, totalErrors: 0, durationMs: Date.now() - start };
     }
 
@@ -198,15 +207,14 @@ export async function runBackfill(): Promise<BackfillResult> {
     logger.info({ pairs: mappedPairs.map((p) => p.symbol) }, "candle_backfill_starting");
 
     for (const pair of mappedPairs) {
-        const krakenPair = REST_PAIR_MAP[pair.symbol]!;
+        const productId = CB_PAIR_MAP[pair.symbol]!;
 
         for (const plan of plans) {
             try {
                 const inserted = await backfillPairTimeframe(
-                    pair.id, pair.symbol, krakenPair, plan,
+                    pair.id, pair.symbol, productId, plan,
                 );
                 totalInserted += inserted;
-                await sleep(RATE_LIMIT_MS);
             } catch (err) {
                 totalErrors++;
                 logger.warn(
@@ -215,7 +223,21 @@ export async function runBackfill(): Promise<BackfillResult> {
                 );
             }
         }
+
+        // Roll up 4h from the freshly-backfilled 1h data
+        try {
+            const rolled = await rollup4hFromHourly(pair.id);
+            totalInserted += rolled;
+        } catch (err) {
+            totalErrors++;
+            logger.warn(
+                { pair: pair.symbol, tf: "4h", err: (err as Error).message },
+                "backfill_4h_rollup_failed",
+            );
+        }
     }
 
-    return { totalInserted, totalErrors, durationMs: Date.now() - start };
+    const result = { totalInserted, totalErrors, durationMs: Date.now() - start };
+    logger.info(result, "candle_backfill_complete");
+    return result;
 }
