@@ -1,68 +1,65 @@
 /**
- * Historical candle backfill from Coinbase Advanced Trade REST API.
+ * Historical candle backfill — CryptoCompare (deep history) + Coinbase (recent granular).
  *
- * Fetches OHLCV data for all active trading pairs and inserts into the
- * `candles` table. Idempotent — safe to re-run (ON CONFLICT DO NOTHING).
+ * Strategy:
+ *   1d  → CryptoCompare histoday  (allData — full coin lifetime)
+ *   1h  → CryptoCompare histohour (full history, paginated)
+ *   15m → Coinbase                (90 days)
+ *   5m  → Coinbase                (30 days)
+ *   1m  → Coinbase                (7 days)
+ *   4h  → Rolled up from 1h data  (no native source)
+ *
+ * Gap-fill: checks what's already in the candles table per (pair, timeframe)
+ * and only fetches what's missing.
  *
  * Usage:
  *   cd apps/api && pnpm backfill
- *
- * Depths:
- *   1m  → 7 days       5m  → 30 days      15m → 90 days
- *   1h  → 1 year       1d  → 2 years       4h  → rolled up from 1h data
- *
- * Gap-fill: checks what's already in the candles table per (pair, timeframe)
- * and only fetches what's missing — oldest gap down to the depth cap.
  */
 import "dotenv/config";
 import { pool } from "../db/pool";
 import {
     fetchCoinbaseCandles,
-    sleep,
+    sleep as cbSleep,
     CB_PAIR_MAP,
     TF_TO_GRANULARITY,
     type CoinbaseGranularity,
 } from "../marketData/coinbaseRest";
+import {
+    fetchCCCandles,
+    fetchCCAllDaily,
+    sleep as ccSleep,
+    CC_PAIR_MAP,
+} from "../marketData/cryptoCompareRest";
 
-// ── Timeframe plans ──
+// ── Constants ──
 
-interface TimeframePlan {
-    ourTf: string;
-    granularity: CoinbaseGranularity;
-    candleSeconds: number;
-    lookbackSeconds: number;
-}
+const SEVEN_DAYS  = 7 * 86400;
+const THIRTY_DAYS = 30 * 86400;
+const NINETY_DAYS = 90 * 86400;
 
-const SEVEN_DAYS      = 7 * 86400;
-const THIRTY_DAYS     = 30 * 86400;
-const NINETY_DAYS     = 90 * 86400;
-const ONE_YEAR        = 365 * 86400;
-const TWO_YEARS       = 2 * 365 * 86400;
-
-const TIMEFRAME_PLANS: TimeframePlan[] = [
-    { ourTf: "1d",  ...TF_TO_GRANULARITY["1d"]!,  lookbackSeconds: TWO_YEARS },
-    { ourTf: "1h",  ...TF_TO_GRANULARITY["1h"]!,  lookbackSeconds: ONE_YEAR },
-    { ourTf: "15m", ...TF_TO_GRANULARITY["15m"]!, lookbackSeconds: NINETY_DAYS },
-    { ourTf: "5m",  ...TF_TO_GRANULARITY["5m"]!,  lookbackSeconds: THIRTY_DAYS },
-    { ourTf: "1m",  ...TF_TO_GRANULARITY["1m"]!,  lookbackSeconds: SEVEN_DAYS },
-];
-
-const MAX_CANDLES_PER_REQUEST = 300;
-const RATE_LIMIT_MS = 120; // 10 req/s → 100ms minimum; use 120ms for safety
+const CB_RATE_LIMIT_MS = 120;   // Coinbase: 10 req/s → 120ms
+const CC_RATE_LIMIT_MS = 220;   // CryptoCompare: 5 req/s → 220ms
 const MAX_RETRIES = 3;
 
 // ── DB helpers ──
 
-interface PairInfo {
-    id: string;
-    symbol: string;
+interface PairInfo { id: string; symbol: string }
+
+interface OHLCEntry {
+    time: number;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
 }
 
 async function loadPairs(): Promise<PairInfo[]> {
     const { rows } = await pool.query<PairInfo>(
         `SELECT id, symbol FROM trading_pairs WHERE is_active = true ORDER BY symbol`,
     );
-    return rows.filter((p) => CB_PAIR_MAP[p.symbol]);
+    // Only pairs that both sources can serve
+    return rows.filter((p) => CB_PAIR_MAP[p.symbol] && CC_PAIR_MAP[p.symbol]);
 }
 
 async function getOldestCandleTs(pairId: string, timeframe: string): Promise<number> {
@@ -83,85 +80,230 @@ async function getLatestCandleTs(pairId: string, timeframe: string): Promise<num
     return Math.floor(new Date(rows[0].ts).getTime() / 1000);
 }
 
+async function getCandleCount(pairId: string, timeframe: string): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM candles WHERE pair_id = $1 AND timeframe = $2`,
+        [pairId, timeframe],
+    );
+    return parseInt(rows[0]!.count, 10);
+}
+
 async function insertCandles(
     pairId: string,
     timeframe: string,
-    candles: Array<{ time: number; open: string; high: string; low: string; close: string; volume: string }>,
+    candles: OHLCEntry[],
 ): Promise<number> {
     if (candles.length === 0) return 0;
 
-    const values: string[] = [];
-    const params: (string | number)[] = [];
-    let idx = 1;
+    // Batch in chunks of 250 to stay under Postgres param limit (65535 / 8 = ~8191)
+    const BATCH = 250;
+    let totalInserted = 0;
 
-    for (const c of candles) {
-        const ts = new Date(c.time * 1000).toISOString();
-        values.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, $${idx + 6}, $${idx + 7})`);
-        params.push(pairId, timeframe, ts, c.open, c.high, c.low, c.close, c.volume);
-        idx += 8;
+    for (let i = 0; i < candles.length; i += BATCH) {
+        const chunk = candles.slice(i, i + BATCH);
+        const values: string[] = [];
+        const params: (string | number)[] = [];
+        let idx = 1;
+
+        for (const c of chunk) {
+            const ts = new Date(c.time * 1000).toISOString();
+            values.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, $${idx + 6}, $${idx + 7})`);
+            params.push(pairId, timeframe, ts, c.open, c.high, c.low, c.close, c.volume);
+            idx += 8;
+        }
+
+        const sql = `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+                     VALUES ${values.join(", ")}
+                     ON CONFLICT (pair_id, timeframe, ts) DO NOTHING`;
+
+        const result = await pool.query(sql, params);
+        totalInserted += result.rowCount ?? 0;
     }
 
-    const sql = `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-                 VALUES ${values.join(", ")}
-                 ON CONFLICT (pair_id, timeframe, ts) DO NOTHING`;
-
-    const result = await pool.query(sql, params);
-    return result.rowCount ?? 0;
+    return totalInserted;
 }
 
-// ── Fetch with retry ──
+// ── Retry wrapper ──
 
-async function fetchWithRetry(
-    productId: string,
-    granularity: CoinbaseGranularity,
-    start: number,
-    end: number,
-): Promise<Array<{ time: number; open: string; high: string; low: string; close: string; volume: string }>> {
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
     let lastErr: Error | undefined;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            return await fetchCoinbaseCandles(productId, granularity, start, end);
+            return await fn();
         } catch (err) {
             lastErr = err as Error;
             if (attempt < MAX_RETRIES) {
                 const backoff = attempt * 2000;
-                console.log(`  Retry ${attempt}/${MAX_RETRIES} after ${backoff}ms: ${lastErr.message}`);
-                await sleep(backoff);
+                console.log(`  Retry ${attempt}/${MAX_RETRIES} (${label}): ${lastErr.message}`);
+                await cbSleep(backoff);
             }
         }
     }
     throw lastErr;
 }
 
-// ── Per-pair-timeframe backfill ──
+// ═══════════════════════════════════════════════════════════════
+// Phase 1: CryptoCompare — deep 1d and 1h history
+// ═══════════════════════════════════════════════════════════════
 
-async function backfillPairTimeframe(
-    pair: PairInfo,
-    plan: TimeframePlan,
-): Promise<number> {
+async function backfillDailyCC(pair: PairInfo): Promise<number> {
+    const cc = CC_PAIR_MAP[pair.symbol]!;
+    const label = `[${pair.symbol}] 1d (CC)`;
+
+    const oldestExisting = await getOldestCandleTs(pair.id, "1d");
+    const existingCount = await getCandleCount(pair.id, "1d");
+
+    // Use allData=true for a single-request full history fetch
+    console.log(`${label}: fetching full history via allData=true...`);
+    const candles = await withRetry(
+        () => fetchCCAllDaily(cc.fsym, cc.tsym),
+        label,
+    );
+
+    if (candles.length === 0) {
+        console.log(`${label}: no data returned`);
+        return 0;
+    }
+
+    // If we already have data, only insert candles older than oldest existing
+    // or newer than latest existing (gap-fill)
+    const latestExisting = await getLatestCandleTs(pair.id, "1d");
+    let toInsert = candles;
+
+    if (oldestExisting > 0) {
+        toInsert = candles.filter(
+            (c) => c.time < oldestExisting || c.time > latestExisting,
+        );
+    }
+
+    const inserted = await insertCandles(pair.id, "1d", toInsert);
+    const range = `${new Date(candles[0]!.time * 1000).toISOString().slice(0, 10)} → ${new Date(candles[candles.length - 1]!.time * 1000).toISOString().slice(0, 10)}`;
+    console.log(`${label}: ${candles.length} total candles (${range}), ${inserted} new (had ${existingCount})`);
+
+    return inserted;
+}
+
+async function backfillHourlyCC(pair: PairInfo): Promise<number> {
+    const cc = CC_PAIR_MAP[pair.symbol]!;
+    const label = `[${pair.symbol}] 1h (CC)`;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const candleSeconds = 3600;
+
+    const oldestExisting = await getOldestCandleTs(pair.id, "1h");
+    const latestExisting = await getLatestCandleTs(pair.id, "1h");
+
+    // Determine ranges to fetch
+    const ranges: Array<{ toTs: number; stopAt: number; direction: string }> = [];
+
+    if (oldestExisting === 0) {
+        // No data — page backwards from now to the beginning
+        ranges.push({ toTs: nowSec, stopAt: 0, direction: "full" });
+    } else {
+        // Backwards: fill from oldest existing back to coin origin
+        ranges.push({ toTs: oldestExisting, stopAt: 0, direction: "backwards" });
+        // Forwards: fill from latest existing to now
+        if (latestExisting < nowSec - candleSeconds * 2) {
+            ranges.push({ toTs: nowSec, stopAt: latestExisting, direction: "forwards" });
+        }
+    }
+
+    let totalInserted = 0;
+
+    for (const range of ranges) {
+        let toTs = range.toTs;
+        let page = 0;
+        let emptyPages = 0;
+
+        console.log(`${label} [${range.direction}]: paging from ${new Date(toTs * 1000).toISOString().slice(0, 10)}...`);
+
+        while (!stopping) {
+            page++;
+            const result = await withRetry(
+                () => fetchCCCandles("histohour", cc.fsym, cc.tsym, 2000, toTs),
+                `${label} page ${page}`,
+            );
+
+            if (result.candles.length === 0) {
+                emptyPages++;
+                if (emptyPages >= 2) break; // Two consecutive empty pages = no more data
+                toTs = result.timeFrom - 1;
+                await ccSleep(CC_RATE_LIMIT_MS);
+                continue;
+            }
+            emptyPages = 0;
+
+            // Filter out current in-progress candle
+            const currentBucket = Math.floor(nowSec / candleSeconds) * candleSeconds;
+            const completed = result.candles.filter((c) => c.time < currentBucket);
+
+            if (completed.length > 0) {
+                const inserted = await insertCandles(pair.id, "1h", completed);
+                totalInserted += inserted;
+
+                const oldest = completed[0]!;
+                const newest = completed[completed.length - 1]!;
+                console.log(`${label}: page ${page}, ${completed.length} candles (${new Date(oldest.time * 1000).toISOString().slice(0, 10)} → ${new Date(newest.time * 1000).toISOString().slice(0, 10)}), ${inserted} new`);
+
+                // Stop if we've reached existing data or the coin's beginning
+                if (range.stopAt > 0 && oldest.time <= range.stopAt) break;
+            }
+
+            // If fewer than expected, we've reached the beginning
+            if (result.candles.length < 2000) break;
+
+            // Page backwards: set toTs to the earliest candle's time
+            toTs = result.timeFrom;
+
+            await ccSleep(CC_RATE_LIMIT_MS);
+        }
+    }
+
+    if (totalInserted > 0) {
+        console.log(`${label}: done — ${totalInserted} candles inserted`);
+    } else {
+        console.log(`${label}: up to date`);
+    }
+
+    return totalInserted;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 2: Coinbase — recent granular data (15m, 5m, 1m)
+// ═══════════════════════════════════════════════════════════════
+
+interface CoinbasePlan {
+    ourTf: string;
+    granularity: CoinbaseGranularity;
+    candleSeconds: number;
+    lookbackSeconds: number;
+}
+
+const COINBASE_PLANS: CoinbasePlan[] = [
+    { ourTf: "15m", ...TF_TO_GRANULARITY["15m"]!, lookbackSeconds: NINETY_DAYS },
+    { ourTf: "5m",  ...TF_TO_GRANULARITY["5m"]!,  lookbackSeconds: THIRTY_DAYS },
+    { ourTf: "1m",  ...TF_TO_GRANULARITY["1m"]!,  lookbackSeconds: SEVEN_DAYS },
+];
+
+const CB_MAX_CANDLES = 300;
+
+async function backfillCoinbaseTf(pair: PairInfo, plan: CoinbasePlan): Promise<number> {
     const productId = CB_PAIR_MAP[pair.symbol]!;
-    const label = `[${pair.symbol}] ${plan.ourTf}`;
+    const label = `[${pair.symbol}] ${plan.ourTf} (CB)`;
     const nowSec = Math.floor(Date.now() / 1000);
     const depthFloor = nowSec - plan.lookbackSeconds;
 
-    // Gap-fill: find oldest existing candle and only fetch backwards from there
     const oldestExisting = await getOldestCandleTs(pair.id, plan.ourTf);
     const latestExisting = await getLatestCandleTs(pair.id, plan.ourTf);
 
-    // Determine what we need to fetch:
-    // 1. "backwards" — from depthFloor up to the oldest existing candle (historical gap)
-    // 2. "forwards" — from the latest existing candle up to now (recent gap)
+    // Gap-fill ranges
     const ranges: Array<{ start: number; end: number; direction: string }> = [];
 
     if (oldestExisting === 0) {
-        // No candles at all — fetch the entire depth range
         ranges.push({ start: depthFloor, end: nowSec, direction: "full" });
     } else {
-        // Backwards: fill from depthFloor to oldest existing
         if (oldestExisting > depthFloor + plan.candleSeconds) {
             ranges.push({ start: depthFloor, end: oldestExisting, direction: "backwards" });
         }
-        // Forwards: fill from latest existing to now
         if (latestExisting < nowSec - plan.candleSeconds * 2) {
             ranges.push({ start: latestExisting, end: nowSec, direction: "forwards" });
         }
@@ -176,19 +318,20 @@ async function backfillPairTimeframe(
 
     for (const range of ranges) {
         const windowCandles = Math.floor((range.end - range.start) / plan.candleSeconds);
-        console.log(`${label} [${range.direction}]: ~${windowCandles} candles to fetch (${new Date(range.start * 1000).toISOString().slice(0, 10)} → ${new Date(range.end * 1000).toISOString().slice(0, 10)})`);
+        console.log(`${label} [${range.direction}]: ~${windowCandles} candles (${new Date(range.start * 1000).toISOString().slice(0, 10)} → ${new Date(range.end * 1000).toISOString().slice(0, 10)})`);
 
-        // Page through the range in chunks of MAX_CANDLES_PER_REQUEST candles
         let cursor = range.start;
         let page = 0;
 
         while (cursor < range.end && !stopping) {
             page++;
-            const pageEnd = Math.min(cursor + MAX_CANDLES_PER_REQUEST * plan.candleSeconds, range.end);
+            const pageEnd = Math.min(cursor + CB_MAX_CANDLES * plan.candleSeconds, range.end);
 
-            const candles = await fetchWithRetry(productId, plan.granularity, cursor, pageEnd);
+            const candles = await withRetry(
+                () => fetchCoinbaseCandles(productId, plan.granularity, cursor, pageEnd),
+                `${label} page ${page}`,
+            );
 
-            // Filter out the current in-progress candle
             const currentBucket = Math.floor(nowSec / plan.candleSeconds) * plan.candleSeconds;
             const completed = candles.filter((c) => c.time < currentBucket);
 
@@ -200,10 +343,8 @@ async function backfillPairTimeframe(
                 console.log(`${label}: page ${page}, fetched ${completed.length}, inserted ${inserted}, latest ${new Date(newest.time * 1000).toISOString()}`);
             }
 
-            // Advance cursor past the page window
             cursor = pageEnd;
-
-            await sleep(RATE_LIMIT_MS);
+            await cbSleep(CB_RATE_LIMIT_MS);
         }
     }
 
@@ -214,7 +355,9 @@ async function backfillPairTimeframe(
     return totalInserted;
 }
 
-// ── 4h rollup from 1h data ──
+// ═══════════════════════════════════════════════════════════════
+// Phase 3: 4h rollup from 1h data
+// ═══════════════════════════════════════════════════════════════
 
 async function rollup4hFromHourly(pairId: string, pairSymbol: string): Promise<number> {
     const label = `[${pairSymbol}] 4h (rollup)`;
@@ -248,45 +391,71 @@ async function rollup4hFromHourly(pairId: string, pairSymbol: string): Promise<n
     return inserted;
 }
 
-// ── Main ──
+// ═══════════════════════════════════════════════════════════════
+// Main
+// ═══════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-    console.log("=== Coinbase Historical Candle Backfill ===\n");
+    console.log("=== Historical Candle Backfill ===");
+    console.log("    Phase 1: CryptoCompare (1d full history, 1h full history)");
+    console.log("    Phase 2: Coinbase (15m 90d, 5m 30d, 1m 7d)");
+    console.log("    Phase 3: 4h rollup from 1h\n");
 
     const pairs = await loadPairs();
     if (pairs.length === 0) {
-        console.log("No active pairs with Coinbase mapping found. Run pnpm seed first.");
+        console.log("No active pairs found. Run pnpm seed first.");
         process.exitCode = 1;
         return;
     }
 
     console.log(`Found ${pairs.length} pairs: ${pairs.map((p) => p.symbol).join(", ")}\n`);
 
+    const startTime = Date.now();
+    let grandTotal = 0;
+
     for (const pair of pairs) {
         if (stopping) break;
-        console.log(`\n--- ${pair.symbol} ---`);
+        console.log(`\n${"═".repeat(50)}`);
+        console.log(`  ${pair.symbol}`);
+        console.log(`${"═".repeat(50)}`);
 
-        // Fetch native timeframes from Coinbase
-        for (const plan of TIMEFRAME_PLANS) {
-            if (stopping) break;
+        // Phase 1: CryptoCompare deep history
+        try {
+            grandTotal += await backfillDailyCC(pair);
+        } catch (err) {
+            console.error(`[${pair.symbol}] 1d CC: FAILED — ${(err as Error).message}`);
+        }
+
+        if (!stopping) {
             try {
-                await backfillPairTimeframe(pair, plan);
+                grandTotal += await backfillHourlyCC(pair);
             } catch (err) {
-                console.error(`[${pair.symbol}] ${plan.ourTf}: FAILED — ${(err as Error).message}`);
+                console.error(`[${pair.symbol}] 1h CC: FAILED — ${(err as Error).message}`);
             }
         }
 
-        // Roll up 4h from 1h data (Coinbase has no native 4h granularity)
+        // Phase 2: Coinbase recent granular
+        for (const plan of COINBASE_PLANS) {
+            if (stopping) break;
+            try {
+                grandTotal += await backfillCoinbaseTf(pair, plan);
+            } catch (err) {
+                console.error(`[${pair.symbol}] ${plan.ourTf} CB: FAILED — ${(err as Error).message}`);
+            }
+        }
+
+        // Phase 3: 4h rollup
         if (!stopping) {
             try {
-                await rollup4hFromHourly(pair.id, pair.symbol);
+                grandTotal += await rollup4hFromHourly(pair.id, pair.symbol);
             } catch (err) {
                 console.error(`[${pair.symbol}] 4h rollup: FAILED — ${(err as Error).message}`);
             }
         }
     }
 
-    console.log("\n=== Backfill complete ===");
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`\n=== Backfill complete — ${grandTotal} candles inserted in ${elapsed}s ===`);
 }
 
 // Graceful shutdown
