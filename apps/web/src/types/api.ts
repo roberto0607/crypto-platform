@@ -476,7 +476,16 @@ export type SSEEvent =
   | EventEnvelope<"candle.closed", CandleClosedEvent>
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
   | EventEnvelope<"signal.new", SignalNewEvent>
-  | EventEnvelope<"match.started", MatchStartedEvent>;
+  | EventEnvelope<"match.started", MatchStartedEvent>
+  | EventEnvelope<"challenge.received", ChallengeReceivedEvent>;
+
+export interface ChallengeReceivedEvent {
+  matchId: string;
+  challengerId: string;
+  challengerName: string;
+  duration: number;
+  createdAt: string;
+}
 
 export interface MatchStartedEvent {
   matchId: string;

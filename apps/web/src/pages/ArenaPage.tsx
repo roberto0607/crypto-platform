@@ -222,6 +222,13 @@ export default function ArenaPage() {
         return () => { window.removeEventListener("sse:match.started", handler); };
     }, [loadActiveMatch]);
 
+    // Show incoming challenge when opponent sends one (SSE push)
+    useEffect(() => {
+        const handler = () => { loadActiveMatch(); };
+        window.addEventListener("sse:challenge.received", handler);
+        return () => { window.removeEventListener("sse:challenge.received", handler); };
+    }, [loadActiveMatch]);
+
     async function handleChallenge() {
         if (!challengeInput.trim()) return;
         setSubmitting(true);

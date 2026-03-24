@@ -106,6 +106,14 @@ export interface NotificationCreatedData {
   body: string | null;
 }
 
+export interface ChallengeReceivedData {
+  matchId: string;
+  challengerId: string;
+  challengerName: string;
+  duration: number;
+  createdAt: string;
+}
+
 export interface MatchStartedData {
   matchId: string;
   challengerId: string;
@@ -143,7 +151,8 @@ export type AppEvent =
   | EventEnvelope<"candle.closed", CandleClosedData>
   | EventEnvelope<"notification.created", NotificationCreatedData>
   | EventEnvelope<"signal.new", SignalNewData>
-  | EventEnvelope<"match.started", MatchStartedData>;
+  | EventEnvelope<"match.started", MatchStartedData>
+  | EventEnvelope<"challenge.received", ChallengeReceivedData>;
 
 // ── Helper to create events ──
 

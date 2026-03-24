@@ -104,7 +104,23 @@ export async function createMatch(
             );
         }
 
+        // Fetch challenger display name for the SSE payload
+        const { rows: challengerRows } = await client.query<{ display_name: string | null }>(
+            `SELECT display_name FROM users WHERE id = $1`,
+            [challengerId],
+        );
+
         await client.query("COMMIT");
+
+        // Notify opponent via SSE so their browser shows the challenge
+        publish(createEvent("challenge.received", {
+            matchId: match.id,
+            challengerId,
+            challengerName: challengerRows[0]?.display_name ?? "Unknown",
+            duration: durationHours,
+            createdAt: match.created_at,
+        }, { userId: opponentId }));
+
         return match;
     } catch (err) {
         await client.query("ROLLBACK");
