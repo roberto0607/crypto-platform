@@ -10,6 +10,7 @@ import {
     getActiveMatchForUser,
     getMatchHistory,
 } from "../../competitions/matchService.js";
+import { pool } from "../../db/pool.js";
 
 const challengeBody = z.object({
     opponentId: z.string().uuid(),
@@ -115,6 +116,30 @@ const v1Matches: FastifyPluginAsync = async (app) => {
             const match = await getMatchById(id);
             if (!match) throw new Error("match_not_found");
             return reply.send({ ok: true, match });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/matches/:id/result — get detailed ELO result for a completed match
+    app.get("/matches/:id/result", {
+        schema: {
+            tags: ["Matches"],
+            summary: "Get ELO result details for a completed match",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { id } = req.params as { id: string };
+            const { rows } = await pool.query(
+                `SELECT * FROM match_elo_results WHERE match_id = $1`,
+                [id],
+            );
+            if (rows.length === 0) {
+                return reply.code(404).send({ ok: false, error: "no_elo_result" });
+            }
+            return reply.send({ ok: true, result: rows[0] });
         } catch (err) {
             return v1HandleError(reply, err);
         }
