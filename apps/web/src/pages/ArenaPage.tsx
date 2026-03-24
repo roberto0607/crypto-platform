@@ -215,6 +215,13 @@ export default function ArenaPage() {
         loadSeason();
     }, [loadActiveMatch, loadMatchHistory, loadSeason]);
 
+    // Auto-transition to LiveMatchView when a match is accepted (SSE push)
+    useEffect(() => {
+        const handler = () => { loadActiveMatch(); };
+        window.addEventListener("sse:match.started", handler);
+        return () => { window.removeEventListener("sse:match.started", handler); };
+    }, [loadActiveMatch]);
+
     async function handleChallenge() {
         if (!challengeInput.trim()) return;
         setSubmitting(true);

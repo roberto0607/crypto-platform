@@ -1,8 +1,13 @@
 import type { PoolClient } from "pg";
 import { pool, acquireClient } from "../db/pool.js";
-import { applyEloChange, type TWTier } from "./eloService.js";
+import { resolveMatchElo, type TWTier } from "./eloService.js";
 import { getUserTier } from "./tierRepo.js";
 import { getSnapshot } from "../market/snapshotStore.js";
+import { logger as rootLogger } from "../observability/logContext.js";
+import { publish } from "../events/eventBus.js";
+import { createEvent } from "../events/eventTypes.js";
+
+const logger = rootLogger.child({ module: "matchService" });
 
 // ── Types ──
 
@@ -139,7 +144,21 @@ export async function acceptMatch(matchId: string, acceptingUserId: string): Pro
         );
 
         await client.query("COMMIT");
-        return updated[0];
+
+        const accepted = updated[0];
+
+        // Notify both players via SSE so their browsers auto-transition
+        const eventData = {
+            matchId: accepted.id,
+            challengerId: accepted.challenger_id,
+            opponentId: accepted.opponent_id,
+            duration: accepted.duration_hours,
+            startedAt: accepted.started_at!,
+        };
+        publish(createEvent("match.started", eventData, { userId: accepted.challenger_id }));
+        publish(createEvent("match.started", eventData, { userId: accepted.opponent_id }));
+
+        return accepted;
     } catch (err) {
         await client.query("ROLLBACK");
         throw err;
@@ -172,23 +191,22 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
             ? match.opponent_id
             : match.challenger_id;
 
-        // Determine tier for ELO
-        const tierRaw = await getUserTier(winnerId);
-        const tier = (["ROOKIE", "PRO", "ELITE", "LEGEND"].includes(tierRaw) ? tierRaw : "ROOKIE") as TWTier;
-
-        const eloChange = await applyEloChange(winnerId, forfeitUserId, matchId, tier, client);
-
         const { rows: updated } = await client.query<MatchRow>(
             `UPDATE matches
              SET status = 'FORFEITED',
                  forfeit_user_id = $2,
                  winner_id = $3,
-                 elo_delta = $4,
                  completed_at = now()
              WHERE id = $1
              RETURNING *`,
-            [matchId, forfeitUserId, winnerId, eloChange.winnerDelta],
+            [matchId, forfeitUserId, winnerId],
         );
+
+        // Apply full ELO resolution (streaks, tiers, badges) — idempotent
+        const eloResult = await resolveMatchElo(matchId, client);
+        if (eloResult) {
+            logger.info({ matchId, ...eloResult }, "forfeit_elo_resolved");
+        }
 
         await client.query("COMMIT");
         return updated[0];
@@ -254,16 +272,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         }
         // If scores are exactly equal, it's a draw (winnerId stays null)
 
-        // Apply ELO if there's a winner
-        let eloDelta: number | null = null;
-        if (winnerId) {
-            const loserId = winnerId === match.challenger_id ? match.opponent_id : match.challenger_id;
-            const tierRaw = await getUserTier(winnerId);
-            const tier = (["ROOKIE", "PRO", "ELITE", "LEGEND"].includes(tierRaw) ? tierRaw : "ROOKIE") as TWTier;
-            const change = await applyEloChange(winnerId, loserId, matchId, tier, client);
-            eloDelta = change.winnerDelta;
-        }
-
+        // Set match to COMPLETED with stats + winner
         const { rows: updated } = await client.query<MatchRow>(
             `UPDATE matches SET
                 status = 'COMPLETED',
@@ -276,7 +285,6 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
                 challenger_score = $8,
                 opponent_score = $9,
                 winner_id = $10,
-                elo_delta = $11,
                 completed_at = now()
              WHERE id = $1
              RETURNING *`,
@@ -286,9 +294,15 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
                 challengerStats.tradesCount, opponentStats.tradesCount,
                 challengerStats.winRate, opponentStats.winRate,
                 challengerStats.score, opponentStats.score,
-                winnerId, eloDelta,
+                winnerId,
             ],
         );
+
+        // Apply full ELO resolution (streaks, tiers, badges) — idempotent
+        const eloResult = await resolveMatchElo(matchId, client);
+        if (eloResult) {
+            logger.info({ matchId, ...eloResult }, "match_elo_resolved");
+        }
 
         await client.query("COMMIT");
         return updated[0];

@@ -475,4 +475,13 @@ export type SSEEvent =
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
   | EventEnvelope<"candle.closed", CandleClosedEvent>
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
-  | EventEnvelope<"signal.new", SignalNewEvent>;
+  | EventEnvelope<"signal.new", SignalNewEvent>
+  | EventEnvelope<"match.started", MatchStartedEvent>;
+
+export interface MatchStartedEvent {
+  matchId: string;
+  challengerId: string;
+  opponentId: string;
+  duration: number;
+  startedAt: string;
+}

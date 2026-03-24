@@ -17,6 +17,7 @@ export interface SSEHandlers {
   onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
   onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
+  onMatchStarted?: (event: Extract<SSEEvent, { type: "match.started" }>) => void;
   onPing?: (ts: number) => void;
 }
 
@@ -93,6 +94,9 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
           break;
         case "signal.new":
           handlers.onSignalNew?.(event);
+          break;
+        case "match.started":
+          handlers.onMatchStarted?.(event);
           break;
       }
     },

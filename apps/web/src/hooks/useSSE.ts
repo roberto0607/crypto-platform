@@ -129,6 +129,12 @@ export function useSSE() {
         );
       },
 
+      onMatchStarted: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:match.started", { detail: event.data }),
+        );
+      },
+
       // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing
       onPing: () => {
         useAppStore.getState().setLastPriceTickAt(Date.now());
