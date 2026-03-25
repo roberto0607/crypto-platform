@@ -275,7 +275,6 @@ export default function ArenaPage() {
                 match={activeMatch}
                 onMatchEnd={() => {
                     setActiveMatch(null);
-                    loadActiveMatch();
                     loadMatchHistory();
                 }}
             />

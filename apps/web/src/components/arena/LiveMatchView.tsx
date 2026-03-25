@@ -6,7 +6,7 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { getPositions } from "@/api/endpoints/analytics";
 import { placeOrder } from "@/api/endpoints/trading";
-import { forfeitMatch, getActiveMatch, type Match } from "@/api/endpoints/matches";
+import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
 import { formatDecimal } from "@/lib/decimal";
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { OpponentActivityFeed } from "./OpponentActivityFeed";
@@ -756,14 +756,18 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                         setShowEndOverlay(true);
                     }
                 } else {
-                    // No active match — it ended
+                    // No active match — fetch final state by ID for accurate result display
+                    try {
+                        const { data: full } = await getMatch(match.id);
+                        setMatch(full.match);
+                    } catch { /* ignore — overlay will use existing match state */ }
                     setShowEndOverlay(true);
                 }
             } catch { /* ignore */ }
         };
         const id = setInterval(poll, 15_000);
         return () => clearInterval(id);
-    }, []);
+    }, [match.id]);
 
     // Check for match end by timer
     useEffect(() => {
@@ -797,8 +801,10 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     // Handle forfeit
     const handleForfeit = async () => {
         try {
-            const { data } = await forfeitMatch(match.id);
-            setMatch(data.match);
+            await forfeitMatch(match.id);
+            // Fetch full match with JOINed player data (elo, names)
+            const { data: full } = await getMatch(match.id);
+            setMatch(full.match);
             setShowEndOverlay(true);
         } catch { /* ignore */ }
     };

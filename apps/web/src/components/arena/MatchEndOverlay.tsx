@@ -56,7 +56,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
         : (match.elo_delta ?? 0);
     const oldElo = eloResult
         ? (isWinner ? eloResult.winner_old_elo : eloResult.loser_old_elo)
-        : (isChallenger ? match.challenger_elo : match.opponent_elo);
+        : ((isChallenger ? match.challenger_elo : match.opponent_elo) ?? 1200);
     const newElo = eloResult
         ? (isWinner ? eloResult.winner_new_elo : eloResult.loser_new_elo)
         : (won ? oldElo + eloDelta : lost ? oldElo - eloDelta : oldElo);
