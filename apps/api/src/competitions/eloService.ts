@@ -294,10 +294,10 @@ export async function resolveMatchElo(
     if (streakBadge) {
         badges.push(streakBadge);
         await client.query(
-            `INSERT INTO user_badges (user_id, badge_type, metadata, earned_at)
-             VALUES ($1, $2, $3, now())
+            `INSERT INTO user_badges (user_id, badge_type, tier, metadata, earned_at)
+             VALUES ($1, $2, $3, $4, now())
              ON CONFLICT DO NOTHING`,
-            [winnerId, streakBadge, JSON.stringify({ matchId, streak: newWinStreak })],
+            [winnerId, streakBadge, winnerTierAfter, JSON.stringify({ matchId, streak: newWinStreak })],
         );
     }
 
