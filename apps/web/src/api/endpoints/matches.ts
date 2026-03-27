@@ -27,6 +27,8 @@ export interface Match {
     challenger_elo: number;
     opponent_name: string | null;
     opponent_elo: number;
+    winner_elo_delta: number | null;
+    loser_elo_delta: number | null;
 }
 
 export function challengeUser(body: {

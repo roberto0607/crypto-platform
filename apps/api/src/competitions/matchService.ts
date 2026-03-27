@@ -41,6 +41,8 @@ export interface MatchWithPlayers extends MatchRow {
     challenger_elo: number;
     opponent_name: string | null;
     opponent_elo: number;
+    winner_elo_delta: number | null;
+    loser_elo_delta: number | null;
 }
 
 /** Starting capital per tier */
@@ -435,10 +437,13 @@ export async function getMatchHistory(
     const { rows } = await pool.query<MatchWithPlayers>(
         `SELECT m.*,
                 c.display_name AS challenger_name, c.elo_rating AS challenger_elo,
-                o.display_name AS opponent_name, o.elo_rating AS opponent_elo
+                o.display_name AS opponent_name, o.elo_rating AS opponent_elo,
+                mer.winner_delta AS winner_elo_delta,
+                mer.loser_delta AS loser_elo_delta
          FROM matches m
          JOIN users c ON c.id = m.challenger_id
          JOIN users o ON o.id = m.opponent_id
+         LEFT JOIN match_elo_results mer ON mer.match_id = m.id
          WHERE (m.challenger_id = $1 OR m.opponent_id = $1)
            AND m.status IN ('COMPLETED', 'FORFEITED')
          ORDER BY m.completed_at DESC

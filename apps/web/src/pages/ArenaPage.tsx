@@ -529,8 +529,11 @@ export default function ArenaPage() {
                                             const theirPnl = isChallenger ? m.opponent_pnl_pct : m.challenger_pnl_pct;
                                             const won = m.winner_id === userId;
                                             const lost = m.winner_id && m.winner_id !== userId;
-                                            const eloDelta = m.elo_delta ?? 0;
-                                            const eloDisplay = won ? `+${eloDelta}` : lost ? `-${eloDelta}` : "0";
+                                            const eloDisplay = won
+                                                ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
+                                                : lost
+                                                    ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`
+                                                    : "0";
 
                                             return (
                                                 <tr key={m.id}>

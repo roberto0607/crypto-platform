@@ -171,7 +171,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                 )}
 
                 {/* Badges */}
-                {badges.length > 0 && (
+                {isWinner && badges.length > 0 && (
                     <div
                         style={{
                             textAlign: "center",
