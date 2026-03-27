@@ -88,18 +88,16 @@ export async function runMigrationGuard(pool: Pool): Promise<void> {
   migrationGuardFailuresTotal.inc();
 
   if (result.status === "DB_BEHIND") {
-    console.error(
-      `[migrationGuard] FATAL: DB is behind code. Run 'pnpm migrate'. ` +
-        `code=${result.latestCodeVersion} db=${result.dbVersion}`
-    );
+    const msg = `[migrationGuard] FATAL: DB is behind code. Run 'pnpm migrate'. ` +
+        `code=${result.latestCodeVersion} db=${result.dbVersion}`;
+    console.error(msg);
+    throw new Error(msg);
   } else {
-    console.error(
-      `[migrationGuard] FATAL: DB is AHEAD of code — unexpected. ` +
-        `code=${result.latestCodeVersion} db=${result.dbVersion}`
-    );
+    const msg = `[migrationGuard] FATAL: DB is AHEAD of code — unexpected. ` +
+        `code=${result.latestCodeVersion} db=${result.dbVersion}`;
+    console.error(msg);
+    throw new Error(msg);
   }
-
-  process.exit(1);
 }
 
 /**

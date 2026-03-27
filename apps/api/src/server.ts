@@ -44,17 +44,24 @@ function getGitCommit(): string {
 async function start() {
   // ── Optional boot-time migrations (single designated instance) ──
   if (config.runMigrationsOnBoot) {
+    console.log("[boot] Running pending migrations…");
     const { runPendingMigrations } = await import("./db/migrate");
     await runPendingMigrations(pool);
   }
 
   // ── Redis (optional — distributed mode) ──
-  await initRedis();
-  await startEventBus();
-  await initRedisQueue();
+  try {
+    await initRedis();
+    await startEventBus();
+    await initRedisQueue();
+  } catch (err) {
+    console.error("[boot] Redis/EventBus init failed (non-fatal):", (err as Error).message);
+    // Continue without Redis — local-only mode
+  }
   initEmailTransport();
 
   // ── Migration guard — fail fast if schema mismatch ──
+  console.log("[boot] Running migration guard…");
   await runMigrationGuard(pool);
 
   const app = await buildApp({
@@ -150,6 +157,7 @@ async function start() {
 }
 
 start().catch((err) => {
+  console.error("[boot] FATAL — server failed to start:");
   console.error(err);
   process.exit(1);
 });
