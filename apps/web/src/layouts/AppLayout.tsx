@@ -55,7 +55,7 @@ export default function AppLayout() {
 
   useSystemStatusPolling();
   useRefreshTokenKeepAlive();
-  const { sseConnected } = useSSE();
+  const { sseConnected, sseConnectionState } = useSSE();
   const lastPriceTickAt = useAppStore((s) => s.lastPriceTickAt);
   const [priceStale, setPriceStale] = useState(false);
 
@@ -225,9 +225,9 @@ export default function AppLayout() {
             </div>
 
             <div className="flex items-center gap-5">
-              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#6b7280" }}>
-                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-gray-600"}`} style={sseConnected && !priceStale ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
-                {priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
+              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: sseConnectionState === "reconnecting" || priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#ef4444" }}>
+                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${sseConnectionState === "reconnecting" || priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-red-500"}`} style={sseConnected && !priceStale && sseConnectionState !== "reconnecting" ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
+                {sseConnectionState === "reconnecting" || priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
               </div>
 
               <NotificationBell />

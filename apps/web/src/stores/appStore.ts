@@ -7,6 +7,7 @@ import type {
   Asset,
   Wallet,
 } from "@/types/api";
+import type { SseConnectionState } from "@/api/sse";
 
 interface AppState {
   systemStatus: SystemStatus | null;
@@ -19,6 +20,7 @@ interface AppState {
   initialized: boolean;
   serverOffline: boolean;
   sseConnected: boolean;
+  sseConnectionState: SseConnectionState;
   lastPriceTickAt: number;
   setInitialized: (initialized: boolean) => void;
   setServerOffline: (offline: boolean) => void;
@@ -30,6 +32,7 @@ interface AppState {
   setWallets: (wallets: Wallet[]) => void;
   setSelectedPairId: (id: string | null) => void;
   setSseConnected: (connected: boolean) => void;
+  setSseConnectionState: (state: SseConnectionState) => void;
   setLastPriceTickAt: (ts: number) => void;
 }
 
@@ -44,6 +47,7 @@ export const useAppStore = create<AppState>((set) => ({
   initialized: false,
   serverOffline: false,
   sseConnected: false,
+  sseConnectionState: "disconnected" as SseConnectionState,
   lastPriceTickAt: 0,
   setInitialized: (initialized) => set({ initialized }),
   setServerOffline: (serverOffline) => set({ serverOffline }),
@@ -55,5 +59,6 @@ export const useAppStore = create<AppState>((set) => ({
   setWallets: (wallets) => set({ wallets }),
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
   setSseConnected: (sseConnected) => set({ sseConnected }),
+  setSseConnectionState: (sseConnectionState) => set({ sseConnectionState }),
   setLastPriceTickAt: (lastPriceTickAt) => set({ lastPriceTickAt }),
 }));

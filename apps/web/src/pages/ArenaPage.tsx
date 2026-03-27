@@ -232,6 +232,13 @@ export default function ArenaPage() {
         return () => { window.removeEventListener("sse:challenge.received", handler); };
     }, [loadActiveMatch]);
 
+    // Re-sync match state after SSE reconnects (may have missed events)
+    useEffect(() => {
+        const handler = () => { loadActiveMatch(); loadMatchHistory(); };
+        window.addEventListener("sse:reconnected", handler);
+        return () => { window.removeEventListener("sse:reconnected", handler); };
+    }, [loadActiveMatch, loadMatchHistory]);
+
     async function handleChallenge() {
         if (!challengeInput.trim()) return;
         setSubmitting(true);

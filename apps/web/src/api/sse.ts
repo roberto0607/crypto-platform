@@ -4,7 +4,14 @@ import { useAppStore } from "@/stores/appStore";
 import type { SSEEvent } from "@/types/api";
 
 const SSE_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/events`;
-const BACKOFF_STEPS = [2_000, 5_000, 10_000, 30_000];
+
+// Exponential backoff: 1s → 2s → 4s → 8s → 30s cap
+const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
+
+// If no message (including pings) received for this long, treat connection as dead
+const HEARTBEAT_TIMEOUT_MS = 45_000;
+
+export type SseConnectionState = "connected" | "disconnected" | "reconnecting";
 
 export interface SSEHandlers {
   onOrderUpdated?: (event: Extract<SSEEvent, { type: "order.updated" }>) => void;
@@ -20,16 +27,43 @@ export interface SSEHandlers {
   onMatchStarted?: (event: Extract<SSEEvent, { type: "match.started" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
   onPing?: (ts: number) => void;
+  onReconnected?: () => void;
 }
 
 let abortController: AbortController | null = null;
 let reconnectAttempt = 0;
+let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+let wasConnected = false;
+
+function setSseState(state: SseConnectionState): void {
+  useAppStore.getState().setSseConnectionState(state);
+  useAppStore.getState().setSseConnected(state === "connected");
+}
+
+function resetHeartbeatTimer(): void {
+  if (heartbeatTimer) clearTimeout(heartbeatTimer);
+  heartbeatTimer = setTimeout(() => {
+    // No message received for 45s — connection is dead, force reconnect
+    if (abortController && !abortController.signal.aborted) {
+      setSseState("reconnecting");
+      forceReconnectSSE();
+    }
+  }, HEARTBEAT_TIMEOUT_MS);
+}
+
+function clearHeartbeatTimer(): void {
+  if (heartbeatTimer) {
+    clearTimeout(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+}
 
 export function connectSSE(token: string, handlers: SSEHandlers): () => void {
   // Disconnect any existing connection first
   disconnectSSE();
 
   abortController = new AbortController();
+  wasConnected = false;
 
   fetchEventSource(SSE_URL, {
     signal: abortController.signal,
@@ -39,14 +73,26 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
     async onopen(response) {
       if (response.ok && response.headers.get("content-type")?.includes(EventStreamContentType)) {
+        const isReconnect = wasConnected;
         reconnectAttempt = 0;
-        useAppStore.getState().setSseConnected(true);
+        wasConnected = true;
+        setSseState("connected");
+        resetHeartbeatTimer();
+
+        // On reconnect, notify so callers can re-fetch missed state
+        if (isReconnect) {
+          handlers.onReconnected?.();
+          window.dispatchEvent(new CustomEvent("sse:reconnected"));
+        }
         return;
       }
       throw new Error(`SSE open failed: ${response.status}`);
     },
 
     onmessage(msg) {
+      // Any message (including ping) resets the heartbeat timer
+      resetHeartbeatTimer();
+
       if (!msg.event || !msg.data) return;
 
       // Handle ping (not in SSEEvent union — raw from backend)
@@ -106,23 +152,29 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
     },
 
     onclose() {
-      useAppStore.getState().setSseConnected(false);
+      clearHeartbeatTimer();
+      setSseState("disconnected");
     },
 
     onerror(err) {
-      useAppStore.getState().setSseConnected(false);
+      clearHeartbeatTimer();
 
       // If aborted intentionally, don't reconnect
       if (abortController?.signal.aborted) {
+        setSseState("disconnected");
         throw err;
       }
 
       // If token is gone (logged out), don't reconnect
       if (!useAuthStore.getState().isAuthenticated) {
+        setSseState("disconnected");
         throw err;
       }
 
-      // Exponential backoff: 2s → 5s → 10s → 30s (never give up)
+      // Show reconnecting state
+      setSseState("reconnecting");
+
+      // Exponential backoff: 1s → 2s → 4s → 8s → 30s (never give up)
       const delay = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
       reconnectAttempt++;
       return delay;
@@ -142,14 +194,16 @@ export function forceReconnectSSE(): void {
   // Aborting will trigger onerror → auto-retry with backoff, which is the desired behavior.
   abortController.abort();
   abortController = null;
-  useAppStore.getState().setSseConnected(false);
+  setSseState("reconnecting");
 }
 
 export function disconnectSSE(): void {
+  clearHeartbeatTimer();
   if (abortController) {
     abortController.abort();
     abortController = null;
   }
   reconnectAttempt = 0;
-  useAppStore.getState().setSseConnected(false);
+  wasConnected = false;
+  setSseState("disconnected");
 }

@@ -11,6 +11,7 @@ export function useSSE() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const accessToken = useAuthStore((s) => s.accessToken);
   const sseConnected = useAppStore((s) => s.sseConnected);
+  const sseConnectionState = useAppStore((s) => s.sseConnectionState);
   const disconnectRef = useRef<(() => void) | null>(null);
 
   // ── Main SSE connection ──
@@ -145,6 +146,11 @@ export function useSSE() {
       onPing: () => {
         useAppStore.getState().setLastPriceTickAt(Date.now());
       },
+
+      // On reconnect, dispatch event so pages can re-fetch missed state
+      onReconnected: () => {
+        window.dispatchEvent(new CustomEvent("sse:reconnected"));
+      },
     };
 
     disconnectRef.current = connectSSE(accessToken, handlers);
@@ -180,5 +186,5 @@ export function useSSE() {
     };
   }, [checkAndReconnect]);
 
-  return { sseConnected };
+  return { sseConnected, sseConnectionState };
 }
