@@ -16,7 +16,7 @@ export interface MatchRow {
     season_id: string | null;
     challenger_id: string;
     opponent_id: string;
-    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "EXPIRED";
+    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "EXPIRED" | "CANCELLED";
     duration_hours: number;
     starting_capital: string;
     challenger_pnl_pct: string | null;
@@ -364,6 +364,56 @@ export async function getActiveMatchForUser(userId: string): Promise<MatchWithPl
         [userId],
     );
     return rows[0] ?? null;
+}
+
+/**
+ * Cancel a user's active/pending match.
+ * Only allowed if the match is PENDING or ACTIVE with zero trades by either player.
+ * If the match has trades, the user must forfeit instead.
+ */
+export async function cancelActiveMatch(userId: string): Promise<MatchRow> {
+    const client = await acquireClient();
+    try {
+        await client.query("BEGIN");
+
+        const { rows } = await client.query<MatchRow>(
+            `SELECT * FROM matches
+             WHERE (challenger_id = $1 OR opponent_id = $1)
+               AND status IN ('PENDING', 'ACTIVE')
+             FOR UPDATE
+             LIMIT 1`,
+            [userId],
+        );
+        if (rows.length === 0) throw new Error("match_not_found");
+
+        const match = rows[0];
+
+        // PENDING matches can always be cancelled
+        if (match.status === "ACTIVE") {
+            const totalTrades = (match.challenger_trades_count ?? 0) + (match.opponent_trades_count ?? 0);
+            if (totalTrades > 0) {
+                throw new Error("match_has_trades");
+            }
+        }
+
+        const { rows: updated } = await client.query<MatchRow>(
+            `UPDATE matches
+             SET status = 'CANCELLED', completed_at = now()
+             WHERE id = $1
+             RETURNING *`,
+            [match.id],
+        );
+
+        await client.query("COMMIT");
+
+        logger.info({ matchId: match.id, userId, oldStatus: match.status }, "match_cancelled_by_user");
+        return updated[0];
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**

@@ -48,6 +48,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   role_unchanged: "The user already has the requested role.",
   risk_check_failed: "The order was rejected by risk controls.",
   governance_check_failed: "The order was rejected by account governance controls.",
+  // matches
+  match_already_active: "You already have an active or pending match.",
+  match_has_trades: "This match has trades — use forfeit instead of cancel.",
   // misc 400
   replay_not_active: "The replay session is not active.",
   replay_already_stopped: "The replay session has already stopped.",

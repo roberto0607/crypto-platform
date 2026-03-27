@@ -5,7 +5,7 @@ export interface Match {
     season_id: string | null;
     challenger_id: string;
     opponent_id: string;
-    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "EXPIRED";
+    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "EXPIRED" | "CANCELLED";
     duration_hours: number;
     starting_capital: string;
     challenger_pnl_pct: string | null;
@@ -47,6 +47,10 @@ export function forfeitMatch(matchId: string) {
 
 export function getActiveMatch() {
     return client.get<{ ok: true; match: Match | null }>("/v1/matches/active");
+}
+
+export function cancelActiveMatch() {
+    return client.post<{ ok: true; match: Match }>("/v1/matches/active/cancel");
 }
 
 export function getMatch(matchId: string) {

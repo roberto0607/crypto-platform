@@ -6,6 +6,7 @@ import {
     challengeUser,
     acceptMatch,
     forfeitMatch,
+    cancelActiveMatch,
     getActiveMatch,
     getMatchHistory,
     type Match,
@@ -172,6 +173,8 @@ export default function ArenaPage() {
     const [duration, setDuration] = useState(24);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [matchBlocked, setMatchBlocked] = useState(false);
+    const [cancelling, setCancelling] = useState(false);
     const [seasonLoading, setSeasonLoading] = useState(true);
     const [seasonError, setSeasonError] = useState(false);
 
@@ -233,6 +236,7 @@ export default function ArenaPage() {
         if (!challengeInput.trim()) return;
         setSubmitting(true);
         setError(null);
+        setMatchBlocked(false);
         try {
             const activePairIds = pairs.filter((p) => p.is_active).map((p) => p.id);
             await challengeUser({
@@ -243,9 +247,36 @@ export default function ArenaPage() {
             setChallengeInput("");
             await loadActiveMatch();
         } catch (err: any) {
-            setError(err?.response?.data?.message ?? err?.response?.data?.code ?? "Challenge failed");
+            const code = err?.response?.data?.code;
+            if (code === "match_already_active") {
+                setError("You have a stuck match blocking new challenges.");
+                setMatchBlocked(true);
+            } else {
+                setError(err?.response?.data?.message ?? code ?? "Challenge failed");
+            }
         } finally {
             setSubmitting(false);
+        }
+    }
+
+    async function handleCancelActiveMatch() {
+        setCancelling(true);
+        try {
+            await cancelActiveMatch();
+            setError(null);
+            setMatchBlocked(false);
+            await loadActiveMatch();
+            await loadMatchHistory();
+        } catch (err: any) {
+            const code = err?.response?.data?.code;
+            if (code === "match_has_trades") {
+                setError("Match has trades — use FORFEIT instead.");
+                await loadActiveMatch();
+            } else {
+                setError(err?.response?.data?.message ?? "Cancel failed");
+            }
+        } finally {
+            setCancelling(false);
         }
     }
 
@@ -449,6 +480,16 @@ export default function ArenaPage() {
                                     </div>
                                     {error && (
                                         <div style={{ fontSize: 10, color: "var(--ar-red)", marginTop: 4 }}>{error}</div>
+                                    )}
+                                    {matchBlocked && (
+                                        <button
+                                            className="ar-btn ar-btn-red"
+                                            style={{ marginTop: 8 }}
+                                            disabled={cancelling}
+                                            onClick={handleCancelActiveMatch}
+                                        >
+                                            {cancelling ? "CANCELLING..." : "CANCEL STUCK MATCH"}
+                                        </button>
                                     )}
                                 </div>
                             </>

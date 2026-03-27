@@ -6,6 +6,7 @@ import {
     createMatch,
     acceptMatch,
     forfeitMatch,
+    cancelActiveMatch,
     getMatchById,
     getActiveMatchForUser,
     getMatchHistory,
@@ -140,6 +141,24 @@ const v1Matches: FastifyPluginAsync = async (app) => {
                 return reply.code(404).send({ ok: false, error: "no_elo_result" });
             }
             return reply.send({ ok: true, result: rows[0] });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // POST /v1/matches/active/cancel — cancel a stuck active/pending match
+    app.post("/matches/active/cancel", {
+        schema: {
+            tags: ["Matches"],
+            summary: "Cancel your active or pending match (no trades only)",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const userId = req.user!.id;
+            const match = await cancelActiveMatch(userId);
+            return reply.send({ ok: true, match });
         } catch (err) {
             return v1HandleError(reply, err);
         }

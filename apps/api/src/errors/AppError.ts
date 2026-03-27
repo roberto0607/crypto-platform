@@ -68,6 +68,7 @@ const ERROR_STATUS: Record<string, number> = {
   match_already_active: 400,
   match_not_pending: 400,
   match_not_active: 400,
+  match_has_trades: 400,
   // 404 (competitions)
   competition_not_found: 404,
   match_not_found: 404,
