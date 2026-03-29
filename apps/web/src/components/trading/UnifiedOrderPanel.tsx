@@ -1,0 +1,488 @@
+/**
+ * UnifiedOrderPanel — shared order form used by both TradingPage and LiveMatchView.
+ *
+ * Features:
+ *   - LONG / SHORT direction toggle
+ *   - MARKET / LIMIT order type
+ *   - USD-first amount input (converted to base qty for API)
+ *   - Optional Take Profit / Stop Loss (creates trigger orders after fill)
+ *   - Open position card with real-time P&L and close button
+ *   - Available balance display
+ */
+
+import { useState, useEffect, useCallback } from "react";
+import { useAppStore } from "@/stores/appStore";
+import { useTradingStore } from "@/stores/tradingStore";
+import { placeOrder } from "@/api/endpoints/trading";
+import { createTrigger, createOco } from "@/api/endpoints/triggers";
+import { formatDecimal } from "@/lib/decimal";
+import type { Position, TradingPair } from "@/types/api";
+import type { AxiosError } from "axios";
+import type { V1ApiError } from "@/types/api";
+
+const ERROR_MAP: Record<string, string> = {
+    INSUFFICIENT_BALANCE: "INSUFFICIENT BALANCE",
+    POSITION_LIMIT: "POSITION LIMIT REACHED",
+    PAIR_DISABLED: "PAIR DISABLED",
+    RATE_LIMITED: "RATE LIMITED",
+    insufficient_balance: "INSUFFICIENT BALANCE",
+    insufficient_liquidity: "INSUFFICIENT LIQUIDITY",
+};
+
+function fmtUsd(n: number): string {
+    return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+interface UnifiedOrderPanelProps {
+    pair: TradingPair;
+    position: Position | null;
+    quoteBalance: number;
+    onOrderFilled: () => void;
+    /** CSS class prefix — "tr" for TradingPage, "lmv" for LiveMatchView */
+    classPrefix?: string;
+}
+
+export function UnifiedOrderPanel({
+    pair,
+    position,
+    quoteBalance,
+    onOrderFilled,
+    classPrefix = "tr",
+}: UnifiedOrderPanelProps) {
+    const orderType = useTradingStore((s) => s.orderType);
+    const limitPrice = useTradingStore((s) => s.limitPrice);
+    const orderSubmitting = useTradingStore((s) => s.orderSubmitting);
+    const appInitialized = useAppStore((s) => s.initialized);
+    const setOrderSide = useTradingStore((s) => s.setOrderSide);
+    const setOrderType = useTradingStore((s) => s.setOrderType);
+    const setQty = useTradingStore((s) => s.setQty);
+    const setLimitPrice = useTradingStore((s) => s.setLimitPrice);
+    const submitOrder = useTradingStore((s) => s.submitOrder);
+    const snapshot = useTradingStore((s) => s.snapshot);
+    const selectedPairId = useTradingStore((s) => s.selectedPairId);
+
+    const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
+    const [usdAmount, setUsdAmount] = useState("");
+    const [tpPrice, setTpPrice] = useState("");
+    const [slPrice, setSlPrice] = useState("");
+    const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
+    const [errorMsg, setErrorMsg] = useState("");
+    const [closing, setClosing] = useState(false);
+    const [tpSlMsg, setTpSlMsg] = useState("");
+
+    // Reset on pair change
+    useEffect(() => {
+        setBtnState("idle");
+        setErrorMsg("");
+        setUsdAmount("");
+        setTpPrice("");
+        setSlPrice("");
+        setTpSlMsg("");
+    }, [selectedPairId]);
+
+    const [baseSymbol] = pair.symbol.split("/") as [string, string];
+    const currentPrice = snapshot?.last
+        ? parseFloat(snapshot.last)
+        : pair.last_price
+            ? parseFloat(pair.last_price)
+            : 0;
+
+    const effectivePrice =
+        orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
+
+    // USD → base conversion
+    const usdNum = usdAmount ? parseFloat(usdAmount) : 0;
+    const baseQty = usdNum > 0 && effectivePrice > 0 ? usdNum / effectivePrice : 0;
+    const baseQtyStr = baseQty > 0 ? baseQty.toFixed(8) : "";
+
+    // Fee calculation
+    const estFee = usdNum > 0 ? (usdNum * (pair.taker_fee_bps / 10000)) : 0;
+
+    // Position info
+    const posQty = position ? parseFloat(position.base_qty) : 0;
+    const hasPosition = position && posQty !== 0;
+    const posDirection: "LONG" | "SHORT" | null = hasPosition ? (posQty > 0 ? "LONG" : "SHORT") : null;
+    const posAbsQty = Math.abs(posQty);
+    const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
+    const posUsdSize = posAbsQty * posEntryPrice;
+    const pnlValue = hasPosition ? (currentPrice - posEntryPrice) * posQty : 0;
+    const pnlPct = posUsdSize > 0 ? (pnlValue / posUsdSize) * 100 : 0;
+
+    // TP/SL estimates
+    const tpNum = tpPrice ? parseFloat(tpPrice) : 0;
+    const slNum = slPrice ? parseFloat(slPrice) : 0;
+    const tpEstProfit = tpNum > 0 && baseQty > 0
+        ? (activeMode === "LONG" ? (tpNum - effectivePrice) : (effectivePrice - tpNum)) * baseQty
+        : 0;
+    const slEstLoss = slNum > 0 && baseQty > 0
+        ? (activeMode === "LONG" ? (slNum - effectivePrice) : (effectivePrice - slNum)) * baseQty
+        : 0;
+    const tpEstPct = usdNum > 0 && tpEstProfit !== 0 ? (tpEstProfit / usdNum) * 100 : 0;
+    const slEstPct = usdNum > 0 && slEstLoss !== 0 ? (slEstLoss / usdNum) * 100 : 0;
+
+    // TP/SL validation
+    const tpValid = !tpNum || (activeMode === "LONG" ? tpNum > effectivePrice : tpNum < effectivePrice);
+    const slValid = !slNum || (activeMode === "LONG" ? slNum < effectivePrice : slNum > effectivePrice);
+
+    // Limit price warning
+    const limitWarn = orderType === "LIMIT" && limitPrice
+        ? (activeMode === "LONG" && parseFloat(limitPrice) > currentPrice
+            ? "Price above market — will fill immediately"
+            : activeMode === "SHORT" && parseFloat(limitPrice) < currentPrice
+                ? "Price below market — will fill immediately"
+                : null)
+        : null;
+
+    // Sync direction → store orderSide
+    const handleModeChange = useCallback((mode: "LONG" | "SHORT") => {
+        setActiveMode(mode);
+        setOrderSide(mode === "LONG" ? "BUY" : "SELL");
+    }, [setOrderSide]);
+
+    useEffect(() => {
+        setOrderSide(activeMode === "LONG" ? "BUY" : "SELL");
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Sync USD → store qty (base units)
+    useEffect(() => {
+        setQty(baseQtyStr);
+    }, [baseQtyStr, setQty]);
+
+    // Submit button label
+    const isLong = activeMode === "LONG";
+    const btnLabel = (() => {
+        if (orderSubmitting) return "PLACING...";
+        if (btnState === "success") return tpSlMsg || "ORDER PLACED";
+        if (btnState === "error") return errorMsg || "FAILED";
+        if (hasPosition && posDirection === activeMode) return `ADD TO ${activeMode}`;
+        if (hasPosition && posDirection !== activeMode) return "CLOSE & REVERSE";
+        return `OPEN ${isLong ? "LONG" : "SHORT"}`;
+    })();
+
+    const handlePlaceOrder = async () => {
+        if (!appInitialized || !baseQtyStr) return;
+        setErrorMsg("");
+        setTpSlMsg("");
+        setBtnState("idle");
+        try {
+            const result = await submitOrder();
+            const fills = result?.fills ?? [];
+            const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
+
+            // Create TP/SL triggers if specified and order filled
+            if (filledQty > 0 && (tpNum || slNum) && selectedPairId) {
+                const closeSide = isLong ? "SELL" : "BUY";
+                const qtyStr = filledQty.toFixed(8);
+                try {
+                    if (tpNum && slNum && tpValid && slValid) {
+                        await createOco({
+                            pairId: selectedPairId,
+                            side: closeSide as "BUY" | "SELL",
+                            qty: qtyStr,
+                            stopTriggerPrice: slPrice,
+                            takeProfitTriggerPrice: tpPrice,
+                        });
+                        setTpSlMsg("ORDER + TP/SL SET");
+                    } else if (tpNum && tpValid) {
+                        await createTrigger({
+                            pairId: selectedPairId,
+                            kind: "TAKE_PROFIT_MARKET",
+                            side: closeSide as "BUY" | "SELL",
+                            triggerPrice: tpPrice,
+                            qty: qtyStr,
+                        });
+                        setTpSlMsg("ORDER + TP SET");
+                    } else if (slNum && slValid) {
+                        await createTrigger({
+                            pairId: selectedPairId,
+                            kind: "STOP_MARKET",
+                            side: closeSide as "BUY" | "SELL",
+                            triggerPrice: slPrice,
+                            qty: qtyStr,
+                        });
+                        setTpSlMsg("ORDER + SL SET");
+                    }
+                } catch {
+                    setTpSlMsg("ORDER FILLED — TP/SL FAILED");
+                }
+            }
+
+            setBtnState("success");
+            setUsdAmount("");
+            setTpPrice("");
+            setSlPrice("");
+            onOrderFilled();
+            setTimeout(() => { setBtnState("idle"); setTpSlMsg(""); }, 2500);
+        } catch (err) {
+            const axErr = err as AxiosError<V1ApiError | { error: string }>;
+            const data = axErr.response?.data;
+            let msg = "FAILED";
+            if (data) {
+                const code = "code" in data ? data.code : "error" in data ? data.error : "";
+                const message = "message" in data ? data.message : "";
+                msg = ERROR_MAP[code] ?? (typeof message === "string" && message ? message : "FAILED");
+            }
+            setErrorMsg(msg);
+            setBtnState("error");
+            setTimeout(() => setBtnState("idle"), 3000);
+        }
+    };
+
+    const handleClosePosition = async () => {
+        if (!hasPosition || !selectedPairId) return;
+        setClosing(true);
+        try {
+            const closeSide = posQty > 0 ? "SELL" : "BUY";
+            await placeOrder(
+                { pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8) },
+                crypto.randomUUID(),
+            );
+            onOrderFilled();
+        } catch {
+            setErrorMsg("Close failed");
+            setBtnState("error");
+            setTimeout(() => setBtnState("idle"), 3000);
+        } finally {
+            setClosing(false);
+        }
+    };
+
+    const handleMax = () => {
+        if (quoteBalance > 0) {
+            setUsdAmount(Math.floor(quoteBalance * 100) / 100 + "");
+        }
+    };
+
+    const p = classPrefix;
+
+    const btnClass = (() => {
+        if (btnState === "success") return `${p}-place-btn success`;
+        if (btnState === "error") return `${p}-place-btn error`;
+        return `${p}-place-btn ${isLong ? "buy" : "sell"}`;
+    })();
+
+    return (
+        <div className={`${p}-order-section`}>
+            {/* ── DIRECTION ── */}
+            <div className={`${p}-dir-toggle`}>
+                <div
+                    className={`${p}-dir-btn ${p === "lmv" ? "long" : `${p}-dir-long`}${activeMode === "LONG" ? " active" : ""}`}
+                    onClick={() => handleModeChange("LONG")}
+                >
+                    LONG
+                </div>
+                <div
+                    className={`${p}-dir-btn ${p === "lmv" ? "short" : `${p}-dir-short`}${activeMode === "SHORT" ? " active" : ""}`}
+                    onClick={() => handleModeChange("SHORT")}
+                >
+                    SHORT
+                </div>
+            </div>
+
+            {/* ── ORDER TYPE ── */}
+            <div className={`${p}-type-toggle`}>
+                {(["MARKET", "LIMIT"] as const).map((t) => (
+                    <div
+                        key={t}
+                        className={`${p}-tt${orderType === t ? " active" : ""}`}
+                        onClick={() => {
+                            setOrderType(t);
+                            if (t === "LIMIT" && !limitPrice && snapshot?.last) setLimitPrice(snapshot.last);
+                        }}
+                    >
+                        {t}
+                    </div>
+                ))}
+            </div>
+
+            {/* ── LIMIT PRICE ── */}
+            {orderType === "LIMIT" && (
+                <div className={`${p}-field`}>
+                    <label>LIMIT PRICE</label>
+                    <div className={`${p}-field-wrap`}>
+                        <input
+                            type="number"
+                            placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"}
+                            value={limitPrice}
+                            onChange={(e) => setLimitPrice(e.target.value)}
+                        />
+                        <span className={`${p}-field-unit`}>USD</span>
+                    </div>
+                    {limitWarn && (
+                        <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 4, letterSpacing: 1 }}>
+                            {limitWarn}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── AMOUNT (USD) ── */}
+            <div className={`${p}-field`}>
+                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>AMOUNT</span>
+                    <span
+                        style={{ color: "var(--ar-orange, var(--g, #00ff41))", cursor: "pointer", fontSize: 9, letterSpacing: 2 }}
+                        onClick={handleMax}
+                    >
+                        MAX
+                    </span>
+                </label>
+                <div className={`${p}-field-wrap`}>
+                    <input
+                        type="number"
+                        placeholder="0.00"
+                        value={usdAmount}
+                        onChange={(e) => setUsdAmount(e.target.value)}
+                    />
+                    <span className={`${p}-field-unit`}>USD</span>
+                </div>
+                {baseQty > 0 && (
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
+                        ≈ {baseQty.toFixed(4)} {baseSymbol}
+                    </div>
+                )}
+            </div>
+
+            {/* ── TAKE PROFIT ── */}
+            <div className={`${p}-field`}>
+                <label>TAKE PROFIT</label>
+                <div className={`${p}-field-wrap`}>
+                    <input
+                        type="number"
+                        placeholder={isLong ? "above entry" : "below entry"}
+                        value={tpPrice}
+                        onChange={(e) => setTpPrice(e.target.value)}
+                    />
+                    <span className={`${p}-field-unit`}>USD</span>
+                </div>
+                {tpNum > 0 && !tpValid && (
+                    <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>
+                        {isLong ? "TP must be above entry" : "TP must be below entry"}
+                    </div>
+                )}
+                {tpNum > 0 && tpValid && tpEstProfit !== 0 && (
+                    <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>
+                        Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)
+                    </div>
+                )}
+            </div>
+
+            {/* ── STOP LOSS ── */}
+            <div className={`${p}-field`}>
+                <label>STOP LOSS</label>
+                <div className={`${p}-field-wrap`}>
+                    <input
+                        type="number"
+                        placeholder={isLong ? "below entry" : "above entry"}
+                        value={slPrice}
+                        onChange={(e) => setSlPrice(e.target.value)}
+                    />
+                    <span className={`${p}-field-unit`}>USD</span>
+                </div>
+                {slNum > 0 && !slValid && (
+                    <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>
+                        {isLong ? "SL must be below entry" : "SL must be above entry"}
+                    </div>
+                )}
+                {slNum > 0 && slValid && slEstLoss !== 0 && (
+                    <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>
+                        Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)
+                    </div>
+                )}
+            </div>
+
+            {/* ── SUMMARY ── */}
+            <div className={`${p}-summary`}>
+                <div className={`${p}-sum-row`}>
+                    <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
+                    <span className={`${p}-sum-val`}>
+                        {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}
+                    </span>
+                </div>
+                <div className={`${p}-sum-row`}>
+                    <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
+                    <span className={`${p}-sum-val`}>{usdNum > 0 ? fmtUsd(usdNum) : "--"}</span>
+                </div>
+                <div className={`${p}-sum-row`}>
+                    <span className={`${p}-sum-lbl`}>FEE ({pair.taker_fee_bps} bps)</span>
+                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : "--"}</span>
+                </div>
+                <div className={`${p}-sum-row`}>
+                    <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
+                    <span className={`${p}-sum-val`} style={{ color: "#fff" }}>
+                        ${formatDecimal(quoteBalance.toString(), 2)} USD
+                    </span>
+                </div>
+            </div>
+
+            {/* ── SUBMIT ── */}
+            <button
+                className={btnClass}
+                disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized}
+                onClick={handlePlaceOrder}
+            >
+                {btnLabel}
+            </button>
+
+            {/* ── OPEN POSITION ── */}
+            {hasPosition && (
+                <div style={{
+                    marginTop: 12,
+                    padding: "12px",
+                    border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
+                    background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
+                }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: 2,
+                            color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
+                        }}>
+                            {baseSymbol} {posDirection}
+                        </span>
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
+                            {fmtUsd(posUsdSize)}
+                        </span>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
+                        <div>
+                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>ENTRY</span>
+                            <div style={{ color: "rgba(255,255,255,0.7)" }}>{fmtUsd(posEntryPrice)}</div>
+                        </div>
+                        <div>
+                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>CURRENT</span>
+                            <div style={{ color: "rgba(255,255,255,0.7)" }}>{fmtUsd(currentPrice)}</div>
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>P&L</span>
+                            <div style={{ color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700 }}>
+                                {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        disabled={closing}
+                        onClick={handleClosePosition}
+                        style={{
+                            width: "100%",
+                            padding: "8px 0",
+                            background: "rgba(255,59,59,0.15)",
+                            border: "1px solid rgba(255,59,59,0.4)",
+                            color: "#ff3b3b",
+                            fontSize: 10,
+                            letterSpacing: 3,
+                            cursor: closing ? "not-allowed" : "pointer",
+                            opacity: closing ? 0.5 : 1,
+                            fontFamily: "inherit",
+                        }}
+                    >
+                        {closing ? "CLOSING..." : "CLOSE POSITION"}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}

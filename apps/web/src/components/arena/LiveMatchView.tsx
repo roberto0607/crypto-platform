@@ -5,15 +5,12 @@ import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { getPositions } from "@/api/endpoints/analytics";
-import { placeOrder } from "@/api/endpoints/trading";
 import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
-import { formatDecimal } from "@/lib/decimal";
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { OpponentActivityFeed } from "./OpponentActivityFeed";
 import { MatchEndOverlay } from "./MatchEndOverlay";
-import type { Position, TradingPair } from "@/types/api";
-import type { AxiosError } from "axios";
-import type { V1ApiError } from "@/types/api";
+import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
+import type { Position } from "@/types/api";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -500,205 +497,11 @@ const LMV_CSS = `
   }
 `;
 
-/* ── ERROR MESSAGES ── */
-const ERROR_MAP: Record<string, string> = {
-    INSUFFICIENT_BALANCE: "INSUFFICIENT BALANCE",
-    POSITION_LIMIT: "POSITION LIMIT REACHED",
-    PAIR_DISABLED: "PAIR DISABLED",
-    RATE_LIMITED: "RATE LIMITED",
-};
-
 function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/* ── COMPACT ORDER PANEL ── */
-function MatchOrderPanel({
-    pair,
-    position,
-    quoteBalance,
-    onOrderFilled,
-}: {
-    pair: TradingPair;
-    position: Position | null;
-    quoteBalance: number;
-    onOrderFilled: () => void;
-}) {
-    const orderType = useTradingStore((s) => s.orderType);
-    const qty = useTradingStore((s) => s.qty);
-    const limitPrice = useTradingStore((s) => s.limitPrice);
-    const orderSubmitting = useTradingStore((s) => s.orderSubmitting);
-    const appInitialized = useAppStore((s) => s.initialized);
-    const setOrderSide = useTradingStore((s) => s.setOrderSide);
-    const setOrderType = useTradingStore((s) => s.setOrderType);
-    const setQty = useTradingStore((s) => s.setQty);
-    const setLimitPrice = useTradingStore((s) => s.setLimitPrice);
-    const submitOrder = useTradingStore((s) => s.submitOrder);
-    const snapshot = useTradingStore((s) => s.snapshot);
-    const selectedPairId = useTradingStore((s) => s.selectedPairId);
-
-    const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
-    const [pct, setPct] = useState<number | null>(null);
-    const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
-    const [errorMsg, setErrorMsg] = useState("");
-    const [closing, setClosing] = useState(false);
-
-    useEffect(() => {
-        setBtnState("idle");
-        setErrorMsg("");
-    }, [selectedPairId]);
-
-    const [baseSymbol] = pair.symbol.split("/") as [string, string];
-    const currentPrice = snapshot?.last ? parseFloat(snapshot.last) : (pair.last_price ? parseFloat(pair.last_price) : 0);
-    const effectivePrice = orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
-    const qtyNum = qty ? parseFloat(qty) : 0;
-    const estTotal = qtyNum && effectivePrice ? (qtyNum * effectivePrice).toFixed(2) : null;
-    const estFee = estTotal ? (parseFloat(estTotal) * (pair.taker_fee_bps / 10000)).toFixed(2) : null;
-
-    const posQty = position ? parseFloat(position.base_qty) : 0;
-    const hasPosition = position && posQty !== 0;
-    const posDirection: "LONG" | "SHORT" | null = hasPosition ? (posQty > 0 ? "LONG" : "SHORT") : null;
-    const posAbsQty = Math.abs(posQty);
-
-    const handleModeChange = (mode: "LONG" | "SHORT") => {
-        setActiveMode(mode);
-        setOrderSide(mode === "LONG" ? "BUY" : "SELL");
-    };
-
-    useEffect(() => {
-        setOrderSide(activeMode === "LONG" ? "BUY" : "SELL");
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const handlePct = (p: number) => {
-        setPct(p);
-        if (currentPrice > 0) {
-            const dollars = quoteBalance * (p / 100);
-            setQty((dollars / currentPrice).toFixed(4));
-        }
-    };
-
-    const handlePlaceOrder = async () => {
-        if (!appInitialized) return;
-        setErrorMsg("");
-        setBtnState("idle");
-        try {
-            await submitOrder();
-            setBtnState("success");
-            setPct(null);
-            onOrderFilled();
-            setTimeout(() => setBtnState("idle"), 2000);
-        } catch (err) {
-            const axErr = err as AxiosError<V1ApiError | { error: string }>;
-            const data = axErr.response?.data;
-            let msg = "FAILED";
-            if (data) {
-                const code = "code" in data ? data.code : "error" in data ? data.error : "";
-                const message = "message" in data ? data.message : "";
-                msg = ERROR_MAP[code] ?? (typeof message === "string" && message ? message : "FAILED");
-            }
-            setErrorMsg(msg);
-            setBtnState("error");
-            setTimeout(() => setBtnState("idle"), 3000);
-        }
-    };
-
-    const handleClosePosition = async () => {
-        if (!hasPosition || !selectedPairId) return;
-        setClosing(true);
-        try {
-            const closeSide = posQty > 0 ? "SELL" : "BUY";
-            await placeOrder({ pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8) }, crypto.randomUUID());
-            onOrderFilled();
-        } catch {
-            setErrorMsg("Close failed");
-            setBtnState("error");
-            setTimeout(() => setBtnState("idle"), 3000);
-        } finally {
-            setClosing(false);
-        }
-    };
-
-    const isLong = activeMode === "LONG";
-    const btnLabel = (() => {
-        if (orderSubmitting) return "PLACING...";
-        if (btnState === "success") return "ORDER PLACED";
-        if (btnState === "error") return errorMsg || "FAILED";
-        const arrow = isLong ? "\u25B2" : "\u25BC";
-        return `${arrow} ${isLong ? "LONG" : "SHORT"} ${orderType}`;
-    })();
-    const btnClass = (() => {
-        if (btnState === "success") return "lmv-place-btn success";
-        if (btnState === "error") return "lmv-place-btn error";
-        return `lmv-place-btn ${isLong ? "buy" : "sell"}`;
-    })();
-
-    return (
-        <div className="lmv-order-section">
-            {/* Direction */}
-            <div className="lmv-dir-toggle">
-                <div className={`lmv-dir-btn long${activeMode === "LONG" ? " active" : ""}`} onClick={() => handleModeChange("LONG")}>LONG</div>
-                <div className={`lmv-dir-btn short${activeMode === "SHORT" ? " active" : ""}`} onClick={() => handleModeChange("SHORT")}>SHORT</div>
-            </div>
-
-            {/* Order type */}
-            <div className="lmv-type-toggle">
-                {(["MARKET", "LIMIT"] as const).map((t) => (
-                    <div key={t} className={`lmv-tt${orderType === t ? " active" : ""}`}
-                        onClick={() => { setOrderType(t); if (t === "LIMIT" && !limitPrice && snapshot?.last) setLimitPrice(snapshot.last); }}>
-                        {t}
-                    </div>
-                ))}
-            </div>
-
-            {/* Fields */}
-            {orderType === "LIMIT" && (
-                <div className="lmv-field">
-                    <label>LIMIT PRICE</label>
-                    <div className="lmv-field-wrap">
-                        <input type="number" placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"} value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
-                        <span className="lmv-field-unit">USD</span>
-                    </div>
-                </div>
-            )}
-            <div className="lmv-field">
-                <label>QUANTITY</label>
-                <div className="lmv-field-wrap">
-                    <input type="number" placeholder="0.0000" value={qty} onChange={(e) => { setQty(e.target.value); setPct(null); }} />
-                    <span className="lmv-field-unit">{baseSymbol}</span>
-                </div>
-            </div>
-            <div className="lmv-pct-row">
-                {[25, 50, 75, 100].map((p) => (
-                    <div key={p} className={`lmv-pct${pct === p ? " active" : ""}`} onClick={() => handlePct(p)}>{p}%</div>
-                ))}
-            </div>
-
-            {/* Summary */}
-            <div className="lmv-summary">
-                <div className="lmv-sum-row"><span className="lmv-sum-lbl">ESTIMATED</span><span className="lmv-sum-val">{estTotal ? fmtUsd(parseFloat(estTotal)) : "--"}</span></div>
-                <div className="lmv-sum-row"><span className="lmv-sum-lbl">FEE</span><span className="lmv-sum-val">{estFee ?? "--"}</span></div>
-            </div>
-
-            {/* Place order */}
-            <button className={btnClass} disabled={orderSubmitting || !qty || !appInitialized} onClick={handlePlaceOrder}>
-                {btnLabel}
-            </button>
-
-            {/* Close position */}
-            {hasPosition && (
-                <button className="lmv-close-btn" disabled={closing} onClick={handleClosePosition}>
-                    {closing ? "CLOSING..." : `\u2715 CLOSE ${posDirection} \u2014 ${posAbsQty.toFixed(4)} ${baseSymbol}`}
-                </button>
-            )}
-
-            {/* Balance */}
-            <div className="lmv-balance-row">
-                <span className="lmv-bal-lbl">AVAILABLE</span>
-                <span className="lmv-bal-val">${formatDecimal(quoteBalance.toString(), 2)} USD</span>
-            </div>
-        </div>
-    );
-}
+/* ── MatchOrderPanel removed — see UnifiedOrderPanel.tsx ── */
 
 /* ─────────────────────────────────────────
    MAIN LIVE MATCH VIEW
@@ -862,11 +665,12 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                     </div>
 
                     {/* Order panel */}
-                    <MatchOrderPanel
+                    <UnifiedOrderPanel
                         pair={selectedPair}
                         position={currentPosition}
                         quoteBalance={quoteBalance}
                         onOrderFilled={refreshPositions}
+                        classPrefix="lmv"
                     />
                 </div>
 
