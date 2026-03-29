@@ -8,7 +8,6 @@ import { getPositions } from "@/api/endpoints/analytics";
 import { placeOrder } from "@/api/endpoints/trading";
 import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
 import { formatDecimal } from "@/lib/decimal";
-import { setActiveCompetitionId } from "@/api/client";
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { OpponentActivityFeed } from "./OpponentActivityFeed";
 import { MatchEndOverlay } from "./MatchEndOverlay";
@@ -727,17 +726,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const opponentPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
     const yourTrades = isChallenger ? match.challenger_trades_count : match.opponent_trades_count;
     const oppTrades = isChallenger ? match.opponent_trades_count : match.challenger_trades_count;
-
-    // Tag orders with match ID while LiveMatchView is mounted
-    useEffect(() => {
-        setActiveCompetitionId(match.id);
-        return () => { setActiveCompetitionId(null); };
-    }, [match.id]);
-
-    // Clear competition tag when match ends (overlay shown)
-    useEffect(() => {
-        if (showEndOverlay) setActiveCompetitionId(null);
-    }, [showEndOverlay]);
 
     // Default to first active pair on mount
     useEffect(() => {
