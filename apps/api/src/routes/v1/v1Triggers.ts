@@ -23,21 +23,26 @@ const createTriggerBody = z
             "STOP_LIMIT",
             "TAKE_PROFIT_MARKET",
             "TAKE_PROFIT_LIMIT",
+            "TRAILING_STOP_MARKET",
         ]),
         side: z.enum(["BUY", "SELL"]),
         triggerPrice: decimalStr,
         limitPrice: decimalStr.optional(),
         qty: decimalStr,
+        trailingOffset: decimalStr.optional(),
     })
     .refine(
         (d) => {
             if (d.kind.endsWith("_LIMIT") && !d.limitPrice) return false;
-            if (d.kind.endsWith("_MARKET") && d.limitPrice) return false;
+            if (d.kind === "STOP_MARKET" && d.limitPrice) return false;
+            if (d.kind === "TAKE_PROFIT_MARKET" && d.limitPrice) return false;
+            if (d.kind === "TRAILING_STOP_MARKET" && !d.trailingOffset) return false;
+            if (d.kind === "TRAILING_STOP_MARKET" && d.limitPrice) return false;
             return true;
         },
         {
             message:
-                "limitPrice required for *_LIMIT kinds, forbidden for *_MARKET kinds",
+                "limitPrice required for *_LIMIT kinds; trailingOffset required for TRAILING_STOP_MARKET",
         }
     );
 
@@ -55,21 +60,26 @@ const triggerLeg = z
             "STOP_LIMIT",
             "TAKE_PROFIT_MARKET",
             "TAKE_PROFIT_LIMIT",
+            "TRAILING_STOP_MARKET",
         ]),
         side: z.enum(["BUY", "SELL"]),
         triggerPrice: decimalStr,
         limitPrice: decimalStr.optional(),
         qty: decimalStr,
+        trailingOffset: decimalStr.optional(),
     })
     .refine(
         (d) => {
             if (d.kind.endsWith("_LIMIT") && !d.limitPrice) return false;
-            if (d.kind.endsWith("_MARKET") && d.limitPrice) return false;
+            if (d.kind === "STOP_MARKET" && d.limitPrice) return false;
+            if (d.kind === "TAKE_PROFIT_MARKET" && d.limitPrice) return false;
+            if (d.kind === "TRAILING_STOP_MARKET" && !d.trailingOffset) return false;
+            if (d.kind === "TRAILING_STOP_MARKET" && d.limitPrice) return false;
             return true;
         },
         {
             message:
-                "limitPrice required for *_LIMIT kinds, forbidden for *_MARKET kinds",
+                "limitPrice required for *_LIMIT kinds; trailingOffset required for TRAILING_STOP_MARKET",
         }
     );
 
@@ -122,6 +132,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 triggerPrice: b.triggerPrice,
                 limitPrice: b.limitPrice,
                 qty: b.qty,
+                trailingOffset: b.trailingOffset,
+                trailingHighWaterMark: b.kind === "TRAILING_STOP_MARKET" ? b.triggerPrice : undefined,
             });
 
             return reply.code(201).send(trigger);
@@ -268,6 +280,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 limitPrice: b.legA.limitPrice,
                 qty: b.legA.qty,
                 ocoGroupId,
+                trailingOffset: b.legA.trailingOffset,
+                trailingHighWaterMark: b.legA.kind === "TRAILING_STOP_MARKET" ? b.legA.triggerPrice : undefined,
             });
 
             const legB = await createTriggerOrder({
@@ -279,6 +293,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 limitPrice: b.legB.limitPrice,
                 qty: b.legB.qty,
                 ocoGroupId,
+                trailingOffset: b.legB.trailingOffset,
+                trailingHighWaterMark: b.legB.kind === "TRAILING_STOP_MARKET" ? b.legB.triggerPrice : undefined,
             });
 
             return reply.code(201).send({ ocoGroupId, legA, legB });

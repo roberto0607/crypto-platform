@@ -1,5 +1,5 @@
 import { pool } from "../db/pool";
-import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx } from "./triggerRepo";
+import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx, updateTrailingHwm } from "./triggerRepo";
 import type { TriggerOrderRow } from "./triggerTypes";
 import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
 import { subscribeGlobal, unsubscribe, publish } from "../events/eventBus";
@@ -18,6 +18,7 @@ let handler: EventHandler | null = null;
  *
  * STOP BUY  / TP SELL  → fire when last >= trigger_price
  * STOP SELL / TP BUY   → fire when last <= trigger_price
+ * TRAILING_STOP_MARKET  → trigger_price is dynamically updated by updateTrailingStop
  */
 export function shouldTrigger(
     trigger: TriggerOrderRow,
@@ -26,7 +27,7 @@ export function shouldTrigger(
     const last = parseFloat(snapshot.last);
     const tp = parseFloat(trigger.trigger_price);
 
-    const isStop = trigger.kind.startsWith("STOP");
+    const isStop = trigger.kind.startsWith("STOP") || trigger.kind === "TRAILING_STOP_MARKET";
     const isBuy = trigger.side === "BUY";
 
     // STOP BUY or TAKE_PROFIT SELL → fire when last >= trigger_price
@@ -35,6 +36,46 @@ export function shouldTrigger(
         return last >= tp;
     }
     return last <= tp;
+}
+
+/**
+ * Update trailing stop high water mark and effective trigger price.
+ * Called on every price tick BEFORE shouldTrigger check.
+ *
+ * For SELL trailing stops (long position protection):
+ *   hwm = max(hwm, currentPrice), triggerPrice = hwm - offset
+ * For BUY trailing stops (short position protection):
+ *   hwm = min(hwm, currentPrice), triggerPrice = hwm + offset
+ */
+async function updateTrailingStop(
+    trigger: TriggerOrderRow,
+    snapshot: PriceSnapshot,
+): Promise<void> {
+    if (trigger.kind !== "TRAILING_STOP_MARKET" || !trigger.trailing_offset) return;
+
+    const last = parseFloat(snapshot.last);
+    const offset = parseFloat(trigger.trailing_offset);
+    const currentHwm = trigger.trailing_high_water_mark ? parseFloat(trigger.trailing_high_water_mark) : last;
+
+    let newHwm: number;
+    let newTriggerPrice: number;
+
+    if (trigger.side === "SELL") {
+        // Long position: track highest price
+        newHwm = Math.max(currentHwm, last);
+        newTriggerPrice = newHwm - offset;
+    } else {
+        // Short position: track lowest price
+        newHwm = Math.min(currentHwm, last);
+        newTriggerPrice = newHwm + offset;
+    }
+
+    if (newHwm !== currentHwm || newTriggerPrice !== parseFloat(trigger.trigger_price)) {
+        await updateTrailingHwm(trigger.id, newHwm.toFixed(8), Math.max(0, newTriggerPrice).toFixed(8));
+        // Update in-memory for the subsequent shouldTrigger check
+        trigger.trailing_high_water_mark = newHwm.toFixed(8);
+        trigger.trigger_price = Math.max(0, newTriggerPrice).toFixed(8);
+    }
 }
 
 /**
@@ -178,6 +219,10 @@ export async function evaluateTriggersForPair(
     const triggers = await listActiveTriggersForPair(pairId);
 
     for (const trigger of triggers) {
+        // Update trailing stop HWM before checking
+        if (trigger.kind === "TRAILING_STOP_MARKET") {
+            await updateTrailingStop(trigger, snapshot);
+        }
         if (shouldTrigger(trigger, snapshot)) {
             await fireTrigger(trigger, snapshot);
         }

@@ -2,7 +2,7 @@ import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
 import type { TriggerKind, TriggerOrderRow, TriggerStatus } from "./triggerTypes";
 
-const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, created_at, updated_at`;
+const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, created_at, updated_at`;
 
 export async function createTriggerOrder(params: {
     userId: string;
@@ -13,11 +13,13 @@ export async function createTriggerOrder(params: {
     limitPrice?: string;
     qty: string;
     ocoGroupId?: string;
+    trailingOffset?: string;
+    trailingHighWaterMark?: string;
 }): Promise<TriggerOrderRow> {
     const result = await pool.query<TriggerOrderRow>(
         `
-        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING ${TRIGGER_COLUMNS}
         `,
         [
@@ -29,6 +31,8 @@ export async function createTriggerOrder(params: {
             params.limitPrice ?? null,
             params.qty,
             params.ocoGroupId ?? null,
+            params.trailingOffset ?? null,
+            params.trailingHighWaterMark ?? null,
         ]
     );
 
@@ -49,6 +53,19 @@ export async function listActiveTriggersForPair(
     );
 
     return result.rows;
+}
+
+export async function updateTrailingHwm(
+    triggerId: string,
+    newHwm: string,
+    newTriggerPrice: string,
+): Promise<void> {
+    await pool.query(
+        `UPDATE trigger_orders
+         SET trailing_high_water_mark = $2, trigger_price = $3
+         WHERE id = $1 AND status = 'ACTIVE'`,
+        [triggerId, newHwm, newTriggerPrice],
+    );
 }
 
 export async function listTriggersByUser(

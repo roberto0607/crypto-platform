@@ -2,7 +2,8 @@ export type TriggerKind =
   | "STOP_MARKET"
   | "STOP_LIMIT"
   | "TAKE_PROFIT_MARKET"
-  | "TAKE_PROFIT_LIMIT";
+  | "TAKE_PROFIT_LIMIT"
+  | "TRAILING_STOP_MARKET";
 
 export type TriggerStatus =
   | "ACTIVE"
@@ -24,6 +25,8 @@ export type TriggerOrderRow = {
   oco_group_id: string | null;
   derived_order_id: string | null;
   fail_reason: string | null;
+  trailing_offset: string | null;
+  trailing_high_water_mark: string | null;
   created_at: string;
   updated_at: string;
 };

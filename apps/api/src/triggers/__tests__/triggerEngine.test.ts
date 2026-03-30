@@ -16,6 +16,8 @@ function makeTrigger(overrides: Partial<TriggerOrderRow> = {}): TriggerOrderRow 
         oco_group_id: null,
         derived_order_id: null,
         fail_reason: null,
+        trailing_offset: null,
+        trailing_high_water_mark: null,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
         ...overrides,

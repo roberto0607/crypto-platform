@@ -115,9 +115,9 @@ export default function TriggersTab() {
         if (cursor) params.cursor = cursor;
         const res = await listTriggers(params);
         if (cursor) {
-          setTriggers((prev) => [...prev, ...res.data.triggers]);
+          setTriggers((prev) => [...prev, ...res.data.data]);
         } else {
-          setTriggers(res.data.triggers);
+          setTriggers(res.data.data);
         }
         setNextCursor(res.data.nextCursor);
       } catch {
@@ -181,7 +181,7 @@ export default function TriggersTab() {
         limitPrice: isLimitKind(formKind) ? formLimitPrice : undefined,
         qty: formQty,
       });
-      setTriggers((prev) => [res.data.trigger, ...prev]);
+      setTriggers((prev) => [res.data, ...prev]);
       setFormTriggerPrice("");
       setFormLimitPrice("");
       setFormQty("");
@@ -200,17 +200,16 @@ export default function TriggersTab() {
     setOcoSuccess(null);
     setOcoSubmitting(true);
     try {
+      const stopKind = ocoStopLimitPrice ? "STOP_LIMIT" : "STOP_MARKET";
+      const tpKind = ocoTpLimitPrice ? "TAKE_PROFIT_LIMIT" : "TAKE_PROFIT_MARKET";
       const res = await createOco({
         pairId: ocoPairId,
-        side: ocoSide,
-        qty: ocoQty,
-        stopTriggerPrice: ocoStopPrice,
-        stopLimitPrice: ocoStopLimitPrice || undefined,
-        takeProfitTriggerPrice: ocoTpPrice,
-        takeProfitLimitPrice: ocoTpLimitPrice || undefined,
+        legA: { kind: stopKind, side: ocoSide, triggerPrice: ocoStopPrice, limitPrice: ocoStopLimitPrice || undefined, qty: ocoQty },
+        legB: { kind: tpKind, side: ocoSide, triggerPrice: ocoTpPrice, limitPrice: ocoTpLimitPrice || undefined, qty: ocoQty },
       });
-      setOcoSuccess(res.data.triggers);
-      setTriggers((prev) => [...res.data.triggers, ...prev]);
+      const ocoTriggers = [res.data.legA, res.data.legB];
+      setOcoSuccess(ocoTriggers);
+      setTriggers((prev) => [...ocoTriggers, ...prev]);
       setOcoStopPrice("");
       setOcoStopLimitPrice("");
       setOcoTpPrice("");

@@ -5,8 +5,9 @@
  *   - LONG / SHORT direction toggle
  *   - MARKET / LIMIT order type
  *   - USD-first amount input (converted to base qty for API)
- *   - Optional Take Profit / Stop Loss (creates trigger orders after fill)
- *   - Open position card with real-time P&L and close button
+ *   - Optional Take Profit / Stop Loss (creates trigger orders via OCO after fill)
+ *   - Optional Trailing Stop (offset in USD)
+ *   - Open position card with real-time P&L, value, TP/SL display, close button
  *   - Available balance display
  */
 
@@ -14,9 +15,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { placeOrder } from "@/api/endpoints/trading";
-import { createTrigger, createOco } from "@/api/endpoints/triggers";
+import { createTrigger, createOco, listTriggers, cancelTrigger } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
-import type { Position, TradingPair } from "@/types/api";
+import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
 
@@ -38,7 +39,6 @@ interface UnifiedOrderPanelProps {
     position: Position | null;
     quoteBalance: number;
     onOrderFilled: () => void;
-    /** CSS class prefix — "tr" for TradingPage, "lmv" for LiveMatchView */
     classPrefix?: string;
 }
 
@@ -65,10 +65,29 @@ export function UnifiedOrderPanel({
     const [usdAmount, setUsdAmount] = useState("");
     const [tpPrice, setTpPrice] = useState("");
     const [slPrice, setSlPrice] = useState("");
+    const [tslOffset, setTslOffset] = useState("");
     const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
     const [errorMsg, setErrorMsg] = useState("");
     const [closing, setClosing] = useState(false);
     const [tpSlMsg, setTpSlMsg] = useState("");
+
+    // Active triggers for position card display
+    const [activeTriggers, setActiveTriggers] = useState<TriggerOrder[]>([]);
+    const [editingTp, setEditingTp] = useState(false);
+    const [editingSl, setEditingSl] = useState(false);
+    const [editTpVal, setEditTpVal] = useState("");
+    const [editSlVal, setEditSlVal] = useState("");
+
+    // Fetch triggers for current pair
+    const fetchTriggers = useCallback(async () => {
+        if (!selectedPairId) return;
+        try {
+            const res = await listTriggers({ pairId: selectedPairId, status: "ACTIVE" });
+            setActiveTriggers(res.data.data ?? []);
+        } catch { /* non-fatal */ }
+    }, [selectedPairId]);
+
+    useEffect(() => { fetchTriggers(); }, [fetchTriggers]);
 
     // Reset on pair change
     useEffect(() => {
@@ -77,7 +96,10 @@ export function UnifiedOrderPanel({
         setUsdAmount("");
         setTpPrice("");
         setSlPrice("");
+        setTslOffset("");
         setTpSlMsg("");
+        setEditingTp(false);
+        setEditingSl(false);
     }, [selectedPairId]);
 
     const [baseSymbol] = pair.symbol.split("/") as [string, string];
@@ -105,12 +127,20 @@ export function UnifiedOrderPanel({
     const posAbsQty = Math.abs(posQty);
     const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
     const posUsdSize = posAbsQty * posEntryPrice;
+    const posCurrentValue = posAbsQty * currentPrice;
     const pnlValue = hasPosition ? (currentPrice - posEntryPrice) * posQty : 0;
     const pnlPct = posUsdSize > 0 ? (pnlValue / posUsdSize) * 100 : 0;
+
+    // Derive TP/SL/TSL from active triggers
+    const tpTrigger = activeTriggers.find((t) => t.kind === "TAKE_PROFIT_MARKET");
+    const slTrigger = activeTriggers.find((t) => t.kind === "STOP_MARKET");
+    const tslTrigger = activeTriggers.find((t) => t.kind === "TRAILING_STOP_MARKET");
+    const tslCurrentStop = tslTrigger ? parseFloat(tslTrigger.trigger_price) : 0;
 
     // TP/SL estimates
     const tpNum = tpPrice ? parseFloat(tpPrice) : 0;
     const slNum = slPrice ? parseFloat(slPrice) : 0;
+    const tslNum = tslOffset ? parseFloat(tslOffset) : 0;
     const tpEstProfit = tpNum > 0 && baseQty > 0
         ? (activeMode === "LONG" ? (tpNum - effectivePrice) : (effectivePrice - tpNum)) * baseQty
         : 0;
@@ -120,11 +150,10 @@ export function UnifiedOrderPanel({
     const tpEstPct = usdNum > 0 && tpEstProfit !== 0 ? (tpEstProfit / usdNum) * 100 : 0;
     const slEstPct = usdNum > 0 && slEstLoss !== 0 ? (slEstLoss / usdNum) * 100 : 0;
 
-    // TP/SL validation
+    // Validations
     const tpValid = !tpNum || (activeMode === "LONG" ? tpNum > effectivePrice : tpNum < effectivePrice);
     const slValid = !slNum || (activeMode === "LONG" ? slNum < effectivePrice : slNum > effectivePrice);
 
-    // Limit price warning
     const limitWarn = orderType === "LIMIT" && limitPrice
         ? (activeMode === "LONG" && parseFloat(limitPrice) > currentPrice
             ? "Price above market — will fill immediately"
@@ -170,24 +199,22 @@ export function UnifiedOrderPanel({
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
 
             // Create TP/SL triggers if specified and order filled
-            if (filledQty > 0 && (tpNum || slNum) && selectedPairId) {
-                const closeSide = isLong ? "SELL" : "BUY";
+            if (filledQty > 0 && selectedPairId) {
+                const closeSide = (isLong ? "SELL" : "BUY") as "BUY" | "SELL";
                 const qtyStr = filledQty.toFixed(8);
                 try {
                     if (tpNum && slNum && tpValid && slValid) {
                         await createOco({
                             pairId: selectedPairId,
-                            side: closeSide as "BUY" | "SELL",
-                            qty: qtyStr,
-                            stopTriggerPrice: slPrice,
-                            takeProfitTriggerPrice: tpPrice,
+                            legA: { kind: "STOP_MARKET", side: closeSide, triggerPrice: slPrice, qty: qtyStr },
+                            legB: { kind: "TAKE_PROFIT_MARKET", side: closeSide, triggerPrice: tpPrice, qty: qtyStr },
                         });
                         setTpSlMsg("ORDER + TP/SL SET");
                     } else if (tpNum && tpValid) {
                         await createTrigger({
                             pairId: selectedPairId,
                             kind: "TAKE_PROFIT_MARKET",
-                            side: closeSide as "BUY" | "SELL",
+                            side: closeSide,
                             triggerPrice: tpPrice,
                             qty: qtyStr,
                         });
@@ -196,11 +223,27 @@ export function UnifiedOrderPanel({
                         await createTrigger({
                             pairId: selectedPairId,
                             kind: "STOP_MARKET",
-                            side: closeSide as "BUY" | "SELL",
+                            side: closeSide,
                             triggerPrice: slPrice,
                             qty: qtyStr,
                         });
                         setTpSlMsg("ORDER + SL SET");
+                    }
+
+                    // Create trailing stop if specified
+                    if (tslNum > 0) {
+                        const initialStop = isLong
+                            ? (currentPrice - tslNum).toFixed(8)
+                            : (currentPrice + tslNum).toFixed(8);
+                        await createTrigger({
+                            pairId: selectedPairId,
+                            kind: "TRAILING_STOP_MARKET",
+                            side: closeSide,
+                            triggerPrice: initialStop,
+                            qty: qtyStr,
+                            trailingOffset: tslNum.toFixed(8),
+                        });
+                        setTpSlMsg((prev) => prev ? prev + " + TSL" : "ORDER + TSL SET");
                     }
                 } catch {
                     setTpSlMsg("ORDER FILLED — TP/SL FAILED");
@@ -211,7 +254,9 @@ export function UnifiedOrderPanel({
             setUsdAmount("");
             setTpPrice("");
             setSlPrice("");
+            setTslOffset("");
             onOrderFilled();
+            fetchTriggers();
             setTimeout(() => { setBtnState("idle"); setTpSlMsg(""); }, 2500);
         } catch (err) {
             const axErr = err as AxiosError<V1ApiError | { error: string }>;
@@ -238,6 +283,7 @@ export function UnifiedOrderPanel({
                 crypto.randomUUID(),
             );
             onOrderFilled();
+            fetchTriggers();
         } catch {
             setErrorMsg("Close failed");
             setBtnState("error");
@@ -245,6 +291,22 @@ export function UnifiedOrderPanel({
         } finally {
             setClosing(false);
         }
+    };
+
+    const handleEditTrigger = async (oldTrigger: TriggerOrder, newPrice: string) => {
+        try {
+            await cancelTrigger(oldTrigger.id);
+            await createTrigger({
+                pairId: oldTrigger.pair_id,
+                kind: oldTrigger.kind,
+                side: oldTrigger.side,
+                triggerPrice: newPrice,
+                qty: oldTrigger.qty,
+            });
+            fetchTriggers();
+        } catch { /* non-fatal */ }
+        setEditingTp(false);
+        setEditingSl(false);
     };
 
     const handleMax = () => {
@@ -260,6 +322,9 @@ export function UnifiedOrderPanel({
         if (btnState === "error") return `${p}-place-btn error`;
         return `${p}-place-btn ${isLong ? "buy" : "sell"}`;
     })();
+
+    const smallLabel: React.CSSProperties = { color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 };
+    const smallVal: React.CSSProperties = { color: "rgba(255,255,255,0.7)", fontSize: 10 };
 
     return (
         <div className={`${p}-order-section`}>
@@ -300,19 +365,10 @@ export function UnifiedOrderPanel({
                 <div className={`${p}-field`}>
                     <label>LIMIT PRICE</label>
                     <div className={`${p}-field-wrap`}>
-                        <input
-                            type="number"
-                            placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"}
-                            value={limitPrice}
-                            onChange={(e) => setLimitPrice(e.target.value)}
-                        />
+                        <input type="number" placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"} value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
                         <span className={`${p}-field-unit`}>USD</span>
                     </div>
-                    {limitWarn && (
-                        <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 4, letterSpacing: 1 }}>
-                            {limitWarn}
-                        </div>
-                    )}
+                    {limitWarn && <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 4, letterSpacing: 1 }}>{limitWarn}</div>}
                 </div>
             )}
 
@@ -320,73 +376,47 @@ export function UnifiedOrderPanel({
             <div className={`${p}-field`}>
                 <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span>AMOUNT</span>
-                    <span
-                        style={{ color: "var(--ar-orange, var(--g, #00ff41))", cursor: "pointer", fontSize: 9, letterSpacing: 2 }}
-                        onClick={handleMax}
-                    >
-                        MAX
-                    </span>
+                    <span style={{ color: "var(--ar-orange, var(--g, #00ff41))", cursor: "pointer", fontSize: 9, letterSpacing: 2 }} onClick={handleMax}>MAX</span>
                 </label>
                 <div className={`${p}-field-wrap`}>
-                    <input
-                        type="number"
-                        placeholder="0.00"
-                        value={usdAmount}
-                        onChange={(e) => setUsdAmount(e.target.value)}
-                    />
+                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => setUsdAmount(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {baseQty > 0 && (
-                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
-                        ≈ {baseQty.toFixed(4)} {baseSymbol}
-                    </div>
-                )}
+                {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>≈ {baseQty.toFixed(4)} {baseSymbol}</div>}
             </div>
 
             {/* ── TAKE PROFIT ── */}
             <div className={`${p}-field`}>
                 <label>TAKE PROFIT</label>
                 <div className={`${p}-field-wrap`}>
-                    <input
-                        type="number"
-                        placeholder={isLong ? "above entry" : "below entry"}
-                        value={tpPrice}
-                        onChange={(e) => setTpPrice(e.target.value)}
-                    />
+                    <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => setTpPrice(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {tpNum > 0 && !tpValid && (
-                    <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>
-                        {isLong ? "TP must be above entry" : "TP must be below entry"}
-                    </div>
-                )}
-                {tpNum > 0 && tpValid && tpEstProfit !== 0 && (
-                    <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>
-                        Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)
-                    </div>
-                )}
+                {tpNum > 0 && !tpValid && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{isLong ? "TP must be above entry" : "TP must be below entry"}</div>}
+                {tpNum > 0 && tpValid && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
             </div>
 
             {/* ── STOP LOSS ── */}
             <div className={`${p}-field`}>
                 <label>STOP LOSS</label>
                 <div className={`${p}-field-wrap`}>
-                    <input
-                        type="number"
-                        placeholder={isLong ? "below entry" : "above entry"}
-                        value={slPrice}
-                        onChange={(e) => setSlPrice(e.target.value)}
-                    />
+                    <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => setSlPrice(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {slNum > 0 && !slValid && (
-                    <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>
-                        {isLong ? "SL must be below entry" : "SL must be above entry"}
-                    </div>
-                )}
-                {slNum > 0 && slValid && slEstLoss !== 0 && (
-                    <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>
-                        Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)
+                {slNum > 0 && !slValid && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{isLong ? "SL must be below entry" : "SL must be above entry"}</div>}
+                {slNum > 0 && slValid && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
+            </div>
+
+            {/* ── TRAILING STOP ── */}
+            <div className={`${p}-field`}>
+                <label>TRAILING STOP</label>
+                <div className={`${p}-field-wrap`}>
+                    <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => setTslOffset(e.target.value)} />
+                    <span className={`${p}-field-unit`}>USD</span>
+                </div>
+                {tslNum > 0 && currentPrice > 0 && (
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
+                        Stops at {fmtUsd(isLong ? currentPrice - tslNum : currentPrice + tslNum)} if price stays at current level
                     </div>
                 )}
             </div>
@@ -395,9 +425,7 @@ export function UnifiedOrderPanel({
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
-                    <span className={`${p}-sum-val`}>
-                        {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}
-                    </span>
+                    <span className={`${p}-sum-val`}>{orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
@@ -409,36 +437,24 @@ export function UnifiedOrderPanel({
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
-                    <span className={`${p}-sum-val`} style={{ color: "#fff" }}>
-                        ${formatDecimal(quoteBalance.toString(), 2)} USD
-                    </span>
+                    <span className={`${p}-sum-val`} style={{ color: "#fff" }}>${formatDecimal(quoteBalance.toString(), 2)} USD</span>
                 </div>
             </div>
 
             {/* ── SUBMIT ── */}
-            <button
-                className={btnClass}
-                disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized}
-                onClick={handlePlaceOrder}
-            >
+            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized} onClick={handlePlaceOrder}>
                 {btnLabel}
             </button>
 
-            {/* ── OPEN POSITION ── */}
+            {/* ── OPEN POSITION CARD ── */}
             {hasPosition && (
                 <div style={{
-                    marginTop: 12,
-                    padding: "12px",
+                    marginTop: 12, padding: "12px",
                     border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
                     background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
                 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            letterSpacing: 2,
-                            color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
-                        }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
                             {baseSymbol} {posDirection}
                         </span>
                         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
@@ -448,35 +464,80 @@ export function UnifiedOrderPanel({
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
                         <div>
-                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>ENTRY</span>
-                            <div style={{ color: "rgba(255,255,255,0.7)" }}>{fmtUsd(posEntryPrice)}</div>
+                            <span style={smallLabel}>ENTRY</span>
+                            <div style={smallVal}>{fmtUsd(posEntryPrice)}</div>
                         </div>
                         <div>
-                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>CURRENT</span>
-                            <div style={{ color: "rgba(255,255,255,0.7)" }}>{fmtUsd(currentPrice)}</div>
+                            <span style={smallLabel}>CURRENT</span>
+                            <div style={smallVal}>{fmtUsd(currentPrice)}</div>
                         </div>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                            <span style={{ color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 }}>P&L</span>
-                            <div style={{ color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700 }}>
+                        <div>
+                            <span style={smallLabel}>VALUE</span>
+                            <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
+                        </div>
+                        <div>
+                            <span style={smallLabel}>P&L</span>
+                            <div style={{ color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700, fontSize: 10 }}>
                                 {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
                             </div>
                         </div>
+
+                        {/* TP display */}
+                        <div>
+                            <span style={smallLabel}>TP</span>
+                            {editingTp && tpTrigger ? (
+                                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                    <input type="number" value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
+                                        style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
+                                    <span style={{ cursor: "pointer", color: "#00ff41", fontSize: 10 }} onClick={() => handleEditTrigger(tpTrigger, editTpVal)}>OK</span>
+                                    <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingTp(false)}>X</span>
+                                </div>
+                            ) : (
+                                <div style={{ color: tpTrigger ? "#00ff41" : "rgba(255,255,255,0.2)" }}>
+                                    {tpTrigger ? fmtUsd(parseFloat(tpTrigger.trigger_price)) : "--"}
+                                    {tpTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditTpVal(tpTrigger.trigger_price); setEditingTp(true); }}>✏️</span>}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* SL display */}
+                        <div>
+                            <span style={smallLabel}>SL</span>
+                            {editingSl && slTrigger ? (
+                                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                    <input type="number" value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
+                                        style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
+                                    <span style={{ cursor: "pointer", color: "#ff3b3b", fontSize: 10 }} onClick={() => handleEditTrigger(slTrigger, editSlVal)}>OK</span>
+                                    <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingSl(false)}>X</span>
+                                </div>
+                            ) : (
+                                <div style={{ color: slTrigger ? "#ff3b3b" : "rgba(255,255,255,0.2)" }}>
+                                    {slTrigger ? fmtUsd(parseFloat(slTrigger.trigger_price)) : "--"}
+                                    {slTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditSlVal(slTrigger.trigger_price); setEditingSl(true); }}>✏️</span>}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Trailing stop display */}
+                        {tslTrigger && (
+                            <div style={{ gridColumn: "1 / -1" }}>
+                                <span style={smallLabel}>TSL</span>
+                                <div style={{ color: "#f59e0b", fontSize: 10 }}>
+                                    ${parseFloat(tslTrigger.trailing_offset ?? "0").toFixed(2)} offset (stop: {fmtUsd(tslCurrentStop)})
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <button
                         disabled={closing}
                         onClick={handleClosePosition}
                         style={{
-                            width: "100%",
-                            padding: "8px 0",
-                            background: "rgba(255,59,59,0.15)",
-                            border: "1px solid rgba(255,59,59,0.4)",
-                            color: "#ff3b3b",
-                            fontSize: 10,
-                            letterSpacing: 3,
+                            width: "100%", padding: "8px 0",
+                            background: "rgba(255,59,59,0.15)", border: "1px solid rgba(255,59,59,0.4)",
+                            color: "#ff3b3b", fontSize: 10, letterSpacing: 3,
                             cursor: closing ? "not-allowed" : "pointer",
-                            opacity: closing ? 0.5 : 1,
-                            fontFamily: "inherit",
+                            opacity: closing ? 0.5 : 1, fontFamily: "inherit",
                         }}
                     >
                         {closing ? "CLOSING..." : "CLOSE POSITION"}

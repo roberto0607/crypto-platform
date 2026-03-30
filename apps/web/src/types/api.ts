@@ -209,7 +209,8 @@ export type TriggerKind =
   | "STOP_MARKET"
   | "STOP_LIMIT"
   | "TAKE_PROFIT_MARKET"
-  | "TAKE_PROFIT_LIMIT";
+  | "TAKE_PROFIT_LIMIT"
+  | "TRAILING_STOP_MARKET";
 
 export type TriggerStatus =
   | "ACTIVE"
@@ -231,6 +232,8 @@ export interface TriggerOrder {
   oco_group_id: UUID | null;
   derived_order_id: UUID | null;
   fail_reason: string | null;
+  trailing_offset: DecimalString | null;
+  trailing_high_water_mark: DecimalString | null;
   created_at: ISODateString;
   updated_at: ISODateString;
 }
