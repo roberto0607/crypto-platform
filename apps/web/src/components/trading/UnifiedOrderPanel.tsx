@@ -70,6 +70,8 @@ export function UnifiedOrderPanel({
     const [errorMsg, setErrorMsg] = useState("");
     const [closing, setClosing] = useState(false);
     const [tpSlMsg, setTpSlMsg] = useState("");
+    const [lastOrderUsd, setLastOrderUsd] = useState<number | null>(null);
+    const [lastOrderFee, setLastOrderFee] = useState<number | null>(null);
 
     // Active triggers for position card display
     const [activeTriggers, setActiveTriggers] = useState<TriggerOrder[]>([]);
@@ -251,6 +253,8 @@ export function UnifiedOrderPanel({
             }
 
             setBtnState("success");
+            setLastOrderUsd(usdNum);
+            setLastOrderFee(estFee);
             setUsdAmount("");
             setTpPrice("");
             setSlPrice("");
@@ -379,7 +383,7 @@ export function UnifiedOrderPanel({
                     <span style={{ color: "var(--ar-orange, var(--g, #00ff41))", cursor: "pointer", fontSize: 9, letterSpacing: 2 }} onClick={handleMax}>MAX</span>
                 </label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => setUsdAmount(e.target.value)} />
+                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>≈ {baseQty.toFixed(4)} {baseSymbol}</div>}
@@ -429,11 +433,11 @@ export function UnifiedOrderPanel({
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
-                    <span className={`${p}-sum-val`}>{usdNum > 0 ? fmtUsd(usdNum) : "--"}</span>
+                    <span className={`${p}-sum-val`}>{usdNum > 0 ? fmtUsd(usdNum) : lastOrderUsd ? fmtUsd(lastOrderUsd) : "--"}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>FEE ({pair.taker_fee_bps} bps)</span>
-                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : "--"}</span>
+                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : lastOrderFee ? fmtUsd(lastOrderFee) : "--"}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>

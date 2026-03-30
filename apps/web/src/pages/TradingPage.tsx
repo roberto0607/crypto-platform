@@ -252,7 +252,7 @@ const TRADE_CSS = `
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar { width:2px; }
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar-thumb { background:var(--border); }
   .tr-order-panel-book {
-    flex:1 1 0;min-height:0;overflow-y:auto;
+    flex:0 0 auto;max-height:280px;overflow-y:auto;
     border-top:1px solid var(--border);
     padding-top:0;
   }
@@ -663,6 +663,7 @@ export default function TradingPage() {
   const liveOrderBook = useTradingStore((s) => s.orderBook);
   const [positions, setPositions] = useState<Position[]>([]);
   const [fundingRate, setFundingRate] = useState(0);
+  const [bookOpen, setBookOpen] = useState(false);
 
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
@@ -818,9 +819,17 @@ export default function TradingPage() {
 
           {/* Orders/History tabs removed — use History page instead */}
 
-          <div className="tr-order-panel-book">
-            <OrderBookPanel liveBook={liveOrderBook} />
+          <div
+            style={{ borderTop: "1px solid var(--border)", padding: "8px 12px", cursor: "pointer", fontSize: 10, letterSpacing: 3, color: "var(--muted)", userSelect: "none" }}
+            onClick={() => setBookOpen((v) => !v)}
+          >
+            ORDER BOOK {bookOpen ? "\u25B2" : "\u25BC"}
           </div>
+          {bookOpen && (
+            <div className="tr-order-panel-book">
+              <OrderBookPanel liveBook={liveOrderBook} />
+            </div>
+          )}
         </div>
       </div>
 

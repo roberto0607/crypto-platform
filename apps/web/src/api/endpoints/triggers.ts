@@ -16,7 +16,7 @@ export function createTrigger(params: {
   qty: DecimalString;
   trailingOffset?: DecimalString;
 }) {
-  return client.post<TriggerOrder>("/triggers", params);
+  return client.post<TriggerOrder>("/v1/triggers", params);
 }
 
 export function listTriggers(params?: {
@@ -26,13 +26,13 @@ export function listTriggers(params?: {
   limit?: number;
 }) {
   return client.get<{ data: TriggerOrder[]; nextCursor: string | null }>(
-    "/triggers",
+    "/v1/triggers",
     { params },
   );
 }
 
 export function cancelTrigger(triggerId: UUID) {
-  return client.delete<TriggerOrder>(`/triggers/${triggerId}`);
+  return client.delete<TriggerOrder>(`/v1/triggers/${triggerId}`);
 }
 
 export function createOco(params: {
@@ -54,5 +54,5 @@ export function createOco(params: {
     trailingOffset?: DecimalString;
   };
 }) {
-  return client.post<{ ocoGroupId: string; legA: TriggerOrder; legB: TriggerOrder }>("/oco", params);
+  return client.post<{ ocoGroupId: string; legA: TriggerOrder; legB: TriggerOrder }>("/v1/oco", params);
 }
