@@ -250,8 +250,10 @@ export function UnifiedOrderPanel({
                         });
                         setTpSlMsg((prev) => prev ? prev + " + TSL" : "ORDER + TSL SET");
                     }
-                } catch {
-                    setTpSlMsg("ORDER FILLED — TP/SL FAILED");
+                } catch (tpSlErr) {
+                    const ax = tpSlErr as AxiosError<{ code?: string; message?: string }>;
+                    const reason = ax.response?.data?.message ?? ax.response?.data?.code ?? ax.message ?? "unknown";
+                    setTpSlMsg(`TP/SL FAILED: ${reason}`);
                 }
             }
 
