@@ -63,6 +63,8 @@ export function UnifiedOrderPanel({
 
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
     const [usdAmount, setUsdAmount] = useState("");
+    const [leverage, setLeverage] = useState(1);
+    const [posLeverage, setPosLeverage] = useState(1);
     const [tpPrice, setTpPrice] = useState("");
     const [slPrice, setSlPrice] = useState("");
     const [tslOffset, setTslOffset] = useState("");
@@ -114,13 +116,14 @@ export function UnifiedOrderPanel({
     const effectivePrice =
         orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
 
-    // USD → base conversion
+    // USD → base conversion (leverage applied)
     const usdNum = usdAmount ? parseFloat(usdAmount) : 0;
-    const baseQty = usdNum > 0 && effectivePrice > 0 ? usdNum / effectivePrice : 0;
+    const effectiveUsd = usdNum * leverage;
+    const baseQty = effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
     const baseQtyStr = baseQty > 0 ? baseQty.toFixed(8) : "";
 
-    // Fee calculation
-    const estFee = usdNum > 0 ? (usdNum * (pair.taker_fee_bps / 10000)) : 0;
+    // Fee calculation (on effective size)
+    const estFee = effectiveUsd > 0 ? (effectiveUsd * (pair.taker_fee_bps / 10000)) : 0;
 
     // Position info
     const posQty = position ? parseFloat(position.base_qty) : 0;
@@ -149,7 +152,7 @@ export function UnifiedOrderPanel({
     const slEstLoss = slNum > 0 && baseQty > 0
         ? (activeMode === "LONG" ? (slNum - effectivePrice) : (effectivePrice - slNum)) * baseQty
         : 0;
-    const tpEstPct = usdNum > 0 && tpEstProfit !== 0 ? (tpEstProfit / usdNum) * 100 : 0;
+    const tpEstPct = usdNum > 0 && tpEstProfit !== 0 ? (tpEstProfit / usdNum) * 100 : 0;  // % of margin
     const slEstPct = usdNum > 0 && slEstLoss !== 0 ? (slEstLoss / usdNum) * 100 : 0;
 
     // Validations
@@ -253,8 +256,9 @@ export function UnifiedOrderPanel({
             }
 
             setBtnState("success");
-            setLastOrderUsd(usdNum);
+            setLastOrderUsd(effectiveUsd);
             setLastOrderFee(estFee);
+            if (usdNum > 0) setPosLeverage(leverage);
             setUsdAmount("");
             setTpPrice("");
             setSlPrice("");
@@ -364,6 +368,30 @@ export function UnifiedOrderPanel({
                 ))}
             </div>
 
+            {/* ── LEVERAGE ── */}
+            <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                {([1, 2, 3, 5, 10] as const).map((lv) => (
+                    <div
+                        key={lv}
+                        onClick={() => setLeverage(lv)}
+                        style={{
+                            flex: 1, textAlign: "center", padding: "5px 0",
+                            fontSize: 10, letterSpacing: 1, cursor: "pointer",
+                            border: `1px solid ${leverage === lv ? "var(--ar-orange, var(--g, #00ff41))" : "rgba(255,255,255,0.08)"}`,
+                            color: leverage === lv ? "var(--ar-orange, var(--g, #00ff41))" : "rgba(255,255,255,0.3)",
+                            background: leverage === lv ? "rgba(255,255,255,0.04)" : "transparent",
+                        }}
+                    >
+                        {lv}x
+                    </div>
+                ))}
+            </div>
+            {leverage > 1 && (
+                <div style={{ fontSize: 9, color: "#f59e0b", marginBottom: 8, letterSpacing: 1 }}>
+                    {leverage}x leverage amplifies both gains and losses
+                </div>
+            )}
+
             {/* ── LIMIT PRICE ── */}
             {orderType === "LIMIT" && (
                 <div className={`${p}-field`}>
@@ -386,7 +414,9 @@ export function UnifiedOrderPanel({
                     <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>≈ {baseQty.toFixed(4)} {baseSymbol}</div>}
+                {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
+                    ≈ {baseQty.toFixed(4)} {baseSymbol}{leverage > 1 ? `  (${leverage}x = ${fmtUsd(effectiveUsd)} effective)` : ""}
+                </div>}
             </div>
 
             {/* ── TAKE PROFIT ── */}
@@ -433,7 +463,7 @@ export function UnifiedOrderPanel({
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
-                    <span className={`${p}-sum-val`}>{usdNum > 0 ? fmtUsd(usdNum) : lastOrderUsd ? fmtUsd(lastOrderUsd) : "--"}</span>
+                    <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : "--"}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>FEE ({pair.taker_fee_bps} bps)</span>
@@ -459,7 +489,7 @@ export function UnifiedOrderPanel({
                 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
-                            {baseSymbol} {posDirection}
+                            {baseSymbol} {posDirection}{posLeverage > 1 ? ` ${posLeverage}x` : ""}
                         </span>
                         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
                             {fmtUsd(posUsdSize)}
