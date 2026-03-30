@@ -5,11 +5,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { getPositions } from "@/api/endpoints/analytics";
-import { placeOrder } from "@/api/endpoints/trading";
-import { getJournal } from "@/api/endpoints/journal";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
-import { formatUsd } from "@/lib/decimal";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import type { Position, OrderBook as OrderBookType } from "@/types/api";
 
@@ -493,9 +490,6 @@ const TRADE_CSS = `
   /* ticker provided by AppLayout */
 `;
 
-/* ── STATIC DATA ── */
-const TABS = ["ORDERS", "HISTORY"];
-
 /* ── ORDER BOOK FORMATTERS ── */
 function formatBookQty(qty: string): string {
   const n = parseFloat(qty);
@@ -667,13 +661,8 @@ export default function TradingPage() {
   const selectPair = useTradingStore((s) => s.selectPair);
   const snapshot = useTradingStore((s) => s.snapshot);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
-  const openOrders = useTradingStore((s) => s.openOrders);
-  const cancelOrder = useTradingStore((s) => s.cancelOrder);
-  const [tab, setTab] = useState("ORDERS");
-  const [actionStates, setActionStates] = useState<Record<string, "idle" | "loading" | "error">>({});
   const [positions, setPositions] = useState<Position[]>([]);
   const [fundingRate, setFundingRate] = useState(0);
-  const [historyTrades, setHistoryTrades] = useState<any[]>([]);
 
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
@@ -726,14 +715,6 @@ export default function TradingPage() {
     const interval = setInterval(fetchFunding, 60_000);
     return () => clearInterval(interval);
   }, []);
-
-  // Fetch trade history when HISTORY tab is active or pair changes
-  useEffect(() => {
-    if (tab !== "HISTORY") return;
-    getJournal({ pairId: selectedPairId || undefined, limit: 20 })
-      .then((res) => setHistoryTrades(res.data.trades ?? []))
-      .catch(() => setHistoryTrades([]));
-  }, [tab, selectedPairId]);
 
   // API only returns active pairs (WHERE is_active = true), no need to re-filter
   const activePairs = pairs;
@@ -835,161 +816,7 @@ export default function TradingPage() {
             />
           </div>
 
-          <div className="tr-order-panel-activity">
-            <div className="tr-tab-bar">
-              {TABS.map((t) => (
-                <div
-                  key={t}
-                  className={`tr-tab${tab === t ? " active" : ""}`}
-                  onClick={() => setTab(t)}
-                >
-                  {t}
-                </div>
-              ))}
-            </div>
-            <div className="tr-tab-content">
-              {/* ── ORDERS ── */}
-              {tab === "ORDERS" &&
-                (openOrders.length === 0 ? (
-                  <div className="tr-empty-state">
-                    <div className="tr-es-lbl">No open orders</div>
-                    <div className="tr-es-cta">{"\u25B8"} USE THE ORDER PANEL TO BEGIN</div>
-                  </div>
-                ) : (
-                  <table className="tr-ptbl">
-                    <thead>
-                      <tr>
-                        <th>SIDE</th>
-                        <th>TYPE</th>
-                        <th>QTY</th>
-                        <th>PRICE</th>
-                        <th>ACTION</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {openOrders.map((o) => {
-                        const st = actionStates[o.id] ?? "idle";
-                        const canCancel = (o.status === "OPEN" || o.status === "PARTIALLY_FILLED") && o.type === "LIMIT";
-                        const canClose = o.status === "OPEN" && o.type === "MARKET";
-                        const closeLabel = o.side === "BUY" ? "CLOSE LONG" : "CLOSE SHORT";
-
-                        const handleCancel = async () => {
-                          setActionStates((s) => ({ ...s, [o.id]: "loading" }));
-                          try {
-                            await cancelOrder(o.id);
-                            setActionStates((s) => ({ ...s, [o.id]: "idle" }));
-                          } catch {
-                            setActionStates((s) => ({ ...s, [o.id]: "error" }));
-                            setTimeout(() => setActionStates((s) => ({ ...s, [o.id]: "idle" })), 2000);
-                          }
-                        };
-
-                        const handleClose = async () => {
-                          if (!selectedPairId) return;
-                          setActionStates((s) => ({ ...s, [o.id]: "loading" }));
-                          try {
-                            const closeSide = o.side === "BUY" ? "SELL" : "BUY";
-                            const pos = positions.find((p) => p.pair_id === o.pair_id);
-                            const closeQty = pos ? Math.abs(parseFloat(pos.base_qty)).toFixed(8) : o.qty;
-                            await placeOrder(
-                              { pairId: o.pair_id, side: closeSide, type: "MARKET", qty: closeQty },
-                              crypto.randomUUID(),
-                            );
-                            refreshPositions();
-                            setActionStates((s) => ({ ...s, [o.id]: "idle" }));
-                          } catch {
-                            setActionStates((s) => ({ ...s, [o.id]: "error" }));
-                            setTimeout(() => setActionStates((s) => ({ ...s, [o.id]: "idle" })), 2000);
-                          }
-                        };
-
-                        return (
-                          <tr key={o.id}>
-                            <td>
-                              <span className={o.side === "BUY" ? "tr-side-b" : "tr-side-s"}>
-                                {o.side}
-                              </span>
-                            </td>
-                            <td>{o.type}</td>
-                            <td>{o.qty}</td>
-                            <td>{o.limit_price ?? "MKT"}</td>
-                            <td>
-                              {canCancel && (
-                                <button
-                                  className="tr-action-btn cancel"
-                                  disabled={st === "loading"}
-                                  onClick={handleCancel}
-                                >
-                                  {st === "loading" ? "..." : st === "error" ? "FAILED" : "\u2715 CANCEL"}
-                                </button>
-                              )}
-                              {canClose && (
-                                <button
-                                  className="tr-action-btn close"
-                                  disabled={st === "loading"}
-                                  onClick={handleClose}
-                                >
-                                  {st === "loading" ? "..." : st === "error" ? "FAILED" : closeLabel}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                ))}
-
-              {/* ── HISTORY ── */}
-              {tab === "HISTORY" &&
-                (historyTrades.length === 0 ? (
-                  <div className="tr-empty-state">
-                    <div className="tr-es-lbl">No trade history</div>
-                    <div className="tr-es-cta">{"\u25B8"} CLOSED TRADES WILL APPEAR HERE</div>
-                  </div>
-                ) : (
-                  <table className="tr-ptbl">
-                    <thead>
-                      <tr>
-                        <th>PAIR</th>
-                        <th>SIDE</th>
-                        <th>ENTRY</th>
-                        <th>EXIT</th>
-                        <th>PNL</th>
-                        <th>TIME</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {historyTrades.map((t: any, i: number) => {
-                        const pnl = parseFloat(t.net_pnl ?? "0");
-                        return (
-                          <tr key={t.id ?? i}>
-                            <td>
-                              <span className="tr-sym">{t.pair_symbol ?? "?"}</span>
-                            </td>
-                            <td>
-                              <span className={t.direction === "LONG" ? "tr-side-b" : "tr-side-s"}>
-                                {t.direction}
-                              </span>
-                            </td>
-                            <td>{formatUsd(t.entry_avg_price)}</td>
-                            <td>{formatUsd(t.exit_avg_price)}</td>
-                            <td className={pnl >= 0 ? "tr-pos" : "tr-neg"}>
-                              {(pnl >= 0 ? "+" : "") + formatUsd(String(pnl.toFixed(2)))}
-                            </td>
-                            <td className="tr-dim">
-                              {t.exit_at
-                                ? new Date(t.exit_at).toLocaleDateString([], { month: "short", day: "numeric" })
-                                : "\u2014"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                ))}
-            </div>
-          </div>
+          {/* Orders/History tabs removed — use History page instead */}
 
           <div className="tr-order-panel-book">
             <OrderBookPanel liveBook={liveOrderBook} />
