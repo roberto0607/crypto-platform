@@ -102,11 +102,12 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 required: ["pairId", "kind", "side", "triggerPrice", "qty"],
                 properties: {
                     pairId: { type: "string", format: "uuid" },
-                    kind: { type: "string", enum: ["STOP_MARKET", "STOP_LIMIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT"] },
+                    kind: { type: "string", enum: ["STOP_MARKET", "STOP_LIMIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT", "TRAILING_STOP_MARKET"] },
                     side: { type: "string", enum: ["BUY", "SELL"] },
                     triggerPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
                     limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for *_LIMIT kinds, forbidden for *_MARKET kinds" },
                     qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                    trailingOffset: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for TRAILING_STOP_MARKET" },
                 },
             },
             response: {
