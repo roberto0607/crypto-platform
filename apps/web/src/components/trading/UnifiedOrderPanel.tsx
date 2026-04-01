@@ -158,6 +158,24 @@ export function UnifiedOrderPanel({
     // Validations
     const tpValid = !tpNum || (activeMode === "LONG" ? tpNum > effectivePrice : tpNum < effectivePrice);
     const slValid = !slNum || (activeMode === "LONG" ? slNum < effectivePrice : slNum > effectivePrice);
+    const slDistance = slNum > 0 && effectivePrice > 0 ? Math.abs(effectivePrice - slNum) : 0;
+
+    const tpError = tpNum > 0 && !tpValid
+        ? (activeMode === "LONG" ? "Take profit must be above entry for a long position" : "Take profit must be below entry for a short position")
+        : null;
+    const slError = slNum > 0 && !slValid
+        ? (activeMode === "LONG" ? "Stop loss must be below entry for a long position" : "Stop loss must be above entry for a short position")
+        : null;
+    const tslError = tslNum > 0
+        ? (tslNum <= 0
+            ? "Trailing stop offset must be greater than 0"
+            : tslNum >= effectiveUsd
+                ? "Trailing stop offset must be less than your position size"
+                : slDistance > 0 && tslNum >= slDistance
+                    ? "Trailing stop offset must be less than your stop loss distance"
+                    : null)
+        : null;
+    const hasValidationError = !!(tpError || slError || tslError);
 
     const limitWarn = orderType === "LIMIT" && limitPrice
         ? (activeMode === "LONG" && parseFloat(limitPrice) > currentPrice
@@ -428,8 +446,8 @@ export function UnifiedOrderPanel({
                     <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => setTpPrice(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {tpNum > 0 && !tpValid && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{isLong ? "TP must be above entry" : "TP must be below entry"}</div>}
-                {tpNum > 0 && tpValid && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
+                {tpError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tpError}</div>}
+                {!tpError && tpNum > 0 && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
             </div>
 
             {/* ── STOP LOSS ── */}
@@ -439,8 +457,8 @@ export function UnifiedOrderPanel({
                     <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => setSlPrice(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {slNum > 0 && !slValid && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{isLong ? "SL must be below entry" : "SL must be above entry"}</div>}
-                {slNum > 0 && slValid && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
+                {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
+                {!slError && slNum > 0 && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
             </div>
 
             {/* ── TRAILING STOP ── */}
@@ -450,7 +468,8 @@ export function UnifiedOrderPanel({
                     <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => setTslOffset(e.target.value)} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
-                {tslNum > 0 && currentPrice > 0 && (
+                {tslError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tslError}</div>}
+                {!tslError && tslNum > 0 && currentPrice > 0 && (
                     <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
                         Stops at {fmtUsd(isLong ? currentPrice - tslNum : currentPrice + tslNum)} if price stays at current level
                     </div>
@@ -478,7 +497,7 @@ export function UnifiedOrderPanel({
             </div>
 
             {/* ── SUBMIT ── */}
-            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized} onClick={handlePlaceOrder}>
+            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || hasValidationError} onClick={handlePlaceOrder}>
                 {btnLabel}
             </button>
 
