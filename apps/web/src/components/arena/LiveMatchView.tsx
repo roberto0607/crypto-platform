@@ -7,7 +7,6 @@ import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { getPositions } from "@/api/endpoints/analytics";
 import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
 import { MatchHeaderBar } from "./MatchHeaderBar";
-import { OpponentActivityFeed } from "./OpponentActivityFeed";
 import { MatchEndOverlay } from "./MatchEndOverlay";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import type { Position } from "@/types/api";
@@ -497,10 +496,6 @@ const LMV_CSS = `
   }
 `;
 
-function fmtUsd(n: number): string {
-    return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 /* ── MatchOrderPanel removed — see UnifiedOrderPanel.tsx ── */
 
 /* ─────────────────────────────────────────
@@ -527,8 +522,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const opponentName = isChallenger ? (match.opponent_name ?? "OPPONENT") : (match.challenger_name ?? "OPPONENT");
     const yourPnl = isChallenger ? match.challenger_pnl_pct : match.opponent_pnl_pct;
     const opponentPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
-    const yourTrades = isChallenger ? match.challenger_trades_count : match.opponent_trades_count;
-    const oppTrades = isChallenger ? match.opponent_trades_count : match.challenger_trades_count;
 
     // Default to first active pair on mount
     useEffect(() => {
@@ -619,15 +612,13 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const quoteBalance = quoteWallet ? new Decimal(quoteWallet.balance).minus(quoteWallet.reserved ?? "0").toNumber() : 0;
     const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
-    const yourPnlNum = parseFloat(yourPnl ?? "0");
-
     if (!selectedPair) {
         return <div className="lmv-wrap" style={{ alignItems: "center", justifyContent: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>NO PAIRS AVAILABLE</div>;
     }
 
     return (
         <div className="lmv-wrap">
-            {/* MATCH HEADER */}
+            {/* COMPACT OPPONENT BAR */}
             <MatchHeaderBar
                 match={match}
                 yourPnl={yourPnl}
@@ -637,74 +628,24 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                 onForfeit={handleForfeit}
             />
 
-            {/* SPLIT VIEW */}
-            <div className="lmv-split">
-                {/* ── YOUR SIDE ── */}
-                <div className="lmv-side">
-                    {/* Chart */}
-                    <div className="lmv-chart-wrap">
-                        <CandlestickChart />
-                    </div>
-
-                    {/* Stats row */}
-                    <div className="lmv-stats">
-                        <div>
-                            <span className="lmv-stat-lbl">BALANCE</span>
-                            <span className="lmv-stat-val">{fmtUsd(quoteBalance)}</span>
-                        </div>
-                        <div>
-                            <span className="lmv-stat-lbl">P&L</span>
-                            <span className="lmv-stat-val" style={{ color: yourPnlNum >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                {yourPnlNum >= 0 ? "+" : ""}{yourPnlNum.toFixed(2)}%
-                            </span>
-                        </div>
-                        <div>
-                            <span className="lmv-stat-lbl">TRADES</span>
-                            <span className="lmv-stat-val">{yourTrades}</span>
-                        </div>
-                    </div>
-
-                    {/* Order panel */}
-                    <UnifiedOrderPanel
-                        pair={selectedPair}
-                        position={currentPosition}
-                        quoteBalance={quoteBalance}
-                        onOrderFilled={refreshPositions}
-                        classPrefix="lmv"
-                    />
+            {/* FULL WIDTH TRADING VIEW */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", flex: 1, minHeight: 0, overflow: "hidden" }}>
+                {/* CHART — full height left column */}
+                <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", height: "100%", minHeight: 0 }}>
+                    <CandlestickChart />
                 </div>
 
-                {/* ── DIVIDER ── */}
-                <div className="lmv-divider" />
-
-                {/* ── OPPONENT SIDE ── */}
-                <div className="lmv-side opponent">
-                    {/* Opponent chart (read-only) */}
-                    <div className="lmv-chart-wrap readonly">
-                        <div className="lmv-opp-label">OPPONENT VIEW</div>
-                        <CandlestickChart />
+                {/* RIGHT COLUMN — order panel */}
+                <div style={{ display: "flex", flexDirection: "column", height: "100%", maxHeight: "100%", overflow: "hidden", borderLeft: "1px solid var(--ar-orange)" }}>
+                    <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+                        <UnifiedOrderPanel
+                            pair={selectedPair}
+                            position={currentPosition}
+                            quoteBalance={quoteBalance}
+                            onOrderFilled={refreshPositions}
+                            classPrefix="lmv"
+                        />
                     </div>
-
-                    {/* Opponent stats row */}
-                    <div className="lmv-stats">
-                        <div>
-                            <span className="lmv-stat-lbl">P&L</span>
-                            <span className="lmv-stat-val" style={{ color: parseFloat(opponentPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                {parseFloat(opponentPnl ?? "0") >= 0 ? "+" : ""}{parseFloat(opponentPnl ?? "0").toFixed(2)}%
-                            </span>
-                        </div>
-                        <div>
-                            <span className="lmv-stat-lbl">TRADES</span>
-                            <span className="lmv-stat-val">{oppTrades}</span>
-                        </div>
-                        <div>
-                            <span className="lmv-stat-lbl">PAIR</span>
-                            <span className="lmv-stat-val">{selectedPair.symbol.split("/")[0]}</span>
-                        </div>
-                    </div>
-
-                    {/* Opponent activity feed */}
-                    <OpponentActivityFeed />
                 </div>
             </div>
 
