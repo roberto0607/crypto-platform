@@ -9,6 +9,9 @@ const STANDARD_INDICATORS = [
   { key: "bollingerBands", label: "Bollinger Bands", color: "#6366f1" },
   { key: "volume", label: "Volume", color: "#22c55e" },
   { key: "rsi", label: "RSI", color: "#f59e0b" },
+  { key: "macd", label: "MACD", color: "#3b82f6" },
+  { key: "atr", label: "ATR", color: "#a855f7" },
+  { key: "delta", label: "Est. Delta", color: "#22c55e" },
 ] as const;
 
 const ADVANCED_INDICATORS = [

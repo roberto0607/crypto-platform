@@ -153,6 +153,122 @@ export function computeBollingerBands(
 }
 
 /**
+ * MACD (12/26/9)
+ * Uses Float64Array for performance on large datasets.
+ */
+export interface MACDResult {
+  macd: Point[];
+  signal: Point[];
+  histogram: Point[];
+}
+
+export function computeMACD(
+  candles: Candle[],
+  fastPeriod = 12,
+  slowPeriod = 26,
+  signalPeriod = 9,
+): MACDResult {
+  const n = candles.length;
+  if (n < slowPeriod + signalPeriod) return { macd: [], signal: [], histogram: [] };
+
+  const closes = new Float64Array(n);
+  for (let i = 0; i < n; i++) closes[i] = candles[i]!.close;
+
+  // Fast EMA
+  const fastK = 2 / (fastPeriod + 1);
+  const fastEma = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i < fastPeriod; i++) sum += closes[i]!;
+  fastEma[fastPeriod - 1] = sum / fastPeriod;
+  for (let i = fastPeriod; i < n; i++) fastEma[i] = closes[i]! * fastK + fastEma[i - 1]! * (1 - fastK);
+
+  // Slow EMA
+  const slowK = 2 / (slowPeriod + 1);
+  const slowEma = new Float64Array(n);
+  sum = 0;
+  for (let i = 0; i < slowPeriod; i++) sum += closes[i]!;
+  slowEma[slowPeriod - 1] = sum / slowPeriod;
+  for (let i = slowPeriod; i < n; i++) slowEma[i] = closes[i]! * slowK + slowEma[i - 1]! * (1 - slowK);
+
+  // MACD line (from slowPeriod-1 onwards)
+  const macdStart = slowPeriod - 1;
+  const macdLen = n - macdStart;
+  const macdLine = new Float64Array(macdLen);
+  for (let i = 0; i < macdLen; i++) macdLine[i] = fastEma[macdStart + i]! - slowEma[macdStart + i]!;
+
+  // Signal line = 9-period EMA of MACD
+  const sigK = 2 / (signalPeriod + 1);
+  const sigLine = new Float64Array(macdLen);
+  sum = 0;
+  for (let i = 0; i < signalPeriod; i++) sum += macdLine[i]!;
+  sigLine[signalPeriod - 1] = sum / signalPeriod;
+  for (let i = signalPeriod; i < macdLen; i++) sigLine[i] = macdLine[i]! * sigK + sigLine[i - 1]! * (1 - sigK);
+
+  // Build output from signalPeriod-1 in macdLine (= macdStart + signalPeriod - 1 in candles)
+  const outStart = signalPeriod - 1;
+  const macd: Point[] = [];
+  const signal: Point[] = [];
+  const histogram: Point[] = [];
+  for (let i = outStart; i < macdLen; i++) {
+    const t = candles[macdStart + i]!.time;
+    const m = macdLine[i]!;
+    const s = sigLine[i]!;
+    macd.push({ time: t, value: m });
+    signal.push({ time: t, value: s });
+    histogram.push({ time: t, value: m - s });
+  }
+  return { macd, signal, histogram };
+}
+
+/**
+ * ATR — Average True Range (Wilder smoothing)
+ * Uses Float64Array for performance.
+ */
+export function computeATR(candles: Candle[], period = 14): Point[] {
+  const n = candles.length;
+  if (n < period + 1) return [];
+
+  const tr = new Float64Array(n);
+  tr[0] = candles[0]!.high - candles[0]!.low;
+  for (let i = 1; i < n; i++) {
+    const c = candles[i]!;
+    const pc = candles[i - 1]!.close;
+    tr[i] = Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
+  }
+
+  // First ATR = simple average of first `period` TR values (starting at index 1)
+  let atrSum = 0;
+  for (let i = 1; i <= period; i++) atrSum += tr[i]!;
+  let atr = atrSum / period;
+
+  const result: Point[] = [];
+  result.push({ time: candles[period]!.time, value: atr });
+
+  // Wilder smoothing
+  for (let i = period + 1; i < n; i++) {
+    atr = (atr * (period - 1) + tr[i]!) / period;
+    result.push({ time: candles[i]!.time, value: atr });
+  }
+  return result;
+}
+
+/**
+ * Per-candle Delta (estimated buy - sell volume)
+ * Approximation: bullish candles split 70/30, bearish 30/70, doji 50/50.
+ */
+export function computeCandleDelta(candles: Candle[]): Point[] {
+  return candles.map((c) => {
+    let ratio: number;
+    if (c.close > c.open) ratio = 0.7;
+    else if (c.close < c.open) ratio = 0.3;
+    else ratio = 0.5;
+    const buyVol = c.volume * ratio;
+    const sellVol = c.volume * (1 - ratio);
+    return { time: c.time, value: buyVol - sellVol };
+  });
+}
+
+/**
  * RSI — Relative Strength Index
  */
 export function computeRSI(candles: Candle[], period = 14): Point[] {

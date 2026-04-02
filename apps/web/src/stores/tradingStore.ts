@@ -43,6 +43,9 @@ const defaultIndicatorConfig = {
   bollingerBands: false,
   volume: true,
   rsi: false,
+  macd: false,
+  atr: false,
+  delta: false,
   // Advanced
   keyLevels: false,
   liquidityZones: false,

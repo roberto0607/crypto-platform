@@ -20,8 +20,12 @@ import {
     computeVWAP,
     computeBollingerBands,
     computeRSI,
+    computeMACD,
+    computeATR,
+    computeCandleDelta,
     type Candle as IndicatorCandle,
     type Point,
+    type MACDResult,
 } from "@/lib/indicators";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
@@ -30,6 +34,9 @@ import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } fro
 import { CvdPanel } from "./CvdPanel";
 import { VolumePanel } from "./VolumePanel";
 import { RsiPanel } from "./RsiPanel";
+import { MACDPanel } from "./MACDPanel";
+import { ATRPanel } from "./ATRPanel";
+import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import client from "@/api/client";
 
@@ -163,6 +170,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const [rsiData, setRsiData] = useState<Point[]>([]);
+    const [macdData, setMacdData] = useState<MACDResult>({ macd: [], signal: [], histogram: [] });
+    const [atrData, setAtrData] = useState<Point[]>([]);
+    const [deltaData, setDeltaData] = useState<Point[]>([]);
 
     const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligenceData | null>(null);
     const [intelLoading, setIntelLoading] = useState(false);
@@ -440,6 +450,27 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 setRsiData(computeRSI(indCandles, 14));
             } else {
                 setRsiData([]);
+            }
+
+            // MACD (computed here, rendered in sub-panel)
+            if (indicatorConfig.macd) {
+                setMacdData(computeMACD(indCandles));
+            } else {
+                setMacdData({ macd: [], signal: [], histogram: [] });
+            }
+
+            // ATR (computed here, rendered in sub-panel)
+            if (indicatorConfig.atr) {
+                setAtrData(computeATR(indCandles, 14));
+            } else {
+                setAtrData([]);
+            }
+
+            // Per-candle delta (computed here, rendered in sub-panel)
+            if (indicatorConfig.delta) {
+                setDeltaData(computeCandleDelta(indCandles));
+            } else {
+                setDeltaData([]);
             }
         }
     }, [indicatorConfig, clearPriceLines, fundingRate]);
@@ -1637,9 +1668,24 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} />
             )}
 
+            {/* MACD sub-panel */}
+            {indicatorConfig.macd && macdData.macd.length > 0 && (
+                <MACDPanel data={macdData} mainChart={chartRef.current} />
+            )}
+
             {/* RSI sub-panel */}
             {indicatorConfig.rsi && rsiData.length > 0 && (
                 <RsiPanel rsiData={rsiData} mainChart={chartRef.current} />
+            )}
+
+            {/* ATR sub-panel */}
+            {indicatorConfig.atr && atrData.length > 0 && (
+                <ATRPanel atrData={atrData} mainChart={chartRef.current} />
+            )}
+
+            {/* Delta sub-panel */}
+            {indicatorConfig.delta && deltaData.length > 0 && (
+                <DeltaPanel deltaData={deltaData} mainChart={chartRef.current} />
             )}
 
             {/* CVD sub-panel */}
