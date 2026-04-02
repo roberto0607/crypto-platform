@@ -70,6 +70,15 @@ All new indicators follow this pattern:
 3. Entry in `IndicatorToolbar.tsx` (STANDARD or ADVANCED section)
 4. Overlay indicators: add `LineSeries` in `CandlestickChart.tsx` `renderOverlays()`
 5. Sub-panel indicators: create a synced panel component like `CvdPanel.tsx` / `RsiPanel.tsx`
+6. All indicator defaults are OFF — user enables what they want
+7. Sub-panels use time-based range sync (`getVisibleRange`/`setVisibleRange`), not logical index
+
+### Sub-Panel Height Constants
+- Minimum height: 40px (drag clamp)
+- Default expanded: 80px (Volume, RSI, Delta), 100px (MACD), 120px (ATR), 60px (CVD)
+- Collapsed height: 20px (SubPanelHeader label bar only)
+- Maximum height: 400px (drag clamp)
+- Heights persisted in localStorage key `tradr_panel_heights`
 
 ### Auth & Cookies
 - Production uses `sameSite: "none"` + `secure: true` (cross-origin Railway deployment)

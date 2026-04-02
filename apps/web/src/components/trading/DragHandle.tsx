@@ -11,7 +11,7 @@ export const DEFAULT_HEIGHTS: Record<string, number> = {
     cvd: 60,
 };
 
-const MIN_HEIGHT = 60;
+const MIN_HEIGHT = 40;
 const MAX_HEIGHT = 400;
 
 export function loadPanelHeights(): Record<string, number> {

@@ -41,7 +41,7 @@ const defaultIndicatorConfig = {
   ema200: false,
   vwap: false,
   bollingerBands: false,
-  volume: true,
+  volume: false,
   rsi: false,
   macd: false,
   atr: false,
