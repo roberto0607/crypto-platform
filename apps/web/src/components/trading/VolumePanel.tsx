@@ -21,7 +21,7 @@ export function VolumePanel({ candles, mainChart, height: externalHeight }: Volu
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false); // Volume: expanded by default
+    const [collapsed, setCollapsed] = useState(true);
 
     useEffect(() => {
         if (!containerRef.current) return;
