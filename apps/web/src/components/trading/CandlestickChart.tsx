@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
     CandlestickSeries,
+    LineSeries,
+    LineStyle,
     type IChartApi,
     type ISeriesApi,
     type CandlestickData,
@@ -14,13 +16,20 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import {
     prevDayHighLow,
+    computeEMA,
+    computeVWAP,
+    computeBollingerBands,
+    computeRSI,
     type Candle as IndicatorCandle,
+    type Point,
 } from "@/lib/indicators";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
 import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
 import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
 import { CvdPanel } from "./CvdPanel";
+import { VolumePanel } from "./VolumePanel";
+import { RsiPanel } from "./RsiPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import client from "@/api/client";
 
@@ -144,6 +153,16 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const priceLabelRef = useRef<HTMLDivElement>(null);
     const pdhConnectorRef = useRef<HTMLDivElement>(null);
     const pdlConnectorRef = useRef<HTMLDivElement>(null);
+
+    // Overlay line series refs
+    const ema20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const ema50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const ema200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const [rsiData, setRsiData] = useState<Point[]>([]);
 
     const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligenceData | null>(null);
     const [intelLoading, setIntelLoading] = useState(false);
@@ -352,6 +371,76 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         } else {
             setCvdData([]);
             setCvdDivergences([]);
+        }
+
+        // ── Standard overlay indicators ──
+        const chart = chartRef.current;
+        if (chart) {
+            const toLineData = (pts: Point[]) => pts.map((p) => ({ time: p.time as Time, value: p.value }));
+
+            // EMA 20
+            if (indicatorConfig.ema20) {
+                if (!ema20SeriesRef.current) {
+                    ema20SeriesRef.current = chart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                }
+                ema20SeriesRef.current.setData(toLineData(computeEMA(indCandles, 20)));
+            } else if (ema20SeriesRef.current) {
+                chart.removeSeries(ema20SeriesRef.current); ema20SeriesRef.current = null;
+            }
+
+            // EMA 50
+            if (indicatorConfig.ema50) {
+                if (!ema50SeriesRef.current) {
+                    ema50SeriesRef.current = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                }
+                ema50SeriesRef.current.setData(toLineData(computeEMA(indCandles, 50)));
+            } else if (ema50SeriesRef.current) {
+                chart.removeSeries(ema50SeriesRef.current); ema50SeriesRef.current = null;
+            }
+
+            // EMA 200
+            if (indicatorConfig.ema200) {
+                if (!ema200SeriesRef.current) {
+                    ema200SeriesRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                }
+                ema200SeriesRef.current.setData(toLineData(computeEMA(indCandles, 200)));
+            } else if (ema200SeriesRef.current) {
+                chart.removeSeries(ema200SeriesRef.current); ema200SeriesRef.current = null;
+            }
+
+            // VWAP
+            if (indicatorConfig.vwap) {
+                if (!vwapSeriesRef.current) {
+                    vwapSeriesRef.current = chart.addSeries(LineSeries, { color: "#a855f7", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+                }
+                vwapSeriesRef.current.setData(toLineData(computeVWAP(indCandles)));
+            } else if (vwapSeriesRef.current) {
+                chart.removeSeries(vwapSeriesRef.current); vwapSeriesRef.current = null;
+            }
+
+            // Bollinger Bands
+            if (indicatorConfig.bollingerBands) {
+                const bb = computeBollingerBands(indCandles, 20, 2);
+                if (!bbMiddleSeriesRef.current) {
+                    bbMiddleSeriesRef.current = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    bbUpperSeriesRef.current = chart.addSeries(LineSeries, { color: "rgba(99,102,241,0.5)", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    bbLowerSeriesRef.current = chart.addSeries(LineSeries, { color: "rgba(99,102,241,0.5)", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                }
+                bbMiddleSeriesRef.current.setData(toLineData(bb.middle));
+                bbUpperSeriesRef.current!.setData(toLineData(bb.upper));
+                bbLowerSeriesRef.current!.setData(toLineData(bb.lower));
+            } else {
+                if (bbMiddleSeriesRef.current) { chart.removeSeries(bbMiddleSeriesRef.current); bbMiddleSeriesRef.current = null; }
+                if (bbUpperSeriesRef.current) { chart.removeSeries(bbUpperSeriesRef.current); bbUpperSeriesRef.current = null; }
+                if (bbLowerSeriesRef.current) { chart.removeSeries(bbLowerSeriesRef.current); bbLowerSeriesRef.current = null; }
+            }
+
+            // RSI (computed here, rendered in sub-panel)
+            if (indicatorConfig.rsi) {
+                setRsiData(computeRSI(indCandles, 14));
+            } else {
+                setRsiData([]);
+            }
         }
     }, [indicatorConfig, clearPriceLines, fundingRate]);
 
@@ -1542,6 +1631,16 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                     </div>
                 );
             })()}
+
+            {/* Volume sub-panel */}
+            {indicatorConfig.volume && rawCandlesRef.current.length > 0 && (
+                <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} />
+            )}
+
+            {/* RSI sub-panel */}
+            {indicatorConfig.rsi && rsiData.length > 0 && (
+                <RsiPanel rsiData={rsiData} mainChart={chartRef.current} />
+            )}
 
             {/* CVD sub-panel */}
             {indicatorConfig.cvd && cvdData.length > 0 && (

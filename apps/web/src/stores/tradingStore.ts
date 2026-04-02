@@ -35,6 +35,15 @@ const MAX_RECENT_TRADES = 50;
 const INDICATOR_STORAGE_KEY = "indicator-config";
 
 const defaultIndicatorConfig = {
+  // Standard
+  ema20: false,
+  ema50: false,
+  ema200: false,
+  vwap: false,
+  bollingerBands: false,
+  volume: true,
+  rsi: false,
+  // Advanced
   keyLevels: false,
   liquidityZones: false,
   orderBlocks: false,

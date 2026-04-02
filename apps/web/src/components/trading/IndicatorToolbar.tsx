@@ -1,7 +1,17 @@
 import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 
-const OVERLAY_INDICATORS = [
+const STANDARD_INDICATORS = [
+  { key: "ema20", label: "EMA 20", color: "#3b82f6" },
+  { key: "ema50", label: "EMA 50", color: "#f59e0b" },
+  { key: "ema200", label: "EMA 200", color: "#ef4444" },
+  { key: "vwap", label: "VWAP", color: "#a855f7" },
+  { key: "bollingerBands", label: "Bollinger Bands", color: "#6366f1" },
+  { key: "volume", label: "Volume", color: "#22c55e" },
+  { key: "rsi", label: "RSI", color: "#f59e0b" },
+] as const;
+
+const ADVANCED_INDICATORS = [
   { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#ff4d4d" },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
@@ -9,13 +19,14 @@ const OVERLAY_INDICATORS = [
   { key: "marketIntelligence", label: "Market Intelligence", color: "rgba(147,51,234,1)" },
 ] as const;
 
+const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];
+
 export function IndicatorToolbar() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const config = useTradingStore((s) => s.indicatorConfig);
   const toggle = useTradingStore((s) => s.toggleIndicator);
 
-  // Close dropdown on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -25,7 +36,41 @@ export function IndicatorToolbar() {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const activeCount = OVERLAY_INDICATORS.filter((i) => config[i.key]).length;
+  const activeCount = ALL_INDICATORS.filter((i) => config[i.key]).length;
+
+  function renderRow(ind: { key: string; label: string; color: string }) {
+    const active = config[ind.key as keyof typeof config];
+    return (
+      <button
+        key={ind.key}
+        onClick={() => toggle(ind.key as keyof typeof config)}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "5px 12px", cursor: "pointer",
+          width: "100%", textAlign: "left",
+          background: "transparent", border: "none",
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+      >
+        <span style={{
+          width: 14, height: 14, borderRadius: 2, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: active ? "#00ff41" : "rgba(255,255,255,0.04)",
+          border: active ? "1px solid #00ff41" : "1px solid rgba(255,255,255,0.15)",
+        }}>
+          {active && (
+            <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#000" strokeWidth="2">
+              <path d="M2 6l3 3 5-5" />
+            </svg>
+          )}
+        </span>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, backgroundColor: ind.color }} />
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "'Space Mono', monospace" }}>{ind.label}</span>
+      </button>
+    );
+  }
 
   return (
     <div ref={ref} className="relative">
@@ -64,50 +109,20 @@ export function IndicatorToolbar() {
           border: "1px solid rgba(0,255,65,0.16)",
           borderRadius: 2,
           boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
-          zIndex: 50, minWidth: 200, padding: "4px 0",
+          zIndex: 50, minWidth: 220, padding: "4px 0",
+          maxHeight: 400, overflowY: "auto",
         }}>
-          <div style={{
-            padding: "4px 12px", fontSize: 10,
-            color: "rgba(255,255,255,0.25)", letterSpacing: 3,
-            textTransform: "uppercase",
-          }}>
-            On Chart
+          <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
+            STANDARD
           </div>
-          {OVERLAY_INDICATORS.map((ind) => (
-            <button
-              key={ind.key}
-              onClick={() => toggle(ind.key)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "6px 12px", cursor: "pointer",
-                width: "100%", textAlign: "left",
-                background: "transparent", border: "none",
-                transition: "background 0.15s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-            >
-              <span style={{
-                width: 14, height: 14, borderRadius: 2, flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: config[ind.key] ? "#00ff41" : "rgba(255,255,255,0.04)",
-                border: config[ind.key] ? "1px solid #00ff41" : "1px solid rgba(255,255,255,0.15)",
-              }}>
-                {config[ind.key] && (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#000" strokeWidth="2">
-                    <path d="M2 6l3 3 5-5" />
-                  </svg>
-                )}
-              </span>
-              <span
-                style={{
-                  width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                  backgroundColor: ind.color,
-                }}
-              />
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "'Space Mono', monospace" }}>{ind.label}</span>
-            </button>
-          ))}
+          {STANDARD_INDICATORS.map(renderRow)}
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
+
+          <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
+            ADVANCED
+          </div>
+          {ADVANCED_INDICATORS.map(renderRow)}
         </div>
       )}
     </div>
