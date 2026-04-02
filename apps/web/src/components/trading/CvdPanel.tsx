@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import {
     createChart,
     AreaSeries,
@@ -28,6 +28,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     const chartRef = useRef<IChartApi | null>(null);
     const posSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
     const negSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+    const [collapsed, setCollapsed] = useState(false);
 
     const lastValue = cvdData.length > 0 ? cvdData[cvdData.length - 1]!.value : 0;
 
@@ -155,8 +156,9 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     return (
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(6,10,16,0.95)" }}>
             {/* Header bar — 20px */}
-            <div style={{ height: 20, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 8px", position: "relative", zIndex: 1 }}>
+            <div onClick={() => setCollapsed((v) => !v)} style={{ height: 20, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 8px", position: "relative", zIndex: 1, cursor: "pointer", userSelect: "none" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 8, color: "rgba(255,255,255,0.3)", transition: "transform 0.15s", transform: collapsed ? "rotate(-90deg)" : "rotate(0)" }}>▼</span>
                     <span style={{ fontFamily: "Oxanium, monospace", fontSize: 9, color: "rgba(255,255,255,0.5)", letterSpacing: 2, textTransform: "uppercase" }}>
                         CVD
                     </span>
@@ -179,7 +181,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
                 </div>
             </div>
             {/* Chart area — 60px */}
-            <div ref={containerRef} style={{ height: 60 }} />
+            {!collapsed && <div ref={containerRef} style={{ height: 60 }} />}
         </div>
     );
 }

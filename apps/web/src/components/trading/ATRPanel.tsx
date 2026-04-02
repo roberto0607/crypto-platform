@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     createChart,
     LineSeries,
@@ -9,6 +9,7 @@ import {
     type IPriceLine,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { SubPanelHeader } from "./SubPanelHeader";
 
 interface ATRPanelProps {
     atrData: Point[];
@@ -20,6 +21,7 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const avgLineRef = useRef<IPriceLine | null>(null);
+    const [collapsed, setCollapsed] = useState(false);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -33,9 +35,7 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
             crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
         });
 
-        const series = chart.addSeries(LineSeries, {
-            color: "#a855f7", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceScaleId: "atr",
-        });
+        const series = chart.addSeries(LineSeries, { color: "#a855f7", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceScaleId: "atr" });
 
         chartRef.current = chart;
         seriesRef.current = series;
@@ -43,7 +43,6 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
         return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; avgLineRef.current = null; };
     }, []);
 
-    // Sync time scale
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
@@ -52,42 +51,23 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
-    // Set data + average mid-line
     useEffect(() => {
         if (!seriesRef.current || atrData.length === 0) return;
         seriesRef.current.setData(atrData.map((p) => ({ time: p.time as Time, value: p.value })));
 
-        // Remove old average line
-        if (avgLineRef.current) {
-            seriesRef.current.removePriceLine(avgLineRef.current);
-            avgLineRef.current = null;
-        }
-
-        // Compute average ATR across all data points
+        if (avgLineRef.current) { seriesRef.current.removePriceLine(avgLineRef.current); avgLineRef.current = null; }
         let sum = 0;
         for (const p of atrData) sum += p.value;
-        const avg = sum / atrData.length;
-
-        avgLineRef.current = seriesRef.current.createPriceLine({
-            price: avg,
-            color: "#333333",
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            axisLabelVisible: false,
-        });
+        avgLineRef.current = seriesRef.current.createPriceLine({ price: sum / atrData.length, color: "#333333", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
     }, [atrData]);
 
     const lastATR = atrData.length > 0 ? atrData[atrData.length - 1]!.value : 0;
 
     return (
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", position: "relative" }}>
-            <div style={{ position: "absolute", top: 4, left: 8, fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 2, zIndex: 5 }}>
-                ATR 14
-            </div>
-            <div style={{ position: "absolute", top: 4, right: 8, fontSize: 9, color: "#a855f7", zIndex: 5 }}>
-                ${lastATR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <div ref={containerRef} style={{ height: 120 }} />
+        <div>
+            <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="ATR 14"
+                rightContent={<span style={{ color: "#a855f7" }}>${lastATR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>} />
+            {!collapsed && <div ref={containerRef} style={{ height: 120 }} />}
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     createChart,
     HistogramSeries,
@@ -7,6 +7,7 @@ import {
     type Time,
 } from "lightweight-charts";
 import type { Candle } from "@/api/endpoints/candles";
+import { SubPanelHeader } from "./SubPanelHeader";
 
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 
@@ -19,30 +20,21 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+    const [collapsed, setCollapsed] = useState(false);
 
     useEffect(() => {
         if (!containerRef.current) return;
 
         const chart = createChart(containerRef.current, {
             height: 80,
-            layout: {
-                background: { color: "#0a0a0a" },
-                textColor: "#555",
-                fontSize: 9,
-            },
+            layout: { background: { color: "#0a0a0a" }, textColor: "#555", fontSize: 9 },
             grid: { vertLines: { visible: false }, horzLines: { visible: false } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0 } },
             timeScale: { visible: false },
-            crosshair: {
-                vertLine: { visible: false },
-                horzLine: { visible: false },
-            },
+            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
         });
 
-        const series = chart.addSeries(HistogramSeries, {
-            priceFormat: { type: "volume" },
-            priceScaleId: "volume",
-        });
+        const series = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "volume" });
 
         chartRef.current = chart;
         seriesRef.current = series;
@@ -50,7 +42,6 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
     }, []);
 
-    // Sync time scale with main chart
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
@@ -59,22 +50,24 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
-    // Set data
     useEffect(() => {
         if (!seriesRef.current || candles.length === 0) return;
         const data = candles.map((c) => ({
             time: (new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC) as Time,
             value: parseFloat(c.volume),
-            color: parseFloat(c.close) >= parseFloat(c.open)
-                ? "rgba(0,255,65,0.35)"
-                : "rgba(255,59,59,0.35)",
+            color: parseFloat(c.close) >= parseFloat(c.open) ? "rgba(0,255,65,0.35)" : "rgba(255,59,59,0.35)",
         }));
         seriesRef.current.setData(data);
     }, [candles]);
 
+    const lastVol = candles.length > 0 ? parseFloat(candles[candles.length - 1]!.volume) : 0;
+    const fmtVol = lastVol >= 1_000_000 ? (lastVol / 1_000_000).toFixed(1) + "M" : lastVol >= 1000 ? (lastVol / 1000).toFixed(0) + "K" : lastVol.toFixed(0);
+
     return (
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div ref={containerRef} style={{ height: 80 }} />
+        <div>
+            <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="VOLUME"
+                rightContent={<span style={{ color: "rgba(255,255,255,0.4)" }}>{fmtVol}</span>} />
+            {!collapsed && <div ref={containerRef} style={{ height: 80 }} />}
         </div>
     );
 }
