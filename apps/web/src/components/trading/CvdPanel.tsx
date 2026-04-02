@@ -120,14 +120,14 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         const cvdTimeScale = chartRef.current.timeScale();
 
         const handler = () => {
-            const range = mainTimeScale.getVisibleLogicalRange();
-            if (range) cvdTimeScale.setVisibleLogicalRange(range);
+            const range = mainTimeScale.getVisibleRange();
+            if (range) cvdTimeScale.setVisibleRange(range);
         };
 
-        mainTimeScale.subscribeVisibleLogicalRangeChange(handler);
+        mainTimeScale.subscribeVisibleTimeRangeChange(handler);
 
         return () => {
-            mainTimeScale.unsubscribeVisibleLogicalRangeChange(handler);
+            mainTimeScale.unsubscribeVisibleTimeRangeChange(handler);
         };
     }, [mainChart]);
 
@@ -158,8 +158,8 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
 
         // Sync range after data loads
         if (mainChart && chartRef.current) {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });
         }
     }, [cvdData, mainChart]);
 
@@ -167,8 +167,8 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     useEffect(() => {
         if (collapsed || !mainChart || !chartRef.current) return;
         requestAnimationFrame(() => {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) chartRef.current?.timeScale().setVisibleRange(range);
         });
     }, [collapsed, mainChart]);
 

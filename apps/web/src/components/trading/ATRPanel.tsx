@@ -47,9 +47,9 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
-        mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
+        return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart]);
 
     useEffect(() => {
@@ -66,16 +66,16 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
         avgLineRef.current = seriesRef.current.createPriceLine({ price: sum / atrData.length, color: "#333333", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
 
         if (mainChart && chartRef.current) {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });
         }
     }, [atrData, mainChart]);
 
     useEffect(() => {
         if (collapsed || !mainChart || !chartRef.current) return;
         requestAnimationFrame(() => {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) chartRef.current?.timeScale().setVisibleRange(range);
         });
     }, [collapsed, mainChart]);
 

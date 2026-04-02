@@ -54,9 +54,9 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
-        mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
+        return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart]);
 
     useEffect(() => {
@@ -71,8 +71,8 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         histSeriesRef.current.setData(data.histogram.map((p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#16a34a" : "#dc2626" })));
         // Sync range after data loads
         if (mainChart && chartRef.current) {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });
         }
     }, [data, mainChart]);
 
@@ -80,8 +80,8 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (collapsed || !mainChart || !chartRef.current) return;
         requestAnimationFrame(() => {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) chartRef.current?.timeScale().setVisibleRange(range);
         });
     }, [collapsed, mainChart]);
 

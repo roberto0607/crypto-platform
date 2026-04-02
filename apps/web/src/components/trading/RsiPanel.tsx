@@ -48,9 +48,9 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
-        mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
+        return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart]);
 
     useEffect(() => {
@@ -61,16 +61,16 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
         if (!seriesRef.current || rsiData.length === 0) return;
         seriesRef.current.setData(rsiData.map((p) => ({ time: p.time as Time, value: p.value })));
         if (mainChart && chartRef.current) {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });
         }
     }, [rsiData, mainChart]);
 
     useEffect(() => {
         if (collapsed || !mainChart || !chartRef.current) return;
         requestAnimationFrame(() => {
-            const range = mainChart.timeScale().getVisibleLogicalRange();
-            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) chartRef.current?.timeScale().setVisibleRange(range);
         });
     }, [collapsed, mainChart]);
 
