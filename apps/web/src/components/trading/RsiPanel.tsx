@@ -13,9 +13,10 @@ import { SubPanelHeader } from "./SubPanelHeader";
 interface RsiPanelProps {
     rsiData: Point[];
     mainChart: IChartApi | null;
+    height?: number;
 }
 
-export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
+export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -55,6 +56,10 @@ export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
     }, [mainChart]);
 
     useEffect(() => {
+        if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
+    }, [externalHeight, collapsed]);
+
+    useEffect(() => {
         if (!seriesRef.current || rsiData.length === 0) return;
         seriesRef.current.setData(rsiData.map((p) => ({ time: p.time as Time, value: p.value })));
     }, [rsiData]);
@@ -65,7 +70,7 @@ export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="RSI 14"
                 rightContent={<span style={{ color: lastRsi > 70 ? "#ff3b3b" : lastRsi < 30 ? "#00ff41" : "#f59e0b" }}>{lastRsi.toFixed(1)}</span>} />
-            <div ref={containerRef} style={{ height: collapsed ? 0 : 80, overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 80), overflow: "hidden" }} />
         </div>
     );
 }

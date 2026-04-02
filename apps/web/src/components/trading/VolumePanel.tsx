@@ -14,9 +14,10 @@ const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 interface VolumePanelProps {
     candles: Candle[];
     mainChart: IChartApi | null;
+    height?: number;
 }
 
-export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
+export function VolumePanel({ candles, mainChart, height: externalHeight }: VolumePanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -53,6 +54,13 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
+    // Resize chart when height changes
+    useEffect(() => {
+        if (chartRef.current && !collapsed && externalHeight) {
+            chartRef.current.applyOptions({ height: externalHeight });
+        }
+    }, [externalHeight, collapsed]);
+
     useEffect(() => {
         if (!seriesRef.current || candles.length === 0) return;
         const data = candles.map((c) => ({
@@ -70,7 +78,7 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="VOLUME"
                 rightContent={<span style={{ color: "rgba(255,255,255,0.4)" }}>{fmtVol}</span>} />
-            <div ref={containerRef} style={{ height: collapsed ? 0 : 80, overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 80), overflow: "hidden" }} />
         </div>
     );
 }

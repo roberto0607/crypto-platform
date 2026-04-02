@@ -14,9 +14,10 @@ import { SubPanelHeader } from "./SubPanelHeader";
 interface MACDPanelProps {
     data: MACDResult;
     mainChart: IChartApi | null;
+    height?: number;
 }
 
-export function MACDPanel({ data, mainChart }: MACDPanelProps) {
+export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const macdSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -61,6 +62,10 @@ export function MACDPanel({ data, mainChart }: MACDPanelProps) {
     }, [mainChart]);
 
     useEffect(() => {
+        if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
+    }, [externalHeight, collapsed]);
+
+    useEffect(() => {
         if (!macdSeriesRef.current || !signalSeriesRef.current || !histSeriesRef.current) return;
         if (data.macd.length === 0) return;
         macdSeriesRef.current.setData(data.macd.map((p) => ({ time: p.time as Time, value: p.value })));
@@ -75,7 +80,7 @@ export function MACDPanel({ data, mainChart }: MACDPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="MACD 12/26/9"
                 rightContent={<><span style={{ color: "#3b82f6" }}>{lastMacd.toFixed(2)}</span>{" "}<span style={{ color: "#f97316" }}>{lastSignal.toFixed(2)}</span></>} />
-            <div ref={containerRef} style={{ height: collapsed ? 0 : 100, overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 100), overflow: "hidden" }} />
         </div>
     );
 }

@@ -14,9 +14,10 @@ import { SubPanelHeader } from "./SubPanelHeader";
 interface ATRPanelProps {
     atrData: Point[];
     mainChart: IChartApi | null;
+    height?: number;
 }
 
-export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
+export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -54,6 +55,10 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
     }, [mainChart]);
 
     useEffect(() => {
+        if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
+    }, [externalHeight, collapsed]);
+
+    useEffect(() => {
         if (!seriesRef.current || atrData.length === 0) return;
         seriesRef.current.setData(atrData.map((p) => ({ time: p.time as Time, value: p.value })));
 
@@ -69,7 +74,7 @@ export function ATRPanel({ atrData, mainChart }: ATRPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="ATR 14"
                 rightContent={<span style={{ color: "#a855f7" }}>${lastATR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>} />
-            <div ref={containerRef} style={{ height: collapsed ? 0 : 120, overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 120), overflow: "hidden" }} />
         </div>
     );
 }

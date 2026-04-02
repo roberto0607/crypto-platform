@@ -14,6 +14,7 @@ interface CvdPanelProps {
     divergences: CvdDivergence[];
     dataSource: CvdDataSource;
     mainChart: IChartApi | null;
+    height?: number;
 }
 
 function formatCvdValue(val: number): string {
@@ -23,7 +24,7 @@ function formatCvdValue(val: number): string {
     return (val > 0 ? "+" : "") + val.toFixed(0);
 }
 
-export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainChart }: CvdPanelProps) {
+export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainChart, height: externalHeight }: CvdPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const posSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
@@ -131,6 +132,10 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         };
     }, [mainChart]);
 
+    useEffect(() => {
+        if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
+    }, [externalHeight, collapsed]);
+
     // Update data — split into positive/negative series
     useEffect(() => {
         if (!posSeriesRef.current || !negSeriesRef.current || cvdData.length === 0) return;
@@ -181,7 +186,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
                 </div>
             </div>
             {/* Chart area — 60px */}
-            <div ref={containerRef} style={{ height: collapsed ? 0 : 60, overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 60), overflow: "hidden" }} />
         </div>
     );
 }

@@ -38,6 +38,7 @@ import { MACDPanel } from "./MACDPanel";
 import { ATRPanel } from "./ATRPanel";
 import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
+import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import client from "@/api/client";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -173,6 +174,20 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const [macdData, setMacdData] = useState<MACDResult>({ macd: [], signal: [], histogram: [] });
     const [atrData, setAtrData] = useState<Point[]>([]);
     const [deltaData, setDeltaData] = useState<Point[]>([]);
+
+    const [panelHeights, setPanelHeights] = useState(() => loadPanelHeights());
+
+    const handleHeightChange = useCallback((key: string, h: number) => {
+        setPanelHeights((prev) => ({ ...prev, [key]: h }));
+    }, []);
+
+    const handleDragEnd = useCallback((key: string, h: number) => {
+        setPanelHeights((prev) => {
+            const next = { ...prev, [key]: h };
+            savePanelHeights(next);
+            return next;
+        });
+    }, []);
 
     const [marketIntelligence, setMarketIntelligence] = useState<MarketIntelligenceData | null>(null);
     const [intelLoading, setIntelLoading] = useState(false);
@@ -1664,34 +1679,40 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             })()}
 
             {/* Volume sub-panel */}
-            {indicatorConfig.volume && rawCandlesRef.current.length > 0 && (
-                <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.volume && rawCandlesRef.current.length > 0 && (<>
+                <DragHandle panelKey="volume" currentHeight={panelHeights.volume ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} height={panelHeights.volume} />
+            </>)}
 
             {/* MACD sub-panel */}
-            {indicatorConfig.macd && macdData.macd.length > 0 && (
-                <MACDPanel data={macdData} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.macd && macdData.macd.length > 0 && (<>
+                <DragHandle panelKey="macd" currentHeight={panelHeights.macd ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <MACDPanel data={macdData} mainChart={chartRef.current} height={panelHeights.macd} />
+            </>)}
 
             {/* RSI sub-panel */}
-            {indicatorConfig.rsi && rsiData.length > 0 && (
-                <RsiPanel rsiData={rsiData} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.rsi && rsiData.length > 0 && (<>
+                <DragHandle panelKey="rsi" currentHeight={panelHeights.rsi ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <RsiPanel rsiData={rsiData} mainChart={chartRef.current} height={panelHeights.rsi} />
+            </>)}
 
             {/* ATR sub-panel */}
-            {indicatorConfig.atr && atrData.length > 0 && (
-                <ATRPanel atrData={atrData} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.atr && atrData.length > 0 && (<>
+                <DragHandle panelKey="atr" currentHeight={panelHeights.atr ?? 120} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <ATRPanel atrData={atrData} mainChart={chartRef.current} height={panelHeights.atr} />
+            </>)}
 
             {/* Delta sub-panel */}
-            {indicatorConfig.delta && deltaData.length > 0 && (
-                <DeltaPanel deltaData={deltaData} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.delta && deltaData.length > 0 && (<>
+                <DragHandle panelKey="delta" currentHeight={panelHeights.delta ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <DeltaPanel deltaData={deltaData} mainChart={chartRef.current} height={panelHeights.delta} />
+            </>)}
 
             {/* CVD sub-panel */}
-            {indicatorConfig.cvd && cvdData.length > 0 && (
-                <CvdPanel cvdData={cvdData} divergences={cvdDivergences} dataSource={cvdDataSource} mainChart={chartRef.current} />
-            )}
+            {indicatorConfig.cvd && cvdData.length > 0 && (<>
+                <DragHandle panelKey="cvd" currentHeight={panelHeights.cvd ?? 60} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <CvdPanel cvdData={cvdData} divergences={cvdDivergences} dataSource={cvdDataSource} mainChart={chartRef.current} height={panelHeights.cvd} />
+            </>)}
         </div>
     );
 }
