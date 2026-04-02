@@ -22,7 +22,7 @@ export function MACDPanel({ data, mainChart }: MACDPanelProps) {
     const macdSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const signalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const histSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -55,6 +55,8 @@ export function MACDPanel({ data, mainChart }: MACDPanelProps) {
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -73,7 +75,7 @@ export function MACDPanel({ data, mainChart }: MACDPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="MACD 12/26/9"
                 rightContent={<><span style={{ color: "#3b82f6" }}>{lastMacd.toFixed(2)}</span>{" "}<span style={{ color: "#f97316" }}>{lastSignal.toFixed(2)}</span></>} />
-            {!collapsed && <div ref={containerRef} style={{ height: 100 }} />}
+            <div ref={containerRef} style={{ height: collapsed ? 0 : 100, overflow: "hidden" }} />
         </div>
     );
 }

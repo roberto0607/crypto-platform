@@ -483,7 +483,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         hasMoreRef.current = true;
         fetchingOlderRef.current = false;
         try {
-            const candleRes = await getCandles(selectedPairId, { timeframe, limit: 300 });
+            const candleRes = await getCandles(selectedPairId, { timeframe, limit: 750 });
 
             rawCandlesRef.current = candleRes.data.candles;
             liveCandleRef.current = null;

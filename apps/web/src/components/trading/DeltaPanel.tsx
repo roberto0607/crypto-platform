@@ -19,7 +19,7 @@ export function DeltaPanel({ deltaData, mainChart }: DeltaPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -48,6 +48,8 @@ export function DeltaPanel({ deltaData, mainChart }: DeltaPanelProps) {
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -63,7 +65,7 @@ export function DeltaPanel({ deltaData, mainChart }: DeltaPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="EST. DELTA"
                 rightContent={<span style={{ color: lastDelta >= 0 ? "#22c55e" : "#ef4444" }}>{lastDelta >= 0 ? "+" : ""}{fmtDelta}</span>} />
-            {!collapsed && <div ref={containerRef} style={{ height: 80 }} />}
+            <div ref={containerRef} style={{ height: collapsed ? 0 : 80, overflow: "hidden" }} />
         </div>
     );
 }

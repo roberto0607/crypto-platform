@@ -28,7 +28,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     const chartRef = useRef<IChartApi | null>(null);
     const posSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
     const negSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
 
     const lastValue = cvdData.length > 0 ? cvdData[cvdData.length - 1]!.value : 0;
 
@@ -181,7 +181,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
                 </div>
             </div>
             {/* Chart area — 60px */}
-            {!collapsed && <div ref={containerRef} style={{ height: 60 }} />}
+            <div ref={containerRef} style={{ height: collapsed ? 0 : 60, overflow: "hidden" }} />
         </div>
     );
 }

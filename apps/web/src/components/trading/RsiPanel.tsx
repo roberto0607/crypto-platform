@@ -19,7 +19,7 @@ export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -49,6 +49,8 @@ export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -63,7 +65,7 @@ export function RsiPanel({ rsiData, mainChart }: RsiPanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="RSI 14"
                 rightContent={<span style={{ color: lastRsi > 70 ? "#ff3b3b" : lastRsi < 30 ? "#00ff41" : "#f59e0b" }}>{lastRsi.toFixed(1)}</span>} />
-            {!collapsed && <div ref={containerRef} style={{ height: 80 }} />}
+            <div ref={containerRef} style={{ height: collapsed ? 0 : 80, overflow: "hidden" }} />
         </div>
     );
 }

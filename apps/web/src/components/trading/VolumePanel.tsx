@@ -20,7 +20,7 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(false); // Volume: expanded by default
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -47,6 +47,9 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        // Sync immediately on mount
+        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
+        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -67,7 +70,7 @@ export function VolumePanel({ candles, mainChart }: VolumePanelProps) {
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="VOLUME"
                 rightContent={<span style={{ color: "rgba(255,255,255,0.4)" }}>{fmtVol}</span>} />
-            {!collapsed && <div ref={containerRef} style={{ height: 80 }} />}
+            <div ref={containerRef} style={{ height: collapsed ? 0 : 80, overflow: "hidden" }} />
         </div>
     );
 }
