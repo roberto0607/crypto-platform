@@ -33,6 +33,8 @@ export interface RecentTrade {
 const MAX_RECENT_TRADES = 50;
 
 const INDICATOR_STORAGE_KEY = "indicator-config";
+const INDICATOR_VERSION_KEY = "indicator-config-version";
+const INDICATOR_CONFIG_VERSION = 2; // Bump to reset stale localStorage defaults
 
 const defaultIndicatorConfig = {
   // Standard
@@ -58,6 +60,14 @@ type IndicatorConfig = typeof defaultIndicatorConfig;
 
 function loadIndicatorConfig(): IndicatorConfig {
   try {
+    // Version check — reset stale config when defaults change
+    const storedVersion = localStorage.getItem(INDICATOR_VERSION_KEY);
+    if (!storedVersion || parseInt(storedVersion, 10) < INDICATOR_CONFIG_VERSION) {
+      localStorage.removeItem(INDICATOR_STORAGE_KEY);
+      localStorage.setItem(INDICATOR_VERSION_KEY, String(INDICATOR_CONFIG_VERSION));
+      return { ...defaultIndicatorConfig };
+    }
+
     const stored = localStorage.getItem(INDICATOR_STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
@@ -146,6 +156,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   toggleIndicator: (key: keyof IndicatorConfig) => {
     const config = { ...get().indicatorConfig, [key]: !get().indicatorConfig[key] };
     localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(config));
+    localStorage.setItem(INDICATOR_VERSION_KEY, String(INDICATOR_CONFIG_VERSION));
     set({ indicatorConfig: config });
   },
 
