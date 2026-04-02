@@ -49,8 +49,6 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -61,7 +59,19 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
     useEffect(() => {
         if (!seriesRef.current || deltaData.length === 0) return;
         seriesRef.current.setData(deltaData.map((p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#22c55e" : "#ef4444" })));
-    }, [deltaData]);
+        if (mainChart && chartRef.current) {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+        }
+    }, [deltaData, mainChart]);
+
+    useEffect(() => {
+        if (collapsed || !mainChart || !chartRef.current) return;
+        requestAnimationFrame(() => {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+        });
+    }, [collapsed, mainChart]);
 
     const lastDelta = deltaData.length > 0 ? deltaData[deltaData.length - 1]!.value : 0;
     const fmtDelta = Math.abs(lastDelta) >= 1000 ? (lastDelta / 1000).toFixed(1) + "K" : lastDelta.toFixed(0);

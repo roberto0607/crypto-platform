@@ -49,8 +49,6 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -66,7 +64,20 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
         let sum = 0;
         for (const p of atrData) sum += p.value;
         avgLineRef.current = seriesRef.current.createPriceLine({ price: sum / atrData.length, color: "#333333", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
-    }, [atrData]);
+
+        if (mainChart && chartRef.current) {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+        }
+    }, [atrData, mainChart]);
+
+    useEffect(() => {
+        if (collapsed || !mainChart || !chartRef.current) return;
+        requestAnimationFrame(() => {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+        });
+    }, [collapsed, mainChart]);
 
     const lastATR = atrData.length > 0 ? atrData[atrData.length - 1]!.value : 0;
 

@@ -56,8 +56,6 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         const sub = chartRef.current;
         const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
@@ -71,7 +69,21 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         macdSeriesRef.current.setData(data.macd.map((p) => ({ time: p.time as Time, value: p.value })));
         signalSeriesRef.current.setData(data.signal.map((p) => ({ time: p.time as Time, value: p.value })));
         histSeriesRef.current.setData(data.histogram.map((p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#16a34a" : "#dc2626" })));
-    }, [data]);
+        // Sync range after data loads
+        if (mainChart && chartRef.current) {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleLogicalRange(range); });
+        }
+    }, [data, mainChart]);
+
+    // Re-sync when panel expands from collapsed
+    useEffect(() => {
+        if (collapsed || !mainChart || !chartRef.current) return;
+        requestAnimationFrame(() => {
+            const range = mainChart.timeScale().getVisibleLogicalRange();
+            if (range) chartRef.current?.timeScale().setVisibleLogicalRange(range);
+        });
+    }, [collapsed, mainChart]);
 
     const lastMacd = data.macd.length > 0 ? data.macd[data.macd.length - 1]!.value : 0;
     const lastSignal = data.signal.length > 0 ? data.signal[data.signal.length - 1]!.value : 0;
