@@ -137,3 +137,5 @@ All new indicators follow this pattern:
 | `REDIS_URL` | no | — | Redis connection (empty = local-only mode) |
 | `DISABLE_RATE_LIMIT` | no | `false` | Skip rate limiting (dev/load test) |
 | `DISABLE_JOB_RUNNER` | no | `false` | Skip background jobs (load test) |
+
+# Stage 2 deployed: Funding Rate + Open Interest
