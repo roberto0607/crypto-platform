@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useAppStore } from "@/stores/appStore";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import {
     prevDayHighLow,
@@ -39,6 +40,8 @@ import { ATRPanel } from "./ATRPanel";
 import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
+import { FundingRatePanel } from "./FundingRatePanel";
+import { OpenInterestPanel } from "./OpenInterestPanel";
 import client from "@/api/client";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -196,6 +199,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
+    const pairs = useAppStore((s) => s.pairs);
+    const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
 
     // Create chart instance
     useEffect(() => {
@@ -1712,6 +1717,18 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             {indicatorConfig.cvd && cvdData.length > 0 && (<>
                 <DragHandle panelKey="cvd" currentHeight={panelHeights.cvd ?? 60} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
                 <CvdPanel cvdData={cvdData} divergences={cvdDivergences} dataSource={cvdDataSource} mainChart={chartRef.current} height={panelHeights.cvd} />
+            </>)}
+
+            {/* Funding Rate sub-panel */}
+            {indicatorConfig.fundingRate && (<>
+                <DragHandle panelKey="fundingRate" currentHeight={panelHeights.fundingRate ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <FundingRatePanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.fundingRate} />
+            </>)}
+
+            {/* Open Interest sub-panel */}
+            {indicatorConfig.openInterest && (<>
+                <DragHandle panelKey="openInterest" currentHeight={panelHeights.openInterest ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <OpenInterestPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.openInterest} />
             </>)}
         </div>
     );
