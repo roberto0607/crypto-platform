@@ -46,7 +46,7 @@ export function VolumePanel({ candles, mainChart, height: externalHeight }: Volu
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
+        const handler = (range: unknown) => { console.log("VOLUME handler fired:", range); if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
         // Sync immediately on mount
         const currentRange = mainChart.timeScale().getVisibleLogicalRange();
