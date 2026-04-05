@@ -47,10 +47,16 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
+        const handler = (range: unknown) => {
+            if (!range) return;
+            const r = range as { from: number; to: number };
+            const len = deltaData.length || 750;
+            const pad = Math.max(0, r.to - (len - 1));
+            sub.timeScale().setVisibleLogicalRange({ from: r.from - pad, to: r.to - pad } as never);
+        };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, deltaData.length]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

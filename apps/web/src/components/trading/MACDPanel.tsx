@@ -54,10 +54,16 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { console.log("MACD received:", JSON.stringify(range)); if (range) { sub.timeScale().setVisibleLogicalRange(range as never); console.log("MACD after set:", JSON.stringify(sub.timeScale().getVisibleLogicalRange())); } };
+        const handler = (range: unknown) => {
+            if (!range) return;
+            const r = range as { from: number; to: number };
+            const len = data.macd.length || 750;
+            const pad = Math.max(0, r.to - (len - 1));
+            sub.timeScale().setVisibleLogicalRange({ from: r.from - pad, to: r.to - pad } as never);
+        };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, data.macd.length]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
@@ -66,7 +72,6 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (!macdSeriesRef.current || !signalSeriesRef.current || !histSeriesRef.current) return;
         if (data.macd.length === 0) return;
-        console.log("MACD data points:", data.macd.length, "first time:", data.macd[0]?.time, "last time:", data.macd[data.macd.length - 1]?.time);
         macdSeriesRef.current.setData(data.macd.map((p) => ({ time: p.time as Time, value: p.value })));
         signalSeriesRef.current.setData(data.signal.map((p) => ({ time: p.time as Time, value: p.value })));
         histSeriesRef.current.setData(data.histogram.map((p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#16a34a" : "#dc2626" })));

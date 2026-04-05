@@ -120,7 +120,11 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         const cvdTimeScale = chartRef.current.timeScale();
 
         const handler = (range: unknown) => {
-            if (range) cvdTimeScale.setVisibleLogicalRange(range as never);
+            if (!range) return;
+            const r = range as { from: number; to: number };
+            const len = cvdData.length || 750;
+            const pad = Math.max(0, r.to - (len - 1));
+            cvdTimeScale.setVisibleLogicalRange({ from: r.from - pad, to: r.to - pad } as never);
         };
 
         mainTimeScale.subscribeVisibleLogicalRangeChange(handler);
@@ -128,7 +132,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         return () => {
             mainTimeScale.unsubscribeVisibleLogicalRangeChange(handler);
         };
-    }, [mainChart]);
+    }, [mainChart, cvdData.length]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
