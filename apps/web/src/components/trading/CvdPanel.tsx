@@ -119,15 +119,14 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         const mainTimeScale = mainChart.timeScale();
         const cvdTimeScale = chartRef.current.timeScale();
 
-        const handler = () => {
-            const range = mainTimeScale.getVisibleRange();
-            if (range) cvdTimeScale.setVisibleRange(range);
+        const handler = (range: unknown) => {
+            if (range) cvdTimeScale.setVisibleLogicalRange(range as never);
         };
 
-        mainTimeScale.subscribeVisibleTimeRangeChange(handler);
+        mainTimeScale.subscribeVisibleLogicalRangeChange(handler);
 
         return () => {
-            mainTimeScale.unsubscribeVisibleTimeRangeChange(handler);
+            mainTimeScale.unsubscribeVisibleLogicalRangeChange(handler);
         };
     }, [mainChart]);
 

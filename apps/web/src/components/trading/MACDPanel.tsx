@@ -54,9 +54,9 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
-        mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
-        return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
+        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart]);
 
     useEffect(() => {
