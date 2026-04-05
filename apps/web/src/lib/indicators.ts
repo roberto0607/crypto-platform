@@ -204,18 +204,31 @@ export function computeMACD(
   sigLine[signalPeriod - 1] = sum / signalPeriod;
   for (let i = signalPeriod; i < macdLen; i++) sigLine[i] = macdLine[i]! * sigK + sigLine[i - 1]! * (1 - sigK);
 
-  // Build output from signalPeriod-1 in macdLine (= macdStart + signalPeriod - 1 in candles)
+  // First valid output index in macdLine
   const outStart = signalPeriod - 1;
+  // First valid candle index = macdStart + outStart
+  const firstValidCandle = macdStart + outStart;
+  const firstM = macdLine[outStart]!;
+  const firstS = sigLine[outStart]!;
+
+  // Build padded output — same length as input candles for logical range sync
   const macd: Point[] = [];
   const signal: Point[] = [];
   const histogram: Point[] = [];
-  for (let i = outStart; i < macdLen; i++) {
-    const t = candles[macdStart + i]!.time;
-    const m = macdLine[i]!;
-    const s = sigLine[i]!;
-    macd.push({ time: t, value: m });
-    signal.push({ time: t, value: s });
-    histogram.push({ time: t, value: m - s });
+  for (let i = 0; i < n; i++) {
+    const t = candles[i]!.time;
+    if (i < firstValidCandle) {
+      macd.push({ time: t, value: firstM });
+      signal.push({ time: t, value: firstS });
+      histogram.push({ time: t, value: firstM - firstS });
+    } else {
+      const mi = i - macdStart;
+      const m = macdLine[mi]!;
+      const s = sigLine[mi]!;
+      macd.push({ time: t, value: m });
+      signal.push({ time: t, value: s });
+      histogram.push({ time: t, value: m - s });
+    }
   }
   return { macd, signal, histogram };
 }
@@ -241,13 +254,19 @@ export function computeATR(candles: Candle[], period = 14): Point[] {
   for (let i = 1; i <= period; i++) atrSum += tr[i]!;
   let atr = atrSum / period;
 
-  const result: Point[] = [];
-  result.push({ time: candles[period]!.time, value: atr });
-
-  // Wilder smoothing
+  // Compute all valid ATR values
+  const atrValues = new Float64Array(n);
+  atrValues[period] = atr;
   for (let i = period + 1; i < n; i++) {
     atr = (atr * (period - 1) + tr[i]!) / period;
-    result.push({ time: candles[i]!.time, value: atr });
+    atrValues[i] = atr;
+  }
+
+  // Build padded output — same length as input candles
+  const firstValid = atrValues[period]!;
+  const result: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    result.push({ time: candles[i]!.time, value: i < period ? firstValid : atrValues[i]! });
   }
   return result;
 }
@@ -272,8 +291,8 @@ export function computeCandleDelta(candles: Candle[]): Point[] {
  * RSI — Relative Strength Index
  */
 export function computeRSI(candles: Candle[], period = 14): Point[] {
-  if (candles.length < period + 1) return [];
-  const result: Point[] = [];
+  const n = candles.length;
+  if (n < period + 1) return [];
 
   let avgGain = 0;
   let avgLoss = 0;
@@ -288,17 +307,25 @@ export function computeRSI(candles: Candle[], period = 14): Point[] {
   avgLoss /= period;
 
   const rs0 = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  result.push({ time: candles[period]!.time, value: 100 - 100 / (1 + rs0) });
+  const rsiValues = new Float64Array(n);
+  rsiValues[period] = 100 - 100 / (1 + rs0);
 
   // Subsequent periods — smoothed average
-  for (let i = period + 1; i < candles.length; i++) {
+  for (let i = period + 1; i < n; i++) {
     const diff = candles[i]!.close - candles[i - 1]!.close;
     const gain = diff > 0 ? diff : 0;
     const loss = diff < 0 ? Math.abs(diff) : 0;
     avgGain = (avgGain * (period - 1) + gain) / period;
     avgLoss = (avgLoss * (period - 1) + loss) / period;
     const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    result.push({ time: candles[i]!.time, value: 100 - 100 / (1 + rs) });
+    rsiValues[i] = 100 - 100 / (1 + rs);
+  }
+
+  // Build padded output — same length as input candles
+  const firstValid = rsiValues[period]!;
+  const result: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    result.push({ time: candles[i]!.time, value: i < period ? firstValid : rsiValues[i]! });
   }
   return result;
 }
