@@ -40,10 +40,11 @@ async function fetchWithTimeout(url: string, timeoutMs = FETCH_TIMEOUT): Promise
 // ── CoinGecko derivatives — returns all perpetual contracts ──
 interface CoinGeckoDerivative {
     symbol: string;
-    base: string;
+    index_id: string; // e.g. "BTC", "ETH", "SOL"
+    market: string;   // exchange name e.g. "Binance (Futures)"
     funding_rate: number;
     open_interest: number;
-    index: string; // exchange name
+    contract_type: string;
 }
 
 async function fetchCoinGeckoDerivatives(): Promise<CoinGeckoDerivative[]> {
@@ -61,12 +62,14 @@ async function fetchCoinGeckoDerivatives(): Promise<CoinGeckoDerivative[]> {
 }
 
 function findBestContract(derivatives: CoinGeckoDerivative[], base: string): CoinGeckoDerivative | null {
-    // Prefer Binance, then largest OI
+    // Filter by index_id (e.g. "BTC") and USDT perpetual contracts
     const matches = derivatives.filter((d) =>
-        d.base?.toUpperCase() === base.toUpperCase() &&
-        d.symbol?.includes("USDT"),
+        d.index_id?.toUpperCase() === base.toUpperCase() &&
+        d.symbol?.includes("USDT") &&
+        d.contract_type === "perpetual",
     );
-    const binance = matches.find((d) => d.index?.toLowerCase().includes("binance"));
+    // Prefer Binance, then largest OI
+    const binance = matches.find((d) => d.market?.toLowerCase().includes("binance"));
     if (binance) return binance;
     return matches.sort((a, b) => (b.open_interest ?? 0) - (a.open_interest ?? 0))[0] ?? null;
 }
