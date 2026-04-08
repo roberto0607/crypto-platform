@@ -38,6 +38,8 @@ interface VPVRData {
     buckets: Float64Array;
     pocIndex: number;
     valueArea: Uint8Array; // 1 = in value area, 0 = outside
+    vahIndex: number; // highest bucket in value area
+    valIndex: number; // lowest bucket in value area
     min: number;
     max: number;
     bucketSize: number;
@@ -67,7 +69,7 @@ class VPVRPaneView implements IPrimitivePaneView {
                     const chartWidth = mediaSize.width;
                     const maxBarWidth = chartWidth * 0.13;
 
-                    const { buckets, pocIndex, valueArea, min, bucketSize, maxVolume } = data;
+                    const { buckets, pocIndex, valueArea, vahIndex, valIndex, min, bucketSize, maxVolume } = data;
 
                     // Draw volume bars
                     for (let i = 0; i < buckets.length; i++) {
@@ -125,6 +127,49 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.fillText(label, lx, ly);
                         context.restore();
                     }
+
+                    // VAH and VAL prices
+                    const vahPrice = min + (vahIndex + 1) * bucketSize;
+                    const valPrice = min + valIndex * bucketSize;
+                    const vahY = series.priceToCoordinate(vahPrice);
+                    const valY = series.priceToCoordinate(valPrice);
+
+                    // Shaded fill between VAH and VAL
+                    if (vahY !== null && valY !== null) {
+                        const top = Math.min(vahY, valY);
+                        const h = Math.abs(valY - vahY);
+                        context.fillStyle = "rgba(128, 128, 128, 0.06)";
+                        context.fillRect(0, top, chartWidth, h);
+                    }
+
+                    // Helper to draw a labeled dashed line
+                    const drawLevelLine = (y: number | null, price: number, label: string, color: string) => {
+                        if (y === null) return;
+                        context.save();
+                        context.strokeStyle = color;
+                        context.lineWidth = 1.5;
+                        context.setLineDash([4, 4]);
+                        context.beginPath();
+                        context.moveTo(0, y);
+                        context.lineTo(chartWidth, y);
+                        context.stroke();
+                        context.setLineDash([]);
+
+                        const priceStr = price >= 1000 ? price.toFixed(0) : price.toFixed(2);
+                        const text = `${label} ${priceStr}`;
+                        context.font = "bold 10px monospace";
+                        const tw = context.measureText(text).width;
+                        const lx = chartWidth - tw - 8;
+                        const ly = y - 4;
+                        context.fillStyle = "rgba(0,0,0,0.6)";
+                        context.fillRect(lx - 3, ly - 9, tw + 6, 13);
+                        context.fillStyle = color;
+                        context.fillText(text, lx, ly);
+                        context.restore();
+                    };
+
+                    drawLevelLine(vahY, vahPrice, "VAH", "#26a69a");
+                    drawLevelLine(valY, valPrice, "VAL", "#ef5350");
                 });
             },
         };
@@ -223,7 +268,17 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
             }
         }
 
-        this._data = { buckets, pocIndex, valueArea, min, max, bucketSize, maxVolume };
+        // VAH = highest bucket in value area, VAL = lowest
+        let vahIndex = pocIndex;
+        let valIndex = pocIndex;
+        for (let i = 0; i < NUM_BUCKETS; i++) {
+            if (valueArea[i]) {
+                if (i > vahIndex) vahIndex = i;
+                if (i < valIndex) valIndex = i;
+            }
+        }
+
+        this._data = { buckets, pocIndex, valueArea, vahIndex, valIndex, min, max, bucketSize, maxVolume };
         this._requestUpdate?.();
     }
 
