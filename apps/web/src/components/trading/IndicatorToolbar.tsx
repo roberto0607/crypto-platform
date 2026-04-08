@@ -23,6 +23,7 @@ const ADVANCED_INDICATORS = [
   { key: "fundingRate", label: "Funding Rate", color: "#06b6d4" },
   { key: "openInterest", label: "Open Interest", color: "#eab308" },
   { key: "vpvr", label: "VPVR", color: "#06b6d4" },
+  { key: "orderbook", label: "Order Book Heatmap", color: "#7C3AED" },
 ] as const;
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];

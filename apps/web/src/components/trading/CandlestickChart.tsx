@@ -30,6 +30,7 @@ import {
 } from "@/lib/indicators";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
 import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
+import { OrderbookHeatmapPrimitive, type HeatmapLevel } from "@/lib/orderbookHeatmapPrimitive";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
 import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
 import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
@@ -148,6 +149,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const hasMoreRef = useRef(true);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
+    const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
     const vpvrWeeklyLenRef = useRef(0);
@@ -204,6 +206,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
+    const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
 
@@ -269,10 +272,15 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         series.attachPrimitive(pdhPdlZonePrimitive);
         pdhPdlZonePrimitiveRef.current = pdhPdlZonePrimitive;
 
-        // Attach VPVR primitive
+        // Attach VPVR primitive (RIGHT side)
         const vpvrPrimitive = new VPVRPrimitive();
         series.attachPrimitive(vpvrPrimitive);
         vpvrPrimitiveRef.current = vpvrPrimitive;
+
+        // Attach order book heatmap primitive (LEFT side)
+        const heatmapPrimitive = new OrderbookHeatmapPrimitive();
+        series.attachPrimitive(heatmapPrimitive);
+        heatmapPrimitiveRef.current = heatmapPrimitive;
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -691,6 +699,28 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             return () => clearInterval(checkNewCandle);
         }
     }, [indicatorConfig.vpvr, vpvrMode]);
+
+    // Order book heatmap — update from live order book data
+    useEffect(() => {
+        const heatmap = heatmapPrimitiveRef.current;
+        if (!heatmap) return;
+
+        if (!indicatorConfig.orderbook || !liveOrderBook) {
+            heatmap.clear();
+            return;
+        }
+
+        const bids: HeatmapLevel[] = liveOrderBook.bids.slice(0, 10).map((l) => ({
+            price: parseFloat(l.price),
+            quantity: parseFloat(l.qty),
+        }));
+        const asks: HeatmapLevel[] = liveOrderBook.asks.slice(0, 10).map((l) => ({
+            price: parseFloat(l.price),
+            quantity: parseFloat(l.qty),
+        }));
+
+        heatmap.update(bids, asks);
+    }, [indicatorConfig.orderbook, liveOrderBook]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {
