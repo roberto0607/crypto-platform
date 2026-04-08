@@ -27,7 +27,12 @@ const ADVANCED_INDICATORS = [
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];
 
-export function IndicatorToolbar() {
+interface IndicatorToolbarProps {
+  vpvrMode?: "visible" | "weekly";
+  onVpvrModeChange?: (mode: "visible" | "weekly") => void;
+}
+
+export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: IndicatorToolbarProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const config = useTradingStore((s) => s.indicatorConfig);
@@ -128,7 +133,31 @@ export function IndicatorToolbar() {
           <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
             ADVANCED
           </div>
-          {ADVANCED_INDICATORS.map(renderRow)}
+          {ADVANCED_INDICATORS.map((ind) => (
+            <div key={ind.key}>
+              {renderRow(ind)}
+              {ind.key === "vpvr" && config.vpvr && onVpvrModeChange && (
+                <div style={{ display: "flex", gap: 2, padding: "2px 12px 4px 34px" }}>
+                  {(["visible", "weekly"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={(e) => { e.stopPropagation(); onVpvrModeChange(m); }}
+                      style={{
+                        padding: "2px 8px", fontSize: 9, letterSpacing: 1,
+                        border: "none", cursor: "pointer",
+                        background: vpvrMode === m ? "rgba(255,107,0,0.25)" : "transparent",
+                        color: vpvrMode === m ? "#FF6B00" : "rgba(255,255,255,0.25)",
+                        fontFamily: "'Space Mono', monospace",
+                        transition: "all 0.1s",
+                      }}
+                    >
+                      {m === "visible" ? "VISIBLE" : "WEEKLY"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

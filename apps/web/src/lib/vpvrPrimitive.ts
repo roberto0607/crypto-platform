@@ -44,6 +44,7 @@ interface VPVRData {
     max: number;
     bucketSize: number;
     maxVolume: number;
+    weeklyMode: boolean;
 }
 
 class VPVRPaneView implements IPrimitivePaneView {
@@ -103,20 +104,24 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.fillRect(x, yCenter - barHeight / 2, barWidth, barHeight);
                     }
 
-                    // Draw POC line (solid)
+                    const wk = data.weeklyMode;
+                    const prefix = wk ? "W-" : "";
+
+                    // Draw POC line
                     const pocPrice = min + (pocIndex + 0.5) * bucketSize;
                     const pocY = series.priceToCoordinate(pocPrice);
                     if (pocY !== null) {
                         context.save();
                         context.strokeStyle = "#eab308";
                         context.lineWidth = 1.5;
+                        if (!wk) context.setLineDash([]); // solid in both modes — POC is always solid
                         context.beginPath();
                         context.moveTo(0, pocY);
                         context.lineTo(chartWidth, pocY);
                         context.stroke();
+                        context.setLineDash([]);
 
-                        // POC label with background
-                        const label = "POC";
+                        const label = `${prefix}POC`;
                         context.font = "bold 11px monospace";
                         const tw = context.measureText(label).width;
                         const lx = chartWidth - tw - 8;
@@ -142,13 +147,13 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.fillRect(0, top, chartWidth, h);
                     }
 
-                    // Helper to draw a labeled dashed line
+                    // Helper to draw a labeled line (solid in weekly, dashed in visible)
                     const drawLevelLine = (y: number | null, price: number, label: string, color: string) => {
                         if (y === null) return;
                         context.save();
                         context.strokeStyle = color;
                         context.lineWidth = 1.5;
-                        context.setLineDash([4, 4]);
+                        if (!wk) context.setLineDash([4, 4]);
                         context.beginPath();
                         context.moveTo(0, y);
                         context.lineTo(chartWidth, y);
@@ -156,7 +161,7 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.setLineDash([]);
 
                         const priceStr = price >= 1000 ? price.toFixed(0) : price.toFixed(2);
-                        const text = `${label} ${priceStr}`;
+                        const text = `${prefix}${label} ${priceStr}`;
                         context.font = "bold 10px monospace";
                         const tw = context.measureText(text).width;
                         const lx = chartWidth - tw - 8;
@@ -194,7 +199,7 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
         return this._series;
     }
 
-    update(candles: VPVRCandle[]): void {
+    update(candles: VPVRCandle[], weeklyMode = false): void {
         if (candles.length === 0) {
             this._data = null;
             this._requestUpdate?.();
@@ -278,7 +283,7 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
             }
         }
 
-        this._data = { buckets, pocIndex, valueArea, vahIndex, valIndex, min, max, bucketSize, maxVolume };
+        this._data = { buckets, pocIndex, valueArea, vahIndex, valIndex, min, max, bucketSize, maxVolume, weeklyMode };
         this._requestUpdate?.();
     }
 

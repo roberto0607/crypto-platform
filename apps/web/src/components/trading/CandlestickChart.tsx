@@ -149,6 +149,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly">("visible");
+    const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
     const keyLevelsRef = useRef<{ pdh: number; pdl: number } | null>(null);
@@ -596,7 +598,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         };
     }, [selectedPairId, timeframe]);
 
-    // VPVR — recompute on visible range change (debounced)
+    // VPVR — recompute on visible range change (debounced) or weekly candle data
     useEffect(() => {
         const chart = chartRef.current;
         const vpvr = vpvrPrimitiveRef.current;
@@ -607,7 +609,23 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             return;
         }
 
-        const updateVPVR = () => {
+        const parseCandle = (c: { high: string; low: string; volume: string }): VPVRCandle =>
+            ({ high: parseFloat(c.high), low: parseFloat(c.low), volume: parseFloat(c.volume) });
+
+        // Weekly boundary: most recent Sunday 22:00 UTC
+        const getWeeklyOpen = (): Date => {
+            const now = new Date();
+            const day = now.getUTCDay();
+            const hour = now.getUTCHours();
+            let daysSinceSunday = day;
+            if (day === 0 && hour < 22) daysSinceSunday = 7;
+            const d = new Date(now);
+            d.setUTCDate(now.getUTCDate() - daysSinceSunday);
+            d.setUTCHours(22, 0, 0, 0);
+            return d;
+        };
+
+        const updateVisibleVPVR = () => {
             const range = chart.timeScale().getVisibleLogicalRange();
             if (!range || !rawCandlesRef.current.length) return;
             const from = Math.max(0, Math.floor(range.from));
@@ -615,25 +633,44 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             const visible: VPVRCandle[] = [];
             for (let i = from; i <= to; i++) {
                 const c = rawCandlesRef.current[i];
-                if (c) visible.push({ high: parseFloat(c.high), low: parseFloat(c.low), volume: parseFloat(c.volume) });
+                if (c) visible.push(parseCandle(c));
             }
-            vpvr.update(visible);
+            vpvr.update(visible, false);
         };
 
-        // Initial compute
-        updateVPVR();
-
-        const handler = () => {
-            if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
-            vpvrDebounceRef.current = setTimeout(updateVPVR, 50);
+        const updateWeeklyVPVR = () => {
+            if (!rawCandlesRef.current.length) return;
+            const weeklyOpen = getWeeklyOpen();
+            const weekly: VPVRCandle[] = [];
+            for (const c of rawCandlesRef.current) {
+                if (new Date(c.ts) >= weeklyOpen) weekly.push(parseCandle(c));
+            }
+            vpvr.update(weekly, true);
+            vpvrWeeklyLenRef.current = rawCandlesRef.current.length;
         };
 
-        chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        return () => {
-            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-            if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
-        };
-    }, [indicatorConfig.vpvr]);
+        if (vpvrMode === "visible") {
+            updateVisibleVPVR();
+            const handler = () => {
+                if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
+                vpvrDebounceRef.current = setTimeout(updateVisibleVPVR, 50);
+            };
+            chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+            return () => {
+                chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+                if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
+            };
+        } else {
+            // Weekly mode: compute once, recalc only on new candle
+            updateWeeklyVPVR();
+            const checkNewCandle = setInterval(() => {
+                if (rawCandlesRef.current.length !== vpvrWeeklyLenRef.current) {
+                    updateWeeklyVPVR();
+                }
+            }, 5000);
+            return () => clearInterval(checkNewCandle);
+        }
+    }, [indicatorConfig.vpvr, vpvrMode]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {
@@ -943,7 +980,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                     </button>
                 ))}
                 <div className="ml-2">
-                    <IndicatorToolbar />
+                    <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={setVpvrMode} />
                 </div>
                 {loading && (
                     <span className="text-gray-600 text-xs ml-2">Loading...</span>
