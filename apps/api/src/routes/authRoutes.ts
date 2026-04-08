@@ -370,6 +370,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
 
+    req.log.info({
+      hasCookie: !!rawToken,
+      cookieKeys: Object.keys((req.cookies as Record<string, unknown>) ?? {}),
+      origin: req.headers.origin,
+    }, "auth_refresh_attempt");
+
     if (!rawToken) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
     }
@@ -377,6 +383,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
 
     const row = await findRefreshTokenByHash(tokenHash);
+
+    req.log.info({
+      tokenFound: !!row,
+      revoked: row?.revoked_at != null,
+      expired: row ? new Date(row.expires_at) < new Date() : null,
+    }, "auth_refresh_token_lookup");
 
     // Token not found or expired
     if (!row) {
