@@ -59,12 +59,26 @@ class HeatmapPaneView implements IPrimitivePaneView {
             draw(target: RenderTarget) {
                 const data = primitive.heatmapData;
                 const series = primitive.series;
-                if (!series || !data || data.maxQuantity === 0) return;
+
+                if (!series || !data || data.maxQuantity === 0) {
+                    console.log("[OB DRAW] skip:", { hasSeries: !!series, hasData: !!data, maxQty: data?.maxQuantity });
+                    return;
+                }
 
                 target.useMediaCoordinateSpace(({ context, mediaSize }) => {
                     const chartWidth = mediaSize.width;
                     const maxBarWidth = chartWidth * MAX_BAR_WIDTH_PCT;
                     const { bids, asks, maxQuantity } = data;
+
+                    const firstBidPrice = bids[0]?.price ?? 0;
+                    const firstAskPrice = asks[0]?.price ?? 0;
+                    const firstBidY = series.priceToCoordinate(firstBidPrice);
+                    const firstAskY = series.priceToCoordinate(firstAskPrice);
+                    console.log("[OB DRAW]", {
+                        bidCount: bids.length, askCount: asks.length, maxQuantity,
+                        firstBidPrice, firstBidY, firstAskPrice, firstAskY,
+                        chartWidth, chartHeight: mediaSize.height,
+                    });
 
                     const normalize = (qty: number, maxQty: number) =>
                         maxQty <= 0 ? 0 : Math.log1p(qty) / Math.log1p(maxQty);
