@@ -109,14 +109,21 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     const countdown = nextTime > 0 ? formatCountdown(nextTime - Date.now()) : "--";
     const rateStr = (rate >= 0 ? "+" : "") + (rate * 100).toFixed(4) + "%";
 
+    const histLen = entry?.history?.length ?? 0;
+
     return (
-        <div>
+        <div style={{ position: "relative" }}>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="FUNDING RATE"
                 rightContent={<>
                     <span style={{ color: rate >= 0 ? "#16a34a" : "#dc2626" }}>{rateStr}</span>
                     <span style={{ color: "rgba(255,255,255,0.3)", marginLeft: 8 }}>Next: {countdown}</span>
                 </>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 80), overflow: "hidden" }} />
+            {!collapsed && histLen === 0 && (
+                <div style={{ position: "absolute", top: 20, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#444", fontSize: 10, letterSpacing: 2, pointerEvents: "none" }}>
+                    No historical data
+                </div>
+            )}
         </div>
     );
 }

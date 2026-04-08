@@ -82,8 +82,9 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
             const key = symbolToKey(pairSymbol);
             const d = res.data[key];
             if (d) {
+                console.log("[OI] raw current:", d.current, "history:", d.history?.length);
                 setCurrentOI(d.current);
-                setHistory(d.history);
+                setHistory(d.history ?? []);
             }
         } catch { /* non-fatal */ }
     }, [pairSymbol]);
@@ -108,10 +109,15 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
     }, [history, mainChart]);
 
     return (
-        <div>
+        <div style={{ position: "relative" }}>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="OPEN INTEREST"
                 rightContent={<span style={{ color: "#eab308" }}>{formatOI(currentOI)}</span>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 100), overflow: "hidden" }} />
+            {!collapsed && history.length === 0 && (
+                <div style={{ position: "absolute", top: 20, left: 0, right: 0, bottom: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#444", fontSize: 10, letterSpacing: 2, pointerEvents: "none" }}>
+                    No historical data
+                </div>
+            )}
         </div>
     );
 }
