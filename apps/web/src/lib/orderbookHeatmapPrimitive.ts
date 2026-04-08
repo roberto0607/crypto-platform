@@ -60,31 +60,18 @@ class HeatmapPaneView implements IPrimitivePaneView {
                 const data = primitive.heatmapData;
                 const series = primitive.series;
 
-                if (!series || !data || data.maxQuantity === 0) {
-                    console.log("[OB DRAW] skip:", { hasSeries: !!series, hasData: !!data, maxQty: data?.maxQuantity });
-                    return;
-                }
+                if (!series || !data || data.maxQuantity === 0) return;
 
                 target.useMediaCoordinateSpace(({ context, mediaSize }) => {
                     const chartWidth = mediaSize.width;
                     const maxBarWidth = chartWidth * MAX_BAR_WIDTH_PCT;
                     const { bids, asks, maxQuantity } = data;
 
-                    const firstBidPrice = bids[0]?.price ?? 0;
-                    const firstAskPrice = asks[0]?.price ?? 0;
-                    const firstBidY = series.priceToCoordinate(firstBidPrice);
-                    const firstAskY = series.priceToCoordinate(firstAskPrice);
-                    console.log("[OB DRAW]", {
-                        bidCount: bids.length, askCount: asks.length, maxQuantity,
-                        firstBidPrice, firstBidY, firstAskPrice, firstAskY,
-                        chartWidth, chartHeight: mediaSize.height,
-                    });
-
                     const normalize = (qty: number, maxQty: number) =>
                         maxQty <= 0 ? 0 : Math.log1p(qty) / Math.log1p(maxQty);
                     const minBarWidth = 4;
 
-                    const drawLevel = (level: HeatmapLevel, nextPrice: number | null, color: string, lineColor: string) => {
+                    const drawLevel = (level: HeatmapLevel, nextPrice: number | null, r: number, g: number, b: number, lineColor: string) => {
                         const y = series.priceToCoordinate(level.price);
                         if (y === null) return;
 
@@ -100,7 +87,7 @@ class HeatmapPaneView implements IPrimitivePaneView {
                         }
 
                         // Draw from LEFT edge rightward
-                        context.fillStyle = color.replace(")", `, ${opacity})`).replace("rgb", "rgba");
+                        context.fillStyle = `rgba(${r},${g},${b},${opacity})`;
                         context.fillRect(0, y - barHeight / 2, barWidth, barHeight);
 
                         // Whale wall indicator
@@ -117,13 +104,13 @@ class HeatmapPaneView implements IPrimitivePaneView {
                     // Draw bids (green, sorted high→low)
                     for (let i = 0; i < bids.length; i++) {
                         const nextPrice = i + 1 < bids.length ? bids[i + 1]!.price : null;
-                        drawLevel(bids[i]!, nextPrice, "rgb(38, 166, 154", "#26a69a");
+                        drawLevel(bids[i]!, nextPrice, 38, 166, 154, "#26a69a");
                     }
 
                     // Draw asks (red, sorted low→high)
                     for (let i = 0; i < asks.length; i++) {
                         const nextPrice = i + 1 < asks.length ? asks[i + 1]!.price : null;
-                        drawLevel(asks[i]!, nextPrice, "rgb(239, 83, 80", "#ef5350");
+                        drawLevel(asks[i]!, nextPrice, 239, 83, 80, "#ef5350");
                     }
                 });
             },
