@@ -3,7 +3,8 @@
  *
  * Renders horizontal volume bars on the right side of the main chart canvas.
  * Updates whenever the visible range changes (debounced at 50ms).
- * POC (Point of Control) is highlighted in yellow with a dashed horizontal line.
+ * POC (Point of Control) highlighted in yellow with solid line.
+ * Value Area (70% of total volume) shown with higher opacity.
  */
 
 import type {
@@ -30,11 +31,13 @@ export interface VPVRCandle {
     volume: number;
 }
 
-const NUM_BUCKETS = 100;
+const NUM_BUCKETS = 60;
+const VALUE_AREA_PCT = 0.70;
 
 interface VPVRData {
     buckets: Float64Array;
     pocIndex: number;
+    valueArea: Uint8Array; // 1 = in value area, 0 = outside
     min: number;
     max: number;
     bucketSize: number;
@@ -62,9 +65,9 @@ class VPVRPaneView implements IPrimitivePaneView {
 
                 target.useMediaCoordinateSpace(({ context, mediaSize }) => {
                     const chartWidth = mediaSize.width;
-                    const maxBarWidth = chartWidth * 0.20;
+                    const maxBarWidth = chartWidth * 0.13;
 
-                    const { buckets, pocIndex, min, bucketSize, maxVolume } = data;
+                    const { buckets, pocIndex, valueArea, min, bucketSize, maxVolume } = data;
 
                     // Draw volume bars
                     for (let i = 0; i < buckets.length; i++) {
@@ -88,30 +91,38 @@ class VPVRPaneView implements IPrimitivePaneView {
 
                         const x = chartWidth - barWidth;
 
-                        context.fillStyle = i === pocIndex
-                            ? "rgba(234, 179, 8, 0.5)"
-                            : "rgba(6, 182, 212, 0.25)";
+                        if (i === pocIndex) {
+                            context.fillStyle = "rgba(234, 179, 8, 0.5)";
+                        } else if (valueArea[i]) {
+                            context.fillStyle = "rgba(6, 182, 212, 0.20)";
+                        } else {
+                            context.fillStyle = "rgba(6, 182, 212, 0.08)";
+                        }
                         context.fillRect(x, yCenter - barHeight / 2, barWidth, barHeight);
                     }
 
-                    // Draw POC line
+                    // Draw POC line (solid)
                     const pocPrice = min + (pocIndex + 0.5) * bucketSize;
                     const pocY = series.priceToCoordinate(pocPrice);
                     if (pocY !== null) {
                         context.save();
                         context.strokeStyle = "#eab308";
-                        context.lineWidth = 1;
-                        context.setLineDash([4, 4]);
+                        context.lineWidth = 1.5;
                         context.beginPath();
                         context.moveTo(0, pocY);
                         context.lineTo(chartWidth, pocY);
                         context.stroke();
-                        context.setLineDash([]);
 
-                        // POC label
+                        // POC label with background
+                        const label = "POC";
+                        context.font = "bold 11px monospace";
+                        const tw = context.measureText(label).width;
+                        const lx = chartWidth - tw - 8;
+                        const ly = pocY - 5;
+                        context.fillStyle = "rgba(0,0,0,0.6)";
+                        context.fillRect(lx - 3, ly - 10, tw + 6, 14);
                         context.fillStyle = "#eab308";
-                        context.font = "9px monospace";
-                        context.fillText("POC", chartWidth - 28, pocY - 3);
+                        context.fillText(label, lx, ly);
                         context.restore();
                     }
                 });
@@ -171,16 +182,48 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
             }
         }
 
+        // Find POC and total volume
         let maxVolume = 0;
         let pocIndex = 0;
+        let totalVolume = 0;
         for (let i = 0; i < NUM_BUCKETS; i++) {
+            totalVolume += buckets[i]!;
             if (buckets[i]! > maxVolume) {
                 maxVolume = buckets[i]!;
                 pocIndex = i;
             }
         }
 
-        this._data = { buckets, pocIndex, min, max, bucketSize, maxVolume };
+        // Compute Value Area (70% of total volume, expanding from POC)
+        const valueArea = new Uint8Array(NUM_BUCKETS);
+        const targetVolume = totalVolume * VALUE_AREA_PCT;
+        let vaVolume = buckets[pocIndex]!;
+        valueArea[pocIndex] = 1;
+        let lo = pocIndex - 1;
+        let hi = pocIndex + 1;
+
+        while (vaVolume < targetVolume && (lo >= 0 || hi < NUM_BUCKETS)) {
+            const loVol = lo >= 0 ? buckets[lo]! : 0;
+            const hiVol = hi < NUM_BUCKETS ? buckets[hi]! : 0;
+
+            if (loVol >= hiVol && lo >= 0) {
+                vaVolume += loVol;
+                valueArea[lo] = 1;
+                lo--;
+            } else if (hi < NUM_BUCKETS) {
+                vaVolume += hiVol;
+                valueArea[hi] = 1;
+                hi++;
+            } else if (lo >= 0) {
+                vaVolume += loVol;
+                valueArea[lo] = 1;
+                lo--;
+            } else {
+                break;
+            }
+        }
+
+        this._data = { buckets, pocIndex, valueArea, min, max, bucketSize, maxVolume };
         this._requestUpdate?.();
     }
 
