@@ -23,7 +23,7 @@ function symbolToKey(sym: string): "btc" | "eth" | "sol" {
 function formatOI(val: number): string {
     if (val >= 1e12) return "$" + (val / 1e12).toFixed(1) + "T";
     if (val >= 1e9) return "$" + (val / 1e9).toFixed(1) + "B";
-    if (val >= 1e6) return "$" + (val / 1e6).toFixed(1) + "M";
+    if (val >= 1e6) return "$" + (val / 1e6).toFixed(0) + "M";
     if (val >= 1e3) return "$" + (val / 1e3).toFixed(0) + "K";
     return "$" + val.toFixed(0);
 }
@@ -54,7 +54,7 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
         return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
     }, []);
 
-    // Sync scroll with offset adjustment
+    // Scroll sync with offset adjustment
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;

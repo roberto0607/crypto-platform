@@ -1,9 +1,20 @@
 import client from "../client";
 
+export interface FundingHistoryPoint {
+    time: number;
+    value: number;
+}
+
+export interface FundingRateEntry {
+    rate: number;
+    nextFundingTime: number;
+    history: FundingHistoryPoint[];
+}
+
 export interface FundingRateData {
-    btc: { rate: number; nextFundingTime: number };
-    eth: { rate: number; nextFundingTime: number };
-    sol: { rate: number; nextFundingTime: number };
+    btc: FundingRateEntry;
+    eth: FundingRateEntry;
+    sol: FundingRateEntry;
 }
 
 export interface OIHistoryPoint {
@@ -11,10 +22,15 @@ export interface OIHistoryPoint {
     value: number;
 }
 
+export interface OIEntry {
+    current: number;
+    history: OIHistoryPoint[];
+}
+
 export interface OpenInterestData {
-    btc: { current: number; history: OIHistoryPoint[] };
-    eth: { current: number; history: OIHistoryPoint[] };
-    sol: { current: number; history: OIHistoryPoint[] };
+    btc: OIEntry;
+    eth: OIEntry;
+    sol: OIEntry;
 }
 
 export function fetchFundingRate() {

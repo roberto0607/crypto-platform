@@ -7,12 +7,12 @@ import {
     type ISeriesApi,
     type Time,
 } from "lightweight-charts";
-import { fetchFundingRate, type FundingRateData } from "@/api/endpoints/marketData";
+import { fetchFundingRate, type FundingRateEntry } from "@/api/endpoints/marketData";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface FundingRatePanelProps {
     mainChart: IChartApi | null;
-    pairSymbol: string; // "BTC/USD" | "ETH/USD" | "SOL/USD"
+    pairSymbol: string;
     height?: number;
 }
 
@@ -28,12 +28,14 @@ function formatCountdown(ms: number): string {
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
+
 export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight }: FundingRatePanelProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
-    const [fundingData, setFundingData] = useState<FundingRateData | null>(null);
+    const [entry, setEntry] = useState<FundingRateEntry | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -52,20 +54,25 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
         return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
     }, []);
 
-    // Sync scroll
+    // Scroll sync with offset adjustment
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
+        const handler = (range: unknown) => {
+            if (!range) return;
+            const r = range as { from: number; to: number };
+            const len = entry?.history?.length || 200;
+            const pad = Math.max(0, r.to - (len - 1));
+            sub.timeScale().setVisibleLogicalRange({ from: r.from - pad, to: r.to - pad } as never);
+        };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, entry?.history?.length]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
     }, [externalHeight, collapsed]);
 
-    // Expand re-sync
     useEffect(() => {
         if (collapsed || !mainChart || !chartRef.current) return;
         requestAnimationFrame(() => {
@@ -78,9 +85,10 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     const loadData = useCallback(async () => {
         try {
             const res = await fetchFundingRate();
-            setFundingData(res.data);
+            const key = symbolToKey(pairSymbol);
+            setEntry(res.data[key] ?? null);
         } catch { /* non-fatal */ }
-    }, []);
+    }, [pairSymbol]);
 
     useEffect(() => {
         loadData();
@@ -88,18 +96,22 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
         return () => clearInterval(id);
     }, [loadData]);
 
-    // Display single histogram bar for current rate (visual only — no time series available from funding endpoint)
+    // Set chart data from history
     useEffect(() => {
-        if (!seriesRef.current || !fundingData) return;
-        const key = symbolToKey(pairSymbol);
-        const rate = fundingData[key]?.rate ?? 0;
-        const now = Math.floor(Date.now() / 1000) as unknown as Time;
-        seriesRef.current.setData([{ time: now, value: rate * 100, color: rate >= 0 ? "#16a34a" : "#dc2626" }]);
-    }, [fundingData, pairSymbol]);
+        if (!seriesRef.current || !entry?.history?.length) return;
+        seriesRef.current.setData(entry.history.map((p) => ({
+            time: (p.time + TZ_OFFSET_SEC) as Time,
+            value: p.value,
+            color: p.value >= 0 ? "#16a34a" : "#dc2626",
+        })));
+        if (mainChart && chartRef.current) {
+            const range = mainChart.timeScale().getVisibleRange();
+            if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });
+        }
+    }, [entry, mainChart]);
 
-    const key = symbolToKey(pairSymbol);
-    const rate = fundingData?.[key]?.rate ?? 0;
-    const nextTime = fundingData?.[key]?.nextFundingTime ?? 0;
+    const rate = entry?.rate ?? 0;
+    const nextTime = entry?.nextFundingTime ?? 0;
     const countdown = nextTime > 0 ? formatCountdown(nextTime - Date.now()) : "--";
     const rateStr = (rate >= 0 ? "+" : "") + (rate * 100).toFixed(4) + "%";
 
