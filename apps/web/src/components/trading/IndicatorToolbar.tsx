@@ -28,8 +28,8 @@ const ADVANCED_INDICATORS = [
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];
 
 interface IndicatorToolbarProps {
-  vpvrMode?: "visible" | "weekly";
-  onVpvrModeChange?: (mode: "visible" | "weekly") => void;
+  vpvrMode?: "visible" | "weekly" | "daily";
+  onVpvrModeChange?: (mode: "visible" | "weekly" | "daily") => void;
 }
 
 export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: IndicatorToolbarProps) {
@@ -138,7 +138,7 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
               {renderRow(ind)}
               {ind.key === "vpvr" && config.vpvr && onVpvrModeChange && (
                 <div style={{ display: "flex", gap: 2, padding: "2px 12px 4px 34px" }}>
-                  {(["visible", "weekly"] as const).map((m) => (
+                  {(["visible", "daily", "weekly"] as const).map((m) => (
                     <button
                       key={m}
                       onClick={(e) => { e.stopPropagation(); onVpvrModeChange(m); }}
@@ -151,7 +151,7 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
                         transition: "all 0.1s",
                       }}
                     >
-                      {m === "visible" ? "VISIBLE" : "WEEKLY"}
+                      {m === "visible" ? "VISIBLE" : m === "daily" ? "DAILY" : "WEEKLY"}
                     </button>
                   ))}
                 </div>

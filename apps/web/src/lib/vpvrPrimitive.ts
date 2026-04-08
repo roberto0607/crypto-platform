@@ -44,7 +44,7 @@ interface VPVRData {
     max: number;
     bucketSize: number;
     maxVolume: number;
-    weeklyMode: boolean;
+    mode: "visible" | "weekly" | "daily";
 }
 
 class VPVRPaneView implements IPrimitivePaneView {
@@ -104,8 +104,8 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.fillRect(x, yCenter - barHeight / 2, barWidth, barHeight);
                     }
 
-                    const wk = data.weeklyMode;
-                    const prefix = wk ? "W-" : "";
+                    const isFixed = data.mode !== "visible";
+                    const prefix = data.mode === "weekly" ? "W-" : data.mode === "daily" ? "D-" : "";
 
                     // Draw POC line
                     const pocPrice = min + (pocIndex + 0.5) * bucketSize;
@@ -114,7 +114,7 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.save();
                         context.strokeStyle = "#eab308";
                         context.lineWidth = 1.5;
-                        if (!wk) context.setLineDash([]); // solid in both modes — POC is always solid
+                        // POC always solid
                         context.beginPath();
                         context.moveTo(0, pocY);
                         context.lineTo(chartWidth, pocY);
@@ -153,7 +153,7 @@ class VPVRPaneView implements IPrimitivePaneView {
                         context.save();
                         context.strokeStyle = color;
                         context.lineWidth = 1.5;
-                        if (!wk) context.setLineDash([4, 4]);
+                        if (!isFixed) context.setLineDash([4, 4]);
                         context.beginPath();
                         context.moveTo(0, y);
                         context.lineTo(chartWidth, y);
@@ -199,7 +199,7 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
         return this._series;
     }
 
-    update(candles: VPVRCandle[], weeklyMode = false): void {
+    update(candles: VPVRCandle[], mode: "visible" | "weekly" | "daily" = "visible"): void {
         if (candles.length === 0) {
             this._data = null;
             this._requestUpdate?.();
@@ -283,7 +283,7 @@ export class VPVRPrimitive implements ISeriesPrimitive<Time> {
             }
         }
 
-        this._data = { buckets, pocIndex, valueArea, vahIndex, valIndex, min, max, bucketSize, maxVolume, weeklyMode };
+        this._data = { buckets, pocIndex, valueArea, vahIndex, valIndex, min, max, bucketSize, maxVolume, mode };
         this._requestUpdate?.();
     }
 

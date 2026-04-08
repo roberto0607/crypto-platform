@@ -149,7 +149,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly">("visible");
+    const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
@@ -635,7 +635,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 const c = rawCandlesRef.current[i];
                 if (c) visible.push(parseCandle(c));
             }
-            vpvr.update(visible, false);
+            vpvr.update(visible, "visible");
         };
 
         const updateWeeklyVPVR = () => {
@@ -645,7 +645,26 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             for (const c of rawCandlesRef.current) {
                 if (new Date(c.ts) >= weeklyOpen) weekly.push(parseCandle(c));
             }
-            vpvr.update(weekly, true);
+            vpvr.update(weekly, "weekly");
+            vpvrWeeklyLenRef.current = rawCandlesRef.current.length;
+        };
+
+        // Daily boundary: current UTC midnight
+        const getDailyOpen = (): Date => {
+            const now = new Date();
+            const d = new Date(now);
+            d.setUTCHours(0, 0, 0, 0);
+            return d;
+        };
+
+        const updateDailyVPVR = () => {
+            if (!rawCandlesRef.current.length) return;
+            const dailyOpen = getDailyOpen();
+            const daily: VPVRCandle[] = [];
+            for (const c of rawCandlesRef.current) {
+                if (new Date(c.ts) >= dailyOpen) daily.push(parseCandle(c));
+            }
+            vpvr.update(daily, "daily");
             vpvrWeeklyLenRef.current = rawCandlesRef.current.length;
         };
 
@@ -661,11 +680,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
             };
         } else {
-            // Weekly mode: compute once, recalc only on new candle
-            updateWeeklyVPVR();
+            // Fixed mode (weekly or daily): compute once, recalc only on new candle
+            const updateFixed = vpvrMode === "weekly" ? updateWeeklyVPVR : updateDailyVPVR;
+            updateFixed();
             const checkNewCandle = setInterval(() => {
                 if (rawCandlesRef.current.length !== vpvrWeeklyLenRef.current) {
-                    updateWeeklyVPVR();
+                    updateFixed();
                 }
             }, 5000);
             return () => clearInterval(checkNewCandle);
