@@ -34,7 +34,7 @@ const MAX_RECENT_TRADES = 50;
 
 const INDICATOR_STORAGE_KEY = "indicator-config";
 const INDICATOR_VERSION_KEY = "indicator-config-version";
-const INDICATOR_CONFIG_VERSION = 5; // Bump to reset stale localStorage defaults
+const INDICATOR_CONFIG_VERSION = 6; // Bump to reset stale localStorage defaults
 
 const defaultIndicatorConfig = {
   // Standard
@@ -56,6 +56,7 @@ const defaultIndicatorConfig = {
   marketIntelligence: false,
   fundingRate: false,
   openInterest: false,
+  vpvr: false,
 };
 
 type IndicatorConfig = typeof defaultIndicatorConfig;

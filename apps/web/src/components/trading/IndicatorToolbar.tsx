@@ -22,6 +22,7 @@ const ADVANCED_INDICATORS = [
   { key: "marketIntelligence", label: "Market Intelligence", color: "rgba(147,51,234,1)" },
   { key: "fundingRate", label: "Funding Rate", color: "#06b6d4" },
   { key: "openInterest", label: "Open Interest", color: "#eab308" },
+  { key: "vpvr", label: "VPVR", color: "#06b6d4" },
 ] as const;
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];

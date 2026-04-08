@@ -29,6 +29,7 @@ import {
     type MACDResult,
 } from "@/lib/indicators";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
+import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
 import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
 import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
@@ -146,6 +147,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
+    const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
+    const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
     const keyLevelsRef = useRef<{ pdh: number; pdl: number } | null>(null);
@@ -263,6 +266,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         const pdhPdlZonePrimitive = new PdhPdlZonePrimitive();
         series.attachPrimitive(pdhPdlZonePrimitive);
         pdhPdlZonePrimitiveRef.current = pdhPdlZonePrimitive;
+
+        // Attach VPVR primitive
+        const vpvrPrimitive = new VPVRPrimitive();
+        series.attachPrimitive(vpvrPrimitive);
+        vpvrPrimitiveRef.current = vpvrPrimitive;
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -587,6 +595,45 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
         };
     }, [selectedPairId, timeframe]);
+
+    // VPVR — recompute on visible range change (debounced)
+    useEffect(() => {
+        const chart = chartRef.current;
+        const vpvr = vpvrPrimitiveRef.current;
+        if (!chart || !vpvr) return;
+
+        if (!indicatorConfig.vpvr) {
+            vpvr.update([]);
+            return;
+        }
+
+        const updateVPVR = () => {
+            const range = chart.timeScale().getVisibleLogicalRange();
+            if (!range || !rawCandlesRef.current.length) return;
+            const from = Math.max(0, Math.floor(range.from));
+            const to = Math.min(rawCandlesRef.current.length - 1, Math.ceil(range.to));
+            const visible: VPVRCandle[] = [];
+            for (let i = from; i <= to; i++) {
+                const c = rawCandlesRef.current[i];
+                if (c) visible.push({ high: parseFloat(c.high), low: parseFloat(c.low), volume: parseFloat(c.volume) });
+            }
+            vpvr.update(visible);
+        };
+
+        // Initial compute
+        updateVPVR();
+
+        const handler = () => {
+            if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
+            vpvrDebounceRef.current = setTimeout(updateVPVR, 50);
+        };
+
+        chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        return () => {
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+            if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
+        };
+    }, [indicatorConfig.vpvr]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {
