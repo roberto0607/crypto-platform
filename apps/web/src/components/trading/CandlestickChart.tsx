@@ -705,8 +705,6 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         const heatmap = heatmapPrimitiveRef.current;
         if (!heatmap) return;
 
-        console.log("[OB] liveOrderBook:", liveOrderBook, "toggle:", indicatorConfig.orderbook, "heatmapRef:", !!heatmapPrimitiveRef.current);
-
         if (!indicatorConfig.orderbook || !liveOrderBook) {
             heatmap.clear();
             return;

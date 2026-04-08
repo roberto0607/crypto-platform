@@ -332,6 +332,3 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
 }));
 
-if (typeof window !== "undefined") {
-  (window as never as Record<string, unknown>).__tradrStore = useTradingStore;
-}
