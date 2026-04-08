@@ -58,12 +58,14 @@ class HeatmapPaneView implements IPrimitivePaneView {
 
         return {
             draw(target: RenderTarget) {
-                if (!series || !data || data.maxQuantity === 0) return;
+                if (!series || !data || data.maxQuantity === 0) { console.log("[OB draw] skipped — no data or series"); return; }
 
                 target.useMediaCoordinateSpace(({ context, mediaSize }) => {
                     const chartWidth = mediaSize.width;
                     const maxBarWidth = chartWidth * MAX_BAR_WIDTH_PCT;
                     const { bids, asks, maxQuantity } = data;
+
+                    console.log("[OB draw] rendering", bids.length, "bids", asks.length, "asks", "maxQ:", maxQuantity, "chartW:", chartWidth);
 
                     const drawLevel = (level: HeatmapLevel, nextPrice: number | null, color: string, lineColor: string) => {
                         const y = series.priceToCoordinate(level.price);

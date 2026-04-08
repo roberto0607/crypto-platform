@@ -719,6 +719,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             quantity: parseFloat(l.qty),
         }));
 
+        console.log("[OrderBook] bids:", bids.slice(0, 3), "asks:", asks.slice(0, 3), "maxQty:", Math.max(...bids.map(b => b.quantity), ...asks.map(a => a.quantity)));
         heatmap.update(bids, asks);
     }, [indicatorConfig.orderbook, liveOrderBook]);
 
