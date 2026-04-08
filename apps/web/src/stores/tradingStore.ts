@@ -331,3 +331,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({ openOrders: get().openOrders.filter((o) => o.id !== orderId) });
   },
 }));
+
+if (typeof window !== "undefined") {
+  (window as never as Record<string, unknown>).__tradrStore = useTradingStore;
+}
