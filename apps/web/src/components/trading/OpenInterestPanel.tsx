@@ -54,20 +54,14 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
         return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
     }, []);
 
-    // Scroll sync with offset adjustment
+    // Scroll sync — time-based (external data has different timestamps than main chart candles)
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => {
-            if (!range) return;
-            const r = range as { from: number; to: number };
-            const len = history.length || 200;
-            const pad = Math.max(0, r.to - (len - 1));
-            sub.timeScale().setVisibleLogicalRange({ from: r.from - pad, to: r.to - pad } as never);
-        };
-        mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-    }, [mainChart, history.length]);
+        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
+        return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
+    }, [mainChart]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
