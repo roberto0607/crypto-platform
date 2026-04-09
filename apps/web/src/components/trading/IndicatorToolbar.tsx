@@ -49,7 +49,6 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
   }, [open]);
 
   const activeCount = ALL_INDICATORS.filter((i) => (config as Record<string, boolean>)[i.key]).length;
-  console.log("[badge]", activeCount, "active from", ALL_INDICATORS.length, "total. orderbook:", (config as Record<string, boolean>)["orderbook"], "keys:", Object.keys(config));
 
   function renderRow(ind: { key: string; label: string; color: string }) {
     const active = config[ind.key as keyof typeof config];

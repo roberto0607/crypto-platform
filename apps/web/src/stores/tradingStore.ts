@@ -158,9 +158,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   indicatorConfig: loadIndicatorConfig(),
 
   toggleIndicator: (key: keyof IndicatorConfig) => {
-    const prev = get().indicatorConfig[key];
-    const config = { ...get().indicatorConfig, [key]: !prev };
-    console.log("[store] toggle", key, prev, "->", !prev, "keys:", Object.keys(config).length);
+    const config = { ...get().indicatorConfig, [key]: !get().indicatorConfig[key] };
     localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(config));
     localStorage.setItem(INDICATOR_VERSION_KEY, String(INDICATOR_CONFIG_VERSION));
     set({ indicatorConfig: config });
