@@ -31,6 +31,8 @@ import {
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
 import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
 import { OrderbookHeatmapPrimitive, type HeatmapLevel } from "@/lib/orderbookHeatmapPrimitive";
+import { FootprintPrimitive } from "@/lib/footprintPrimitive";
+import { useFootprint } from "@/lib/useFootprint";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
 import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
 import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
@@ -150,6 +152,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
+    const footprintPrimitiveRef = useRef<FootprintPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
     const vpvrWeeklyLenRef = useRef(0);
@@ -209,6 +212,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
+    const footprintPair = selectedPairSymbol.split("/")[0] ?? "BTC";
+    const footprintData = useFootprint(indicatorConfig.footprint ?? false, timeframe, footprintPair);
 
     // Create chart instance
     useEffect(() => {
@@ -281,6 +286,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         const heatmapPrimitive = new OrderbookHeatmapPrimitive();
         series.attachPrimitive(heatmapPrimitive);
         heatmapPrimitiveRef.current = heatmapPrimitive;
+
+        // Attach footprint primitive (overlaid on candles)
+        const footprintPrimitive = new FootprintPrimitive();
+        series.attachPrimitive(footprintPrimitive);
+        footprintPrimitive.setChart(chart);
+        footprintPrimitiveRef.current = footprintPrimitive;
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -721,6 +732,31 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
         heatmap.update(bids, asks);
     }, [indicatorConfig.orderbook, liveOrderBook]);
+
+    // Footprint chart — update from footprint data
+    useEffect(() => {
+        const fp = footprintPrimitiveRef.current;
+        if (!fp) return;
+
+        const isFootprintTf = ["1m", "5m", "15m"].includes(timeframe);
+        if (!(indicatorConfig.footprint ?? false) || !isFootprintTf || footprintData.size === 0) {
+            fp.clear();
+            return;
+        }
+
+        const getCandleWidthPx = (): number => {
+            const ts = chartRef.current?.timeScale();
+            if (!ts) return 0;
+            const range = ts.getVisibleLogicalRange();
+            if (!range) return 0;
+            const barsVisible = range.to - range.from;
+            if (barsVisible <= 0) return 0;
+            const containerW = containerRef.current?.clientWidth ?? 0;
+            return containerW / barsVisible;
+        };
+
+        fp.update(footprintData, rawCandlesRef.current, getCandleWidthPx());
+    }, [indicatorConfig.footprint, footprintData, timeframe]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {

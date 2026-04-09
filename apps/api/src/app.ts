@@ -43,6 +43,7 @@ import intelligenceRoutes from "./routes/intelligenceRoutes";
 import learningRoutes from "./routes/learningRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
+import { startFootprintAggregator } from "./services/footprintAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { initBotRunner } from "./bot/botRunner";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
@@ -278,6 +279,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   if (!opts.disableKrakenFeed) {
     app.addHook("onReady", () => {
       try { startCoinbaseFeed(); } catch (err) { console.error("[coinbaseWs] failed to start", err); }
+      try { startFootprintAggregator(); } catch (err) { console.error("[footprint] failed to start", err); }
     });
   }
 

@@ -10,6 +10,7 @@
 
 import type { FastifyPluginAsync } from "fastify";
 import { logger } from "../../observability/logContext";
+import { pool } from "../../db/pool";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -141,6 +142,55 @@ const v1Market: FastifyPluginAsync = async (app) => {
 
         setCache("open-interest", result, 300_000);
         return reply.send({ ok: true, ...result });
+    });
+    // GET /v1/market/footprint
+    app.get("/market/footprint", {
+        schema: {
+            tags: ["Market"],
+            summary: "Footprint candle data (aggregated trade buckets)",
+            querystring: {
+                type: "object",
+                properties: {
+                    pair: { type: "string", default: "BTC" },
+                    timeframe: { type: "string", default: "1m" },
+                    from: { type: "string" },
+                    to: { type: "string" },
+                },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+    }, async (req, reply) => {
+        const q = req.query as { pair?: string; timeframe?: string; from?: string; to?: string };
+        const pair = q.pair ?? "BTC";
+        const timeframe = q.timeframe ?? "1m";
+        const from = q.from ? parseInt(q.from, 10) : Date.now() - 86_400_000;
+        const to = q.to ? parseInt(q.to, 10) : Date.now();
+
+        const cacheKey = `footprint:${pair}:${timeframe}:${Math.floor(from / 1000)}`;
+        const cached = getCached<unknown[]>(cacheKey);
+        if (cached) return reply.send({ ok: true, candles: cached });
+
+        try {
+            const { rows } = await pool.query(
+                `SELECT pair, timeframe,
+                    EXTRACT(EPOCH FROM open_time) * 1000 AS open_time_ms,
+                    EXTRACT(EPOCH FROM close_time) * 1000 AS close_time_ms,
+                    buckets, total_buy_qty, total_sell_qty, delta
+                 FROM footprint_candles
+                 WHERE pair = $1
+                   AND timeframe = $2
+                   AND open_time >= to_timestamp($3::double precision / 1000)
+                   AND open_time <= to_timestamp($4::double precision / 1000)
+                 ORDER BY open_time ASC
+                 LIMIT 500`,
+                [pair, timeframe, from, to],
+            );
+            setCache(cacheKey, rows, 1000);
+            return reply.send({ ok: true, candles: rows });
+        } catch (err) {
+            logger.error({ err }, "footprint_query_error");
+            return reply.send({ ok: true, candles: [] });
+        }
     });
 };
 

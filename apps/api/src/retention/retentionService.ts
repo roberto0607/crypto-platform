@@ -139,6 +139,16 @@ export async function runRetention(
         }
         retentionRowsDeletedTotal.inc({ table: "audit_log" }, auditLogsDeleted);
         logger.info({ auditLogsDeleted }, "Deleted old audit logs");
+
+        // ── Step 8: Delete old footprint candles (>24h) ──
+        {
+            const result = await pool.query(
+                `DELETE FROM footprint_candles WHERE open_time < now() - interval '24 hours'`,
+            );
+            const footprintDeleted = result.rowCount ?? 0;
+            retentionRowsDeletedTotal.inc({ table: "footprint_candles" }, footprintDeleted);
+            logger.info({ footprintDeleted }, "Deleted old footprint candles");
+        }
     } catch (err) {
         retentionFailuresTotal.inc();
         throw err;

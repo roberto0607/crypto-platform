@@ -24,6 +24,7 @@ const ADVANCED_INDICATORS = [
   { key: "openInterest", label: "Open Interest", color: "#eab308" },
   { key: "vpvr", label: "VPVR", color: "#06b6d4" },
   { key: "orderbook", label: "Order Book Heatmap", color: "#7C3AED" },
+  { key: "footprint", label: "Footprint", color: "#F59E0B" },
 ] as const;
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];
