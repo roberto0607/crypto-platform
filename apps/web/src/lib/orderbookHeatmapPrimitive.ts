@@ -38,7 +38,7 @@ interface HeatmapData {
     maxQuantity: number;
 }
 
-const MAX_BAR_WIDTH_PCT = 0.12;
+const MAX_BAR_WIDTH_PCT = 0.15;
 const WHALE_THRESHOLD = 0.7;
 
 class HeatmapPaneView implements IPrimitivePaneView {
@@ -67,9 +67,11 @@ class HeatmapPaneView implements IPrimitivePaneView {
                     const maxBarWidth = chartWidth * MAX_BAR_WIDTH_PCT;
                     const { bids, asks, maxQuantity } = data;
 
-                    const normalize = (qty: number, maxQty: number) =>
-                        maxQty <= 0 ? 0 : Math.log1p(qty) / Math.log1p(maxQty);
-                    const minBarWidth = 4;
+                    const normalize = (qty: number, maxQty: number): number => {
+                        if (maxQty <= 0 || qty <= 0) return 0;
+                        return Math.log1p(qty) / Math.log1p(maxQty);
+                    };
+                    const minBarWidth = 6;
 
                     const drawLevel = (level: HeatmapLevel, nextPrice: number | null, r: number, g: number, b: number, lineColor: string) => {
                         const y = series.priceToCoordinate(level.price);
@@ -77,7 +79,7 @@ class HeatmapPaneView implements IPrimitivePaneView {
 
                         const ratio = normalize(level.quantity, maxQuantity);
                         const barWidth = Math.max(minBarWidth, ratio * maxBarWidth);
-                        const opacity = 0.2 + ratio * 0.6;
+                        const opacity = 0.25 + ratio * 0.65;
 
                         // Bar height: from this level's price to next level's price
                         let barHeight = 4; // fallback
