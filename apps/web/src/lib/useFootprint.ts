@@ -52,7 +52,6 @@ export function useFootprint(
     pair: string,
 ): Map<number, FootprintCandle> {
     const [data, setData] = useState<Map<number, FootprintCandle>>(new Map());
-    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const mapRef = useRef<Map<number, FootprintCandle>>(new Map());
 
     const fetchHistory = useCallback(async (from: number, to: number): Promise<Map<number, FootprintCandle>> => {
@@ -111,24 +110,26 @@ export function useFootprint(
             });
         });
 
-        // Poll every 2s: fetch latest 2 completed candles + live forming candle
-        intervalRef.current = setInterval(async () => {
-            const n = Date.now();
-            const tfMs = timeframe === "1m" ? 60_000 : timeframe === "5m" ? 300_000 : 900_000;
-
-            // Fetch recent completed candles
-            const recent = await fetchHistory(n - tfMs * 2, n);
-            for (const [k, v] of recent) mapRef.current.set(k, v);
-
-            // Fetch live forming candle
+        // Fast poll: live forming candle (every 2s)
+        const liveInterval = setInterval(async () => {
             const live = await fetchLive();
-            if (live) mapRef.current.set(live.openTimeMs, live);
-
-            setData(new Map(mapRef.current));
+            if (live) {
+                mapRef.current.set(live.openTimeMs, live);
+                setData(new Map(mapRef.current));
+            }
         }, 2000);
 
+        // Slow poll: recently completed candles (every 30s)
+        const historyInterval = setInterval(async () => {
+            const n = Date.now();
+            const recent = await fetchHistory(n - 5 * 60_000, n);
+            for (const [k, v] of recent) mapRef.current.set(k, v);
+            setData(new Map(mapRef.current));
+        }, 30_000);
+
         return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
+            clearInterval(liveInterval);
+            clearInterval(historyInterval);
         };
     }, [enabled, timeframe, pair, fetchHistory, fetchLive]);
 

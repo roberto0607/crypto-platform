@@ -128,7 +128,8 @@ class FootprintPaneView implements IPrimitivePaneView {
                         const fontSize = Math.max(6, Math.min(10, Math.floor(rowHeight - 2), Math.floor(candleWidthPx / 8)));
                         context.font = `${fontSize}px monospace`;
 
-                        const halfW = candleWidthPx / 2;
+                        const bodyWidth = candleWidthPx * 0.88;
+                        const bodyX = x - bodyWidth / 2;
 
                         for (const bucket of visibleBuckets) {
                             // Skip empty rows at tight zoom
@@ -140,6 +141,10 @@ class FootprintPaneView implements IPrimitivePaneView {
                             const total = bucket.b + bucket.s;
                             const buyRatio = total > 0 ? bucket.b / total : 0.5;
 
+                            // Dark background for readability
+                            context.fillStyle = "rgba(0, 0, 0, 0.55)";
+                            context.fillRect(bodyX, y - rowHeight / 2, bodyWidth, rowHeight);
+
                             // Row background tint
                             if (buyRatio > 0.7) {
                                 context.fillStyle = "rgba(38, 166, 154, 0.12)";
@@ -148,19 +153,19 @@ class FootprintPaneView implements IPrimitivePaneView {
                             } else {
                                 context.fillStyle = "rgba(255, 255, 255, 0.03)";
                             }
-                            context.fillRect(x - halfW, y - rowHeight / 2, candleWidthPx, rowHeight);
+                            context.fillRect(bodyX, y - rowHeight / 2, bodyWidth, rowHeight);
 
                             // Absorption highlight — bright yellow with gold borders
                             if (absorbedLevels.has(bucket.price)) {
                                 context.fillStyle = "rgba(255, 214, 0, 0.35)";
-                                context.fillRect(x - halfW, y - rowHeight / 2, candleWidthPx, rowHeight);
+                                context.fillRect(bodyX, y - rowHeight / 2, bodyWidth, rowHeight);
                                 context.strokeStyle = "rgba(255, 214, 0, 0.8)";
                                 context.lineWidth = 1;
                                 context.beginPath();
-                                context.moveTo(x - halfW, y - rowHeight / 2);
-                                context.lineTo(x + halfW, y - rowHeight / 2);
-                                context.moveTo(x - halfW, y + rowHeight / 2);
-                                context.lineTo(x + halfW, y + rowHeight / 2);
+                                context.moveTo(bodyX, y - rowHeight / 2);
+                                context.lineTo(bodyX + bodyWidth, y - rowHeight / 2);
+                                context.moveTo(bodyX, y + rowHeight / 2);
+                                context.lineTo(bodyX + bodyWidth, y + rowHeight / 2);
                                 context.stroke();
                             }
 
@@ -168,8 +173,8 @@ class FootprintPaneView implements IPrimitivePaneView {
                             context.strokeStyle = "rgba(255,255,255,0.05)";
                             context.lineWidth = 0.5;
                             context.beginPath();
-                            context.moveTo(x - halfW, y - rowHeight / 2);
-                            context.lineTo(x + halfW, y - rowHeight / 2);
+                            context.moveTo(bodyX, y - rowHeight / 2);
+                            context.lineTo(bodyX + bodyWidth, y - rowHeight / 2);
                             context.stroke();
 
                             // Text only when rows are tall enough to read
@@ -179,12 +184,12 @@ class FootprintPaneView implements IPrimitivePaneView {
                                 // Buy qty — LEFT — green
                                 context.fillStyle = "#26a69a";
                                 context.textAlign = "left";
-                                context.fillText(bucket.b.toFixed(2), x - halfW + 2, y + fontSize / 3);
+                                context.fillText(bucket.b.toFixed(2), bodyX + 2, y + fontSize / 3);
 
                                 // Sell qty — RIGHT — red
                                 context.fillStyle = "#ef5350";
                                 context.textAlign = "right";
-                                context.fillText(bucket.s.toFixed(2), x + halfW - 2, y + fontSize / 3);
+                                context.fillText(bucket.s.toFixed(2), bodyX + bodyWidth - 2, y + fontSize / 3);
                             }
                         }
 
