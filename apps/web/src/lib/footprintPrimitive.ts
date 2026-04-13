@@ -83,6 +83,7 @@ class FootprintPaneView implements IPrimitivePaneView {
                 const rawCandles = primitive.rawCandles;
                 const candleWidthPx = primitive.candleWidthPx;
 
+                console.log("[footprint draw]", "data:", data?.size, "width:", candleWidthPx, "series:", !!series, "chart:", !!chart);
                 if (!series || !chart || !data || data.size === 0) return;
                 if (candleWidthPx < 12) return;
 
@@ -235,6 +236,7 @@ export class FootprintPrimitive implements ISeriesPrimitive<Time> {
     get candleWidthPx(): number { return this._candleWidthPx; }
 
     update(data: Map<number, FootprintCandle>, rawCandles: RawCandle[], candleWidthPx: number): void {
+        console.log("[footprint primitive] update:", "candles:", data.size, "rawCandles:", rawCandles.length, "width:", candleWidthPx);
         this._data = data;
         this._rawCandles = rawCandles;
         this._candleWidthPx = candleWidthPx;

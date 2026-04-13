@@ -292,6 +292,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         series.attachPrimitive(footprintPrimitive);
         footprintPrimitive.setChart(chart);
         footprintPrimitiveRef.current = footprintPrimitive;
+        console.log("[footprint] primitive attached:", !!footprintPrimitive, "series exists:", !!series);
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -736,6 +737,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     // Footprint chart — update from footprint data
     useEffect(() => {
         const fp = footprintPrimitiveRef.current;
+        console.log("[footprint] effect:", "data size:", footprintData.size, "enabled:", indicatorConfig.footprint, "timeframe:", timeframe, "fpRef:", !!fp);
         if (!fp) return;
 
         const isFootprintTf = ["1m", "5m", "15m"].includes(timeframe);
