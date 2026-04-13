@@ -304,6 +304,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         series.attachPrimitive(liquidationLevelsPrimitive);
         liquidationLevelsPrimitive.setChart(chart);
         liquidationLevelsPrimitiveRef.current = liquidationLevelsPrimitive;
+        console.log("[liq] primitive attached:", !!liquidationLevelsPrimitiveRef.current);
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -768,6 +769,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     // Liquidation Levels — fetch + 30s poll + refresh on candle.closed
     useEffect(() => {
         const primitive = liquidationLevelsPrimitiveRef.current;
+        console.log(
+            "[liq] effect fired, primitive:", !!liquidationLevelsPrimitiveRef.current,
+            "enabled:", indicatorConfig.liquidationLevels,
+            "pair:", selectedPairSymbol,
+        );
         if (!primitive) return;
 
         if (!indicatorConfig.liquidationLevels) {
