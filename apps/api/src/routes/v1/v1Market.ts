@@ -158,7 +158,12 @@ const v1Market: FastifyPluginAsync = async (app) => {
                     to: { type: "string" },
                 },
             },
-            response: { 200: { type: "object", additionalProperties: true } },
+            response: {
+                200: {
+                    type: "array",
+                    items: { type: "object", additionalProperties: true },
+                },
+            },
         },
     }, async (req, reply) => {
         const q = req.query as { pair?: string; timeframe?: string; from?: string; to?: string };
@@ -174,8 +179,8 @@ const v1Market: FastifyPluginAsync = async (app) => {
         try {
             const { rows } = await pool.query(
                 `SELECT pair, timeframe,
-                    (EXTRACT(EPOCH FROM open_time) * 1000)::bigint AS open_time_ms,
-                    (EXTRACT(EPOCH FROM close_time) * 1000)::bigint AS close_time_ms,
+                    (EXTRACT(EPOCH FROM open_time) * 1000)::double precision AS open_time_ms,
+                    (EXTRACT(EPOCH FROM close_time) * 1000)::double precision AS close_time_ms,
                     buckets, total_buy_qty, total_sell_qty, delta
                  FROM footprint_candles
                  WHERE pair = $1
