@@ -83,6 +83,30 @@ async function persistCandle(tf: string, agg: CandleAgg): Promise<void> {
     }
 }
 
+export function getLiveFootprintCandles(): Record<string, {
+    openTime: number;
+    closeTime: number;
+    buckets: Record<string, { b: number; s: number }>;
+    totalBuy: number;
+    totalSell: number;
+    delta: number;
+} | null> {
+    const result: Record<string, unknown> = {};
+    for (const tf of TIMEFRAMES) {
+        const agg = active[tf];
+        if (!agg) { result[tf] = null; continue; }
+        result[tf] = {
+            openTime: agg.openTime,
+            closeTime: agg.closeTime,
+            buckets: bucketsToJson(agg.buckets),
+            totalBuy: agg.totalBuy,
+            totalSell: agg.totalSell,
+            delta: agg.totalBuy - agg.totalSell,
+        };
+    }
+    return result as Record<string, { openTime: number; closeTime: number; buckets: Record<string, { b: number; s: number }>; totalBuy: number; totalSell: number; delta: number } | null>;
+}
+
 function handleTrade(price: number, qty: number, isSell: boolean, timestampMs: number): void {
     const bucket = Math.floor(price / 10) * 10;
 

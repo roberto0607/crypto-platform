@@ -11,6 +11,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { logger } from "../../observability/logContext";
 import { pool } from "../../db/pool";
+import { getLiveFootprintCandles } from "../../services/footprintAggregator";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -191,6 +192,22 @@ const v1Market: FastifyPluginAsync = async (app) => {
             logger.error({ err }, "footprint_query_error");
             return reply.send({ ok: true, candles: [] });
         }
+    });
+
+    // GET /v1/market/footprint/live — current forming candles (in memory)
+    app.get("/market/footprint/live", {
+        schema: {
+            tags: ["Market"],
+            summary: "Live forming footprint candles (1m, 5m, 15m)",
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+    }, async (_req, reply) => {
+        const cached = getCached<unknown>("footprint-live");
+        if (cached) return reply.send({ ok: true, candles: cached });
+
+        const live = getLiveFootprintCandles();
+        setCache("footprint-live", live, 1000);
+        return reply.send({ ok: true, candles: live });
     });
 };
 
