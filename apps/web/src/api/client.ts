@@ -54,6 +54,25 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 // ── Refresh mutex — singleton promise so only ONE refresh runs at a time ──
 let refreshPromise: Promise<string | null> | null = null;
+// Hard-redirect guard: ensures we only kick the user to /login once per
+// session-expiry event, even if multiple concurrent refresh callers fail.
+let hardRedirectInFlight = false;
+
+function hardLogoutAndRedirect(): void {
+  if (hardRedirectInFlight) return;
+  hardRedirectInFlight = true;
+  try {
+    // Auth-scope localStorage cleanup. We deliberately do NOT wipe all
+    // localStorage — indicator config, panel heights, and themes are
+    // user-preferences that should survive re-login.
+    localStorage.removeItem("tradr_session");
+    sessionStorage.clear();
+  } catch { /* private-mode or quota errors — ignore */ }
+  clearAuth();
+  if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+    window.location.href = "/login";
+  }
+}
 
 export function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
@@ -68,7 +87,14 @@ export function refreshAccessToken(): Promise<string | null> {
       setToken(token);
       return token;
     })
-    .catch(() => null)
+    .catch((err: AxiosError) => {
+      // 401 = refresh cookie is gone or revoked. Stop the loop: hard-clear
+      // auth state + send the user to /login immediately.
+      if (err?.response?.status === 401) {
+        hardLogoutAndRedirect();
+      }
+      return null;
+    })
     .finally(() => {
       refreshPromise = null;
     });

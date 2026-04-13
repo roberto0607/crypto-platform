@@ -50,6 +50,7 @@ export default function AppLayout() {
   const userTier = useCompetitionStore((s) => s.userTier);
   const currentTheme = useThemeStore((s) => s.currentTheme);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const isTradePage = location.pathname === "/trade";
   const isWarTheme = currentTheme === "tradewars";
 
@@ -82,7 +83,13 @@ export default function AppLayout() {
   }, [sseConnectionState]);
 
   function handleLogout() {
+    // Belt-and-suspenders: authStore.clearAuth already revokes the refresh
+    // cookie server-side (via POST /auth/logout) and removes tradr_session.
+    // We also wipe sessionStorage here per the logout spec. localStorage is
+    // left intact so indicator/panel/theme prefs survive re-login.
+    try { sessionStorage.clear(); } catch { /* ignore */ }
     clearAuth();
+    setUserMenuOpen(false);
     navigate("/login", { replace: true });
   }
 
@@ -262,14 +269,39 @@ export default function AppLayout() {
               )}
 
               {user && (
-                <div className="flex items-center gap-2.5 font-mono">
-                  <span className="text-[9px] text-white/50 tracking-[1px]">
-                    {user.displayName || user.email?.split("@")[0] || "user"}
-                  </span>
-                  <span className="text-[9px] text-yellow-400 tracking-[2px] border border-yellow-400/30 px-1.5 py-0.5 bg-yellow-400/[0.06]"
-                    style={{ clipPath: "polygon(3px 0%,100% 0%,calc(100% - 3px) 100%,0% 100%)" }}>
-                    ★ {userTier}
-                  </span>
+                <div className="relative font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setUserMenuOpen((v) => !v)}
+                    onBlur={() => { setTimeout(() => setUserMenuOpen(false), 150); }}
+                    className="flex items-center gap-2.5 bg-transparent border-0 p-0 cursor-pointer"
+                    aria-haspopup="menu"
+                    aria-expanded={userMenuOpen}
+                  >
+                    <span className="text-[9px] text-white/50 tracking-[1px] hover:text-white/80 transition-colors">
+                      {user.displayName || user.email?.split("@")[0] || "user"}
+                    </span>
+                    <span className="text-[9px] text-yellow-400 tracking-[2px] border border-yellow-400/30 px-1.5 py-0.5 bg-yellow-400/[0.06]"
+                      style={{ clipPath: "polygon(3px 0%,100% 0%,calc(100% - 3px) 100%,0% 100%)" }}>
+                      ★ {userTier}
+                    </span>
+                    <span className="text-[8px] text-white/30">▾</span>
+                  </button>
+                  {userMenuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full mt-1.5 bg-[#080808] border border-[rgba(0,255,65,0.16)] shadow-[0_4px_20px_rgba(0,0,0,0.6)] z-50 min-w-[140px]"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onMouseDown={(e) => { e.preventDefault(); handleLogout(); }}
+                        className="w-full text-left px-3 py-2 text-[10px] tracking-[2px] text-red-400 hover:bg-red-500/10 hover:text-red-300 border-0 bg-transparent cursor-pointer font-mono"
+                      >
+                        LOGOUT
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
