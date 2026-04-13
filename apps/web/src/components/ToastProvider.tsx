@@ -99,16 +99,20 @@ export default function ToastProvider({
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      {/* Toast container — top-right, stacked */}
+      {/* Toast container — top-right, stacked.
+          pointer-events-none on the wrapper so it doesn't steal clicks from
+          the header's username menu directly underneath. Individual toasts
+          re-enable pointer events via the pointer-events-auto wrapper below. */}
       {toasts.length > 0 && (
-        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none">
           {toasts.map((t) => (
-            <Toast
-              key={t.id}
-              variant={t.variant}
-              message={t.message}
-              onClose={() => removeToast(t.id)}
-            />
+            <div key={t.id} className="pointer-events-auto">
+              <Toast
+                variant={t.variant}
+                message={t.message}
+                onClose={() => removeToast(t.id)}
+              />
+            </div>
           ))}
         </div>
       )}

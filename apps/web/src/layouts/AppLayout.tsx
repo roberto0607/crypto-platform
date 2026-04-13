@@ -285,7 +285,7 @@ export default function AppLayout() {
               )}
 
               {user && (
-                <div ref={userMenuRef} className="relative font-mono">
+                <div ref={userMenuRef} className="relative z-50 font-mono">
                   <button
                     type="button"
                     onClick={() => setUserMenuOpen((v) => !v)}
