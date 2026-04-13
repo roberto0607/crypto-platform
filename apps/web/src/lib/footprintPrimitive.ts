@@ -84,7 +84,7 @@ class FootprintPaneView implements IPrimitivePaneView {
                 const candleWidthPx = primitive.candleWidthPx;
 
                 if (!series || !chart || !data || data.size === 0) return;
-                if (candleWidthPx < 40) return;
+                if (candleWidthPx < 12) return;
 
                 target.useMediaCoordinateSpace(({ context }) => {
                     context.save();
@@ -124,14 +124,16 @@ class FootprintPaneView implements IPrimitivePaneView {
                         const absorbedLevels = detectAbsorption(fp.buckets, closePrice);
 
                         const rowHeight = candleHeightPx / visibleBuckets.length;
-                        if (rowHeight < 8) continue;
 
-                        const fontSize = Math.min(10, Math.max(7, rowHeight - 3));
+                        const fontSize = Math.max(6, Math.min(10, Math.floor(rowHeight - 2), Math.floor(candleWidthPx / 8)));
                         context.font = `${fontSize}px monospace`;
 
                         const halfW = candleWidthPx / 2;
 
                         for (const bucket of visibleBuckets) {
+                            // Skip empty rows at tight zoom
+                            if (candleWidthPx < 25 && bucket.b < 0.001 && bucket.s < 0.001) continue;
+
                             const y = series.priceToCoordinate(bucket.price + 5);
                             if (y === null) continue;
 
@@ -170,15 +172,20 @@ class FootprintPaneView implements IPrimitivePaneView {
                             context.lineTo(x + halfW, y - rowHeight / 2);
                             context.stroke();
 
-                            // Buy qty — LEFT — green
-                            context.fillStyle = "#26a69a";
-                            context.textAlign = "left";
-                            context.fillText(bucket.b.toFixed(2), x - halfW + 2, y + fontSize / 3);
+                            // Text only when rows are tall enough to read
+                            if (rowHeight >= 7) {
+                                context.font = `${fontSize}px monospace`;
 
-                            // Sell qty — RIGHT — red
-                            context.fillStyle = "#ef5350";
-                            context.textAlign = "right";
-                            context.fillText(bucket.s.toFixed(2), x + halfW - 2, y + fontSize / 3);
+                                // Buy qty — LEFT — green
+                                context.fillStyle = "#26a69a";
+                                context.textAlign = "left";
+                                context.fillText(bucket.b.toFixed(2), x - halfW + 2, y + fontSize / 3);
+
+                                // Sell qty — RIGHT — red
+                                context.fillStyle = "#ef5350";
+                                context.textAlign = "right";
+                                context.fillText(bucket.s.toFixed(2), x + halfW - 2, y + fontSize / 3);
+                            }
                         }
 
                         // Delta label below candle
