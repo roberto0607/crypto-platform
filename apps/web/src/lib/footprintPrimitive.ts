@@ -30,9 +30,36 @@ interface RawCandle {
     ts: string;
     high: string;
     low: string;
+    close: string;
 }
 
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
+
+function detectAbsorption(
+    buckets: Record<string, { b: number; s: number }>,
+    candleClose: number,
+): Set<number> {
+    const absorbed = new Set<number>();
+    const RATIO = 3;
+    const MIN_QTY = 0.01;
+
+    for (const [priceStr, { b, s }] of Object.entries(buckets)) {
+        const price = Number(priceStr);
+        if (b < MIN_QTY && s < MIN_QTY) continue;
+
+        // Bid absorption: buyers aggressive (b >= 3x s) but price rejected
+        if (s >= MIN_QTY && b >= s * RATIO && candleClose <= price + 10) {
+            absorbed.add(price);
+        }
+
+        // Ask absorption: sellers aggressive (s >= 3x b) but price held
+        if (b >= MIN_QTY && s >= b * RATIO && candleClose >= price) {
+            absorbed.add(price);
+        }
+    }
+
+    return absorbed;
+}
 
 class FootprintPaneView implements IPrimitivePaneView {
     private _primitive: FootprintPrimitive;
@@ -92,6 +119,10 @@ class FootprintPaneView implements IPrimitivePaneView {
 
                         if (visibleBuckets.length === 0) continue;
 
+                        // Absorption detection
+                        const closePrice = rc ? parseFloat(rc.close) : high;
+                        const absorbedLevels = detectAbsorption(fp.buckets, closePrice);
+
                         const rowHeight = candleHeightPx / visibleBuckets.length;
                         if (rowHeight < 8) continue;
 
@@ -116,6 +147,20 @@ class FootprintPaneView implements IPrimitivePaneView {
                                 context.fillStyle = "rgba(255, 255, 255, 0.03)";
                             }
                             context.fillRect(x - halfW, y - rowHeight / 2, candleWidthPx, rowHeight);
+
+                            // Absorption highlight — bright yellow with gold borders
+                            if (absorbedLevels.has(bucket.price)) {
+                                context.fillStyle = "rgba(255, 214, 0, 0.35)";
+                                context.fillRect(x - halfW, y - rowHeight / 2, candleWidthPx, rowHeight);
+                                context.strokeStyle = "rgba(255, 214, 0, 0.8)";
+                                context.lineWidth = 1;
+                                context.beginPath();
+                                context.moveTo(x - halfW, y - rowHeight / 2);
+                                context.lineTo(x + halfW, y - rowHeight / 2);
+                                context.moveTo(x - halfW, y + rowHeight / 2);
+                                context.lineTo(x + halfW, y + rowHeight / 2);
+                                context.stroke();
+                            }
 
                             // Row separator
                             context.strokeStyle = "rgba(255,255,255,0.05)";
