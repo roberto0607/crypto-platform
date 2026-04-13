@@ -164,9 +164,11 @@ export function useSSE() {
   // ── Visibility / focus watchdog ──
   // When the tab becomes visible or regains focus, check if SSE is stale
   const checkAndReconnect = useCallback(() => {
-    const { lastPriceTickAt, sseConnected: connected } = useAppStore.getState();
+    const { lastPriceTickAt } = useAppStore.getState();
     const { isAuthenticated: authed } = useAuthStore.getState();
-    if (!authed || !connected) return;
+    if (!authed) return;
+    // Allow reconnect attempt even if !connected (in backoff) as long as
+    // the staleness threshold is met — shortcuts long backoffs on tab resume.
     if (lastPriceTickAt > 0 && Date.now() - lastPriceTickAt > STALE_THRESHOLD_MS) {
       forceReconnectSSE();
     }
