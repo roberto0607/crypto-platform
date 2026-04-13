@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import {
@@ -149,6 +150,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
+    const hasLoadedOnce = useRef(false);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
@@ -208,7 +210,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const [crosshairData, setCrosshairData] = useState<{ open: number; high: number; low: number; close: number; time: number } | null>(null);
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
-    const indicatorConfig = useTradingStore((s) => s.indicatorConfig);
+    const indicatorConfig = useTradingStore(useShallow((s) => s.indicatorConfig));
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
@@ -292,7 +294,6 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         series.attachPrimitive(footprintPrimitive);
         footprintPrimitive.setChart(chart);
         footprintPrimitiveRef.current = footprintPrimitive;
-        console.log("[footprint] primitive attached:", !!footprintPrimitive, "series exists:", !!series);
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -542,7 +543,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
             renderOverlays(candleRes.data.candles);
 
-            chartRef.current?.timeScale().fitContent();
+            // Only fit on the very first load — later re-fetches (from indicator
+            // toggles etc.) must not yank the viewport.
+            if (!hasLoadedOnce.current) {
+                chartRef.current?.timeScale().fitContent();
+                hasLoadedOnce.current = true;
+            }
         } catch {
             // Non-fatal — chart shows empty
         } finally {
@@ -746,16 +752,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             return;
         }
 
-        const getCandleWidthPx = (): number => {
-            const ts = chartRef.current?.timeScale();
-            if (!ts) return 0;
-            const bar0 = ts.logicalToCoordinate(0 as never);
-            const bar1 = ts.logicalToCoordinate(1 as never);
-            if (bar0 === null || bar1 === null) return 0;
-            return Math.abs(bar1 - bar0);
-        };
-
-        fp.update(footprintData, rawCandlesRef.current, getCandleWidthPx());
+        fp.update(footprintData, rawCandlesRef.current);
     }, [indicatorConfig.footprint, footprintData, timeframe]);
 
     // Re-render overlays when indicator config changes

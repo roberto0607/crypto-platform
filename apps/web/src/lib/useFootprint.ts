@@ -66,7 +66,10 @@ export function useFootprint(
             const map = new Map<number, FootprintCandle>();
             for (const c of rows) {
                 const parsed = parseRawCandle(c);
-                map.set(Number(parsed.openTimeMs), parsed);
+                // Floor to integer ms — SQL ::double precision preserves microsecond
+                // fractions, but live candle openTime is a clean int. Without floor,
+                // history and live slots never collide in the Map.
+                map.set(Math.floor(parsed.openTimeMs), parsed);
             }
             console.log("[useFootprint] loaded", map.size, "candles, first key:", [...map.keys()][0], "last key:", [...map.keys()][map.size - 1]);
             console.log(
@@ -114,7 +117,7 @@ export function useFootprint(
             mapRef.current = histMap;
             // Also fetch live candle immediately
             fetchLive().then((live) => {
-                if (live) mapRef.current.set(Number(live.openTimeMs), live);
+                if (live) mapRef.current.set(Math.floor(live.openTimeMs), live);
                 setData(new Map(mapRef.current));
             });
         });
@@ -123,7 +126,7 @@ export function useFootprint(
         const liveInterval = setInterval(async () => {
             const live = await fetchLive();
             if (live) {
-                mapRef.current.set(Number(live.openTimeMs), live);
+                mapRef.current.set(Math.floor(live.openTimeMs), live);
                 setData(new Map(mapRef.current));
             }
         }, 2000);
