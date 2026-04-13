@@ -34,6 +34,8 @@ import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
 import { OrderbookHeatmapPrimitive, type HeatmapLevel } from "@/lib/orderbookHeatmapPrimitive";
 import { FootprintPrimitive } from "@/lib/footprintPrimitive";
 import { useFootprint } from "@/lib/useFootprint";
+import { LiquidationLevelsPrimitive, type LiquidationCluster } from "@/lib/liquidationLevelsPrimitive";
+import { fetchLiquidationLevels } from "@/api/endpoints/marketData";
 import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
 import { getLiquidityZones, type LiquidityZone } from "@/api/endpoints/signals";
 import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
@@ -47,6 +49,7 @@ import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
+import { COTPanel } from "./COTPanel";
 import client from "@/api/client";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
@@ -155,6 +158,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
     const footprintPrimitiveRef = useRef<FootprintPrimitive | null>(null);
+    const liquidationLevelsPrimitiveRef = useRef<LiquidationLevelsPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
     const vpvrWeeklyLenRef = useRef(0);
@@ -294,6 +298,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         series.attachPrimitive(footprintPrimitive);
         footprintPrimitive.setChart(chart);
         footprintPrimitiveRef.current = footprintPrimitive;
+
+        // Attach liquidation levels primitive (right-of-current-candle only)
+        const liquidationLevelsPrimitive = new LiquidationLevelsPrimitive();
+        series.attachPrimitive(liquidationLevelsPrimitive);
+        liquidationLevelsPrimitive.setChart(chart);
+        liquidationLevelsPrimitiveRef.current = liquidationLevelsPrimitive;
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -754,6 +764,54 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
         fp.update(footprintData, rawCandlesRef.current);
     }, [indicatorConfig.footprint, footprintData, timeframe]);
+
+    // Liquidation Levels — fetch + 30s poll + refresh on candle.closed
+    useEffect(() => {
+        const primitive = liquidationLevelsPrimitiveRef.current;
+        if (!primitive) return;
+
+        if (!indicatorConfig.liquidationLevels) {
+            primitive.clear();
+            return;
+        }
+
+        // Only BTC is supported per the spec
+        const base = selectedPairSymbol.split("/")[0]?.toUpperCase() ?? "BTC";
+        if (base !== "BTC") {
+            primitive.clear();
+            return;
+        }
+
+        let cancelled = false;
+
+        const load = async () => {
+            try {
+                const res = await fetchLiquidationLevels("BTC");
+                if (cancelled) return;
+                const clusters: LiquidationCluster[] = res.data.clusters;
+                const raw = rawCandlesRef.current;
+                const latest = raw.length > 0 ? raw[raw.length - 1] : null;
+                const latestTime = latest
+                    ? ((new Date(latest.ts).getTime() / 1000 + TZ_OFFSET_SEC) as Time)
+                    : null;
+                primitive.update(clusters, latestTime);
+            } catch {
+                /* non-fatal — keep prior data until next poll */
+            }
+        };
+
+        load();
+        const id = setInterval(load, 30_000);
+
+        const onCandleClosed = () => { load(); };
+        window.addEventListener("sse:candle.closed", onCandleClosed);
+
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+            window.removeEventListener("sse:candle.closed", onCandleClosed);
+        };
+    }, [indicatorConfig.liquidationLevels, selectedPairSymbol]);
 
     // Re-render overlays when indicator config changes
     useEffect(() => {
@@ -1896,6 +1954,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
             {indicatorConfig.openInterest && (<>
                 <DragHandle panelKey="openInterest" currentHeight={panelHeights.openInterest ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
                 <OpenInterestPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.openInterest} />
+            </>)}
+
+            {/* COT Report sub-panel */}
+            {indicatorConfig.cotReport && (<>
+                <DragHandle panelKey="cotReport" currentHeight={panelHeights.cotReport ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <COTPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.cotReport} />
             </>)}
         </div>
     );

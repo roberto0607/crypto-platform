@@ -40,3 +40,40 @@ export function fetchFundingRate() {
 export function fetchOpenInterest() {
     return client.get<{ ok: true } & OpenInterestData>("/v1/market/open-interest");
 }
+
+export interface LiquidationCluster {
+    price: number;
+    side: "long" | "short";
+    estimatedUSD: number;
+    leverage: number;
+    intensity: number;
+}
+
+export interface LiquidationLevelsResponse {
+    disclaimer: "estimated";
+    currentPrice: number;
+    calculatedAt: string;
+    clusters: LiquidationCluster[];
+    sources: string[];
+}
+
+export function fetchLiquidationLevels(ccy: string) {
+    return client.get<LiquidationLevelsResponse>(`/v1/market/liquidation-levels/${ccy}`);
+}
+
+export interface COTWeek {
+    date: string;
+    nonCommercialLong: number;
+    nonCommercialShort: number;
+    netPosition: number;
+    commercialLong: number;
+    commercialShort: number;
+}
+
+export interface COTResponse {
+    weeks: COTWeek[];
+}
+
+export function fetchCOT(ccy: string) {
+    return client.get<COTResponse>(`/v1/market/cot/${ccy}`);
+}

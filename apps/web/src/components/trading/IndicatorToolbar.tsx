@@ -25,6 +25,8 @@ const ADVANCED_INDICATORS = [
   { key: "vpvr", label: "VPVR", color: "#06b6d4" },
   { key: "orderbook", label: "Order Book Heatmap", color: "#7C3AED" },
   { key: "footprint", label: "Footprint", color: "#F59E0B" },
+  { key: "liquidationLevels", label: "Liquidation Levels (EST.)", color: "#ff3232" },
+  { key: "cotReport", label: "COT Report (CFTC)", color: "#22c55e" },
 ] as const;
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];

@@ -3,15 +3,19 @@
  *
  * Binance fapi and Bybit are geo-blocked from US servers (Railway).
  * Gate.io futures API works from all regions and provides historical data.
+ * OKX public API is also US-accessible and used to augment BTC OI.
  *
  * GET /v1/market/funding-rate — funding rate history for BTC, ETH, SOL
- * GET /v1/market/open-interest — OI history for BTC, ETH, SOL
+ * GET /v1/market/open-interest — aggregated OI (Gate.io + OKX for BTC)
+ * GET /v1/market/liquidation-levels/:ccy — estimated liquidation clusters
+ * GET /v1/market/cot/:ccy — CFTC weekly COT report for CME BTC futures
  */
 
 import type { FastifyPluginAsync } from "fastify";
 import { logger } from "../../observability/logContext";
 import { pool } from "../../db/pool";
 import { getLiveFootprintCandles } from "../../services/footprintAggregator";
+import { estimateLiquidationClusters } from "../../market/liquidationEstimator";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -79,7 +83,7 @@ async function fetchFundingHistory(contract: string): Promise<{ rate: number; ne
 }
 
 // ── Gate.io: OI history ──
-async function fetchOIHistory(contract: string): Promise<{ current: number; history: Array<{ time: number; value: number }> }> {
+async function fetchGateIoOI(contract: string): Promise<{ current: number; history: Array<{ time: number; value: number }> } | null> {
     try {
         const from = Math.floor(Date.now() / 1000) - HISTORY_LIMIT * 3600; // ~200 hours back
         const res = await fetchWithTimeout(
@@ -98,7 +102,51 @@ async function fetchOIHistory(contract: string): Promise<{ current: number; hist
         return { current, history };
     } catch (err) {
         logger.error({ err, contract }, "gateio_oi_fetch_error");
-        return { current: 0, history: [] };
+        return null;
+    }
+}
+
+// ── OKX: spot mark price for USD conversion ──
+async function fetchOKXPrice(ccy: string): Promise<number> {
+    try {
+        const res = await fetchWithTimeout(
+            `https://www.okx.com/api/v5/market/ticker?instId=${ccy}-USDT`,
+        );
+        if (!res.ok) return 0;
+        const json = await res.json() as { data?: Array<{ last?: string }> };
+        return parseFloat(json.data?.[0]?.last ?? "0") || 0;
+    } catch {
+        return 0;
+    }
+}
+
+// ── OKX: current OI in USD ──
+// Rubik returns open-interest-volume as array-of-arrays [ts, oi, oiCcy] historically.
+// Defensive: also handle object form if OKX changes shape.
+async function fetchOKXOI(ccy: string): Promise<number | null> {
+    try {
+        const [oiRes, price] = await Promise.all([
+            fetchWithTimeout(
+                `https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=${ccy}&period=5m&limit=1`,
+            ),
+            fetchOKXPrice(ccy),
+        ]);
+        if (!oiRes.ok) throw new Error(`OKX OI ${oiRes.status}`);
+        const json = await oiRes.json() as { data?: Array<unknown> };
+        const first = json.data?.[0];
+        let oiCcy = 0;
+        if (Array.isArray(first)) {
+            // [ts, oi, oiCcy] — take oiCcy if present, else oi (older shape)
+            oiCcy = parseFloat(String(first[2] ?? first[1] ?? "0")) || 0;
+        } else if (first && typeof first === "object") {
+            const obj = first as { oiCcy?: string; oi?: string };
+            oiCcy = parseFloat(obj.oiCcy ?? obj.oi ?? "0") || 0;
+        }
+        if (oiCcy <= 0 || price <= 0) return null;
+        return oiCcy * price;
+    } catch (err) {
+        logger.error({ err, ccy }, "okx_oi_fetch_error");
+        return null;
     }
 }
 
@@ -125,11 +173,11 @@ const v1Market: FastifyPluginAsync = async (app) => {
         return reply.send({ ok: true, ...result });
     });
 
-    // GET /v1/market/open-interest
+    // GET /v1/market/open-interest — aggregated across Gate.io (+ OKX for BTC)
     app.get("/market/open-interest", {
         schema: {
             tags: ["Market"],
-            summary: "Open interest history (Gate.io)",
+            summary: "Open interest history (Gate.io + OKX aggregated for BTC)",
             response: { 200: { type: "object", additionalProperties: true } },
         },
     }, async (_req, reply) => {
@@ -138,12 +186,154 @@ const v1Market: FastifyPluginAsync = async (app) => {
 
         const result: Record<string, unknown> = {};
         await Promise.all(Object.entries(SYMBOLS).map(async ([key, contract]) => {
-            result[key] = await fetchOIHistory(contract);
+            // OKX only aggregated for BTC per Stage 5 spec
+            const ccy = key.toUpperCase();
+            const [gate, okxCurrent] = await Promise.all([
+                fetchGateIoOI(contract),
+                key === "btc" ? fetchOKXOI(ccy) : Promise.resolve(null),
+            ]);
+
+            const sources: string[] = [];
+            if (gate) sources.push("gateio");
+            if (okxCurrent !== null) sources.push("okx");
+
+            const gateCurrent = gate?.current ?? 0;
+            const history = gate?.history ?? [];
+            // Sum current values across exchanges. History stays Gate.io-only
+            // because OKX doesn't expose the equivalent historical shape.
+            const current = gateCurrent + (okxCurrent ?? 0);
+
+            result[key] = { current, history, sources };
         }));
 
         setCache("open-interest", result, 300_000);
         return reply.send({ ok: true, ...result });
     });
+    // GET /v1/market/cot/:ccy — CFTC COT report for CME BTC futures (weekly)
+    app.get("/market/cot/:ccy", {
+        schema: {
+            tags: ["Market"],
+            summary: "CFTC Commitments of Traders report (CME BTC futures)",
+            params: {
+                type: "object",
+                required: ["ccy"],
+                properties: { ccy: { type: "string" } },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+    }, async (req, reply) => {
+        const { ccy } = req.params as { ccy: string };
+        const ccyUpper = ccy.toUpperCase();
+        const cacheKey = `cot:${ccyUpper}`;
+        const lastGoodKey = `cot-lastgood:${ccyUpper}`;
+
+        const cached = getCached<unknown>(cacheKey);
+        if (cached) return reply.send(cached);
+
+        // Only BTC supported — CFTC publishes CME Bitcoin futures COT
+        if (ccyUpper !== "BTC") {
+            return reply.send({ weeks: [] });
+        }
+
+        try {
+            const filter = encodeURIComponent(
+                "Market_and_Exchange_Names eq 'BITCOIN - CHICAGO MERCANTILE EXCHANGE'",
+            );
+            const url = `https://publicreporting.cftc.gov/api/odata/v1/TriCombined?$filter=${filter}&$orderby=Report_Date_as_MM_DD_YYYY desc&$top=52`;
+            const res = await fetchWithTimeout(url, 10_000);
+            if (!res.ok) throw new Error(`CFTC ${res.status}`);
+            const body = await res.json() as { value?: Array<Record<string, unknown>> };
+            const rows = Array.isArray(body.value) ? body.value : [];
+
+            const weeks = rows
+                .map((r) => {
+                    const dateRaw = String(r["Report_Date_as_MM_DD_YYYY"] ?? "");
+                    // CFTC date format is "MM/DD/YYYY" — normalize to ISO YYYY-MM-DD
+                    const [mm, dd, yyyy] = dateRaw.split("/");
+                    const date = (yyyy && mm && dd)
+                        ? `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`
+                        : dateRaw;
+                    const nonCommercialLong = Number(r["NonComm_Positions_Long_All"] ?? 0);
+                    const nonCommercialShort = Number(r["NonComm_Positions_Short_All"] ?? 0);
+                    const commercialLong = Number(r["Comm_Positions_Long_All"] ?? 0);
+                    const commercialShort = Number(r["Comm_Positions_Short_All"] ?? 0);
+                    return {
+                        date,
+                        nonCommercialLong,
+                        nonCommercialShort,
+                        netPosition: nonCommercialLong - nonCommercialShort,
+                        commercialLong,
+                        commercialShort,
+                    };
+                })
+                // oldest first for charting
+                .reverse();
+
+            const result = { weeks };
+            setCache(cacheKey, result, 6 * 60 * 60 * 1000); // 6h
+            setCache(lastGoodKey, result, 7 * 24 * 60 * 60 * 1000); // 7d safety net
+            return reply.send(result);
+        } catch (err) {
+            logger.error({ err }, "cftc_cot_fetch_error");
+            // Never fail the frontend — fall back to last-good snapshot if we have it
+            const lastGood = getCached<unknown>(lastGoodKey);
+            if (lastGood) return reply.send(lastGood);
+            return reply.send({ weeks: [] });
+        }
+    });
+
+    // GET /v1/market/liquidation-levels/:ccy — estimated liquidation clusters
+    app.get("/market/liquidation-levels/:ccy", {
+        schema: {
+            tags: ["Market"],
+            summary: "Estimated liquidation clusters (mathematical estimate)",
+            params: {
+                type: "object",
+                required: ["ccy"],
+                properties: { ccy: { type: "string" } },
+            },
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+    }, async (req, reply) => {
+        const { ccy } = req.params as { ccy: string };
+        const ccyUpper = ccy.toUpperCase();
+        const cacheKey = `liq-levels:${ccyUpper}`;
+        const cached = getCached<unknown>(cacheKey);
+        if (cached) return reply.send(cached);
+
+        // Only BTC supported per Stage 5 spec
+        if (ccyUpper !== "BTC") {
+            return reply.send({
+                disclaimer: "estimated",
+                currentPrice: 0,
+                calculatedAt: new Date().toISOString(),
+                clusters: [],
+                sources: [],
+            });
+        }
+
+        const contract = "BTC_USDT";
+        const pairSymbol = "BTC/USD";
+
+        const [gate, okxCurrent, price] = await Promise.all([
+            fetchGateIoOI(contract),
+            fetchOKXOI(ccyUpper),
+            fetchOKXPrice(ccyUpper),
+        ]);
+
+        const sources: string[] = [];
+        if (gate) sources.push("gateio");
+        if (okxCurrent !== null) sources.push("okx");
+
+        const totalOiUsd = (gate?.current ?? 0) + (okxCurrent ?? 0);
+
+        const result = await estimateLiquidationClusters(pairSymbol, price, totalOiUsd);
+        result.sources = sources;
+
+        setCache(cacheKey, result, 30_000);
+        return reply.send(result);
+    });
+
     // GET /v1/market/footprint
     app.get("/market/footprint", {
         schema: {

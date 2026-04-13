@@ -82,7 +82,6 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
             const key = symbolToKey(pairSymbol);
             const d = res.data[key];
             if (d) {
-                console.log("[OI] raw current:", d.current, "history:", d.history?.length);
                 setCurrentOI(d.current);
                 setHistory(d.history ?? []);
             }
