@@ -81,13 +81,17 @@ class FootprintPaneView implements IPrimitivePaneView {
                 const series = primitive.series;
                 const chart = primitive.chart;
                 const rawCandles = primitive.rawCandles;
-                const candleWidthPx = primitive.candleWidthPx;
 
-                console.log("[footprint draw]", "data:", data?.size, "width:", candleWidthPx, "series:", !!series, "chart:", !!chart);
                 if (!series || !chart || !data || data.size === 0) return;
-                if (candleWidthPx < 12) return;
 
-                target.useMediaCoordinateSpace(({ context }) => {
+                target.useMediaCoordinateSpace(({ context, mediaSize }) => {
+                    // Calculate candle width from canvas size and visible bar count
+                    const visibleRange = chart.timeScale().getVisibleLogicalRange();
+                    if (!visibleRange) return;
+                    const barsVisible = Math.max(1, visibleRange.to - visibleRange.from);
+                    const candleWidthPx = mediaSize.width / barsVisible;
+
+                    if (candleWidthPx < 12) return;
                     context.save();
 
                     for (const [openTimeMs, fp] of data) {
@@ -216,7 +220,6 @@ class FootprintPaneView implements IPrimitivePaneView {
 export class FootprintPrimitive implements ISeriesPrimitive<Time> {
     private _data: Map<number, FootprintCandle> = new Map();
     private _rawCandles: RawCandle[] = [];
-    private _candleWidthPx = 0;
     private _series: ISeriesApi<"Candlestick"> | null = null;
     private _chart: IChartApi | null = null;
     private _requestUpdate: (() => void) | null = null;
@@ -233,18 +236,11 @@ export class FootprintPrimitive implements ISeriesPrimitive<Time> {
     get series(): ISeriesApi<"Candlestick"> | null { return this._series; }
     get chart(): IChartApi | null { return this._chart; }
     get rawCandles(): RawCandle[] { return this._rawCandles; }
-    get candleWidthPx(): number { return this._candleWidthPx; }
 
-    update(data: Map<number, FootprintCandle>, rawCandles: RawCandle[], candleWidthPx: number): void {
-        console.log("[footprint primitive] update:", "candles:", data.size, "rawCandles:", rawCandles.length, "width:", candleWidthPx);
+    update(data: Map<number, FootprintCandle>, rawCandles: RawCandle[]): void {
         this._data = data;
         this._rawCandles = rawCandles;
-        this._candleWidthPx = candleWidthPx;
         this._requestUpdate?.();
-    }
-
-    setCandleWidth(w: number): void {
-        this._candleWidthPx = w;
     }
 
     clear(): void {
