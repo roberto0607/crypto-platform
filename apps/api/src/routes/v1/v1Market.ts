@@ -169,13 +169,13 @@ const v1Market: FastifyPluginAsync = async (app) => {
 
         const cacheKey = `footprint:${pair}:${timeframe}:${Math.floor(from / 1000)}`;
         const cached = getCached<unknown[]>(cacheKey);
-        if (cached) return reply.send({ ok: true, candles: cached });
+        if (cached) return reply.send(cached);
 
         try {
             const { rows } = await pool.query(
                 `SELECT pair, timeframe,
-                    EXTRACT(EPOCH FROM open_time) * 1000 AS open_time_ms,
-                    EXTRACT(EPOCH FROM close_time) * 1000 AS close_time_ms,
+                    (EXTRACT(EPOCH FROM open_time) * 1000)::bigint AS open_time_ms,
+                    (EXTRACT(EPOCH FROM close_time) * 1000)::bigint AS close_time_ms,
                     buckets, total_buy_qty, total_sell_qty, delta
                  FROM footprint_candles
                  WHERE pair = $1
@@ -187,10 +187,10 @@ const v1Market: FastifyPluginAsync = async (app) => {
                 [pair, timeframe, from, to],
             );
             setCache(cacheKey, rows, 1000);
-            return reply.send({ ok: true, candles: rows });
+            return reply.send(rows);
         } catch (err) {
             logger.error({ err }, "footprint_query_error");
-            return reply.send({ ok: true, candles: [] });
+            return reply.send([]);
         }
     });
 
@@ -203,11 +203,11 @@ const v1Market: FastifyPluginAsync = async (app) => {
         },
     }, async (_req, reply) => {
         const cached = getCached<unknown>("footprint-live");
-        if (cached) return reply.send({ ok: true, candles: cached });
+        if (cached) return reply.send(cached);
 
         const live = getLiveFootprintCandles();
         setCache("footprint-live", live, 1000);
-        return reply.send({ ok: true, candles: live });
+        return reply.send(live);
     });
 };
 

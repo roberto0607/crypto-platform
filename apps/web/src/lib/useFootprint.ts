@@ -57,12 +57,13 @@ export function useFootprint(
 
     const fetchHistory = useCallback(async (from: number, to: number): Promise<Map<number, FootprintCandle>> => {
         try {
-            const res = await client.get<{ ok: true; candles: RawCandle[] }>(
+            const res = await client.get<RawCandle[]>(
                 "/v1/market/footprint",
                 { params: { pair, timeframe, from, to } },
             );
+            const rows = Array.isArray(res.data) ? res.data : [];
             const map = new Map<number, FootprintCandle>();
-            for (const c of res.data.candles) {
+            for (const c of rows) {
                 const parsed = parseRawCandle(c);
                 map.set(parsed.openTimeMs, parsed);
             }
@@ -74,10 +75,10 @@ export function useFootprint(
 
     const fetchLive = useCallback(async (): Promise<FootprintCandle | null> => {
         try {
-            const res = await client.get<{ ok: true; candles: Record<string, LiveCandle | null> }>(
+            const res = await client.get<Record<string, LiveCandle | null>>(
                 "/v1/market/footprint/live",
             );
-            const live = res.data.candles[timeframe];
+            const live = res.data[timeframe];
             if (!live) return null;
             return {
                 openTimeMs: live.openTime,
