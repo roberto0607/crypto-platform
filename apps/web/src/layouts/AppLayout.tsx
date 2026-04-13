@@ -68,6 +68,19 @@ export default function AppLayout() {
     return () => clearInterval(id);
   }, [sseConnected, lastPriceTickAt]);
 
+  // ── Hard-offline fallback ──
+  // If "reconnecting" persists > 60s, surface OFFLINE + a refresh CTA so the
+  // user isn't stuck staring at a spinner.
+  const [isHardOffline, setIsHardOffline] = useState(false);
+  useEffect(() => {
+    if (sseConnectionState !== "reconnecting") {
+      setIsHardOffline(false);
+      return;
+    }
+    const id = setTimeout(() => setIsHardOffline(true), 60_000);
+    return () => clearTimeout(id);
+  }, [sseConnectionState]);
+
   function handleLogout() {
     clearAuth();
     navigate("/login", { replace: true });
@@ -225,9 +238,18 @@ export default function AppLayout() {
             </div>
 
             <div className="flex items-center gap-5">
-              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: sseConnectionState === "reconnecting" || priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#ef4444" }}>
-                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${sseConnectionState === "reconnecting" || priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-red-500"}`} style={sseConnected && !priceStale && sseConnectionState !== "reconnecting" ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
-                {sseConnectionState === "reconnecting" || priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
+              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: isHardOffline ? "#ef4444" : sseConnectionState === "reconnecting" || priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#ef4444" }}>
+                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${isHardOffline ? "bg-red-500" : sseConnectionState === "reconnecting" || priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-red-500"}`} style={sseConnected && !priceStale && sseConnectionState !== "reconnecting" && !isHardOffline ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
+                {isHardOffline ? "OFFLINE" : sseConnectionState === "reconnecting" || priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
+                {isHardOffline && (
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="ml-1.5 px-1.5 py-0.5 border border-red-500/60 text-red-400 hover:bg-red-500/10 tracking-[2px]"
+                  >
+                    REFRESH
+                  </button>
+                )}
               </div>
 
               <NotificationBell />

@@ -34,6 +34,12 @@ let abortController: AbortController | null = null;
 let reconnectAttempt = 0;
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let wasConnected = false;
+// Stashed so forceReconnectSSE can re-invoke connectSSE with a fresh
+// AbortController. The library terminates its retry loop permanently
+// when the outer signal is aborted, so we must start a new loop instead
+// of trying to resurrect the old one.
+let lastToken: string | null = null;
+let lastHandlers: SSEHandlers | null = null;
 
 function setSseState(state: SseConnectionState): void {
   useAppStore.getState().setSseConnectionState(state);
@@ -43,8 +49,9 @@ function setSseState(state: SseConnectionState): void {
 function resetHeartbeatTimer(): void {
   if (heartbeatTimer) clearTimeout(heartbeatTimer);
   heartbeatTimer = setTimeout(() => {
-    // No message received for 45s — connection is dead, force reconnect
+    // No message received — connection is dead, force reconnect
     if (abortController && !abortController.signal.aborted) {
+      console.warn("[sse] heartbeat timeout — forcing reconnect");
       setSseState("reconnecting");
       forceReconnectSSE();
     }
@@ -64,6 +71,8 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
   abortController = new AbortController();
   wasConnected = false;
+  lastToken = token;
+  lastHandlers = handlers;
 
   fetchEventSource(SSE_URL, {
     signal: abortController.signal,
@@ -86,7 +95,10 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
         }
         return;
       }
-      throw new Error(`SSE open failed: ${response.status}`);
+      // Attach status so onerror can branch on HTTP code.
+      const err = new Error(`SSE open failed: ${response.status}`) as Error & { status?: number };
+      err.status = response.status;
+      throw err;
     },
 
     onmessage(msg) {
@@ -158,6 +170,8 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
     onerror(err) {
       clearHeartbeatTimer();
+      const status = (err as Error & { status?: number }).status;
+      console.error("[sse] onerror:", { message: (err as Error)?.message, status, reconnectAttempt });
 
       // If aborted intentionally, don't reconnect
       if (abortController?.signal.aborted) {
@@ -171,7 +185,15 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
         throw err;
       }
 
-      // Show reconnecting state
+      // 401 = auth expired. Stop retrying, emit event so UI can redirect.
+      if (status === 401) {
+        console.warn("[sse] 401 unauthorized — stopping retries");
+        window.dispatchEvent(new CustomEvent("sse:unauthorized"));
+        setSseState("disconnected");
+        throw err;
+      }
+
+      // Show reconnecting state (502/503/network errors keep retrying)
       setSseState("reconnecting");
 
       // Exponential backoff: 1s → 2s → 4s → 8s → 30s (never give up)
@@ -186,15 +208,28 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
   return () => disconnectSSE();
 }
 
-/** Force a reconnect — tears down and re-establishes the SSE connection. */
+/** Force a reconnect — tears down and re-establishes the SSE connection.
+ *
+ * IMPORTANT: aborting the outer signal terminates fetch-event-source's
+ * retry loop permanently (it resolves its outer promise on abort). So we
+ * must spin up a fresh connectSSE() invocation with a new AbortController
+ * instead of relying on the library's internal retry. */
 export function forceReconnectSSE(): void {
-  const token = useAuthStore.getState().accessToken;
-  if (!token || !abortController) return;
-  // The current handlers are captured in the closure of the running fetchEventSource.
-  // Aborting will trigger onerror → auto-retry with backoff, which is the desired behavior.
-  abortController.abort();
-  abortController = null;
+  const token = useAuthStore.getState().accessToken ?? lastToken;
+  const handlers = lastHandlers;
+  if (!token || !handlers) {
+    console.warn("[sse] forceReconnectSSE skipped — no token or handlers");
+    return;
+  }
+
+  clearHeartbeatTimer();
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
   setSseState("reconnecting");
+  // Re-enter connectSSE: fresh AbortController, fresh fetchEventSource loop.
+  connectSSE(token, handlers);
 }
 
 export function disconnectSSE(): void {
@@ -205,5 +240,7 @@ export function disconnectSSE(): void {
   }
   reconnectAttempt = 0;
   wasConnected = false;
+  lastToken = null;
+  lastHandlers = null;
   setSseState("disconnected");
 }
