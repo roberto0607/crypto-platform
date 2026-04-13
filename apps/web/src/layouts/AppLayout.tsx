@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
@@ -51,6 +51,22 @@ export default function AppLayout() {
   const currentTheme = useThemeStore((s) => s.currentTheme);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close user menu on outside click — matches NotificationBell / IndicatorToolbar pattern.
+  // Previously used onBlur with a setTimeout, but that fired spuriously on the same
+  // click that opened the menu in some browsers (aria-expanded re-render blurring
+  // the button), making the menu appear non-clickable.
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [userMenuOpen]);
   const isTradePage = location.pathname === "/trade";
   const isWarTheme = currentTheme === "tradewars";
 
@@ -269,11 +285,10 @@ export default function AppLayout() {
               )}
 
               {user && (
-                <div className="relative font-mono">
+                <div ref={userMenuRef} className="relative font-mono">
                   <button
                     type="button"
                     onClick={() => setUserMenuOpen((v) => !v)}
-                    onBlur={() => { setTimeout(() => setUserMenuOpen(false), 150); }}
                     className="flex items-center gap-2.5 bg-transparent border-0 p-0 cursor-pointer"
                     aria-haspopup="menu"
                     aria-expanded={userMenuOpen}
@@ -295,7 +310,7 @@ export default function AppLayout() {
                       <button
                         type="button"
                         role="menuitem"
-                        onMouseDown={(e) => { e.preventDefault(); handleLogout(); }}
+                        onClick={handleLogout}
                         className="w-full text-left px-3 py-2 text-[10px] tracking-[2px] text-red-400 hover:bg-red-500/10 hover:text-red-300 border-0 bg-transparent cursor-pointer font-mono"
                       >
                         LOGOUT
