@@ -14,8 +14,8 @@ import {
   eventsDeliveryFailuresTotal,
 } from "../../metrics";
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
-const PING_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const PING_INTERVAL_MS = 15_000;
 
 const v1Events: FastifyPluginAsync = async (app) => {
   app.get("/events", {

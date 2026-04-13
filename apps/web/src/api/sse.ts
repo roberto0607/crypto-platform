@@ -9,7 +9,7 @@ const SSE_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/events`;
 const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
 
 // If no message (including pings) received for this long, treat connection as dead
-const HEARTBEAT_TIMEOUT_MS = 45_000;
+const HEARTBEAT_TIMEOUT_MS = 30_000;
 
 export type SseConnectionState = "connected" | "disconnected" | "reconnecting";
 
