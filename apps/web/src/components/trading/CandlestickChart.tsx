@@ -749,12 +749,10 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         const getCandleWidthPx = (): number => {
             const ts = chartRef.current?.timeScale();
             if (!ts) return 0;
-            const range = ts.getVisibleLogicalRange();
-            if (!range) return 0;
-            const barsVisible = range.to - range.from;
-            if (barsVisible <= 0) return 0;
-            const containerW = containerRef.current?.clientWidth ?? 0;
-            return containerW / barsVisible;
+            const bar0 = ts.logicalToCoordinate(0 as never);
+            const bar1 = ts.logicalToCoordinate(1 as never);
+            if (bar0 === null || bar1 === null) return 0;
+            return Math.abs(bar1 - bar0);
         };
 
         fp.update(footprintData, rawCandlesRef.current, getCandleWidthPx());

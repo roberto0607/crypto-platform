@@ -31,18 +31,20 @@ interface LiveCandle {
 
 const SUPPORTED_TF = new Set(["1m", "5m", "15m"]);
 
-function parseNum(v: number | string): number {
-    return typeof v === "string" ? parseFloat(v) : v;
+function toNum(v: unknown): number {
+    if (typeof v === "number") return v;
+    if (typeof v === "string") return parseFloat(v);
+    return Number(v) || 0;
 }
 
 function parseRawCandle(c: RawCandle): FootprintCandle {
     return {
-        openTimeMs: parseNum(c.open_time_ms),
-        closeTimeMs: parseNum(c.close_time_ms),
-        buckets: c.buckets,
-        totalBuy: parseNum(c.total_buy_qty),
-        totalSell: parseNum(c.total_sell_qty),
-        delta: parseNum(c.delta),
+        openTimeMs: toNum(c.open_time_ms),
+        closeTimeMs: toNum(c.close_time_ms),
+        buckets: c.buckets ?? {},
+        totalBuy: toNum(c.total_buy_qty),
+        totalSell: toNum(c.total_sell_qty),
+        delta: toNum(c.delta),
     };
 }
 
@@ -66,6 +68,7 @@ export function useFootprint(
                 const parsed = parseRawCandle(c);
                 map.set(parsed.openTimeMs, parsed);
             }
+            console.log("[useFootprint] loaded", map.size, "candles, first key:", [...map.keys()][0], "last key:", [...map.keys()][map.size - 1]);
             return map;
         } catch {
             return new Map();
@@ -80,12 +83,12 @@ export function useFootprint(
             const live = res.data[timeframe];
             if (!live) return null;
             return {
-                openTimeMs: live.openTime,
-                closeTimeMs: live.closeTime,
-                buckets: live.buckets,
-                totalBuy: live.totalBuy,
-                totalSell: live.totalSell,
-                delta: live.delta,
+                openTimeMs: Number(live.openTime) || 0,
+                closeTimeMs: Number(live.closeTime) || 0,
+                buckets: live.buckets ?? {},
+                totalBuy: Number(live.totalBuy) || 0,
+                totalSell: Number(live.totalSell) || 0,
+                delta: Number(live.delta) || 0,
             };
         } catch {
             return null;
