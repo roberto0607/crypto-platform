@@ -769,25 +769,33 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
     // Liquidation Levels — fetch + 30s poll + refresh on candle.closed
     useEffect(() => {
         const primitive = liquidationLevelsPrimitiveRef.current;
+        console.log("[liq] effect start, enabled:", indicatorConfig.liquidationLevels);
         console.log(
             "[liq] effect fired, primitive:", !!liquidationLevelsPrimitiveRef.current,
             "enabled:", indicatorConfig.liquidationLevels,
             "pair:", selectedPairSymbol,
         );
-        if (!primitive) return;
+        if (!primitive) {
+            console.log("[liq] bail: no primitive");
+            return;
+        }
 
         if (!indicatorConfig.liquidationLevels) {
+            console.log("[liq] bail: disabled");
             primitive.clear();
             return;
         }
 
         // Only BTC is supported per the spec
         const base = selectedPairSymbol.split("/")[0]?.toUpperCase() ?? "BTC";
+        console.log("[liq] base:", base);
         if (base !== "BTC") {
+            console.log("[liq] bail: not BTC, base is:", base);
             primitive.clear();
             return;
         }
 
+        console.log("[liq] calling load()...");
         let cancelled = false;
 
         const load = async () => {
