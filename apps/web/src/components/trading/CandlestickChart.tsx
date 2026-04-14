@@ -792,7 +792,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
         const load = async () => {
             try {
+                console.log("[liq] fetching...");
                 const res = await fetchLiquidationLevels("BTC");
+                console.log("[liq] response:", res.data);
                 if (cancelled) return;
                 const clusters: LiquidationCluster[] = res.data.clusters;
                 const raw = rawCandlesRef.current;
@@ -801,8 +803,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                     ? ((new Date(latest.ts).getTime() / 1000 + TZ_OFFSET_SEC) as Time)
                     : null;
                 primitive.update(clusters, latestTime);
-            } catch {
-                /* non-fatal — keep prior data until next poll */
+            } catch (err) {
+                console.error("[liq] fetch error:", err);
             }
         };
 
