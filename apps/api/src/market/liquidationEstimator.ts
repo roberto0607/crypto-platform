@@ -47,19 +47,20 @@ interface EntryCandle {
 
 async function fetchLast24hHourlyOpens(pairSymbol: string): Promise<EntryCandle[]> {
     try {
-        const { rows } = await pool.query<{ open: string; open_time: string }>(
-            `SELECT open, open_time
+        // candles table columns: pair_id, timeframe, ts (TIMESTAMPTZ), open, ...
+        const { rows } = await pool.query<{ open: string; ts: string }>(
+            `SELECT open, ts
              FROM candles c
              JOIN trading_pairs p ON p.id = c.pair_id
              WHERE p.symbol = $1
                AND c.timeframe = '1h'
-               AND c.open_time >= NOW() - INTERVAL '24 hours'
-             ORDER BY c.open_time ASC`,
+               AND c.ts >= NOW() - INTERVAL '24 hours'
+             ORDER BY c.ts ASC`,
             [pairSymbol],
         );
         return rows.map((r) => ({
             open: parseFloat(r.open),
-            openTime: new Date(r.open_time).getTime(),
+            openTime: new Date(r.ts).getTime(),
         }));
     } catch (err) {
         logger.error({ err, pairSymbol }, "liq_estimator_candles_fetch_error");

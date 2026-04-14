@@ -236,27 +236,27 @@ const v1Market: FastifyPluginAsync = async (app) => {
         }
 
         try {
-            const filter = encodeURIComponent(
-                "Market_and_Exchange_Names eq 'BITCOIN - CHICAGO MERCANTILE EXCHANGE'",
-            );
-            const url = `https://publicreporting.cftc.gov/api/odata/v1/TriCombined?$filter=${filter}&$orderby=Report_Date_as_MM_DD_YYYY desc&$top=52`;
+            // CFTC's OData endpoint returns 404 — the public reporting site is a
+            // Socrata instance. Use the SODA JSON resource endpoint instead.
+            // Dataset 6dca-aqww = Legacy Futures-Only COT Combined (has the
+            // non-commercial / commercial long/short columns we want).
+            const where = encodeURIComponent("market_and_exchange_names like 'BITCOIN%'");
+            const order = encodeURIComponent("report_date_as_yyyy_mm_dd DESC");
+            const url = `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${where}&$order=${order}&$limit=52`;
             const res = await fetchWithTimeout(url, 10_000);
             if (!res.ok) throw new Error(`CFTC ${res.status}`);
-            const body = await res.json() as { value?: Array<Record<string, unknown>> };
-            const rows = Array.isArray(body.value) ? body.value : [];
+            const body = await res.json() as Array<Record<string, unknown>>;
+            const rows = Array.isArray(body) ? body : [];
 
             const weeks = rows
                 .map((r) => {
-                    const dateRaw = String(r["Report_Date_as_MM_DD_YYYY"] ?? "");
-                    // CFTC date format is "MM/DD/YYYY" — normalize to ISO YYYY-MM-DD
-                    const [mm, dd, yyyy] = dateRaw.split("/");
-                    const date = (yyyy && mm && dd)
-                        ? `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`
-                        : dateRaw;
-                    const nonCommercialLong = Number(r["NonComm_Positions_Long_All"] ?? 0);
-                    const nonCommercialShort = Number(r["NonComm_Positions_Short_All"] ?? 0);
-                    const commercialLong = Number(r["Comm_Positions_Long_All"] ?? 0);
-                    const commercialShort = Number(r["Comm_Positions_Short_All"] ?? 0);
+                    // Socrata returns ISO timestamps: "2026-04-07T00:00:00.000"
+                    const dateRaw = String(r["report_date_as_yyyy_mm_dd"] ?? "");
+                    const date = dateRaw.slice(0, 10) || dateRaw;
+                    const nonCommercialLong = Number(r["noncomm_positions_long_all"] ?? 0);
+                    const nonCommercialShort = Number(r["noncomm_positions_short_all"] ?? 0);
+                    const commercialLong = Number(r["comm_positions_long_all"] ?? 0);
+                    const commercialShort = Number(r["comm_positions_short_all"] ?? 0);
                     return {
                         date,
                         nonCommercialLong,
