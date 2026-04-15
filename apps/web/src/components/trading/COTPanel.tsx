@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
-    LineSeries,
+    BaselineSeries,
     LineStyle,
     type IChartApi,
     type ISeriesApi,
@@ -21,13 +21,20 @@ function formatNet(v: number): string {
     return sign + v.toLocaleString();
 }
 
+/** Convert YYYY-MM-DD → UTC seconds. lightweight-charts accepts UTCTimestamp
+ *  (number in seconds) directly and handles arbitrary granularity. The prior
+ *  "YYYY-MM-DD as Time" string form collapsed to BusinessDay representation,
+ *  which is fragile against any duplicate/unsorted inputs. */
+function dateToUnixSec(ymd: string): number {
+    return Math.floor(Date.parse(ymd + "T00:00:00Z") / 1000);
+}
+
 export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHeight }: COTPanelProps) {
     // mainChart is accepted for signature parity with other sub-panels but
     // not time-synced: COT data is weekly, the main chart is intraday.
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
-    const netLongSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const netShortSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const seriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
     const [weeks, setWeeks] = useState<COTWeek[]>([]);
 
@@ -37,27 +44,39 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
     useEffect(() => {
         if (!containerRef.current) return;
         const chart = createChart(containerRef.current, {
-            height: externalHeight ?? 100,
-            layout: { background: { color: "#0a0a0a" }, textColor: "#555", fontSize: 9 },
+            height: externalHeight ?? 120,
+            layout: { background: { color: "transparent" }, textColor: "#555", fontSize: 9 },
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
-            timeScale: { visible: true, borderVisible: false, timeVisible: false, secondsVisible: false },
+            timeScale: { visible: false, borderVisible: false },
             crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
         });
-        // Split the line into two overlaid series (green for >=0, red for <0)
-        // so the color switches at the zero crossing cleanly.
-        const netLong = chart.addSeries(LineSeries, {
-            color: "#16a34a", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceScaleId: "cot",
+        // Single BaselineSeries — splits coloring at zero automatically.
+        const series = chart.addSeries(BaselineSeries, {
+            baseValue: { type: "price", price: 0 },
+            topLineColor: "rgb(0, 255, 100)",
+            topFillColor1: "rgba(0, 255, 100, 0.25)",
+            topFillColor2: "rgba(0, 255, 100, 0.05)",
+            bottomLineColor: "rgb(255, 80, 80)",
+            bottomFillColor1: "rgba(255, 80, 80, 0.25)",
+            bottomFillColor2: "rgba(255, 80, 80, 0.05)",
+            lineWidth: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            priceScaleId: "cot",
         });
-        const netShort = chart.addSeries(LineSeries, {
-            color: "#dc2626", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceScaleId: "cot",
+        // Dashed zero line — always visible regardless of data range.
+        series.createPriceLine({
+            price: 0,
+            color: "rgba(255,255,255,0.35)",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: false,
         });
-        netLong.createPriceLine({ price: 0, color: "rgba(255,255,255,0.35)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
 
         chartRef.current = chart;
-        netLongSeriesRef.current = netLong;
-        netShortSeriesRef.current = netShort;
-        return () => { chart.remove(); chartRef.current = null; netLongSeriesRef.current = null; netShortSeriesRef.current = null; };
+        seriesRef.current = series;
+        return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
     }, []);
 
     useEffect(() => {
@@ -78,30 +97,31 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
         return () => clearInterval(id);
     }, [loadData]);
 
-    // Feed the two overlaid line series. Points with opposite sign are set to
-    // the zero line on the "wrong" series so the active color stays accurate.
+    // Feed the baseline series. Defensive pipeline: convert date → unix sec,
+    // sort ascending, dedupe by time (keep last occurrence). lightweight-charts
+    // requires unique, strictly-ascending time values.
     useEffect(() => {
-        if (!netLongSeriesRef.current || !netShortSeriesRef.current) return;
-        if (weeks.length === 0) {
-            netLongSeriesRef.current.setData([]);
-            netShortSeriesRef.current.setData([]);
-            return;
+        const series = seriesRef.current;
+        if (!series) return;
+        if (weeks.length === 0) { series.setData([]); return; }
+
+        const byTime = new Map<number, number>();
+        for (const w of weeks) {
+            const t = dateToUnixSec(w.date);
+            if (!Number.isFinite(t)) continue;
+            byTime.set(t, w.netPosition); // later occurrences overwrite earlier
         }
-        const longPts = weeks.map((w) => ({
-            time: w.date as Time,
-            value: w.netPosition >= 0 ? w.netPosition : 0,
-        }));
-        const shortPts = weeks.map((w) => ({
-            time: w.date as Time,
-            value: w.netPosition < 0 ? w.netPosition : 0,
-        }));
-        netLongSeriesRef.current.setData(longPts);
-        netShortSeriesRef.current.setData(shortPts);
+        const points = Array.from(byTime.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([time, value]) => ({ time: time as Time, value }));
+
+        series.setData(points);
         chartRef.current?.timeScale().fitContent();
     }, [weeks]);
 
     const latest = weeks.length > 0 ? weeks[weeks.length - 1] : null;
     const net = latest?.netPosition ?? 0;
+    const netColor = net >= 0 ? "rgb(0, 255, 100)" : "rgb(255, 80, 80)";
     const netLabel = latest
         ? `Institutional Net: ${formatNet(net)} contracts (${net >= 0 ? "NET LONG" : "NET SHORT"})`
         : "Institutional Net: —";
@@ -112,9 +132,9 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
                 collapsed={collapsed}
                 onToggle={() => setCollapsed((v) => !v)}
                 label="COT REPORT"
-                rightContent={<span style={{ color: net >= 0 ? "#16a34a" : "#dc2626" }}>{netLabel}</span>}
+                rightContent={<span style={{ color: netColor }}>{netLabel}</span>}
             />
-            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 100), overflow: "hidden" }} />
+            <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 120), overflow: "hidden" }} />
             {!collapsed && (
                 <div style={{
                     position: "absolute", bottom: 2, right: 6, fontSize: 8,

@@ -240,7 +240,12 @@ const v1Market: FastifyPluginAsync = async (app) => {
             // Socrata instance. Use the SODA JSON resource endpoint instead.
             // Dataset 6dca-aqww = Legacy Futures-Only COT Combined (has the
             // non-commercial / commercial long/short columns we want).
-            const where = encodeURIComponent("market_and_exchange_names like 'BITCOIN%'");
+            //
+            // Exact-match on the CME Bitcoin futures name — a LIKE filter also
+            // pulls in "BITCOIN CASH PERP STYLE - COINBASE DERIVATIVES, LLC"
+            // (contract_code 133LM5), producing duplicate report_date rows that
+            // break lightweight-charts' unique-time invariant on the frontend.
+            const where = encodeURIComponent("market_and_exchange_names = 'BITCOIN - CHICAGO MERCANTILE EXCHANGE'");
             const order = encodeURIComponent("report_date_as_yyyy_mm_dd DESC");
             const url = `https://publicreporting.cftc.gov/resource/6dca-aqww.json?$where=${where}&$order=${order}&$limit=52`;
             const res = await fetchWithTimeout(url, 10_000);

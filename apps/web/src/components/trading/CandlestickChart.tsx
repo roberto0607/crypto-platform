@@ -1974,7 +1974,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
             {/* COT Report sub-panel */}
             {indicatorConfig.cotReport && (<>
-                <DragHandle panelKey="cotReport" currentHeight={panelHeights.cotReport ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                <DragHandle panelKey="cotReport" currentHeight={panelHeights.cotReport ?? 120} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
                 <COTPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.cotReport} />
             </>)}
         </div>
