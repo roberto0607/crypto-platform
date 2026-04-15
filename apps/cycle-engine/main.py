@@ -30,11 +30,25 @@ logging.basicConfig(
 )
 log = logging.getLogger("cycle-engine")
 
-COINGECKO_BASE = os.getenv("COINGECKO_BASE_URL", "https://api.coingecko.com/api/v3")
+# CoinGecko's /market_chart/range endpoint went paid-only; CryptoCompare
+# /data/v2/histoday is free, no-auth, supports backward pagination via
+# `toTs`, and is already trusted elsewhere in the TRADR codebase for
+# candle backfill.
+CRYPTOCOMPARE_BASE = os.getenv(
+    "CRYPTOCOMPARE_BASE_URL",
+    "https://min-api.cryptocompare.com/data/v2/histoday",
+)
 FIRST_HALVING_UNIX = 1354060800  # 2012-11-28
+# Constant circulating-supply proxy for market cap derivation. Real BTC
+# supply grows slowly (10.4M in 2012 → ~19.85M now) but for MVRV — which
+# is a ratio of market_cap to its own rolling MA — the constant cancels,
+# so supply-curve accuracy doesn't affect the on-chain metric outputs.
+BTC_CIRCULATING_SUPPLY = 19_700_000
+
 ANALYSIS_CACHE_TTL_SEC = 300      # 5 min (PART 2D spec)
 DATA_REFRESH_INTERVAL_SEC = 86400  # 24h
 RETRY_INTERVAL_SEC = 60            # per user spec on fetch failure
+MAX_PAGINATION_CALLS = 10          # safety cap — expect 3-4 in practice
 
 
 class DataStore:
@@ -52,35 +66,65 @@ class DataStore:
         self.analysis_cache_at: datetime | None = None
 
     async def fetch(self) -> None:
+        """Paginated fetch of daily BTC history from CryptoCompare.
+
+        CryptoCompare returns up to ~2001 candles per call ending at `toTs`.
+        We paginate backward (set each next `toTs` to the earliest timestamp
+        we've seen) until we've covered back to the first halving, then
+        dedupe + sort ascending. 3-4 calls typically suffice.
+        """
         now_unix = int(datetime.utcnow().timestamp())
-        url = (
-            f"{COINGECKO_BASE}/coins/bitcoin/market_chart/range"
-            f"?vs_currency=usd&from={FIRST_HALVING_UNIX}&to={now_unix}&precision=2"
-        )
-        log.info("fetching CoinGecko %s", url)
+        to_ts = now_unix
+        all_candles: dict[int, dict] = {}  # dedupe by timestamp
+
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+            for call_idx in range(MAX_PAGINATION_CALLS):
+                url = f"{CRYPTOCOMPARE_BASE}?fsym=BTC&tsym=USD&limit=2000&toTs={to_ts}"
+                log.info("cryptocompare fetch %d toTs=%d url=%s", call_idx + 1, to_ts, url)
+                resp = await client.get(url)
+                resp.raise_for_status()
+                body = resp.json()
 
-        prices_raw = data.get("prices") or []
-        caps_raw = data.get("market_caps") or []
-        vols_raw = data.get("total_volumes") or []
+                if body.get("Response") != "Success":
+                    raise RuntimeError(f"CryptoCompare error: {body.get('Message')}")
 
-        if not prices_raw:
-            raise RuntimeError("CoinGecko returned empty prices")
+                batch = body.get("Data", {}).get("Data") or []
+                if not batch:
+                    break
 
-        self.dates = [datetime.utcfromtimestamp(p[0] / 1000) for p in prices_raw]
-        self.prices = np.array([p[1] for p in prices_raw], dtype=float)
-        self.market_caps = (
-            np.array([p[1] for p in caps_raw], dtype=float)
-            if caps_raw
-            else np.zeros_like(self.prices)
+                # Pre-trading / pre-exchange days have close=0. Skip those.
+                valid = [c for c in batch if (c.get("close") or 0) > 0]
+                for c in valid:
+                    all_candles[int(c["time"])] = c
+
+                earliest_ts = int(batch[0]["time"])
+                if earliest_ts <= FIRST_HALVING_UNIX:
+                    break
+                # Pre-2012 we're done even if API has more
+                to_ts = earliest_ts
+
+        if not all_candles:
+            raise RuntimeError("CryptoCompare returned no usable candles")
+
+        # Filter to first-halving-onward window and sort ascending
+        sorted_times = sorted(t for t in all_candles.keys() if t >= FIRST_HALVING_UNIX)
+        if not sorted_times:
+            raise RuntimeError("no candles in requested date range")
+
+        self.dates = [datetime.utcfromtimestamp(t) for t in sorted_times]
+        self.prices = np.array(
+            [float(all_candles[t]["close"]) for t in sorted_times],
+            dtype=float,
         )
-        self.volumes = (
-            np.array([p[1] for p in vols_raw], dtype=float)
-            if vols_raw
-            else np.zeros_like(self.prices)
+        # Market cap proxy: close price × constant circulating supply. The
+        # constant cancels in MVRV's market_cap/MA(market_cap) ratio, so
+        # accuracy of the supply figure doesn't affect on-chain outputs.
+        self.market_caps = self.prices * BTC_CIRCULATING_SUPPLY
+        # CryptoCompare volumeto is USD volume — matches the dollar-volume
+        # semantics our Reserve Risk proxy expects.
+        self.volumes = np.array(
+            [float(all_candles[t].get("volumeto") or 0.0) for t in sorted_times],
+            dtype=float,
         )
         self.loaded = True
         self.loaded_at = datetime.utcnow()
