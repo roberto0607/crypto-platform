@@ -74,11 +74,23 @@ export async function estimateLiquidationClusters(
     openInterestUsd: number,
 ): Promise<LiquidationLevelsResponse> {
     const calculatedAt = new Date().toISOString();
+    // DIAGNOSTIC — investigating why cluster values are ~50-100x real-world.
+    console.log("[liq-est] inputs", {
+        pairSymbol,
+        currentPrice,
+        openInterestUsd,
+        openInterestUsd_humanB: (openInterestUsd / 1e9).toFixed(2) + "B",
+    });
     if (currentPrice <= 0 || openInterestUsd <= 0) {
         return { disclaimer: "estimated", currentPrice, calculatedAt, clusters: [], sources: [] };
     }
 
     const entries = await fetchLast24hHourlyOpens(pairSymbol);
+    console.log("[liq-est] entries sampled", {
+        count: entries.length,
+        firstOpen: entries[0]?.open,
+        lastOpen: entries[entries.length - 1]?.open,
+    });
     if (entries.length === 0) {
         return { disclaimer: "estimated", currentPrice, calculatedAt, clusters: [], sources: [] };
     }
@@ -87,6 +99,12 @@ export async function estimateLiquidationClusters(
     // then split each entry's share across leverage tiers by weight, then
     // split half/half between long and short side.
     const perEntryUsd = openInterestUsd / entries.length;
+    console.log("[liq-est] perEntryUsd", {
+        perEntryUsd,
+        perEntryUsd_humanM: (perEntryUsd / 1e6).toFixed(2) + "M",
+        // example: at leverage 25 (weight 0.35) split half/half long/short
+        exampleUsdAtTier25: perEntryUsd * 0.35 * 0.5,
+    });
 
     type BucketKey = string; // `${side}|${leverage}|${priceBucket}`
     const buckets = new Map<BucketKey, { price: number; side: "long" | "short"; leverage: number; usd: number }>();
@@ -130,6 +148,28 @@ export async function estimateLiquidationClusters(
 
     // Normalize intensity 0..1 using max USD in the relevant set.
     const maxUsd = relevant.reduce((m, c) => (c.usd > m ? c.usd : m), 0);
+
+    // DIAGNOSTIC — raw cluster (pre-frontend-merge) magnitudes
+    const totalUsdAllBuckets = all.reduce((s, c) => s + c.usd, 0);
+    const top5Raw = [...relevant]
+        .sort((a, b) => b.usd - a.usd)
+        .slice(0, 5)
+        .map((c) => ({
+            side: c.side,
+            leverage: c.leverage,
+            price: c.price,
+            usd: c.usd,
+            usd_humanM: (c.usd / 1e6).toFixed(1) + "M",
+        }));
+    console.log("[liq-est] buckets summary", {
+        totalBuckets: all.length,
+        relevantBuckets: relevant.length,
+        totalUsdAllBuckets,
+        totalUsdAllBuckets_humanB: (totalUsdAllBuckets / 1e9).toFixed(2) + "B",
+        maxBucketUsd: maxUsd,
+        maxBucketUsd_humanM: (maxUsd / 1e6).toFixed(1) + "M",
+        top5Raw,
+    });
 
     const longs = relevant
         .filter((c) => c.side === "long")
