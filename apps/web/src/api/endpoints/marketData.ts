@@ -160,3 +160,50 @@ export interface CycleNarrativeResponse {
 export function fetchCycleNarrative(cycleData: CycleAnalysis) {
     return client.post<CycleNarrativeResponse>("/v1/cycle/narrative", { cycleData });
 }
+
+// ── Cycle Forecast ──
+export interface CycleTopRef {
+    price: number;
+    date: string;
+    confirmed: boolean;
+}
+
+export interface CycleRange { low: number; high: number }
+
+export interface EstimatedBottom {
+    price: number;
+    date: string;
+    dropFromTop: number;
+    confidenceRange: CycleRange;
+    daysRemaining: number;
+    basedOnAnalogs: string[];
+}
+
+export interface NextCycleTop {
+    price: number;
+    date: string;
+    gainFromBottom: number;
+    confidenceRange: CycleRange;
+}
+
+export type InflectionType = "RALLY" | "PULLBACK" | "BOTTOM" | "TOP";
+
+export interface InflectionPoint {
+    date: string;
+    price: number;
+    type: InflectionType;
+    magnitude: number;
+    description: string;
+}
+
+export interface CycleForecast {
+    cycleTop: CycleTopRef;
+    estimatedBottom: EstimatedBottom;
+    nextCycleTop: NextCycleTop;
+    inflectionPoints: InflectionPoint[];
+    disclaimer: string;
+}
+
+export function fetchCycleForecast() {
+    return client.get<CycleForecast>("/v1/cycle/forecast");
+}

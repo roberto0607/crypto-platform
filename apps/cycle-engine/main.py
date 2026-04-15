@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException
 
 from analog import find_top_analogs
 from cycle import HALVINGS, get_cycle_position, get_power_law_position
+from forecast import build_forecast
 from onchain import build_onchain_section, moving_average
 
 logging.basicConfig(
@@ -64,6 +65,10 @@ class DataStore:
         # 5-min analysis cache
         self.analysis_cache: dict | None = None
         self.analysis_cache_at: datetime | None = None
+        # 5-min forecast cache (separate so a forecast miss doesn't
+        # force an analog recompute and vice versa)
+        self.forecast_cache: dict | None = None
+        self.forecast_cache_at: datetime | None = None
 
     async def fetch(self) -> None:
         """Paginated fetch of daily BTC history from CryptoCompare.
@@ -128,9 +133,11 @@ class DataStore:
         )
         self.loaded = True
         self.loaded_at = datetime.utcnow()
-        # Invalidate analysis cache on fresh data
+        # Invalidate downstream caches on fresh data
         self.analysis_cache = None
         self.analysis_cache_at = None
+        self.forecast_cache = None
+        self.forecast_cache_at = None
 
         log.info(
             "loaded %d daily points %s → %s",
@@ -291,4 +298,39 @@ async def cycle_analysis() -> dict:
     result = _build_analysis()
     store.analysis_cache = result
     store.analysis_cache_at = datetime.utcnow()
+    return result
+
+
+@app.get("/cycle/forecast")
+async def cycle_forecast() -> dict:
+    """Forward-looking roadmap derived from the analog results + observed
+    current cycle top. Cached 5 minutes independently of /cycle/analysis."""
+    if not store.loaded:
+        raise HTTPException(status_code=503, detail="data still loading from CryptoCompare")
+
+    if (
+        store.forecast_cache is not None
+        and store.forecast_cache_at is not None
+        and (datetime.utcnow() - store.forecast_cache_at).total_seconds() < ANALYSIS_CACHE_TTL_SEC
+    ):
+        return store.forecast_cache
+
+    # Pull analogs from the analysis cache when fresh; otherwise compute
+    # them directly (reuses the same helper).
+    analysis = None
+    if (
+        store.analysis_cache is not None
+        and store.analysis_cache_at is not None
+        and (datetime.utcnow() - store.analysis_cache_at).total_seconds() < ANALYSIS_CACHE_TTL_SEC
+    ):
+        analysis = store.analysis_cache
+    else:
+        analysis = _build_analysis()
+        store.analysis_cache = analysis
+        store.analysis_cache_at = datetime.utcnow()
+
+    analogs = analysis.get("analogs") or []
+    result = build_forecast(store.dates, store.prices, analogs)
+    store.forecast_cache = result
+    store.forecast_cache_at = datetime.utcnow()
     return result

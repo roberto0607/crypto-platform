@@ -169,9 +169,11 @@ def find_top_analogs(
             pct = (future - price_at_time) / price_at_time * 100 if price_at_time > 0 else 0.0
             return {"pct": round(pct, 1), "price": round(future)}
 
+        end_date = dates[end_idx - 1]
         analogs.append({
             "date": _format_analog_date(start_date),
             "startDate": start_date.strftime("%Y-%m-%d"),
+            "endDate": end_date.strftime("%Y-%m-%d"),
             "similarityScore": r["score"],
             "priceAtTime": round(price_at_time),
             "cycleDay": _days_since_halving_for(dates[end_idx - 1]),

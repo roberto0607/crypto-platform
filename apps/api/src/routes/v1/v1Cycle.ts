@@ -23,6 +23,7 @@ const CYCLE_ENGINE_TIMEOUT_MS = 30_000;
 interface CacheEntry<T> { data: T; expiresAt: number }
 
 let analysisCache: CacheEntry<unknown> | null = null;
+let forecastCache: CacheEntry<unknown> | null = null;
 let narrativeCache: CacheEntry<{ narrative: string }> | null = null;
 
 async function fetchWithTimeout(url: string, timeoutMs = CYCLE_ENGINE_TIMEOUT_MS): Promise<Response> {
@@ -73,6 +74,43 @@ const v1Cycle: FastifyPluginAsync = async (app) => {
             return reply.send(data);
         } catch (err) {
             logger.error({ err }, "cycle_engine_fetch_error");
+            return reply.code(503).send({ error: "cycle engine unavailable" });
+        }
+    });
+
+    // ── GET /v1/cycle/forecast — proxy to cycle-engine forecast ──
+    app.get("/cycle/forecast", {
+        schema: {
+            tags: ["Cycle"],
+            summary: "Forward-looking cycle roadmap: estimated bottom, next top, inflection points",
+            response: {
+                200: { type: "object", additionalProperties: true },
+                503: { type: "object", additionalProperties: true },
+            },
+        },
+    }, async (_req, reply) => {
+        if (forecastCache && Date.now() < forecastCache.expiresAt) {
+            return reply.send(forecastCache.data);
+        }
+
+        try {
+            const upstream = await fetchWithTimeout(`${config.cycleEngineUrl}/cycle/forecast`);
+
+            if (upstream.status === 503) {
+                const body = await upstream.json().catch(() => ({ error: "data loading" }));
+                return reply.code(503).send(body);
+            }
+
+            if (!upstream.ok) {
+                logger.error({ status: upstream.status }, "cycle_engine_forecast_non_ok");
+                return reply.code(503).send({ error: "cycle engine unavailable" });
+            }
+
+            const data = await upstream.json();
+            forecastCache = { data, expiresAt: Date.now() + ANALYSIS_CACHE_TTL_MS };
+            return reply.send(data);
+        } catch (err) {
+            logger.error({ err }, "cycle_engine_forecast_fetch_error");
             return reply.code(503).send({ error: "cycle engine unavailable" });
         }
     });

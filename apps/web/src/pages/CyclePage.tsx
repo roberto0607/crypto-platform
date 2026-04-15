@@ -6,6 +6,7 @@ import { ConsensusBar } from "@/components/cycle/ConsensusBar";
 import { AnalogMiniCard } from "@/components/cycle/AnalogMiniCard";
 import { AINarrative } from "@/components/cycle/AINarrative";
 import { OnChainIndicators } from "@/components/cycle/OnChainIndicators";
+import { CycleForecast } from "@/components/cycle/CycleForecast";
 
 // Gold/amber dedicated theme — injected at page root, following the Arena
 // page pattern. Variables scoped to `.cp-wrap` so nothing leaks.
@@ -139,7 +140,7 @@ function ErrorState({ message }: { message: string }) {
 }
 
 export default function CyclePage() {
-    const { data, loading, error, upstreamLoading } = useCycleData();
+    const { data, forecast, loading, error, upstreamLoading, forecastError } = useCycleData();
 
     const content = useMemo(() => {
         if (loading && !data) {
@@ -234,11 +235,30 @@ export default function CyclePage() {
                 {/* On-chain indicators (collapsed by default) */}
                 <OnChainIndicators onChain={onChain} />
 
+                {/* Cycle forecast — forward-looking roadmap */}
+                {forecast && (
+                    <CycleForecast
+                        data={forecast}
+                        currentPrice={currentPrice}
+                        todayIso={lastUpdated}
+                    />
+                )}
+                {!forecast && forecastError && (
+                    <div style={{
+                        marginTop: 20, padding: "14px 18px",
+                        border: "1px dashed rgba(245,158,11,0.25)",
+                        fontFamily: "'Space Mono', monospace", fontSize: 11,
+                        color: "rgba(254,243,199,0.4)", letterSpacing: 1,
+                    }}>
+                        Forecast unavailable — the cycle engine's /cycle/forecast endpoint did not respond.
+                    </div>
+                )}
+
                 {/* Disclaimer */}
                 <div className="cp-disclaimer">{disclaimer}</div>
             </div>
         );
-    }, [data, loading, error, upstreamLoading]);
+    }, [data, forecast, loading, error, upstreamLoading, forecastError]);
 
     return content;
 }
