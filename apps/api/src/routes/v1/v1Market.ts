@@ -121,29 +121,33 @@ async function fetchOKXPrice(ccy: string): Promise<number> {
 }
 
 // ── OKX: current OI in USD ──
-// Rubik returns open-interest-volume as array-of-arrays [ts, oi, oiCcy] historically.
-// Defensive: also handle object form if OKX changes shape.
+// Rubik returns open-interest-volume as array-of-arrays:
+//   [ts, openInterestUsd, volumeUsd]
+// The prior code read index [2] and multiplied by spot price, which was
+// wrong on two counts: [2] is VOLUME (not coin-OI), and [1] is already
+// USD-denominated so no price multiplier is needed either way. Verified
+// against live API: first[1] ≈ $3.4B for BTC which matches real-world OKX
+// BTC-perp OI on Coinglass; first[2] ≈ 13.9M which is impossible as coin
+// (total BTC supply is 19.8M). Return first[1] directly.
 async function fetchOKXOI(ccy: string): Promise<number | null> {
     try {
-        const [oiRes, price] = await Promise.all([
-            fetchWithTimeout(
-                `https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=${ccy}&period=5m&limit=1`,
-            ),
-            fetchOKXPrice(ccy),
-        ]);
+        const oiRes = await fetchWithTimeout(
+            `https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume?ccy=${ccy}&period=5m&limit=1`,
+        );
         if (!oiRes.ok) throw new Error(`OKX OI ${oiRes.status}`);
         const json = await oiRes.json() as { data?: Array<unknown> };
         const first = json.data?.[0];
-        let oiCcy = 0;
+        let oiUsd = 0;
         if (Array.isArray(first)) {
-            // [ts, oi, oiCcy] — take oiCcy if present, else oi (older shape)
-            oiCcy = parseFloat(String(first[2] ?? first[1] ?? "0")) || 0;
+            // [ts, openInterestUsd, volumeUsd]
+            oiUsd = parseFloat(String(first[1] ?? "0")) || 0;
         } else if (first && typeof first === "object") {
-            const obj = first as { oiCcy?: string; oi?: string };
-            oiCcy = parseFloat(obj.oiCcy ?? obj.oi ?? "0") || 0;
+            // Object form fallback — prefer explicit oiUsd; fall back to oi.
+            const obj = first as { oiUsd?: string; oi?: string };
+            oiUsd = parseFloat(obj.oiUsd ?? obj.oi ?? "0") || 0;
         }
-        if (oiCcy <= 0 || price <= 0) return null;
-        return oiCcy * price;
+        if (oiUsd <= 0) return null;
+        return oiUsd;
     } catch (err) {
         logger.error({ err, ccy }, "okx_oi_fetch_error");
         return null;
