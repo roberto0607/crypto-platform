@@ -27,6 +27,29 @@ CYCLE_DECAY_FACTOR = 0.45
 AVG_DAYS_BOTTOM_TO_NEXT_TOP = 456  # midpoint of historical 365-548 range
 
 
+def _snap_to_seasonal_bottom(mechanical_date: datetime) -> datetime:
+    """Snap the mechanical bottom estimate to November (mid-month).
+
+    Bitcoin has bottomed in Oct-Nov in 3 of 4 completed cycles. Apply
+    that seasonal pattern:
+      - Aug through Jan : snap to the November inside that Aug-Jan
+        window (same calendar year for Aug-Dec, previous calendar
+        year for Jan — the November that just preceded it).
+      - Feb through Jul : snap to next year's November per spec.
+    """
+    m = mechanical_date.month
+    y = mechanical_date.year
+    if 2 <= m <= 7:
+        target_year = y + 1
+    elif m == 1:
+        # Jan is inside the Aug (Y-1) → Jan Y bottom-season window,
+        # so the November for Jan Y is Nov Y-1.
+        target_year = y - 1
+    else:  # Aug..Dec
+        target_year = y
+    return datetime(target_year, 11, 15)
+
+
 def _cycle_index_for_date(dt: datetime) -> int:
     """Halving-cycle index the given date falls into (0-based)."""
     for i in range(len(HALVINGS) - 1):
@@ -140,10 +163,18 @@ def build_forecast(
         low_drop, high_drop = -85.0, -55.0
 
     # ── 3. Estimated bottom ──
+    # Mechanical date first (purely from analog day counts), then snap
+    # the month to the nearest Oct-Nov bottom-season window.
     days_elapsed_from_top = (today - current_top_date).days
-    days_remaining = max(0, int(avg_days - days_elapsed_from_top))
+    days_remaining_mechanical = max(0, int(avg_days - days_elapsed_from_top))
+    mechanical_bottom_date = today + timedelta(days=days_remaining_mechanical)
+    est_bottom_date = _snap_to_seasonal_bottom(mechanical_bottom_date)
+    # Recompute days_remaining from the seasonally adjusted date so the
+    # downstream inflection spacing, chart timeline, and UI countdown all
+    # agree on the same target.
+    days_remaining = max(0, (est_bottom_date - today).days)
     est_bottom_price = current_top_price * (1 + avg_pct_drop / 100)
-    est_bottom_date = today + timedelta(days=days_remaining)
+    # Price estimate is unchanged — only the date is seasonally adjusted.
     low_bottom = current_top_price * (1 + min(low_drop, high_drop) / 100)
     high_bottom = current_top_price * (1 + max(low_drop, high_drop) / 100)
 
@@ -178,6 +209,11 @@ def build_forecast(
             },
             "daysRemaining": days_remaining,
             "basedOnAnalogs": [s["date_label"] for s in analog_stats],
+            "seasonallyAdjusted": True,
+            "seasonalNote": (
+                "Date adjusted to reflect Oct-Nov historical bottom "
+                "seasonality (3 of 4 cycles bottomed Oct-Nov)."
+            ),
         },
         "nextCycleTop": {
             "price": round(est_next_top_price),
@@ -216,10 +252,12 @@ def _build_inflections(
     points: List[dict] = []
     days_to_bottom = max(0, (est_bottom_date - today).days)
 
-    if days_to_bottom >= 60:
-        rally_offset = max(20, int(days_to_bottom * 0.30))
+    # Render rally/pullback whenever bottom is in the future, regardless
+    # of how many days remain (the 60-day gate was removed).
+    if days_to_bottom > 0:
+        rally_offset = max(1, int(round(days_to_bottom * 0.30)))
         rally_date = today + timedelta(days=rally_offset)
-        # Relief rally bounces to roughly 50% of the way back to cycle top
+        # Relief rally bounces to roughly 35% of the way back to cycle top
         # from the linear-interp price at that date
         frac_at_rally = rally_offset / days_to_bottom
         linear_at_rally = current_top_price + (est_bottom_price - current_top_price) * frac_at_rally
@@ -233,7 +271,8 @@ def _build_inflections(
             "description": "Bear market relief rally",
         })
 
-        pull_offset = max(rally_offset + 30, int(days_to_bottom * 0.70))
+        # Pullback must land after the rally and before the bottom
+        pull_offset = min(days_to_bottom - 1, max(rally_offset + 1, int(round(days_to_bottom * 0.70))))
         pull_date = today + timedelta(days=pull_offset)
         frac_at_pull = pull_offset / days_to_bottom
         linear_at_pull = current_top_price + (est_bottom_price - current_top_price) * frac_at_pull

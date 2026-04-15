@@ -124,6 +124,20 @@ function TimelineChart({
         const histSeries = chart.addSeries(LineSeries, {
             color: "#FEF3C7", lineWidth: 3,
             priceLineVisible: false, lastValueVisible: false,
+            // Floor the y-axis at 0 so the whole cycle (incl. deep bottom)
+            // stays in visual proportion to the top. Without this the
+            // auto-scale zooms tight around data and the bottom looks
+            // disproportionately close to today's price.
+            autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
+                const base = original();
+                if (!base) return null;
+                return {
+                    priceRange: {
+                        minValue: 0,
+                        maxValue: base.priceRange.maxValue,
+                    },
+                };
+            },
         });
         histSeries.setData([
             { time: cycleTopTime, value: data.cycleTop.price },

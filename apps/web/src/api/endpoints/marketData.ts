@@ -177,6 +177,8 @@ export interface EstimatedBottom {
     confidenceRange: CycleRange;
     daysRemaining: number;
     basedOnAnalogs: string[];
+    seasonallyAdjusted?: boolean;
+    seasonalNote?: string;
 }
 
 export interface NextCycleTop {
