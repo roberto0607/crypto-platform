@@ -77,3 +77,86 @@ export interface COTResponse {
 export function fetchCOT(ccy: string) {
     return client.get<COTResponse>(`/v1/market/cot/${ccy}`);
 }
+
+// ── Cycle Intelligence ──
+export interface CyclePosition {
+    daysSinceHalving: number;
+    daysToNextHalving: number;
+    cycleNumber: number;
+    cyclePercent: number;
+    phase: string;
+    phaseColor: string;
+    lastHalvingDate: string;
+    nextHalvingDate: string;
+}
+
+export interface PowerLaw {
+    fairValue: number;
+    floorValue: number;
+    ceilingValue: number;
+    corridorPercent: number;
+    interpretation: string;
+}
+
+export interface OnChainMetric {
+    value: number;
+    percentile: number;
+    signal: string;
+    history: number[];
+    thresholds: Record<string, number>;
+    description: string;
+}
+
+export interface CycleAnalog {
+    date: string;
+    startDate: string;
+    similarityScore: number;
+    priceAtTime: number;
+    cycleDay: number;
+    priceChange: {
+        "30d": { pct: number; price: number };
+        "90d": { pct: number; price: number };
+        "180d": { pct: number; price: number };
+    };
+    historicalPrices: number[];
+    forwardPrices: number[];
+    breakdown: { score: number; price: number; cycle: number; onchain: number; volatility: number };
+}
+
+export interface CycleConsensusHorizon {
+    median: number;
+    min: number;
+    max: number;
+    bullish: number;
+    bearish: number;
+}
+
+export interface CycleAnalysis {
+    lastUpdated: string;
+    currentPrice: number;
+    cyclePosition: CyclePosition;
+    powerLaw: PowerLaw;
+    onChain: {
+        mvrv: OnChainMetric;
+        nupl: OnChainMetric;
+        puellMultiple: OnChainMetric;
+        reserveRisk: OnChainMetric;
+    };
+    currentWindow: { prices: number[]; cycleDay: number };
+    analogs: CycleAnalog[];
+    consensus: { "30d": CycleConsensusHorizon; "90d": CycleConsensusHorizon; "180d": CycleConsensusHorizon };
+    disclaimer: string;
+}
+
+export function fetchCycleAnalysis() {
+    return client.get<CycleAnalysis>("/v1/cycle/analysis");
+}
+
+export interface CycleNarrativeResponse {
+    narrative: string | null;
+    error?: string;
+}
+
+export function fetchCycleNarrative(cycleData: CycleAnalysis) {
+    return client.post<CycleNarrativeResponse>("/v1/cycle/narrative", { cycleData });
+}

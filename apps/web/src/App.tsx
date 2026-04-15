@@ -21,6 +21,7 @@ import RegisterPage from "@/pages/RegisterPage";
 import TradingPage from "@/pages/TradingPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ArenaPage from "@/pages/ArenaPage";
+import CyclePage from "@/pages/CyclePage";
 import JournalPage from "@/pages/JournalPage";
 import ProfilePage from "@/pages/ProfilePage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -204,6 +205,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/trade" element={<TradingPage />} />
           <Route path="/arena" element={<ArenaPage />} />
+          <Route path="/cycle" element={<CyclePage />} />
           <Route path="/history" element={<JournalPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings" element={<SettingsPage />} />

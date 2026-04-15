@@ -22,6 +22,7 @@ import v1Journal from "./v1Journal";
 import v1Signals from "./v1Signals";
 import v1Matches from "./v1Matches";
 import v1Market from "./v1Market";
+import v1Cycle from "./v1Cycle";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -46,6 +47,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Signals);
     await app.register(v1Matches);
     await app.register(v1Market);
+    await app.register(v1Cycle);
 };
 
 export default v1Routes;

@@ -18,6 +18,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/trade", label: "Trade", icon: "\u25C8" },
       { to: "/arena", label: "Arena", icon: "\u2694" },
+      { to: "/cycle", label: "Cycle", icon: "\u29BF" },
       { to: "/history", label: "History", icon: "\u270E" },
       { to: "/profile", label: "Profile", icon: "\u2666" },
     ],

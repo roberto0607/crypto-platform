@@ -139,4 +139,8 @@ export const config = {
 
   // ── Phase 22: Derivatives data ──
   derivativesPollerEnabled: booleanEnv("DERIVATIVES_POLLER_ENABLED", true),
+
+  // ── Stage 6: Cycle intelligence ──
+  cycleEngineUrl: process.env.CYCLE_ENGINE_URL || "http://localhost:8080",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
 };
