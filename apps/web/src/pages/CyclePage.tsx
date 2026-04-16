@@ -6,6 +6,7 @@ import { ConsensusBar } from "@/components/cycle/ConsensusBar";
 import { AnalogMiniCard } from "@/components/cycle/AnalogMiniCard";
 import { AINarrative } from "@/components/cycle/AINarrative";
 import { OnChainIndicators } from "@/components/cycle/OnChainIndicators";
+import { CyclePerformance } from "@/components/cycle/CyclePerformance";
 import { CycleForecast } from "@/components/cycle/CycleForecast";
 
 // Gold/amber dedicated theme — injected at page root, following the Arena
@@ -140,7 +141,7 @@ function ErrorState({ message }: { message: string }) {
 }
 
 export default function CyclePage() {
-    const { data, forecast, loading, error, upstreamLoading, forecastError } = useCycleData();
+    const { data, forecast, performance, loading, error, upstreamLoading, forecastError, performanceError } = useCycleData();
 
     const content = useMemo(() => {
         if (loading && !data) {
@@ -235,6 +236,19 @@ export default function CyclePage() {
                 {/* On-chain indicators (collapsed by default) */}
                 <OnChainIndicators onChain={onChain} />
 
+                {/* Cycle performance comparison */}
+                {performance && <CyclePerformance data={performance} />}
+                {!performance && performanceError && (
+                    <div style={{
+                        marginTop: 20, padding: "14px 18px",
+                        border: "1px dashed rgba(245,158,11,0.25)",
+                        fontFamily: "'Space Mono', monospace", fontSize: 11,
+                        color: "rgba(254,243,199,0.4)", letterSpacing: 1,
+                    }}>
+                        Performance comparison unavailable.
+                    </div>
+                )}
+
                 {/* Cycle forecast — forward-looking roadmap */}
                 {forecast && (
                     <CycleForecast
@@ -258,7 +272,7 @@ export default function CyclePage() {
                 <div className="cp-disclaimer">{disclaimer}</div>
             </div>
         );
-    }, [data, forecast, loading, error, upstreamLoading, forecastError]);
+    }, [data, forecast, performance, loading, error, upstreamLoading, forecastError, performanceError]);
 
     return content;
 }

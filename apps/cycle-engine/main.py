@@ -24,6 +24,7 @@ from analog import find_top_analogs
 from cycle import HALVINGS, get_cycle_position, get_power_law_position
 from forecast import build_forecast
 from onchain import build_onchain_section, moving_average
+from performance import build_performance
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +48,7 @@ FIRST_HALVING_UNIX = 1354060800  # 2012-11-28
 BTC_CIRCULATING_SUPPLY = 19_700_000
 
 ANALYSIS_CACHE_TTL_SEC = 300      # 5 min (PART 2D spec)
+PERF_CACHE_TTL_SEC = 3600         # 1 hour — monthly data changes slowly
 DATA_REFRESH_INTERVAL_SEC = 86400  # 24h
 RETRY_INTERVAL_SEC = 60            # per user spec on fetch failure
 MAX_PAGINATION_CALLS = 10          # safety cap — expect 3-4 in practice
@@ -65,10 +67,12 @@ class DataStore:
         # 5-min analysis cache
         self.analysis_cache: dict | None = None
         self.analysis_cache_at: datetime | None = None
-        # 5-min forecast cache (separate so a forecast miss doesn't
-        # force an analog recompute and vice versa)
+        # 5-min forecast cache
         self.forecast_cache: dict | None = None
         self.forecast_cache_at: datetime | None = None
+        # 1-hour performance cache (monthly data changes slowly)
+        self.perf_cache: dict | None = None
+        self.perf_cache_at: datetime | None = None
 
     async def fetch(self) -> None:
         """Paginated fetch of daily BTC history from CryptoCompare.
@@ -138,6 +142,8 @@ class DataStore:
         self.analysis_cache_at = None
         self.forecast_cache = None
         self.forecast_cache_at = None
+        self.perf_cache = None
+        self.perf_cache_at = None
 
         log.info(
             "loaded %d daily points %s → %s",
@@ -333,4 +339,23 @@ async def cycle_forecast() -> dict:
     result = build_forecast(store.dates, store.prices, analogs)
     store.forecast_cache = result
     store.forecast_cache_at = datetime.utcnow()
+    return result
+
+
+@app.get("/cycle/performance")
+async def cycle_performance() -> dict:
+    """Cycle-over-cycle cumulative return comparison. Cached 1 hour."""
+    if not store.loaded:
+        raise HTTPException(status_code=503, detail="data still loading from CryptoCompare")
+
+    if (
+        store.perf_cache is not None
+        and store.perf_cache_at is not None
+        and (datetime.utcnow() - store.perf_cache_at).total_seconds() < PERF_CACHE_TTL_SEC
+    ):
+        return store.perf_cache
+
+    result = build_performance(store.dates, store.prices)
+    store.perf_cache = result
+    store.perf_cache_at = datetime.utcnow()
     return result

@@ -163,6 +163,11 @@ function TimelineChart({
         const downSeries = chart.addSeries(LineSeries, {
             color: "rgba(239,68,68,0.9)", lineWidth: 2, lineStyle: LineStyle.Dashed,
             priceLineVisible: false, lastValueVisible: false,
+            autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
+                const base = original();
+                if (!base) return null;
+                return { priceRange: { minValue: 0, maxValue: base.priceRange.maxValue } };
+            },
         });
         downSeries.setData(downPathDedup);
 
@@ -174,6 +179,11 @@ function TimelineChart({
         const upSeries = chart.addSeries(LineSeries, {
             color: "rgba(16,185,129,0.9)", lineWidth: 2, lineStyle: LineStyle.Dashed,
             priceLineVisible: false, lastValueVisible: false,
+            autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
+                const base = original();
+                if (!base) return null;
+                return { priceRange: { minValue: 0, maxValue: base.priceRange.maxValue } };
+            },
         });
         upSeries.setData(upPath);
 

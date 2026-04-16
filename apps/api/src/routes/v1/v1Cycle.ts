@@ -17,6 +17,7 @@ import { config } from "../../config";
 import { logger } from "../../observability/logContext";
 
 const ANALYSIS_CACHE_TTL_MS = 5 * 60 * 1000;      // 5 min
+const PERF_CACHE_TTL_MS = 60 * 60 * 1000;         // 1 hour
 const NARRATIVE_CACHE_TTL_MS = 60 * 60 * 1000;    // 1 hour
 const CYCLE_ENGINE_TIMEOUT_MS = 30_000;
 
@@ -24,6 +25,7 @@ interface CacheEntry<T> { data: T; expiresAt: number }
 
 let analysisCache: CacheEntry<unknown> | null = null;
 let forecastCache: CacheEntry<unknown> | null = null;
+let perfCache: CacheEntry<unknown> | null = null;
 let narrativeCache: CacheEntry<{ narrative: string }> | null = null;
 
 async function fetchWithTimeout(url: string, timeoutMs = CYCLE_ENGINE_TIMEOUT_MS): Promise<Response> {
@@ -111,6 +113,40 @@ const v1Cycle: FastifyPluginAsync = async (app) => {
             return reply.send(data);
         } catch (err) {
             logger.error({ err }, "cycle_engine_forecast_fetch_error");
+            return reply.code(503).send({ error: "cycle engine unavailable" });
+        }
+    });
+
+    // ── GET /v1/cycle/performance — proxy to cycle-engine, 1h cache ──
+    app.get("/cycle/performance", {
+        schema: {
+            tags: ["Cycle"],
+            summary: "Cycle-over-cycle cumulative return comparison (monthly)",
+            response: {
+                200: { type: "object", additionalProperties: true },
+                503: { type: "object", additionalProperties: true },
+            },
+        },
+    }, async (_req, reply) => {
+        if (perfCache && Date.now() < perfCache.expiresAt) {
+            return reply.send(perfCache.data);
+        }
+
+        try {
+            const upstream = await fetchWithTimeout(`${config.cycleEngineUrl}/cycle/performance`);
+            if (upstream.status === 503) {
+                const body = await upstream.json().catch(() => ({ error: "data loading" }));
+                return reply.code(503).send(body);
+            }
+            if (!upstream.ok) {
+                logger.error({ status: upstream.status }, "cycle_engine_perf_non_ok");
+                return reply.code(503).send({ error: "cycle engine unavailable" });
+            }
+            const data = await upstream.json();
+            perfCache = { data, expiresAt: Date.now() + PERF_CACHE_TTL_MS };
+            return reply.send(data);
+        } catch (err) {
+            logger.error({ err }, "cycle_engine_perf_fetch_error");
             return reply.code(503).send({ error: "cycle engine unavailable" });
         }
     });

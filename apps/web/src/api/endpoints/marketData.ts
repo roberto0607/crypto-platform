@@ -209,3 +209,40 @@ export interface CycleForecast {
 export function fetchCycleForecast() {
     return client.get<CycleForecast>("/v1/cycle/forecast");
 }
+
+// ── Cycle Performance ──
+export interface CyclePerformancePoint {
+    month: number;
+    pctReturn: number;
+    price: number;
+    date: string;
+}
+
+export interface CyclePerformanceCycle {
+    name: string;
+    halvingDate: string;
+    color: string;
+    data: CyclePerformancePoint[];
+    peakMonth: number | null;
+    peakReturn: number | null;
+    totalMonths: number | null;
+}
+
+export interface CyclePerformanceInsight {
+    cycle2AtSameMonth: number | null;
+    cycle3AtSameMonth: number | null;
+    currentReturn: number;
+    performanceVsCycle2: number | null;
+    performanceVsCycle3: number | null;
+    status: "OUTPERFORMING" | "IN LINE" | "UNDERPERFORMING";
+}
+
+export interface CyclePerformanceData {
+    cycles: CyclePerformanceCycle[];
+    currentCycleMonth: number;
+    insight: CyclePerformanceInsight;
+}
+
+export function fetchCyclePerformance() {
+    return client.get<CyclePerformanceData>("/v1/cycle/performance");
+}
