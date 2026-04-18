@@ -1,5 +1,8 @@
 import type { PoolClient } from "pg";
+import { logger as rootLogger } from "../observability/logContext";
 // tierRepo used by legacy applyEloChange callers; tx-safe helpers below for resolveMatchElo
+
+const logger = rootLogger.child({ module: "eloService" });
 
 // ── Trade Wars Tier System (4 tiers) ──
 
@@ -126,8 +129,18 @@ export async function applyEloChange(
         [[winnerId, loserId]],
     );
 
-    const winnerRow = eloRows.find((r) => r.id === winnerId);
-    const loserRow = eloRows.find((r) => r.id === loserId);
+    // users.id is a PK so duplicates should be impossible. Filter by exact id
+    // and log if the defensive check ever trips — indicates a schema violation.
+    const winnerMatches = eloRows.filter((r) => r.id === winnerId);
+    const loserMatches = eloRows.filter((r) => r.id === loserId);
+    if (winnerMatches.length > 1 || loserMatches.length > 1) {
+        logger.error(
+            { winnerId, loserId, winnerCount: winnerMatches.length, loserCount: loserMatches.length },
+            "elo_duplicate_user_rows_detected",
+        );
+    }
+    const winnerRow = winnerMatches[0];
+    const loserRow = loserMatches[0];
     if (!winnerRow || !loserRow) throw new Error("user_not_found");
 
     const change = calculateEloChange(winnerRow.elo_rating, loserRow.elo_rating, tier);

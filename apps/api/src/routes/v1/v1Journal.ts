@@ -23,7 +23,7 @@ const v1Journal: FastifyPluginAsync = async (app) => {
     app.get("/trades/journal", {
         preHandler: requireUser,
         handler: async (req, reply) => {
-            const userId = (req as any).user.id;
+            const userId = req.user!.id;
             const competitionId = req.headers["x-competition-id"] as string | undefined;
             const q = journalQuery.parse(req.query);
 
@@ -47,7 +47,7 @@ const v1Journal: FastifyPluginAsync = async (app) => {
     app.get("/trades/journal/summary", {
         preHandler: requireUser,
         handler: async (req, reply) => {
-            const userId = (req as any).user.id;
+            const userId = req.user!.id;
             const competitionId = req.headers["x-competition-id"] as string | undefined;
             const q = summaryQuery.parse(req.query);
 
@@ -65,7 +65,7 @@ const v1Journal: FastifyPluginAsync = async (app) => {
     app.get("/trades/journal/export", {
         preHandler: requireUser,
         handler: async (req, reply) => {
-            const userId = (req as any).user.id;
+            const userId = req.user!.id;
             const competitionId = req.headers["x-competition-id"] as string | undefined;
 
             const { trades } = await listClosedTrades({

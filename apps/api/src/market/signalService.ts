@@ -7,8 +7,42 @@ import { config } from "../config.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { logger as rootLogger } from "../observability/logContext.js";
+import { z } from "zod";
 
 const logger = rootLogger.child({ module: "signalService" });
+
+// Runtime validation for the ML service response. Only fields that flow into
+// the DB or are used downstream are strictly validated; peripheral metadata
+// (attention, model_contributions) is passthrough to avoid over-fitting the
+// schema to the ML service's internal shape.
+const MLSignalShape = z.object({
+    signal_type: z.enum(["BUY", "SELL"]),
+    confidence: z.number(),
+    entry_price: z.number(),
+    tp1: z.number(),
+    tp2: z.number(),
+    tp3: z.number(),
+    stop_loss: z.number(),
+    tp1_prob: z.number(),
+    tp2_prob: z.number(),
+    tp3_prob: z.number(),
+    top_features: z.array(z.unknown()),
+    model_version: z.string(),
+});
+
+const MLPredictionResponseSchema = z.object({
+    signal: MLSignalShape.nullable(),
+    regime: z.object({
+        regime: z.string(),
+        confidence: z.number().optional(),
+        config: z
+            .object({ strategy: z.string().optional() })
+            .passthrough()
+            .optional(),
+    }).passthrough().optional(),
+    forecast: z.record(z.string(), z.unknown()).optional(),
+    explanation: z.unknown().optional(),
+}).passthrough();
 
 // Cooldown tracking: pairId → last signal timestamp
 const cooldowns = new Map<string, number>();
@@ -121,7 +155,15 @@ export async function fetchAndStoreSignal(
         return null;
     }
 
-    const data: MLPredictionResponse = await response.json();
+    const rawJson = await response.json();
+    const parsed = MLPredictionResponseSchema.safeParse(rawJson);
+    if (!parsed.success) {
+        logger.error({ url, issues: parsed.error.issues }, "ml_service_response_invalid");
+        return null;
+    }
+    // Zod passthrough preserves unknown fields at runtime; cast through unknown
+    // because the Zod output type only names the fields we explicitly validated.
+    const data = parsed.data as unknown as MLPredictionResponse;
 
     if (!data.signal) {
         return null; // No signal (below confidence or NEUTRAL)
@@ -178,7 +220,11 @@ export async function fetchAndStoreSignal(
         ],
     );
 
-    const inserted = rows[0]!;
+    if (!rows || rows.length === 0) {
+        logger.error({ pairId, timeframe }, "ml_signal_insert_no_row");
+        return null;
+    }
+    const inserted = rows[0];
     cooldowns.set(pairId, Date.now());
 
     // Publish SSE event

@@ -42,7 +42,8 @@ export async function isLoginBlocked(params: {
        )`,
     [params.emailNormalized, windowMinutes],
   );
-  const emailFailures = parseInt(emailResult.rows[0].count, 10);
+  const emailParsed = parseInt(emailResult.rows?.[0]?.count ?? "0", 10);
+  const emailFailures = Number.isNaN(emailParsed) ? 0 : emailParsed;
   if (emailFailures >= config.maxLoginAttemptsPerEmail) {
     loginBlockedTotal.inc();
     return true;
@@ -62,7 +63,8 @@ export async function isLoginBlocked(params: {
        )`,
     [params.ipAddress, windowMinutes],
   );
-  const ipFailures = parseInt(ipResult.rows[0].count, 10);
+  const ipParsed = parseInt(ipResult.rows?.[0]?.count ?? "0", 10);
+  const ipFailures = Number.isNaN(ipParsed) ? 0 : ipParsed;
   if (ipFailures >= config.maxLoginAttemptsPerIp) {
     loginBlockedTotal.inc();
     return true;

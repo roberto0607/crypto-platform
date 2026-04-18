@@ -11,7 +11,16 @@ export async function requireVerified(req: FastifyRequest, reply: FastifyReply) 
     [req.user.id]
   );
 
-  if (rows.length > 0 && !rows[0].email_verified_at) {
+  // If the user row is missing, the session points at a deleted/unknown user.
+  // Treat as unauthenticated rather than silently allowing the request.
+  if (rows.length === 0) {
+    return reply.code(401).send({
+      ok: false,
+      error: "unauthorized",
+    });
+  }
+
+  if (!rows[0].email_verified_at) {
     return reply.code(403).send({
       ok: false,
       error: "email_not_verified",

@@ -45,8 +45,15 @@ const v1Events: FastifyPluginAsync = async (app) => {
     // Track active connections
     eventConnectionsActive.inc();
 
+    // `closed` ensures cleanup runs exactly once even if both the client-close
+    // event and a heartbeat/ping write-failure trigger the cleanup path.
+    // Without this guard the decrement on eventConnectionsActive would
+    // double-fire and corrupt the metric.
+    let closed = false;
+
     // Event handler — writes SSE frames to the response
     const handler: EventHandler = (event: AppEvent) => {
+      if (closed) return;
       try {
         const frame = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
         reply.raw.write(frame);
@@ -60,6 +67,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
 
     // Heartbeat to keep connection alive (SSE comment — invisible to fetchEventSource)
     const heartbeat = setInterval(() => {
+      if (closed) return;
       try {
         reply.raw.write(": heartbeat\n\n");
       } catch {
@@ -69,6 +77,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
 
     // Ping — typed SSE event the frontend can detect for liveness
     const ping = setInterval(() => {
+      if (closed) return;
       try {
         const frame = `event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
         reply.raw.write(frame);
@@ -77,8 +86,10 @@ const v1Events: FastifyPluginAsync = async (app) => {
       }
     }, PING_INTERVAL_MS);
 
-    // Cleanup function
+    // Cleanup function — idempotent via the closed flag.
     const cleanup = () => {
+      if (closed) return;
+      closed = true;
       clearInterval(heartbeat);
       clearInterval(ping);
       unsubscribe(handler);

@@ -356,7 +356,9 @@ export function stopKrakenFeed(): void {
         clearInterval(watchdogInterval);
         watchdogInterval = null;
     }
-    flushDueCandles().catch(() => {});
+    flushDueCandles().catch((err: unknown) => {
+        logger.error({ err }, "shutdown_flush_due_candles_failed");
+    });
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

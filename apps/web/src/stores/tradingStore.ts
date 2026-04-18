@@ -109,6 +109,10 @@ interface TradingState {
   bookLoading: boolean;
   orderSubmitting: boolean;
 
+  // Last error from polling methods — UI components can read this to show
+  // a stale-data indicator. null means the most recent call succeeded.
+  lastError: { source: "book" | "snapshot" | "orders"; message: string; at: number } | null;
+
   // Bottom panel tab
   bottomTab: "market" | "orders" | "positions" | "triggers" | "setup" | "liquidation";
   setBottomTab: (tab: "market" | "orders" | "positions" | "triggers" | "setup" | "liquidation") => void;
@@ -157,6 +161,8 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   bookLoading: false,
   orderSubmitting: false,
+
+  lastError: null,
 
   indicatorConfig: loadIndicatorConfig(),
 
@@ -212,18 +218,22 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       if (pair) {
         const res = await getKrakenBook(pair.symbol);
         if (get().selectedPairId === pairId && res.data.book.bids.length > 0) {
-          set({ orderBook: res.data.book, bookLoading: false });
+          set({ orderBook: res.data.book, bookLoading: false, lastError: null });
           return;
         }
       }
       // Fallback to internal order book
       const res = await getOrderBook(pairId);
       if (get().selectedPairId === pairId) {
-        set({ orderBook: res.data.book, bookLoading: false });
+        set({ orderBook: res.data.book, bookLoading: false, lastError: null });
       }
-    } catch {
+    } catch (err) {
+      console.error("[tradingStore] refreshBook failed:", err);
       if (get().selectedPairId === pairId) {
-        set({ bookLoading: false });
+        set({
+          bookLoading: false,
+          lastError: { source: "book", message: (err as Error)?.message ?? "unknown", at: Date.now() },
+        });
       }
     }
   },
@@ -234,10 +244,15 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     try {
       const res = await getSnapshot(pairId);
       if (get().selectedPairId === pairId) {
-        set({ snapshot: res.data.snapshot });
+        set({ snapshot: res.data.snapshot, lastError: null });
       }
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      console.error("[tradingStore] refreshSnapshot failed:", err);
+      if (get().selectedPairId === pairId) {
+        set({
+          lastError: { source: "snapshot", message: (err as Error)?.message ?? "unknown", at: Date.now() },
+        });
+      }
     }
   },
 
@@ -247,10 +262,15 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     try {
       const res = await listOrders({ pairId, status: "OPEN", limit: 50 });
       if (get().selectedPairId === pairId) {
-        set({ openOrders: res.data.orders });
+        set({ openOrders: res.data.orders, lastError: null });
       }
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      console.error("[tradingStore] refreshOpenOrders failed:", err);
+      if (get().selectedPairId === pairId) {
+        set({
+          lastError: { source: "orders", message: (err as Error)?.message ?? "unknown", at: Date.now() },
+        });
+      }
     }
   },
 

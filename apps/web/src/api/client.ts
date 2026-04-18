@@ -53,6 +53,12 @@ client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 });
 
 // ── Refresh mutex — singleton promise so only ONE refresh runs at a time ──
+// NOTE: this mutex scopes to a single tab only. The multi-tab refresh race
+// (where two tabs of the same user trigger concurrent rotations and trip the
+// reuse-detection family revocation) is a known limitation, intentionally
+// deferred per CLAUDE.md. A BroadcastChannel/SharedWorker-based cross-tab
+// mutex would fix it but requires a coordinated design change; see the
+// "Known Issues" section in CLAUDE.md before attempting a fix here.
 let refreshPromise: Promise<string | null> | null = null;
 // Hard-redirect guard: ensures we only kick the user to /login once per
 // session-expiry event, even if multiple concurrent refresh callers fail.

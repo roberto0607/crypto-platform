@@ -164,13 +164,15 @@ async function poll(): Promise<void> {
     if (results[0]!.status === "fulfilled") {
         coinbase = calcImbalance(results[0]!.value.bids, results[0]!.value.asks);
     } else {
-        console.warn("[OBAggregate] Warning: Coinbase fetch failed, using Kraken only this cycle");
+        const reason = (results[0]!.reason as Error)?.message ?? results[0]!.reason;
+        console.warn("[OBAggregate] Warning: Coinbase fetch failed, using Kraken only this cycle —", reason);
     }
 
     if (results[1]!.status === "fulfilled") {
         kraken = calcImbalance(results[1]!.value.bids, results[1]!.value.asks);
     } else {
-        console.warn("[OBAggregate] Warning: Kraken fetch failed, using Coinbase only this cycle");
+        const reason = (results[1]!.reason as Error)?.message ?? results[1]!.reason;
+        console.warn("[OBAggregate] Warning: Kraken fetch failed, using Coinbase only this cycle —", reason);
     }
 
     if (!coinbase && !kraken) {

@@ -368,7 +368,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
   }, async (req, reply) => {
-    const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
+    const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
 
     if (!rawToken) {
       return reply.code(401).send({ ok: false, error: "unauthorized" });
@@ -515,7 +515,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
   }, async (req, reply) => {
-    const rawToken = (req.cookies as any)?.[REFRESH_COOKIE_NAME] as string | undefined;
+    const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
 
     let actorUserId: string | null = null;
 

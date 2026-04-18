@@ -328,7 +328,13 @@ function useCursor() {
     raf = requestAnimationFrame(loop);
     const hoverIn  = () => { if (cur) cur.style.transform = "translate(-50%,-50%) scale(2)"; };
     const hoverOut = () => { if (cur) cur.style.transform = "translate(-50%,-50%) scale(1)"; };
+    // Track elements we've already attached to so MutationObserver ticks don't
+    // re-attach duplicate listeners on every DOM mutation. WeakSet lets GC
+    // reclaim entries when elements are removed from the DOM.
+    const hoverAttached = new WeakSet<Element>();
     const addHover = () => document.querySelectorAll("button,.t-ni,.t-at-tab,.t-ch-btn").forEach(el => {
+      if (hoverAttached.has(el)) return;
+      hoverAttached.add(el);
       el.addEventListener("mouseenter", hoverIn);
       el.addEventListener("mouseleave", hoverOut);
     });

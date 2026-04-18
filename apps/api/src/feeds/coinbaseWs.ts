@@ -15,6 +15,9 @@ const PRODUCT_MAP: Record<string, string> = {
 // Our symbol → pair UUID (populated on connect)
 let symbolToPairId: Record<string, string> = {};
 let pairCacheReady = false;
+let pairCacheRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+const PAIR_CACHE_RETRY_MS = 60_000;
 
 async function loadPairCache(): Promise<void> {
     try {
@@ -25,8 +28,20 @@ async function loadPairCache(): Promise<void> {
         }
         symbolToPairId = map;
         pairCacheReady = true;
-    } catch {
-        // Will retry on next connect
+        if (pairCacheRetryTimer) {
+            clearTimeout(pairCacheRetryTimer);
+            pairCacheRetryTimer = null;
+        }
+    } catch (err) {
+        logger.error({ err }, "coinbase_pair_cache_load_failed");
+        // Retry every 60s until successful — otherwise a DB outage at boot
+        // leaves the cache empty forever and incoming trades are discarded.
+        if (!pairCacheRetryTimer && !stopped) {
+            pairCacheRetryTimer = setTimeout(() => {
+                pairCacheRetryTimer = null;
+                loadPairCache();
+            }, PAIR_CACHE_RETRY_MS);
+        }
     }
 }
 
@@ -133,6 +148,10 @@ export function stopCoinbaseFeed(): void {
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
+    }
+    if (pairCacheRetryTimer) {
+        clearTimeout(pairCacheRetryTimer);
+        pairCacheRetryTimer = null;
     }
     if (ws) {
         ws.close();

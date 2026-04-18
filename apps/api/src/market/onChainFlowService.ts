@@ -229,6 +229,23 @@ async function poll(): Promise<void> {
             fetchFees(),
         ]);
 
+        // Log any rejected fetches so outages don't go unnoticed.
+        if (volBtcRaw.status === "rejected") {
+            console.warn("[OnChain] volBtc fetch rejected:", (volBtcRaw.reason as Error)?.message ?? volBtcRaw.reason);
+        }
+        if (volUsdRaw.status === "rejected") {
+            console.warn("[OnChain] volUsd fetch rejected:", (volUsdRaw.reason as Error)?.message ?? volUsdRaw.reason);
+        }
+        if (txCountRaw.status === "rejected") {
+            console.warn("[OnChain] txCount fetch rejected:", (txCountRaw.reason as Error)?.message ?? txCountRaw.reason);
+        }
+        if (mempool.status === "rejected") {
+            console.warn("[OnChain] mempool fetch rejected:", (mempool.reason as Error)?.message ?? mempool.reason);
+        }
+        if (fees.status === "rejected") {
+            console.warn("[OnChain] fees fetch rejected:", (fees.reason as Error)?.message ?? fees.reason);
+        }
+
         const volBtc = volBtcRaw.status === "fulfilled" ? volBtcRaw.value : [];
         const volUsd = volUsdRaw.status === "fulfilled" ? volUsdRaw.value : [];
         const txCount = txCountRaw.status === "fulfilled" ? txCountRaw.value : [];

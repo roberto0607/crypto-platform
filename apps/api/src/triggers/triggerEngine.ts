@@ -188,11 +188,15 @@ export async function fireTrigger(
         // Events must never break trigger engine
     }
 
-    // Send in-app notification (fire-and-forget)
+    // Send in-app notification (fire-and-forget, but log failures)
     findPairById(trigger.pair_id).then((pair) => {
         const symbol = pair?.symbol ?? trigger.pair_id;
-        notifyTriggerFired(trigger.user_id, symbol, trigger.kind, trigger.side).catch(() => {});
-    }).catch(() => {});
+        notifyTriggerFired(trigger.user_id, symbol, trigger.kind, trigger.side).catch((err) => {
+            logger.error({ err, triggerId: trigger.id }, "trigger_notify_failed");
+        });
+    }).catch((err) => {
+        logger.error({ err, triggerId: trigger.id }, "trigger_notify_failed");
+    });
 
     if (canceledSibling) {
         try {
