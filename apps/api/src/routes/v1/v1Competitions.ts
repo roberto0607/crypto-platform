@@ -25,6 +25,7 @@ import { ensureUserTier, getUserTier } from "../../competitions/tierRepo";
 import { getISOWeekId } from "../../competitions/weeklyUtils";
 import { pool } from "../../db/pool";
 import { AppError } from "../../errors/AppError";
+import { parseIntParam } from "../../http/pagination";
 
 const createCompetitionBody = z.object({
     name: z.string().min(3).max(100),
@@ -73,8 +74,8 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
                 status: query.status,
                 competitionType: query.competition_type,
                 tier: query.tier,
-                limit: query.limit ? parseInt(query.limit) : undefined,
-                offset: query.offset ? parseInt(query.offset) : undefined,
+                limit: query.limit !== undefined ? parseIntParam(query.limit, 50, 1, 100) : undefined,
+                offset: query.offset !== undefined ? parseIntParam(query.offset, 0, 0, 1_000_000) : undefined,
             });
             return reply.send({ data: result.competitions, total: result.total });
         } catch (err) {
@@ -132,8 +133,8 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
             const userId = req.user!.id;
             const tier = await getUserTier(userId);
             const query = req.query as { limit?: string; offset?: string };
-            const limit = query.limit ? parseInt(query.limit) : 10;
-            const offset = query.offset ? parseInt(query.offset) : 0;
+            const limit = parseIntParam(query.limit, 10, 1, 100);
+            const offset = parseIntParam(query.offset, 0, 0, 1_000_000);
 
             const { rows } = await pool.query(
                 `SELECT c.id, c.name, c.week_id, c.start_at, c.end_at, c.tier,
@@ -245,8 +246,8 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
             const query = req.query as { limit?: string; offset?: string };
             const data = await getLeaderboard(
                 id,
-                query.limit ? parseInt(query.limit) : undefined,
-                query.offset ? parseInt(query.offset) : undefined,
+                query.limit !== undefined ? parseIntParam(query.limit, 100, 1, 500) : undefined,
+                query.offset !== undefined ? parseIntParam(query.offset, 0, 0, 1_000_000) : undefined,
             );
             return reply.send({ data });
         } catch (err) {

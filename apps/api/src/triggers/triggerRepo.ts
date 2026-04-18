@@ -217,7 +217,25 @@ export async function cancelTriggerByUser(
     userId: string,
     triggerId: string
 ): Promise<TriggerOrderRow> {
-    const check = await pool.query<TriggerOrderRow>(
+    // Atomic cancel: ownership, existence, and active-state checks are all part of the UPDATE.
+    const result = await pool.query<TriggerOrderRow>(
+        `
+        UPDATE trigger_orders
+        SET status = 'CANCELED'
+        WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'
+        RETURNING ${TRIGGER_COLUMNS}
+        `,
+        [triggerId, userId]
+    );
+
+    if (result.rows.length > 0) {
+        return result.rows[0];
+    }
+
+    // No row updated: either the trigger doesn't exist, doesn't belong to this user,
+    // or is not ACTIVE. If it exists for this user and is already CANCELED, return it
+    // (idempotent). Otherwise surface trigger_not_found.
+    const existing = await pool.query<TriggerOrderRow>(
         `
         SELECT ${TRIGGER_COLUMNS}
         FROM trigger_orders
@@ -227,24 +245,8 @@ export async function cancelTriggerByUser(
         [triggerId, userId]
     );
 
-    const row = check.rows[0];
+    const row = existing.rows[0];
     if (!row) throw new Error("trigger_not_found");
-
     if (row.status === "CANCELED") return row;
-
-    if (row.status !== "ACTIVE") throw new Error("trigger_not_cancelable");
-
-    const result = await pool.query<TriggerOrderRow>(
-        `
-        UPDATE trigger_orders
-        SET status = 'CANCELED'
-        WHERE id = $1 AND status = 'ACTIVE'
-        RETURNING ${TRIGGER_COLUMNS}
-        `,
-        [triggerId]
-    );
-
-    if (result.rows.length === 0) return row;
-
-    return result.rows[0];
+    throw new Error("trigger_not_cancelable");
 }

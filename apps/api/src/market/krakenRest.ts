@@ -45,7 +45,7 @@ export async function fetchOHLC(
 ): Promise<OHLCPage> {
     const url = `${KRAKEN_BASE_URL}/OHLC?pair=${krakenPair}&interval=${interval}&since=${since}`;
 
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
         throw new Error(`Kraken OHLC HTTP ${res.status}: ${await res.text()}`);
     }

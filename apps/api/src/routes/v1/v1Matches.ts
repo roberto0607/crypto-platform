@@ -12,6 +12,7 @@ import {
     getMatchHistory,
 } from "../../competitions/matchService.js";
 import { pool } from "../../db/pool.js";
+import { parseIntParam } from "../../http/pagination.js";
 
 const challengeBody = z.object({
     opponentId: z.string().uuid(),
@@ -116,6 +117,10 @@ const v1Matches: FastifyPluginAsync = async (app) => {
             const { id } = req.params as { id: string };
             const match = await getMatchById(id);
             if (!match) throw new Error("match_not_found");
+            const userId = req.user!.id;
+            if (match.challenger_id !== userId && match.opponent_id !== userId) {
+                return reply.code(403).send({ ok: false, error: "forbidden" });
+            }
             return reply.send({ ok: true, match });
         } catch (err) {
             return v1HandleError(reply, err);
@@ -133,8 +138,26 @@ const v1Matches: FastifyPluginAsync = async (app) => {
     }, async (req, reply) => {
         try {
             const { id } = req.params as { id: string };
+            const userId = req.user!.id;
+
+            // Ownership check: only match participants may view the ELO result.
+            const match = await getMatchById(id);
+            if (!match) {
+                return reply.code(404).send({ ok: false, error: "no_elo_result" });
+            }
+            if (match.challenger_id !== userId && match.opponent_id !== userId) {
+                return reply.code(403).send({ ok: false, error: "forbidden" });
+            }
+
             const { rows } = await pool.query(
-                `SELECT * FROM match_elo_results WHERE match_id = $1`,
+                `SELECT match_id, winner_id, loser_id,
+                        winner_old_elo, winner_new_elo, winner_delta,
+                        loser_old_elo, loser_new_elo, loser_delta,
+                        winner_tier_before, winner_tier_after,
+                        loser_tier_before, loser_tier_after,
+                        winner_win_streak, loser_loss_streak,
+                        streak_multiplier, badges_earned, created_at
+                 FROM match_elo_results WHERE match_id = $1`,
                 [id],
             );
             if (rows.length === 0) {
@@ -176,8 +199,8 @@ const v1Matches: FastifyPluginAsync = async (app) => {
         try {
             const userId = req.user!.id;
             const query = req.query as { limit?: string; offset?: string };
-            const limit = query.limit ? parseInt(query.limit, 10) : 20;
-            const offset = query.offset ? parseInt(query.offset, 10) : 0;
+            const limit = parseIntParam(query.limit, 20, 1, 100);
+            const offset = parseIntParam(query.offset, 0, 0, 1_000_000);
             const result = await getMatchHistory(userId, limit, offset);
             return reply.send({ ok: true, ...result });
         } catch (err) {

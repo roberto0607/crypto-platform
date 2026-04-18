@@ -93,10 +93,31 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   });
 
-  // CORS: env-based origins for production, localhost defaults for dev
-  const corsOrigins = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
+  // CORS: env-based origins for production, localhost defaults for dev.
+  // Each origin must be a full URL with http/https scheme; '*' is rejected because
+  // credentials: true combined with a wildcard origin is unsafe.
+  const rawCorsOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter((o) => o.length > 0)
     : ["http://localhost:5173", "http://localhost:3000"];
+
+  const corsOrigins: string[] = [];
+  for (const entry of rawCorsOrigins) {
+    if (entry === "*") {
+      throw new Error(`Invalid CORS origin: ${entry}. Wildcard is not allowed with credentials.`);
+    }
+    if (!/^https?:\/\//.test(entry)) {
+      throw new Error(`Invalid CORS origin: ${entry}. Must be a full URL with http/https scheme.`);
+    }
+    try {
+      // URL parses successfully → accept.
+      new URL(entry);
+    } catch {
+      throw new Error(`Invalid CORS origin: ${entry}. Must be a parseable URL.`);
+    }
+    corsOrigins.push(entry);
+  }
+
+  app.log.info({ origins: corsOrigins }, "CORS allowlist active");
 
   await app.register(cors, {
     origin: corsOrigins,

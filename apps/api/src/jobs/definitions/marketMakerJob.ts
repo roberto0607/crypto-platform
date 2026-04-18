@@ -10,7 +10,9 @@ import crypto from "node:crypto";
 
 // ── Constants ──
 
-const BOT_USER_ID = "00000000-0000-0000-0000-000000000001";
+// Bot user ID is sourced from config (env: BOT_USER_ID).
+// Set to a random UUID in production via Railway env vars so the account is not enumerable.
+const BOT_USER_ID = config.botUserId;
 
 /**
  * Price levels on each side of the mid-price.

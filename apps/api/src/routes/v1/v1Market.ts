@@ -16,6 +16,7 @@ import { logger } from "../../observability/logContext";
 import { pool } from "../../db/pool";
 import { getLiveFootprintCandles } from "../../services/footprintAggregator";
 import { estimateLiquidationClusters } from "../../market/liquidationEstimator";
+import { parseIntParam } from "../../http/pagination";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -368,8 +369,11 @@ const v1Market: FastifyPluginAsync = async (app) => {
         const q = req.query as { pair?: string; timeframe?: string; from?: string; to?: string };
         const pair = q.pair ?? "BTC";
         const timeframe = q.timeframe ?? "1m";
-        const from = q.from ? parseInt(q.from, 10) : Date.now() - 86_400_000;
-        const to = q.to ? parseInt(q.to, 10) : Date.now();
+        // Clamp timestamps to a sane range: 10 years back, 1 day in the future (ms since epoch).
+        const MAX_TS = Date.now() + 86_400_000;
+        const MIN_TS = Date.now() - 10 * 365 * 86_400_000;
+        const from = parseIntParam(q.from, Date.now() - 86_400_000, MIN_TS, MAX_TS);
+        const to = parseIntParam(q.to, Date.now(), MIN_TS, MAX_TS);
 
         const cacheKey = `footprint:${pair}:${timeframe}:${Math.floor(from / 1000)}`;
         const cached = getCached<unknown[]>(cacheKey);

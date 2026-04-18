@@ -44,6 +44,23 @@ export function parseLimit(raw: unknown): number {
   return Math.max(MIN_LIMIT, Math.min(MAX_LIMIT, Math.floor(n)));
 }
 
+/**
+ * Safe integer parser for pagination-style query params.
+ * Rejects NaN/Infinity and clamps into [min, max].
+ * Use for route-specific limit/offset defaults different from parseLimit's 1..100.
+ */
+export function parseIntParam(
+  raw: unknown,
+  defaultVal: number,
+  min: number,
+  max: number,
+): number {
+  if (raw === undefined || raw === null || raw === "") return defaultVal;
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n)) return defaultVal;
+  return Math.max(min, Math.min(max, n));
+}
+
 // ── Page slicing helper ─────────────────────────────────
 
 /**

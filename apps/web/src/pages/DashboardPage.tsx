@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { subDays, startOfDay, format } from "date-fns";
 import { useCompetitionStore } from "@/stores/competitionStore";
@@ -472,7 +472,7 @@ function EquityChart({ snapshots }: { snapshots: Array<{ ts: number; equity: num
 function StatCard({ label, value, sub, ghost, cls = "dm", delay = "" }: {
   label: string;
   value: string;
-  sub?: string;
+  sub?: ReactNode;
   ghost?: string;
   cls?: string;
   delay?: string;
@@ -481,7 +481,7 @@ function StatCard({ label, value, sub, ghost, cls = "dm", delay = "" }: {
     <div className={`t-sc t-fade-up ${delay}`}>
       <div className="t-sc-label">{label}</div>
       <div className={`t-sc-val ${cls}`}>{value}</div>
-      {sub && <div className="t-sc-sub" dangerouslySetInnerHTML={{ __html: sub }} />}
+      {sub && <div className="t-sc-sub">{sub}</div>}
       {ghost && <div className="t-sc-ghost">{ghost}</div>}
     </div>
   );
@@ -729,8 +729,20 @@ export default function DashboardPage() {
           label="Portfolio Value"
           value={portfolioValue}
           sub={portfolio
-            ? `${positions.length} position${positions.length !== 1 ? "s" : ""} <span style="color:rgba(0,255,65,0.5)">\u00B7</span> ${formatUsd(portfolio.net_pnl_quote)} all time`
-            : `Starting capital &nbsp;<span style="color:rgba(0,255,65,0.5)">\u00B7</span>&nbsp; 0 positions`
+            ? (
+              <>
+                {positions.length} position{positions.length !== 1 ? "s" : ""}{" "}
+                <span style={{ color: "rgba(0,255,65,0.5)" }}>{"\u00B7"}</span>{" "}
+                {formatUsd(portfolio.net_pnl_quote)} all time
+              </>
+            )
+            : (
+              <>
+                Starting capital&nbsp;
+                <span style={{ color: "rgba(0,255,65,0.5)" }}>{"\u00B7"}</span>
+                &nbsp;0 positions
+              </>
+            )
           }
           ghost="$"
           cls="wh"
@@ -747,7 +759,12 @@ export default function DashboardPage() {
         <StatCard
           label="Unrealized PnL"
           value={positions.length > 0 ? formatUsd(unrealizedPnl.toFixed(2)) : "\u2014\u2014"}
-          sub={`Open positions: &nbsp;<span style="color:rgba(255,255,255,0.3)">${positions.length}</span>`}
+          sub={
+            <>
+              Open positions:&nbsp;
+              <span style={{ color: "rgba(255,255,255,0.3)" }}>{positions.length}</span>
+            </>
+          }
           ghost="~"
           cls={positions.length > 0 ? (unrealizedPnl >= 0 ? "gr" : "rd") : "dm"}
           delay="d3"
@@ -755,7 +772,12 @@ export default function DashboardPage() {
         <StatCard
           label="Net PnL"
           value={netPnl !== null && (netPnl !== 0 || recentTrades.length > 0) ? formatUsd(netPnl.toFixed(2)) : "\u2014\u2014"}
-          sub={`Closed trades: &nbsp;<span style="color:rgba(255,255,255,0.3)">${journalStats?.totalTrades ?? 0}</span>`}
+          sub={
+            <>
+              Closed trades:&nbsp;
+              <span style={{ color: "rgba(255,255,255,0.3)" }}>{journalStats?.totalTrades ?? 0}</span>
+            </>
+          }
           ghost="&Sigma;"
           cls={netPnl !== null && netPnl !== 0 ? (netPnl >= 0 ? "gr" : "rd") : "dm"}
           delay="d4"

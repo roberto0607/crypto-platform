@@ -25,6 +25,11 @@ function booleanEnv(name: string, fallback: boolean): boolean {
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProd = nodeEnv === "production";
 
+// Boot-time safety guard: rate limiting must remain enabled in production.
+if (isProd && (process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1")) {
+  throw new Error("DISABLE_RATE_LIMIT cannot be true in production");
+}
+
 const jwtAccessTtlSeconds = numberEnv("JWT_ACCESS_TTL_SECONDS", 900);
 
 // Prefer seconds if provided; otherwise fall back to days.
@@ -126,6 +131,8 @@ export const config = {
 
   // ── Market maker bot ──
   disableMarketMaker: booleanEnv("DISABLE_MARKET_MAKER", false),
+  // Set this to a random UUID in production via Railway env vars.
+  botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
 
   // ── Phase 19: Candle backfill on boot ──
   candleBackfillOnBoot: booleanEnv("CANDLE_BACKFILL_ON_BOOT", true),
