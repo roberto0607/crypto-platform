@@ -22,6 +22,9 @@ export async function storeRefreshToken(args: {
              RETURNING id, family_id`,
             [userId, tokenHash, expiresAt, familyId]
         );
+        if (!result.rows || result.rows.length === 0) {
+            throw new Error("Token insert failed — no row returned");
+        }
         return { id: result.rows[0].id, familyId: result.rows[0].family_id };
     }
 
@@ -31,5 +34,8 @@ export async function storeRefreshToken(args: {
          RETURNING id, family_id`,
         [userId, tokenHash, expiresAt]
     );
+    if (!result.rows || result.rows.length === 0) {
+        throw new Error("Token insert failed — no row returned");
+    }
     return { id: result.rows[0].id, familyId: result.rows[0].family_id };
 }

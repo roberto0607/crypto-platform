@@ -99,6 +99,16 @@ export default function AppLayout() {
     return () => clearTimeout(id);
   }, [sseConnectionState]);
 
+  // ── Session expired (SSE 401) ──
+  // SSE 401 means the access token is no longer valid. Surface a visible
+  // banner + login CTA instead of letting the UI freeze silently.
+  const [sessionExpired, setSessionExpired] = useState(false);
+  useEffect(() => {
+    const onUnauthorized = () => setSessionExpired(true);
+    window.addEventListener("sse:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("sse:unauthorized", onUnauthorized);
+  }, []);
+
   function handleLogout() {
     // Belt-and-suspenders: authStore.clearAuth already revokes the refresh
     // cookie server-side (via POST /auth/logout) and removes tradr_session.
@@ -127,6 +137,25 @@ export default function AppLayout() {
       <div className="fixed inset-0 pointer-events-none z-[2] scanlines-bg" />
 
       <SystemBanner />
+
+      {sessionExpired && (
+        <div
+          role="alert"
+          className="px-4 py-2 text-[10px] tracking-[2px] font-mono flex items-center justify-center gap-3 bg-red-500/10 border-b border-red-500/40 text-red-300"
+        >
+          <span>SESSION EXPIRED — PLEASE LOG IN AGAIN</span>
+          <button
+            type="button"
+            onClick={() => {
+              setSessionExpired(false);
+              handleLogout();
+            }}
+            className="px-2 py-0.5 border border-red-500/60 text-red-200 hover:bg-red-500/20 tracking-[2px]"
+          >
+            LOG IN
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden relative z-10">
         {/* ── SIDEBAR ── */}

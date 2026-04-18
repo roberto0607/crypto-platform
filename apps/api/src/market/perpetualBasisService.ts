@@ -39,7 +39,7 @@ let interval: ReturnType<typeof setInterval> | null = null;
 
 // ── Fetchers ──
 
-async function fetchSpotPrice(): Promise<number> {
+async function fetchSpotPrice(): Promise<number | null> {
     const res = await fetch(
         "https://api.coinbase.com/api/v3/brokerage/market/product_book?product_id=BTC-USD&limit=1",
     );
@@ -47,6 +47,9 @@ async function fetchSpotPrice(): Promise<number> {
     const json = (await res.json()) as {
         pricebook: { bids: { price: string }[]; asks: { price: string }[] };
     };
+    if (!json.pricebook?.bids?.length || !json.pricebook?.asks?.length) {
+        return null; // caller should handle null basis
+    }
     const bid = parseFloat(json.pricebook.bids[0]!.price);
     const ask = parseFloat(json.pricebook.asks[0]!.price);
     return (bid + ask) / 2;
@@ -107,6 +110,11 @@ async function poll(): Promise<void> {
             fetchSpotPrice(),
             fetchDeribitTicker(),
         ]);
+
+        if (spotPrice === null || spotPrice === 0) {
+            console.warn("[PerpBasis] Empty Coinbase book — skipping this poll");
+            return;
+        }
 
         const basisDollar = deribit.perpPrice - spotPrice;
         const basisPercent = (basisDollar / spotPrice) * 100;

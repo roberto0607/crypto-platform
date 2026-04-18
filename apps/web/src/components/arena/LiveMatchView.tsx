@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -517,6 +517,15 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const [positions, setPositions] = useState<Position[]>([]);
     const [showEndOverlay, setShowEndOverlay] = useState(false);
 
+    // Tracks whether the component is still mounted, so async SSE handlers
+    // and polls don't setState on an unmounted component.
+    const isMounted = useRef(true);
+    useEffect(() => {
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
+
     const isChallenger = match.challenger_id === userId;
     const yourName = isChallenger ? (match.challenger_name ?? "YOU") : (match.opponent_name ?? "YOU");
     const opponentName = isChallenger ? (match.opponent_name ?? "OPPONENT") : (match.challenger_name ?? "OPPONENT");
@@ -580,7 +589,9 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     // Fetch positions
     const refreshPositions = useCallback(() => {
         getPositions()
-            .then((res) => setPositions(res.data.positions))
+            .then((res) => {
+                if (isMounted.current) setPositions(res.data.positions);
+            })
             .catch(() => {});
     }, []);
 
@@ -589,7 +600,9 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     }, [selectedPairId, refreshPositions]);
 
     useEffect(() => {
-        const handler = () => refreshPositions();
+        const handler = () => {
+            if (isMounted.current) refreshPositions();
+        };
         window.addEventListener("sse:trade.created", handler);
         return () => window.removeEventListener("sse:trade.created", handler);
     }, [refreshPositions]);

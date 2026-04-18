@@ -51,6 +51,9 @@ export async function appendEventTx(
       input.createdAt,
     ],
   );
+  if (!rows || rows.length === 0) {
+    throw new Error("Event append failed — no row returned");
+  }
   return rows[0];
 }
 
@@ -86,7 +89,9 @@ export async function listEvents(filters: {
     `SELECT COUNT(*) AS cnt FROM event_stream ${where}`,
     params,
   );
-  const total = parseInt(countResult.rows[0].cnt, 10);
+  const rawCount = countResult.rows?.[0]?.cnt ?? "0";
+  const parsedTotal = parseInt(rawCount, 10);
+  const total = Number.isNaN(parsedTotal) ? 0 : parsedTotal;
 
   params.push(filters.limit);
   const { rows } = await pool.query<EventStreamRow>(

@@ -93,7 +93,8 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
           WHERE status = 'OPEN'
             AND (closes_at IS NULL OR closes_at > now())`
       );
-      const openCount = parseInt(rows[0].open_count, 10);
+      const parsedOpen = parseInt(rows?.[0]?.open_count ?? "0", 10);
+      const openCount = Number.isNaN(parsedOpen) ? 0 : parsedOpen;
       result.checks.breakers.openCount = openCount;
       result.checks.breakers.status = openCount > 0 ? "DEGRADED" : "OK";
     } catch {

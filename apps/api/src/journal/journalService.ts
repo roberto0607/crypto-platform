@@ -69,20 +69,32 @@ export async function processFillForJournal(
         [userId, pairId, compId, closingSide],
     );
 
-    let remaining = parseFloat(qty);
+    const fillQty = parseFloat(qty);
+    if (!Number.isFinite(fillQty) || fillQty <= 0) {
+        // Fill qty is invalid — no journal work to do. Caller should treat
+        // this as a no-op rather than corrupt the journal with NaN/Infinity.
+        return;
+    }
+
+    let remaining = fillQty;
     let consumedFeeQuote = 0;
 
     for (const lot of lots) {
         if (remaining <= 0) break;
 
         const lotRemaining = parseFloat(lot.qty_remaining);
+        if (!Number.isFinite(lotRemaining) || lotRemaining <= 0) {
+            // Skip lots with zero or invalid remaining qty — they should have
+            // been filtered by the SQL, but defend against NaN/dust anyway.
+            continue;
+        }
         const consumed = Math.min(remaining, lotRemaining);
         const consumedRatio = consumed / lotRemaining;
 
         // Proportional fee from the lot
         const lotFee = parseFloat(lot.fee_quote) * consumedRatio;
-        // Proportional fee from the current fill
-        const fillFeeShare = parseFloat(feeQuote) * (consumed / parseFloat(qty));
+        // Proportional fee from the current fill (fillQty guaranteed > 0 above)
+        const fillFeeShare = parseFloat(feeQuote) * (consumed / fillQty);
 
         // Determine direction: lot side BUY = LONG trade, lot side SELL = SHORT trade
         const direction = lot.side === "BUY" ? "LONG" : "SHORT";

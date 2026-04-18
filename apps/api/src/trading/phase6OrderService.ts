@@ -112,6 +112,10 @@ export async function placeOrderWithSnapshot(
              ORDER BY ts DESC LIMIT 1`,
             [body.pairId, snapshot.ts]
         );
+        // Defensive: `candleRows[0] ?? null` was already safe from TypeError.
+        // computeMarketExecution below handles null volume/high/low (treats as
+        // missing and falls back to default simulation), so we keep that
+        // behavior rather than rejecting orders on pairs with no candle history.
         const candle = candleRows[0] ?? null;
 
         const simResult = computeMarketExecution(

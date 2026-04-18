@@ -161,6 +161,10 @@ export async function acceptMatch(matchId: string, acceptingUserId: string): Pro
             [matchId, now.toISOString(), endsAt.toISOString()],
         );
 
+        if (!updated || updated.length === 0) {
+            throw new Error("match_update_failed");
+        }
+
         await client.query("COMMIT");
 
         const accepted = updated[0];
@@ -219,6 +223,10 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
              RETURNING *`,
             [matchId, forfeitUserId, winnerId],
         );
+
+        if (!updated || updated.length === 0) {
+            throw new Error("match_update_failed");
+        }
 
         // Apply full ELO resolution (streaks, tiers, badges) — idempotent
         const eloResult = await resolveMatchElo(matchId, client);
@@ -315,6 +323,10 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
                 winnerId,
             ],
         );
+
+        if (!updated || updated.length === 0) {
+            throw new Error("match_update_failed");
+        }
 
         // Apply full ELO resolution (streaks, tiers, badges) — idempotent
         const eloResult = await resolveMatchElo(matchId, client);
@@ -489,18 +501,23 @@ async function calculatePlayerStats(
         return { pnlPct: 0, tradesCount: 0, winRate: 0, consistency: 0, score: 0 };
     }
 
-    const pnls = positions.map((p) => parseFloat(p.pnl ?? "0"));
+    const pnls = positions.map((p) => {
+        const pnlValue = parseFloat(p.pnl ?? "0");
+        return Number.isNaN(pnlValue) ? 0 : pnlValue;
+    });
     const totalPnl = pnls.reduce((s, v) => s + v, 0);
-    const pnlPct = (totalPnl / startingCapital) * 100;
+    const pnlPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0;
     const wins = pnls.filter((p) => p > 0).length;
-    const winRate = (wins / tradesCount) * 100;
+    const winRate = tradesCount > 0 ? (wins / tradesCount) * 100 : 0;
 
     // Consistency = inverse of return standard deviation (higher = more consistent)
     const mean = totalPnl / tradesCount;
     const variance = pnls.reduce((s, v) => s + (v - mean) ** 2, 0) / tradesCount;
     const stddev = Math.sqrt(variance);
     // Normalize: consistency of 100 when stddev=0, approaches 0 as stddev grows
-    const consistency = stddev === 0 ? 100 : Math.max(0, 100 - stddev / startingCapital * 10000);
+    const consistency = stddev === 0 || startingCapital <= 0
+        ? 100
+        : Math.max(0, 100 - stddev / startingCapital * 10000);
 
     // Weighted composite score
     const score = calculateNuancedScore(pnlPct, winRate, tradesCount, consistency);
@@ -539,6 +556,8 @@ export function calculateNuancedScore(
  * Force-close all open match positions at current market price.
  */
 async function forceCloseOpenPositions(matchId: string, client: PoolClient): Promise<void> {
+    // FOR UPDATE prevents two concurrent completeMatch calls from force-closing
+    // the same position twice.
     const { rows: openPositions } = await client.query<{
         id: string;
         pair_id: string;
@@ -548,23 +567,54 @@ async function forceCloseOpenPositions(matchId: string, client: PoolClient): Pro
     }>(
         `SELECT mp.id, mp.pair_id, mp.side, mp.entry_price, mp.qty
          FROM match_positions mp
-         WHERE mp.match_id = $1 AND mp.closed_at IS NULL`,
+         WHERE mp.match_id = $1 AND mp.closed_at IS NULL
+         FOR UPDATE`,
         [matchId],
     );
 
     for (const pos of openPositions) {
-        // Get current price from snapshot store
-        // Look up pair symbol for the snapshot
-        const { rows: pairRows } = await client.query<{ symbol: string }>(
-            `SELECT symbol FROM trading_pairs WHERE id = $1`,
+        // Get current price from snapshot store. Look up pair symbol + last_price
+        // so we can fall back through snapshot → trading_pairs.last_price → entry_price.
+        const { rows: pairRows } = await client.query<{
+            symbol: string;
+            last_price: string | null;
+        }>(
+            `SELECT symbol, last_price FROM trading_pairs WHERE id = $1`,
             [pos.pair_id],
         );
         const symbol = pairRows[0]?.symbol;
-        let exitPrice = parseFloat(pos.entry_price); // fallback: flat close
+        const lastPriceStr = pairRows[0]?.last_price ?? null;
 
+        // Preferred: live snapshot (<60s old).
+        let exitPrice: number | null = null;
         if (symbol) {
-            const snap = await getSnapshot(symbol, 60_000); // 60s stale tolerance
-            if (snap) exitPrice = parseFloat(snap.last);
+            const snap = await getSnapshot(symbol, 60_000);
+            if (snap) {
+                const snapPrice = parseFloat(snap.last);
+                if (Number.isFinite(snapPrice) && snapPrice > 0) exitPrice = snapPrice;
+            }
+        }
+
+        // Fallback 1: trading_pairs.last_price (most recent persisted price).
+        if (exitPrice === null && lastPriceStr !== null) {
+            const lpNum = parseFloat(lastPriceStr);
+            if (Number.isFinite(lpNum) && lpNum > 0) {
+                exitPrice = lpNum;
+                logger.warn(
+                    { matchId, positionId: pos.id, pairId: pos.pair_id, source: "trading_pairs.last_price" },
+                    "force_close_used_last_price_fallback",
+                );
+            }
+        }
+
+        // Fallback 2: entry_price (flat close). Log as error — this means both
+        // live feed and persisted last_price are stale/missing.
+        if (exitPrice === null) {
+            exitPrice = parseFloat(pos.entry_price);
+            logger.error(
+                { matchId, positionId: pos.id, pairId: pos.pair_id, source: "entry_price" },
+                "force_close_fell_back_to_entry_price_no_market_data",
+            );
         }
 
         const entryPrice = parseFloat(pos.entry_price);

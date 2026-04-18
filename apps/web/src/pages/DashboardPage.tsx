@@ -496,6 +496,9 @@ function QuickTrade({ pairs, cashBalance, onTrade }: {
   const [amt, setAmt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  // Synchronous guard to prevent double-submission between a click and the
+  // next React render tick. The useState submitting flag updates asynchronously.
+  const submittingRef = useRef(false);
 
   const pair = pairs[pairIdx] ?? null;
   const price = pair?.last_price ? parseFloat(pair.last_price) : 0;
@@ -505,6 +508,8 @@ function QuickTrade({ pairs, cashBalance, onTrade }: {
 
   async function handleTrade(side: "BUY" | "SELL") {
     if (!pair || !amt || submitting || price <= 0) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setResult(null);
     try {
@@ -513,10 +518,12 @@ function QuickTrade({ pairs, cashBalance, onTrade }: {
       setResult(`${side} filled`);
       setAmt("");
       setTimeout(() => setResult(null), 3000);
-    } catch {
+    } catch (err) {
+      console.error("Order failed:", err);
       setResult("Order failed");
       setTimeout(() => setResult(null), 3000);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
