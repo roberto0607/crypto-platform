@@ -28,10 +28,27 @@ vi.mock("../../sim/liquidityModel", () => ({ computeAvailableLiquidity: vi.fn() 
 vi.mock("../../events/eventTypes", () => ({
   createEvent: vi.fn((_type: string, data: any) => ({ type: _type, data, ts: Date.now() })),
 }));
-vi.mock("../../observability/logContext", () => ({
-  buildLogContext: vi.fn(() => ({})),
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
+// Canonical logger mock: a recursive factory so any `logger.child()` call
+// (from transitively-imported modules like eloService) returns another
+// logger-shaped object with the same API. Factory is scoped INSIDE the
+// vi.mock closure because vi.mock is hoisted to the top of the file;
+// module-level const refs would be TDZ-unavailable at mock execution.
+vi.mock("../../observability/logContext", () => {
+  const makeMockLogger = () => {
+    const l: any = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      child: vi.fn(() => makeMockLogger()),
+    };
+    return l;
+  };
+  return {
+    buildLogContext: vi.fn(() => ({})),
+    logger: makeMockLogger(),
+  };
+});
 vi.mock("../../metrics", () => ({
   orderPlacementLatency: { observe: vi.fn() },
   ordersCreatedTotal: { inc: vi.fn() },
@@ -141,8 +158,12 @@ function setupDefaultMocks() {
       query: vi.fn().mockImplementation(async (sql: string) => {
         if (sql.includes("last_price FROM trading_pairs"))
           return { rows: [{ last_price: "50000.00000000" }] };
-        if (sql.includes("user_id FROM orders"))
-          return { rows: [{ user_id: "maker-id" }] };
+        // Maker-order lookup. Matches the shape (SELECT ... FROM orders
+        // WHERE id = $1) without pinning to a column list — phase6OrderService
+        // now reads user_id, competition_id, and match_id off this row so
+        // the maker-scope fix (Bug L3) can attribute fills correctly.
+        if (/FROM\s+orders\s+WHERE\s+id\s*=\s*\$1/i.test(sql))
+          return { rows: [{ user_id: "maker-id", competition_id: null, match_id: null }] };
         return { rows: [] };
       }),
     };
@@ -370,13 +391,20 @@ describe("placeOrderWithSnapshot", () => {
     it("writes portfolio snapshot within transaction", async () => {
       await placeOrderWithSnapshot("user-1", BODY);
 
+      // Assert meaningful positional args (user, pair, fill price) + scope.
+      // Scope in this test is free-play: the default pool mock returns
+      // non-match-id rows, so getActiveMatchIdForUser resolves to null and
+      // no caller supplied a competitionId. The trailing null asserts
+      // free-play semantics explicitly — drop it only if match-scoped
+      // paths get their own dedicated test.
       expect(writePortfolioSnapshotTx).toHaveBeenCalledWith(
         expect.anything(), // client (inside txn)
         "user-1",
         expect.any(Number), // timestamp
         "pair-1",
         "50000.00000000", // last fill price
-        undefined, // competitionId
+        undefined,          // competitionId — free play
+        null,               // matchId       — free play (resolved by placeOrderWithSnapshot)
       );
     });
   });

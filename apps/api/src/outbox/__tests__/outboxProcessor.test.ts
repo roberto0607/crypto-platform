@@ -11,9 +11,23 @@ vi.mock("../../incidents/incidentService", () => ({
   appendRepairEventsIfIncident: vi.fn(),
 }));
 
-vi.mock("../../observability/logContext", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+// Canonical logger mock — factory scoped inside vi.mock closure because
+// vi.mock is hoisted to the top of the file. See phase6OrderService.test.ts.
+vi.mock("../../observability/logContext", () => {
+  const makeMockLogger = () => {
+    const l: any = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      child: vi.fn(() => makeMockLogger()),
+    };
+    return l;
+  };
+  return {
+    logger: makeMockLogger(),
+  };
+});
 
 import { processEvent } from "../outboxProcessor";
 import { recordEvent } from "../../eventStream/eventService";
