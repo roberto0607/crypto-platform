@@ -3,6 +3,12 @@ import { z } from "zod";
 
 import { requireUser } from "../auth/requireUser";
 import { getPositions, getPnlSummary, getEquitySeries } from "../analytics/pnlService";
+import type { PositionRow } from "../analytics/positionRepo";
+import type { PositionWithPnl } from "../analytics/pnlService";
+import { getActiveMatchIdForUser } from "../competitions/matchService";
+import { getSnapshotForUser } from "../replay/replayEngine";
+import { pool } from "../db/pool";
+import { D, toFixed8 } from "../utils/decimal";
 
 // ── Zod schemas ──
 const positionsQuery = z.object({
@@ -17,13 +23,80 @@ const equityQuery = z.object({
 // ── Plugin ──
 const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
-    // GET /positions — List user's positions with unrealized PnL
+    // GET /positions — List user's positions with unrealized PnL.
+    //
+    // Scope: follows the user's active match state, not the raw table.
+    //   - In a match → only that match's scoped rows. Free-play rows hidden.
+    //   - Not in a match → only unscoped (free-play) rows. Match-scoped
+    //     rows from a previous match stay with the match, not the user.
+    //
+    // Filters out base_qty = 0 rows (flat / fully-closed aggregates should
+    // not render as open positions).
+    //
+    // We do a bespoke query here instead of extending `getPositions` — the
+    // shared helper is still used by portfolioService and pnlService for
+    // aggregate-scope reads, and widening its signature would force scope
+    // decisions on those callers. The trade-off is ~20 lines of duplicated
+    // unrealized-PnL attach logic, which is acceptable for route isolation.
     app.get("/positions", { schema: { tags: ["Portfolio"], summary: "List positions", description: "Returns user's open positions with unrealized PnL.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, positions: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
         const actor = req.user!;
         const queryParsed = positionsQuery.safeParse(req.query);
         const pairId = queryParsed.success ? queryParsed.data.pairId : undefined;
 
-        const positions = await getPositions(actor.id, pairId);
+        const activeMatchId = await getActiveMatchIdForUser(actor.id);
+
+        const conditions: string[] = [`user_id = $1`, `base_qty <> 0`];
+        const params: (string | null)[] = [actor.id];
+
+        if (activeMatchId) {
+            // In-match — show only the current match's rows.
+            params.push(activeMatchId);
+            conditions.push(`match_id = $${params.length}`);
+        } else {
+            // Free-play — exclude any match- or competition-scoped rows.
+            conditions.push(`match_id IS NULL`);
+            conditions.push(`competition_id IS NULL`);
+        }
+
+        if (pairId) {
+            params.push(pairId);
+            conditions.push(`pair_id = $${params.length}`);
+        }
+
+        const { rows } = await pool.query<PositionRow>(
+            `SELECT user_id, pair_id, base_qty, avg_entry_price,
+                    realized_pnl_quote, fees_paid_quote, updated_at
+             FROM positions
+             WHERE ${conditions.join(" AND ")}
+             ORDER BY updated_at DESC`,
+            params,
+        );
+
+        // Attach unrealized PnL using the same snapshot cascade as getPositions.
+        const positions: PositionWithPnl[] = [];
+        for (const pos of rows) {
+            const baseQty = D(pos.base_qty);
+            const snapshot = await getSnapshotForUser(actor.id, pos.pair_id);
+            const currentPrice = D(snapshot.last);
+            const avgEntry = D(pos.avg_entry_price);
+            const unrealized = baseQty.mul(currentPrice.minus(avgEntry));
+            positions.push({
+                ...pos,
+                unrealized_pnl_quote: toFixed8(unrealized),
+                current_price: toFixed8(currentPrice),
+            });
+        }
+
+        req.log.info(
+            {
+                userId: actor.id,
+                scope: activeMatchId ? "match" : "free-play",
+                matchId: activeMatchId,
+                count: positions.length,
+            },
+            "positions_listed",
+        );
+
         return reply.send({ ok: true, positions });
     });
 

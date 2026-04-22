@@ -6,6 +6,8 @@ import { getSnapshot } from "../market/snapshotStore.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
+import { createTrade } from "../trading/tradeRepo.js";
+import { D, toFixed8 } from "../utils/decimal.js";
 
 const logger = rootLogger.child({ module: "matchService" });
 
@@ -213,15 +215,39 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
             ? match.opponent_id
             : match.challenger_id;
 
+        // Anti-gameability: force-close match-scoped positions and book the
+        // realized PnL into the match stats. Without this the forfeiter
+        // could escape a losing open position by forfeiting — now the loss
+        // sticks and shows up in challenger_pnl_pct / opponent_pnl_pct.
+        await closeMatchScopedPositions(matchId, client);
+
+        const capital = parseFloat(match.starting_capital);
+        const challengerStats = await calculatePlayerStats(matchId, match.challenger_id, capital, client);
+        const opponentStats = await calculatePlayerStats(matchId, match.opponent_id, capital, client);
+
         const { rows: updated } = await client.query<MatchRow>(
             `UPDATE matches
              SET status = 'FORFEITED',
                  forfeit_user_id = $2,
                  winner_id = $3,
+                 challenger_pnl_pct = $4,
+                 opponent_pnl_pct = $5,
+                 challenger_trades_count = $6,
+                 opponent_trades_count = $7,
+                 challenger_win_rate = $8,
+                 opponent_win_rate = $9,
+                 challenger_score = $10,
+                 opponent_score = $11,
                  completed_at = now()
              WHERE id = $1
              RETURNING *`,
-            [matchId, forfeitUserId, winnerId],
+            [
+                matchId, forfeitUserId, winnerId,
+                challengerStats.pnlPct, opponentStats.pnlPct,
+                challengerStats.tradesCount, opponentStats.tradesCount,
+                challengerStats.winRate, opponentStats.winRate,
+                challengerStats.score, opponentStats.score,
+            ],
         );
 
         if (!updated || updated.length === 0) {
@@ -282,8 +308,10 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
 
         const capital = parseFloat(match.starting_capital);
 
-        // Force-close any open positions at current market price
-        await forceCloseOpenPositions(matchId, client);
+        // Force-close any open match-scoped positions at current market price.
+        // Books realized PnL into positions.realized_pnl_quote so the next
+        // calculatePlayerStats call picks it up.
+        await closeMatchScopedPositions(matchId, client);
 
         // Calculate stats for each player
         const challengerStats = await calculatePlayerStats(matchId, match.challenger_id, capital, client);
@@ -361,6 +389,30 @@ export async function getMatchById(matchId: string): Promise<MatchWithPlayers | 
         [matchId],
     );
     return rows[0] ?? null;
+}
+
+/**
+ * Returns the user's currently-running match id, or null if they're in
+ * free-play. Uses the `one_active_match_per_*` partial unique indexes, so
+ * this is at most a 1-row lookup.
+ *
+ * Only returns ACTIVE matches (not PENDING) — a match that hasn't started
+ * shouldn't capture fills. Accepts an optional PoolClient so callers
+ * inside a transaction can keep the lookup in the same txn.
+ */
+export async function getActiveMatchIdForUser(
+    userId: string,
+    client?: PoolClient,
+): Promise<string | null> {
+    const q = client ?? pool;
+    const { rows } = await q.query<{ id: string }>(
+        `SELECT id FROM matches
+         WHERE (challenger_id = $1 OR opponent_id = $1)
+           AND status = 'ACTIVE'
+         LIMIT 1`,
+        [userId],
+    );
+    return rows[0]?.id ?? null;
 }
 
 /**
@@ -487,39 +539,56 @@ async function calculatePlayerStats(
     startingCapital: number,
     client: PoolClient,
 ): Promise<PlayerStats> {
-    // Get all closed positions for this player in this match
+    // Stats come from the match-scoped positions table (the live aggregate),
+    // not the deprecated match_positions table. Net realized P&L per row is
+    // realized_pnl_quote - fees_paid_quote; trade count is the number of
+    // FILLED orders for this user in this match. Win rate is the fraction
+    // of position rows with positive net realized P&L.
     const { rows: positions } = await client.query<{
-        pnl: string | null;
+        realized_pnl_quote: string | null;
+        fees_paid_quote: string | null;
     }>(
-        `SELECT pnl FROM match_positions
-         WHERE match_id = $1 AND user_id = $2 AND closed_at IS NOT NULL`,
+        `SELECT realized_pnl_quote, fees_paid_quote
+         FROM positions
+         WHERE match_id = $1 AND user_id = $2`,
         [matchId, userId],
     );
 
-    const tradesCount = positions.length;
-    if (tradesCount === 0) {
-        return { pnlPct: 0, tradesCount: 0, winRate: 0, consistency: 0, score: 0 };
+    const { rows: orderCountRows } = await client.query<{ count: string }>(
+        `SELECT count(*) FROM orders
+         WHERE match_id = $1 AND user_id = $2 AND status = 'FILLED'`,
+        [matchId, userId],
+    );
+    const parsedTradesCount = parseInt(orderCountRows[0]?.count ?? "0", 10);
+    const tradesCount = Number.isNaN(parsedTradesCount) ? 0 : parsedTradesCount;
+
+    if (positions.length === 0) {
+        return { pnlPct: 0, tradesCount, winRate: 0, consistency: 0, score: 0 };
     }
 
-    const pnls = positions.map((p) => {
-        const pnlValue = parseFloat(p.pnl ?? "0");
-        return Number.isNaN(pnlValue) ? 0 : pnlValue;
+    const nets = positions.map((p) => {
+        const realized = parseFloat(p.realized_pnl_quote ?? "0");
+        const fees = parseFloat(p.fees_paid_quote ?? "0");
+        const realizedSafe = Number.isNaN(realized) ? 0 : realized;
+        const feesSafe = Number.isNaN(fees) ? 0 : fees;
+        return realizedSafe - feesSafe;
     });
-    const totalPnl = pnls.reduce((s, v) => s + v, 0);
-    const pnlPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0;
-    const wins = pnls.filter((p) => p > 0).length;
-    const winRate = tradesCount > 0 ? (wins / tradesCount) * 100 : 0;
 
-    // Consistency = inverse of return standard deviation (higher = more consistent)
-    const mean = totalPnl / tradesCount;
-    const variance = pnls.reduce((s, v) => s + (v - mean) ** 2, 0) / tradesCount;
+    const totalPnl = nets.reduce((s, v) => s + v, 0);
+    const pnlPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0;
+
+    const wins = nets.filter((v) => v > 0).length;
+    const winRate = positions.length > 0 ? (wins / positions.length) * 100 : 0;
+
+    // Consistency = inverse of P&L standard deviation across the user's
+    // match-scoped pair rows. With 1 pair traded this always yields 100.
+    const mean = totalPnl / positions.length;
+    const variance = nets.reduce((s, v) => s + (v - mean) ** 2, 0) / positions.length;
     const stddev = Math.sqrt(variance);
-    // Normalize: consistency of 100 when stddev=0, approaches 0 as stddev grows
     const consistency = stddev === 0 || startingCapital <= 0
         ? 100
-        : Math.max(0, 100 - stddev / startingCapital * 10000);
+        : Math.max(0, 100 - (stddev / startingCapital) * 10000);
 
-    // Weighted composite score
     const score = calculateNuancedScore(pnlPct, winRate, tradesCount, consistency);
 
     return { pnlPct, tradesCount, winRate, consistency, score };
@@ -553,6 +622,172 @@ export function calculateNuancedScore(
 }
 
 /**
+ * Synthetically close every match-scoped row in `positions` (the live
+ * aggregate table) for this match. Books the unrealized PnL into
+ * realized_pnl_quote, zeroes base_qty, and writes a synthetic trade row
+ * marked is_system_fill=true so the audit trail shows the close.
+ *
+ * Called by completeMatch and forfeitMatch before their respective match
+ * row UPDATE, so the realized PnL flows into calculatePlayerStats and
+ * thence into match.challenger_pnl_pct / opponent_pnl_pct. This is the
+ * anti-gameability guarantee — a user can't forfeit a losing open position
+ * to escape the loss, because the close books the loss into the match score.
+ */
+async function closeMatchScopedPositions(
+    matchId: string,
+    client: PoolClient,
+): Promise<{ closedCount: number; totalPnlRealized: string }> {
+    // Lock match-scoped, non-flat position rows for the duration of the txn.
+    const { rows: openPositions } = await client.query<{
+        user_id: string;
+        pair_id: string;
+        base_qty: string;
+        avg_entry_price: string;
+        competition_id: string | null;
+    }>(
+        `SELECT user_id, pair_id, base_qty, avg_entry_price, competition_id
+         FROM positions
+         WHERE match_id = $1 AND base_qty <> 0
+         FOR UPDATE`,
+        [matchId],
+    );
+
+    let closedCount = 0;
+    let totalPnl = D("0");
+
+    for (const pos of openPositions) {
+        // Exit-price fallback chain (mirrors forceCloseOpenPositions).
+        const { rows: pairRows } = await client.query<{
+            symbol: string;
+            last_price: string | null;
+            quote_asset_id: string;
+        }>(
+            `SELECT symbol, last_price, quote_asset_id
+             FROM trading_pairs WHERE id = $1`,
+            [pos.pair_id],
+        );
+        const pair = pairRows[0];
+        const symbol = pair?.symbol;
+        const lastPriceStr = pair?.last_price ?? null;
+        const quoteAssetId = pair?.quote_asset_id ?? null;
+
+        let exitPrice: number | null = null;
+        let fallbackSource: "snapshot" | "trading_pairs.last_price" | "avg_entry_price" = "avg_entry_price";
+
+        // 1. Live snapshot (<60s old)
+        if (symbol) {
+            const snap = await getSnapshot(symbol, 60_000);
+            if (snap) {
+                const snapPrice = parseFloat(snap.last);
+                if (Number.isFinite(snapPrice) && snapPrice > 0) {
+                    exitPrice = snapPrice;
+                    fallbackSource = "snapshot";
+                }
+            }
+        }
+
+        // 2. trading_pairs.last_price
+        if (exitPrice === null && lastPriceStr !== null) {
+            const lp = parseFloat(lastPriceStr);
+            if (Number.isFinite(lp) && lp > 0) {
+                exitPrice = lp;
+                fallbackSource = "trading_pairs.last_price";
+            }
+        }
+
+        // 3. avg_entry_price (flat close — log a warning)
+        if (exitPrice === null) {
+            exitPrice = parseFloat(pos.avg_entry_price);
+            logger.warn(
+                { matchId, userId: pos.user_id, pairId: pos.pair_id },
+                "close_match_position_used_entry_price_fallback",
+            );
+        }
+
+        // Signed PnL formula works for both long (base_qty > 0) and short
+        // (base_qty < 0): pnl = base_qty * (exit - entry).
+        const baseQty = D(pos.base_qty);
+        const avgEntry = D(pos.avg_entry_price);
+        const exitD = D(exitPrice);
+        const pnl = baseQty.mul(exitD.minus(avgEntry));
+
+        await client.query(
+            `UPDATE positions
+             SET realized_pnl_quote = realized_pnl_quote + $3,
+                 base_qty = 0,
+                 avg_entry_price = 0,
+                 updated_at = now()
+             WHERE user_id = $1
+               AND pair_id = $2
+               AND match_id = $4`,
+            [pos.user_id, pos.pair_id, toFixed8(pnl), matchId],
+        );
+
+        // Synthetic audit trade. The orders CHECK constraint requires at
+        // least one of buy_order_id/sell_order_id to be non-null, so we
+        // also synthesize a matching FILLED order to point to. Side is
+        // opposite the position direction (SELL closes a long, BUY closes
+        // a short).
+        const closingSide = baseQty.isPositive() ? "SELL" : "BUY";
+        const absQty = baseQty.abs();
+        const quoteAmt = absQty.mul(exitD);
+
+        const { rows: syntheticOrderRows } = await client.query<{ id: string }>(
+            `INSERT INTO orders (
+                user_id, pair_id, side, type, limit_price,
+                qty, qty_filled, status,
+                reserved_wallet_id, reserved_amount, reserved_consumed,
+                competition_id, match_id
+             ) VALUES ($1, $2, $3, 'MARKET', NULL,
+                       $4, $4, 'FILLED',
+                       NULL, '0', '0',
+                       $5::uuid, $6::uuid)
+             RETURNING id`,
+            [pos.user_id, pos.pair_id, closingSide, toFixed8(absQty), pos.competition_id, matchId],
+        );
+        const syntheticOrderId = syntheticOrderRows[0]?.id ?? null;
+
+        await createTrade(client, {
+            pairId: pos.pair_id,
+            buyOrderId: closingSide === "BUY" ? syntheticOrderId : null,
+            sellOrderId: closingSide === "SELL" ? syntheticOrderId : null,
+            price: toFixed8(exitD),
+            qty: toFixed8(absQty),
+            quoteAmount: toFixed8(quoteAmt),
+            feeAmount: "0.00000000",
+            feeAssetId: quoteAssetId,
+            isSystemFill: true,
+        });
+
+        logger.info(
+            {
+                matchId,
+                userId: pos.user_id,
+                pairId: pos.pair_id,
+                side: baseQty.isPositive() ? "LONG" : "SHORT",
+                baseQty: pos.base_qty,
+                exitPrice,
+                realizedPnl: toFixed8(pnl),
+                fallbackSource,
+            },
+            "match_scoped_position_closed",
+        );
+
+        closedCount++;
+        totalPnl = totalPnl.plus(pnl);
+    }
+
+    return {
+        closedCount,
+        totalPnlRealized: toFixed8(totalPnl),
+    };
+}
+
+/**
+ * DEPRECATED: superseded by closeMatchScopedPositions. Retained only for
+ * the case of any lingering match_positions rows from prior schema work.
+ * Safe to remove in a followup.
+ *
  * Force-close all open match positions at current market price.
  */
 async function forceCloseOpenPositions(matchId: string, client: PoolClient): Promise<void> {
