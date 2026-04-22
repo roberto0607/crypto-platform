@@ -163,6 +163,7 @@ export async function enqueueRedis(
   requestId: string,
   timeoutMs?: number,
   competitionId?: string,
+  matchId?: string | null,
 ): Promise<PlaceOrderResult> {
   if (!accepting) throw new AppError("server_shutting_down");
 
@@ -194,7 +195,9 @@ export async function enqueueRedis(
     throw new AppError("pair_queue_overloaded", { pairId, depth });
   }
 
-  // XADD to stream
+  // XADD to stream. matchId is serialized as an empty string when null so
+  // the dequeue path can distinguish "no match scope" ("") from "missing
+  // field" (undefined on the parsed object).
   await redis.xadd(
     key, "*",
     "correlationId", correlationId,
@@ -205,6 +208,7 @@ export async function enqueueRedis(
     "idempotencyKey", idempotencyKey ?? "",
     "requestId", requestId,
     "competitionId", competitionId ?? "",
+    "matchId", matchId ?? "",
     "enqueuedAt", Date.now().toString(),
   );
 
@@ -349,12 +353,22 @@ async function processJob(
   const enqueuedAt = parseInt(job.enqueuedAt, 10);
 
   try {
+    // matchId: empty-string sentinel → null (explicit free-play). Missing
+    // field (undefined from an older job that pre-dates matchId) → null to
+    // preserve free-play semantics rather than triggering a fresh
+    // getActiveMatchIdForUser lookup inside phase6OrderService.
+    const queuedMatchId: string | null =
+      typeof job.matchId === "string" && job.matchId !== ""
+        ? job.matchId
+        : null;
+
     const result = await placeOrderWithSnapshot(
       job.userId,
       JSON.parse(job.payload),
       job.idempotencyKey || undefined,
       job.requestId,
       job.competitionId || undefined,
+      queuedMatchId,
     );
 
     pairQueueWaitMs.observe({ pairId }, execStart - enqueuedAt);

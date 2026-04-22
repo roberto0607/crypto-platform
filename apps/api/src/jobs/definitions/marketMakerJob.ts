@@ -136,7 +136,8 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
         const offset = mid.times(level.offsetBps).div(10000);
         const qty = toFixed8(D(baseQty).times(level.qtyMultiplier));
 
-        // BUY side — below mid
+        // BUY side — below mid. Bots never participate in matches —
+        // matchId: null explicit so server-side active-match lookup is skipped.
         const bidPrice = mid.minus(offset).toFixed(2);
         try {
             await placeOrderWithSnapshot(
@@ -144,14 +145,15 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
                 { pairId: pair.id, side: "BUY", type: "LIMIT", qty, limitPrice: bidPrice },
                 crypto.randomUUID(),
                 `mm-${pair.symbol}-buy-${level.offsetBps}`,
-                null, // free play
+                null, // competitionId — free play
+                null, // matchId — bots never match-scope
             );
             placedCount++;
         } catch (err: any) {
             ctx.logger.warn({ pair: pair.symbol, side: "BUY", level: level.offsetBps, err: err.message }, "mm_place_error");
         }
 
-        // SELL side — above mid
+        // SELL side — above mid.
         const askPrice = mid.plus(offset).toFixed(2);
         try {
             await placeOrderWithSnapshot(
@@ -159,7 +161,8 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
                 { pairId: pair.id, side: "SELL", type: "LIMIT", qty, limitPrice: askPrice },
                 crypto.randomUUID(),
                 `mm-${pair.symbol}-sell-${level.offsetBps}`,
-                null, // free play
+                null, // competitionId — free play
+                null, // matchId — bots never match-scope
             );
             placedCount++;
         } catch (err: any) {

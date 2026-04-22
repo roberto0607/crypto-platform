@@ -135,10 +135,16 @@ async function processRunTick(state: BotRunState, tickTs: number): Promise<void>
             state.orderSeqThisTick++;
 
             try {
+                // Bots never participate in matches — pass matchId: null
+                // explicitly so the server-side active-match lookup is
+                // bypassed and the fill attributes to free-play.
                 await placeOrderWithSnapshot(
                     state.userId,
                     { pairId: state.pairId, side, type: "MARKET", qty },
-                    idemKey
+                    idemKey,
+                    undefined,   // requestId
+                    undefined,   // competitionId
+                    null,        // matchId — bots are free-play
                 );
                 state.consecutiveFailures = 0;
             } catch (err) {
@@ -159,10 +165,16 @@ async function processRunTick(state: BotRunState, tickTs: number): Promise<void>
             state.orderSeqThisTick++;
 
             try {
+                // Bots never participate in matches — pass matchId: null
+                // explicitly so the server-side active-match lookup is
+                // bypassed and the fill attributes to free-play.
                 await placeOrderWithSnapshot(
                     state.userId,
                     { pairId: state.pairId, side, type: "MARKET", qty },
-                    idemKey
+                    idemKey,
+                    undefined,   // requestId
+                    undefined,   // competitionId
+                    null,        // matchId — bots are free-play
                 );
                 state.consecutiveFailures = 0;
             } catch (err) {

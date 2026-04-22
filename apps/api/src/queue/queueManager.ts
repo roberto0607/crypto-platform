@@ -27,12 +27,16 @@ function getOrCreate(pairId: string): PairQueue {
 }
 
 async function executor(job: QueueJob): Promise<PlaceOrderResult> {
+  // matchId passed through verbatim — the enqueue side captured it at the
+  // moment the user placed the order. Phase6OrderService sees an explicit
+  // value and skips the getActiveMatchIdForUser fallback.
   return placeOrderWithSnapshot(
     job.userId,
     job.payload,
     job.idempotencyKey,
     job.requestId,
     job.competitionId,
+    job.matchId,
   );
 }
 
@@ -46,10 +50,11 @@ export function enqueueOrder(
   requestId: string,
   timeoutMs?: number,
   competitionId?: string,
+  matchId?: string | null,
 ): Promise<PlaceOrderResult> {
   // Redis path — distributed queue
   if (getRedis()) {
-    return enqueueRedis(pairId, userId, payload, idempotencyKey, requestId, timeoutMs, competitionId);
+    return enqueueRedis(pairId, userId, payload, idempotencyKey, requestId, timeoutMs, competitionId, matchId);
   }
 
   // In-memory path — existing implementation
@@ -75,6 +80,7 @@ export function enqueueOrder(
       payload,
       idempotencyKey,
       competitionId,
+      matchId,
       enqueuedAt: Date.now(),
       resolve,
       reject,

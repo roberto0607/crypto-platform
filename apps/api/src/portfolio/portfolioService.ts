@@ -290,7 +290,9 @@ export async function writePortfolioSnapshot(
                  (user_id, ts, equity_quote, cash_quote, holdings_quote,
                   unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
-             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+             ON CONFLICT (user_id, ts,
+                          COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                          COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE SET
                  equity_quote = $3,
                  cash_quote = $4,
                  holdings_quote = $5,
@@ -301,7 +303,9 @@ export async function writePortfolioSnapshot(
                  (user_id, ts, equity_quote, cash_quote, holdings_quote,
                   unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
+             ON CONFLICT (user_id, ts,
+                          COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                          COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE SET
                  equity_quote = $3,
                  cash_quote = $4,
                  holdings_quote = $5,
@@ -334,8 +338,10 @@ export async function writePortfolioSnapshotTx(
     fillPairId: string,
     fillPrice: string,
     competitionId?: string | null,
+    matchId?: string | null,
 ): Promise<void> {
     const compId = competitionId ?? null;
+    const matchScope = matchId ?? null;
 
     // 1. Quote asset IDs
     const { rows: qaRows } = await client.query<{ quote_asset_id: string }>(
@@ -343,7 +349,10 @@ export async function writePortfolioSnapshotTx(
     );
     const quoteAssetIds = qaRows.map((r) => r.quote_asset_id);
 
-    // 2. Cash
+    // 2. Cash. Wallets are NOT match-scoped in the current design (Phase 4
+    // only scopes positions + equity_snapshots by match). Cash always reads
+    // from the competition-scope wallet — typically the free-play USD
+    // wallet in the common case.
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
         const compFilter = compId === null
@@ -360,11 +369,8 @@ export async function writePortfolioSnapshotTx(
         cashQuote = D(rows[0].total);
     }
 
-    // 3. All positions for this user (scoped to competition)
-    const compPosFilter = compId === null
-        ? `AND competition_id IS NULL`
-        : `AND competition_id = $2`;
-    const posParams = compId === null ? [userId] : [userId, compId];
+    // 3. Positions for this exact scope (user, competition, match) — uses
+    // COALESCE-nil to collapse NULL scopes onto the free-play row.
     const { rows: posRows } = await client.query<{
         pair_id: string;
         base_qty: string;
@@ -373,8 +379,11 @@ export async function writePortfolioSnapshotTx(
         fees_paid_quote: string;
     }>(
         `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
-         FROM positions WHERE user_id = $1 ${compPosFilter}`,
-        posParams,
+         FROM positions
+         WHERE user_id = $1
+           AND COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+           AND COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        [userId, compId, matchScope],
     );
 
     let holdingsQuote = ZERO;
@@ -406,39 +415,30 @@ export async function writePortfolioSnapshotTx(
 
     const equityQuote = cashQuote.plus(holdingsQuote);
 
-    // 4. Upsert (overwrites narrow snapshot from positionRepo)
+    // 4. Upsert into equity_snapshots scoped to (user, ts, competition, match).
+    // Using a single uniform INSERT (no branching) with explicit scope casts.
     await client.query(
-        compId === null
-            ? `INSERT INTO equity_snapshots
-                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
-                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
-             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
-                 equity_quote = $3,
-                 cash_quote = $4,
-                 holdings_quote = $5,
-                 unrealized_pnl_quote = $6,
-                 realized_pnl_quote = $7,
-                 fees_paid_quote = $8`
-            : `INSERT INTO equity_snapshots
-                 (user_id, ts, equity_quote, cash_quote, holdings_quote,
-                  unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote, competition_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000')) DO UPDATE SET
-                 equity_quote = $3,
-                 cash_quote = $4,
-                 holdings_quote = $5,
-                 unrealized_pnl_quote = $6,
-                 realized_pnl_quote = $7,
-                 fees_paid_quote = $8`,
-        compId === null
-            ? [userId, ts, toFixed8(equityQuote),
-               toFixed8(cashQuote), toFixed8(holdingsQuote),
-               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid)]
-            : [userId, ts, toFixed8(equityQuote),
-               toFixed8(cashQuote), toFixed8(holdingsQuote),
-               toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid), compId],
+        `INSERT INTO equity_snapshots
+             (user_id, ts, equity_quote, cash_quote, holdings_quote,
+              unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote,
+              competition_id, match_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::uuid)
+         ON CONFLICT (user_id, ts,
+                      COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                      COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE SET
+             equity_quote = $3,
+             cash_quote = $4,
+             holdings_quote = $5,
+             unrealized_pnl_quote = $6,
+             realized_pnl_quote = $7,
+             fees_paid_quote = $8`,
+        [
+            userId, ts, toFixed8(equityQuote),
+            toFixed8(cashQuote), toFixed8(holdingsQuote),
+            toFixed8(unrealizedPnl), toFixed8(realizedPnl), toFixed8(feesPaid),
+            compId, matchScope,
+        ],
     );
 
-    logger.debug({ userId, ts, equity: toFixed8(equityQuote) }, "portfolio_snapshot_written_tx");
+    logger.debug({ userId, ts, equity: toFixed8(equityQuote), matchId: matchScope }, "portfolio_snapshot_written_tx");
 }

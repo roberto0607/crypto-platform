@@ -16,6 +16,11 @@ export interface ComputedPosition {
   realizedPnlQuote: string;
   feesPaidQuote: string;
   tradeCount: number;
+  // Scope of the rebuilt row. Derived from the most recent trade's
+  // associated order; rebuild is single-scope per (user, pair) and these
+  // tag the upsert target. Both default to null = free-play.
+  competitionId?: string | null;
+  matchId?: string | null;
 }
 
 export interface PositionDiff {

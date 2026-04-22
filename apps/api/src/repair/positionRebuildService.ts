@@ -14,6 +14,10 @@ export interface TradeRow {
   executed_at: string;
   user_side: "BUY" | "SELL";
   user_fee_bps: number;
+  // match_id on the user's side of this trade (from orders.match_id). May
+  // be null if the order wasn't match-scoped. Rebuild uses the most recent
+  // trade's match_id as the scope for the upserted positions row.
+  user_match_id: string | null;
 }
 
 // ── Fetch trades for a user+pair ──
@@ -39,7 +43,14 @@ const USER_TRADES_SQL = `
         CASE WHEN t.is_system_fill
                OR sell_o.created_at >= COALESCE(buy_o.created_at, '-infinity'::timestamptz)
              THEN tp.taker_fee_bps ELSE tp.maker_fee_bps END
-    END AS user_fee_bps
+    END AS user_fee_bps,
+    -- Pick match_id from whichever order is the user's side of the fill.
+    -- Rebuild is single-scope per (user, pair); we use the latest trade's
+    -- match_id to decide which scope row to upsert.
+    CASE
+      WHEN buy_o.user_id = $1 THEN buy_o.match_id
+      ELSE sell_o.match_id
+    END AS user_match_id
   FROM trades t
   LEFT JOIN orders buy_o  ON buy_o.id  = t.buy_order_id
   LEFT JOIN orders sell_o ON sell_o.id = t.sell_order_id
@@ -72,6 +83,7 @@ export function replayTrades(pairId: string, trades: TradeRow[]): ComputedPositi
   let realizedPnl = ZERO;
   let feesPaid = ZERO;
   let tradeCount = 0;
+  let latestMatchId: string | null = null;
 
   for (const trade of trades) {
     const fillQty = D(trade.qty);
@@ -112,6 +124,9 @@ export function replayTrades(pairId: string, trades: TradeRow[]): ComputedPositi
 
     feesPaid = feesPaid.plus(feeQuote);
     tradeCount++;
+    // Trades are iterated in executed_at ASC order, so the final value of
+    // latestMatchId reflects the most recent trade's scope.
+    latestMatchId = trade.user_match_id;
   }
 
   return {
@@ -121,6 +136,8 @@ export function replayTrades(pairId: string, trades: TradeRow[]): ComputedPositi
     realizedPnlQuote: toFixed8(realizedPnl),
     feesPaidQuote: toFixed8(feesPaid),
     tradeCount,
+    competitionId: null,
+    matchId: latestMatchId,
   };
 }
 
@@ -148,6 +165,8 @@ export async function diffPosition(
   userId: string,
   computed: ComputedPosition,
 ): Promise<PositionDiff[]> {
+  // Read the exact scope row we computed for — matches the 4-column unique
+  // index from migration 066 via the COALESCE-nil trick.
   const { rows } = await client.query<{
     base_qty: string;
     avg_entry_price: string;
@@ -156,8 +175,10 @@ export async function diffPosition(
   }>(
     `SELECT base_qty::text, avg_entry_price::text, realized_pnl_quote::text, fees_paid_quote::text
      FROM positions
-     WHERE user_id = $1 AND pair_id = $2`,
-    [userId, computed.pairId],
+     WHERE user_id = $1 AND pair_id = $2
+       AND COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       AND COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($4::uuid, '00000000-0000-0000-0000-000000000000'::uuid)`,
+    [userId, computed.pairId, computed.competitionId ?? null, computed.matchId ?? null],
   );
 
   const diffs: PositionDiff[] = [];
@@ -222,11 +243,20 @@ export async function applyPositionRebuildTx(
     return { applied: false, diffs };
   }
 
-  // APPLY: upsert position to exact computed values
+  // APPLY: upsert position to exact computed values. Bug L2 fix: ON CONFLICT
+  // target now matches the 4-column unique index from migration 066
+  // (positions_user_pair_scope_unique). Prior code specified (user_id, pair_id)
+  // which has not matched any index since migration 042.
   await client.query(
-    `INSERT INTO positions (user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (user_id, pair_id)
+    `INSERT INTO positions (
+        user_id, pair_id,
+        base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote,
+        competition_id, match_id
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, $8::uuid)
+     ON CONFLICT (user_id, pair_id,
+                  COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                  COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid))
      DO UPDATE SET
        base_qty            = EXCLUDED.base_qty,
        avg_entry_price     = EXCLUDED.avg_entry_price,
@@ -240,6 +270,8 @@ export async function applyPositionRebuildTx(
       params.computed.avgEntryPrice,
       params.computed.realizedPnlQuote,
       params.computed.feesPaidQuote,
+      params.computed.competitionId ?? null,
+      params.computed.matchId ?? null,
     ],
   );
 

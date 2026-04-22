@@ -26,6 +26,7 @@ import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { txWithEvents } from "../utils/txWithEvents";
 import { processFillForJournal } from "../journal/journalService";
+import { getActiveMatchIdForUser } from "../competitions/matchService";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -69,15 +70,32 @@ export async function placeOrderWithSnapshot(
     idempotencyKey?: string,
     requestId?: string,
     competitionId?: string | null,
+    // matchId semantics:
+    //   undefined → server resolves via getActiveMatchIdForUser (default for HTTP)
+    //   null      → explicit free-play (used by bots/sim)
+    //   string    → caller-specified match (used by Redis queue replay)
+    matchId?: string | null,
 ): Promise<PlaceOrderResult> {
     const startMs = performance.now();
+
+    // Resolve matchId: caller-supplied wins, else look up user's active match.
+    // Distinguish undefined (do lookup) from null (explicit free-play) — bots
+    // and the redis queue replay path both pass null to opt out of the lookup.
+    const resolvedMatchId: string | null =
+        matchId !== undefined
+            ? matchId
+            : await getActiveMatchIdForUser(userId);
+
     const logCtx = buildLogContext({
       requestId: requestId ?? "no-request",
       userId,
       pairId: body.pairId,
       idempotencyKey,
     });
-    logger.info({ ...logCtx, eventType: "order.placement_started" }, "Order placement started");
+    logger.info(
+        { ...logCtx, eventType: "order.placement_started", matchId: resolvedMatchId },
+        "Order placement started",
+    );
 
     // ── 1. Idempotency check (outside transaction) ──
     if (idempotencyKey) {
@@ -168,6 +186,7 @@ export async function placeOrderWithSnapshot(
             body.qty,
             body.limitPrice,
             competitionId,
+            resolvedMatchId,
         );
 
         // ── 5. Post-fill processing ──
@@ -198,9 +217,13 @@ export async function placeOrderWithSnapshot(
                         feeQuote: takerFee.feeAmount,
                         ts: executedAtMs,
                         competitionId,
+                        matchId: resolvedMatchId,
                     });
 
-                    // Journal: record taker fill for FIFO P&L
+                    // Journal: record taker fill for FIFO P&L.
+                    // NOTE: open_lots / closed_trades don't have match_id
+                    // columns yet (see migration 066 paired-changes list);
+                    // journal stays competition-scoped-only for now.
                     await processFillForJournal(client, {
                         userId,
                         pairId: body.pairId,
@@ -213,16 +236,33 @@ export async function placeOrderWithSnapshot(
                         competitionId: competitionId ?? null,
                     });
 
-                    // Apply fill to maker's position (if not system fill)
+                    // Apply fill to maker's position (if not system fill).
+                    // Bug L3 fix: maker's scope comes from the order they
+                    // originally placed (makerOrder.competition_id /
+                    // .match_id), NOT the taker's incoming scope. Otherwise
+                    // a match-scoped taker would clobber the maker's
+                    // free-play position row (or vice versa).
                     if (!fill.is_system_fill) {
                         const makerOrderId = body.side === "BUY" ? fill.sell_order_id : fill.buy_order_id;
                         let makerUserId: string | null = null;
+                        let makerCompetitionId: string | null = null;
+                        let makerMatchId: string | null = null;
                         if (makerOrderId) {
-                            const makerResult = await client.query<{ user_id: string }>(
-                                `SELECT user_id FROM orders WHERE id = $1`,
+                            const makerResult = await client.query<{
+                                user_id: string;
+                                competition_id: string | null;
+                                match_id: string | null;
+                            }>(
+                                `SELECT user_id, competition_id, match_id
+                                 FROM orders WHERE id = $1`,
                                 [makerOrderId]
                             );
-                            makerUserId = makerResult.rows[0]?.user_id ?? null;
+                            const makerRow = makerResult.rows[0];
+                            if (makerRow) {
+                                makerUserId = makerRow.user_id;
+                                makerCompetitionId = makerRow.competition_id;
+                                makerMatchId = makerRow.match_id;
+                            }
                         }
 
                         if (makerUserId) {
@@ -243,10 +283,12 @@ export async function placeOrderWithSnapshot(
                                 price: fillPrice,
                                 feeQuote: makerFee.feeAmount,
                                 ts: executedAtMs,
-                                competitionId,
+                                competitionId: makerCompetitionId,
+                                matchId: makerMatchId,
                             });
 
-                            // Journal: record maker fill for FIFO P&L
+                            // Journal maker fill — same journal-scope caveat
+                            // as the taker journal call above.
                             await processFillForJournal(client, {
                                 userId: makerUserId,
                                 pairId: body.pairId,
@@ -256,7 +298,7 @@ export async function placeOrderWithSnapshot(
                                 qty: fillQty,
                                 feeQuote: makerFee.feeAmount,
                                 filledAt: new Date(fill.executed_at),
-                                competitionId: competitionId ?? null,
+                                competitionId: makerCompetitionId,
                             });
                         }
                     }
@@ -304,7 +346,7 @@ export async function placeOrderWithSnapshot(
                 // ── Portfolio snapshot (inside transaction, sees uncommitted wallet/position changes) ──
                 const lastFill = matchResult.fills[matchResult.fills.length - 1];
                 const lastFillTs = new Date(lastFill.executed_at).getTime();
-                await writePortfolioSnapshotTx(client, userId, lastFillTs, body.pairId, lastFill.price, competitionId);
+                await writePortfolioSnapshotTx(client, userId, lastFillTs, body.pairId, lastFill.price, competitionId, resolvedMatchId);
             }
 
             // Prepare SSE events (published after commit)

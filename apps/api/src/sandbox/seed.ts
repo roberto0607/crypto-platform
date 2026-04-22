@@ -146,7 +146,9 @@ async function seed(): Promise<void> {
         await client.query(
           `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
            VALUES (gen_random_uuid(), $1, $2, $3, '0.00000000')
-           ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+           ON CONFLICT (user_id, asset_id,
+                        COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                        COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid))
            DO UPDATE
              SET balance = EXCLUDED.balance,
                  reserved = '0.00000000'`,

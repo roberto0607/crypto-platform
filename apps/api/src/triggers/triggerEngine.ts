@@ -8,6 +8,7 @@ import { createEvent } from "../events/eventTypes";
 import { findPairById } from "../trading/pairRepo";
 import { logger } from "../observability/logContext";
 import { notifyTriggerFired } from "../notifications/notificationService";
+import { getActiveMatchIdForUser } from "../competitions/matchService";
 
 type PriceSnapshot = { last: string };
 
@@ -131,14 +132,30 @@ export async function fireTrigger(
 
     let derivedOrderId: string | null = null;
 
+    // Bug L4 fix: attribute the derived order to the user's CURRENT active
+    // match (not the match the trigger was placed in). Design intent: if
+    // the user left the match before the trigger fired, the position
+    // should follow them to their current state (free-play or a new
+    // match). Persisting match_id on the trigger itself (Option B) would
+    // keep the original match; Option A — resolve-at-fire-time — is
+    // simpler and handles "user exited the match" cleanly.
+    const triggerMatchId = await getActiveMatchIdForUser(trigger.user_id);
+
     try {
-        const result = await placeOrderWithSnapshot(trigger.user_id, {
-            pairId: trigger.pair_id,
-            side: trigger.side,
-            type: derivedType,
-            qty: trigger.qty,
-            limitPrice: derivedLimitPrice,
-        });
+        const result = await placeOrderWithSnapshot(
+            trigger.user_id,
+            {
+                pairId: trigger.pair_id,
+                side: trigger.side,
+                type: derivedType,
+                qty: trigger.qty,
+                limitPrice: derivedLimitPrice,
+            },
+            undefined,           // idempotencyKey
+            undefined,           // requestId
+            undefined,           // competitionId — derived orders inherit free-play competition
+            triggerMatchId,      // matchId — explicitly resolved, bypasses server-side lookup
+        );
 
         derivedOrderId = result.order.id;
 

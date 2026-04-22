@@ -238,13 +238,15 @@ async function main() {
                 const qty = randDecimal(qtyRange.min, qtyRange.max, 6);
 
                 try {
-                    // Seller places LIMIT sell first (resting order)
+                    // Seller places LIMIT sell first (resting order).
+                    // matchId: null — simulator doesn't model matches.
                     await placeOrderWithSnapshot(
                         seller,
                         { pairId: pair.id, side: "SELL", type: "LIMIT", qty, limitPrice: price },
                         crypto.randomUUID(),
                         `sim-r${round}-s${i}`,
                         comp.id,
+                        null, // matchId — simulator is competition-scoped only
                     );
 
                     // Buyer places LIMIT buy at same price → immediate match
@@ -254,6 +256,7 @@ async function main() {
                         crypto.randomUUID(),
                         `sim-r${round}-b${i}`,
                         comp.id,
+                        null, // matchId — simulator is competition-scoped only
                     );
 
                     tradesPerUser.set(buyer, (tradesPerUser.get(buyer) ?? 0) + 1);

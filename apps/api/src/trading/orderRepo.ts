@@ -34,12 +34,15 @@ export async function createOrder(
         reservedWalletId: string | null;
         reservedAmount: string;
         competitionId?: string | null;
+        // Stamps the originating match onto the order row. Read back at
+        // match time for maker-side scope resolution (see phase6OrderService).
+        matchId?: string | null;
     }
 ): Promise<OrderRow> {
     const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
-        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING ${ORDER_COLUMNS}
         `,
         [
@@ -53,6 +56,7 @@ export async function createOrder(
             params.reservedWalletId,
             params.reservedAmount,
             params.competitionId ?? null,
+            params.matchId ?? null,
         ]
     );
 

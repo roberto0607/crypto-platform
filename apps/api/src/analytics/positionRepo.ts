@@ -14,6 +14,11 @@ export type PositionRow = {
 
 const POSITION_COLUMNS = `user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote, updated_at`;
 
+// Sentinel used by the positions/equity_snapshots unique indexes to collapse
+// NULL competition_id / match_id onto a single "free play" row per user+pair.
+// Must match the constant the SQL indexes use (migration 042/066).
+const NIL_UUID = "'00000000-0000-0000-0000-000000000000'::uuid";
+
 /**
  * Apply a single fill to the user's position within an existing transaction.
  *
@@ -25,6 +30,10 @@ const POSITION_COLUMNS = `user_id, pair_id, base_qty, avg_entry_price, realized_
  * Handles position flips (long → short via oversized sell) by
  * realizing PnL on the entire old position, then opening a new
  * position at the fill price for the remaining qty.
+ *
+ * Scope: positions are unique per (user, pair, competition, match). A null
+ * competitionId and/or matchId means "free play" or "not match-scoped" and
+ * collapses to the nil-UUID slot in the unique index (see migration 066).
  */
 export async function applyFillToPositionTx(
     client: PoolClient,
@@ -37,40 +46,37 @@ export async function applyFillToPositionTx(
         feeQuote: string;
         ts: number;
         competitionId?: string | null;
+        matchId?: string | null;
     }
 ): Promise<PositionRow> {
     const { userId, pairId, side, qty, price, feeQuote, ts } = params;
     const compId = params.competitionId ?? null;
+    const matchId = params.matchId ?? null;
     const fillQty = D(qty);
     const fillPrice = D(price);
     const fee = D(feeQuote);
 
-    // Upsert position row if it doesn't exist
+    // Upsert position row if it doesn't exist. COALESCE-based ON CONFLICT
+    // target matches the 4-column unique index created in migration 066.
     await client.query(
-        compId === null
-            ? `INSERT INTO positions (user_id, pair_id, competition_id)
-               VALUES ($1, $2, NULL)
-               ON CONFLICT (user_id, pair_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
-               DO NOTHING`
-            : `INSERT INTO positions (user_id, pair_id, competition_id)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (user_id, pair_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
-               DO NOTHING`,
-        compId === null ? [userId, pairId] : [userId, pairId, compId]
+        `INSERT INTO positions (user_id, pair_id, competition_id, match_id)
+         VALUES ($1, $2, $3::uuid, $4::uuid)
+         ON CONFLICT (user_id, pair_id,
+                      COALESCE(competition_id, ${NIL_UUID}),
+                      COALESCE(match_id, ${NIL_UUID}))
+         DO NOTHING`,
+        [userId, pairId, compId, matchId]
     );
 
-    // Lock and read current position
+    // Lock and read current position for this exact (user, pair, scope).
     const posResult = await client.query<PositionRow>(
-        compId === null
-            ? `SELECT ${POSITION_COLUMNS}
-               FROM positions
-               WHERE user_id = $1 AND pair_id = $2 AND competition_id IS NULL
-               FOR UPDATE`
-            : `SELECT ${POSITION_COLUMNS}
-               FROM positions
-               WHERE user_id = $1 AND pair_id = $2 AND competition_id = $3
-               FOR UPDATE`,
-        compId === null ? [userId, pairId] : [userId, pairId, compId]
+        `SELECT ${POSITION_COLUMNS}
+         FROM positions
+         WHERE user_id = $1 AND pair_id = $2
+           AND COALESCE(competition_id, ${NIL_UUID}) = COALESCE($3::uuid, ${NIL_UUID})
+           AND COALESCE(match_id, ${NIL_UUID}) = COALESCE($4::uuid, ${NIL_UUID})
+         FOR UPDATE`,
+        [userId, pairId, compId, matchId]
     );
 
     const pos = posResult.rows[0];
@@ -113,17 +119,19 @@ export async function applyFillToPositionTx(
     // Accumulate fees
     feesPaid = feesPaid.plus(fee);
 
-    // Update position
+    // Update position. Bug L1 fix: WHERE includes competition_id AND match_id
+    // so we only touch the exact scope row we just locked — previously this
+    // UPDATE could clobber rows in other scopes for the same (user, pair).
     const updateResult = await client.query<PositionRow>(
-        `
-        UPDATE positions
-        SET base_qty = $3,
-            avg_entry_price = $4,
-            realized_pnl_quote = $5,
-            fees_paid_quote = $6
-        WHERE user_id = $1 AND pair_id = $2
-        RETURNING ${POSITION_COLUMNS}
-        `,
+        `UPDATE positions
+         SET base_qty = $3,
+             avg_entry_price = $4,
+             realized_pnl_quote = $5,
+             fees_paid_quote = $6
+         WHERE user_id = $1 AND pair_id = $2
+           AND COALESCE(competition_id, ${NIL_UUID}) = COALESCE($7::uuid, ${NIL_UUID})
+           AND COALESCE(match_id, ${NIL_UUID}) = COALESCE($8::uuid, ${NIL_UUID})
+         RETURNING ${POSITION_COLUMNS}`,
         [
             userId,
             pairId,
@@ -131,23 +139,22 @@ export async function applyFillToPositionTx(
             toFixed8(avgEntry),
             toFixed8(realizedPnl),
             toFixed8(feesPaid),
+            compId,
+            matchId,
         ]
     );
 
-    // Insert equity snapshot
-    // Equity = realized PnL - total fees (unrealized computed at read time)
+    // Insert equity snapshot scoped to the same (user, ts, competition, match).
+    // Equity = realized PnL - total fees (unrealized computed at read time).
     const equity = realizedPnl.minus(feesPaid);
     await client.query(
-        compId === null
-            ? `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id)
-               VALUES ($1, $2, $3, NULL)
-               ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
-               DO UPDATE SET equity_quote = $3`
-            : `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT (user_id, ts, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
-               DO UPDATE SET equity_quote = $3`,
-        compId === null ? [userId, ts, toFixed8(equity)] : [userId, ts, toFixed8(equity), compId]
+        `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id, match_id)
+         VALUES ($1, $2, $3, $4::uuid, $5::uuid)
+         ON CONFLICT (user_id, ts,
+                      COALESCE(competition_id, ${NIL_UUID}),
+                      COALESCE(match_id, ${NIL_UUID}))
+         DO UPDATE SET equity_quote = $3`,
+        [userId, ts, toFixed8(equity), compId, matchId]
     );
 
     return updateResult.rows[0];

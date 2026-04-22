@@ -120,6 +120,11 @@ async function placeOrderInternal(
     qty: string,
     limitPrice?: string,
     competitionId?: string | null,
+    // matchId is stamped onto the order row so the post-fill pipeline can
+    // scope position updates to the user's active match. Wallets are NOT
+    // match-scoped (see migration 066 notes) — we keep free-play wallet
+    // lookups even when match_id is set on the order.
+    matchId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -289,6 +294,7 @@ async function placeOrderInternal(
         reservedWalletId: reserveWalletId,
         reservedAmount: toFixed8(reserveAmount),
         competitionId: competitionId ?? null,
+        matchId: matchId ?? null,
     });
 
     // ── Phase I: Execute book fills ──
@@ -470,12 +476,13 @@ export async function placeOrder(
     qty: string,
     limitPrice?: string,
     competitionId?: string | null,
+    matchId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
-        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId);
+        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId);
         await client.query("COMMIT");
         return result;
     } catch (err) {
@@ -499,8 +506,9 @@ export async function placeOrderTx(
     qty: string,
     limitPrice?: string,
     competitionId?: string | null,
+    matchId?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId);
 }
 
 /**

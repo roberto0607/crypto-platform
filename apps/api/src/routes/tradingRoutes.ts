@@ -184,6 +184,9 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
         const competitionId = req.headers["x-competition-id"] as string | undefined;
 
+        // matchId is omitted (undefined) — phase6OrderService resolves
+        // the user's active match server-side via getActiveMatchIdForUser.
+        // No new header is needed; the server knows the user's match state.
         const result = await enqueueOrder(
             parsed.data.pairId,
             actor.id,
@@ -198,6 +201,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
             req.id as string,
             undefined,
             competitionId,
+            undefined,
         );
 
         if (!result.fromIdempotencyCache) {
