@@ -64,16 +64,78 @@ git push origin main
 Watch GitHub Actions / Railway build pipeline. **Don't proceed if any
 step shows red.**
 
-### Step 2. Verify `RUN_MIGRATIONS_ON_BOOT=true` on the API service
+### Step 2. Verify required env vars on the API service
 
-In Railway dashboard → `crypto-platform` service → Variables, confirm:
+Run this guard locally before pushing. It exits non-zero on any
+missing or wrong-valued var:
 
+```bash
+# Pre-flight: required env vars on crypto-platform.
+# MUST exit non-zero if any var is missing or wrong-valued.
+# Passive checks were skipped during the April 25 phase 9
+# push and caused a boot crashloop. See postmortem at the
+# bottom of this doc.
+
+REQUIRED_VARS=(
+  DATABASE_URL
+  JWT_ACCESS_SECRET
+  RUN_MIGRATIONS_ON_BOOT
+  NODE_ENV
+  REDIS_URL
+  CORS_ORIGINS
+)
+
+VARS_OUTPUT=$(railway variables --service crypto-platform 2>&1)
+MISSING=()
+for VAR in "${REQUIRED_VARS[@]}"; do
+  echo "$VARS_OUTPUT" | grep -qE "\b${VAR}\b" \
+    || MISSING+=("$VAR")
+done
+if [ ${#MISSING[@]} -gt 0 ]; then
+  echo "MISSING ENV VARS on crypto-platform: ${MISSING[*]}"
+  echo "Set via: railway variables --set 'KEY=value' --service crypto-platform"
+  exit 1
+fi
+
+# Strict-value checks — catches "set but wrong" cases that
+# presence checks miss. Each check below corresponds to a
+# historically-painful bug class.
+
+# 1. RUN_MIGRATIONS_ON_BOOT must be "true" (not "false", not
+#    unset-defaulting-to-false). The April 25 incident was a
+#    silent default-to-false.
+if ! echo "$VARS_OUTPUT" | grep -qE "RUN_MIGRATIONS_ON_BOOT[[:space:]]+│[[:space:]]+true"; then
+  echo "RUN_MIGRATIONS_ON_BOOT must equal 'true' (not just present)."
+  exit 1
+fi
+
+# 2. NODE_ENV must be "production". Without this, sameSite
+#    cookies are misconfigured (lax + insecure) and Swagger
+#    UI is exposed. See CLAUDE.md history: "sameSite cookie
+#    fix (none in prod)".
+if ! echo "$VARS_OUTPUT" | grep -qE "NODE_ENV[[:space:]]+│[[:space:]]+production"; then
+  echo "NODE_ENV must equal 'production' for the prod deploy."
+  exit 1
+fi
+
+# 3. CORS_ORIGINS must contain a *.railway.app origin (the
+#    deployed frontend). Catches "set to localhost only"
+#    misconfigs. Pattern is intentionally loose so service
+#    renames don't silently break this check; tighten if you
+#    later add a custom domain.
+if ! echo "$VARS_OUTPUT" | grep -qE "CORS_ORIGINS[[:space:]]+│[[:space:]]+.*railway\.app"; then
+  echo "CORS_ORIGINS must include a *.railway.app origin."
+  exit 1
+fi
+
+echo "All required env vars present and correctly valued on crypto-platform."
 ```
-RUN_MIGRATIONS_ON_BOOT=true
-```
 
-If absent or `false`, set it to `true` *before* the next deploy so the
-new container applies migration 066 during boot, before serving traffic.
+The box-drawing `│` characters in the strict-value regexes match the
+Unicode separator (`U+2502`) that `railway variables` prints between
+the variable name and value columns. If `railway` ever changes its
+output format, the strict checks will start failing — update the
+regexes rather than weakening them to a presence-only match.
 
 ### Step 3. Deploy
 
@@ -156,6 +218,49 @@ WHERE user_id = '<user>' AND match_id IS NOT NULL;
 ```
 
 Expect a row with `match_id = <their match.id>`.
+
+---
+
+## Verification — outstanding items
+
+### V4 (in-match order attribution) — deferred to dad-test 1v1
+
+Status as of 2026-04-25: deferred (not failed).
+
+V4 requires an in-match fill to validate. At deploy time there were 0
+active matches in production and demo was not paired against any user,
+so V4 returned an N/A per this doc's sign-off allowance. V2
+(active-match endpoint), V3 (free-play scope), and V1 (schema +
+indexes) all passed cleanly, so the new code path is live but not yet
+exercised end-to-end on real match traffic.
+
+**Resolution path: weekend dad-test 1v1.**
+
+Acceptance criteria — V4 is closed when all of the following are
+observed in production:
+
+1. Two real users (rtirado0607@gmail.com + demo@demo.local on dad's
+   browser) start a 1v1 match
+2. Each places at least one filled order during the match
+3. While match is active, query confirms positions have `match_id` set
+   to the active match UUID:
+
+   ```sql
+   SELECT user_id, base_qty, match_id, updated_at
+   FROM positions
+   WHERE match_id IS NOT NULL
+   ORDER BY updated_at DESC LIMIT 10;
+   ```
+4. Match resolves cleanly (winner, ELO delta applied, `elo_resolved=true`)
+5. Both users start a NEW 1v1 immediately after; query confirms NO
+   leftover position rows from the prior match leak into the new
+   context — i.e. no positions with `base_qty <> 0` and a stale
+   `match_id` from the completed match
+6. Capture DB query output as evidence; record it in this doc's
+   verification log
+
+Until all 6 are observed, phase 9 is "verified-with-caveat" rather
+than "verified-complete".
 
 ---
 
@@ -312,3 +417,42 @@ After the deploy:
       `match_id`.
 
 If all six are green, the deploy is complete.
+
+---
+
+## Postmortem — 2026-04-25
+
+**Incident:** Boot crashloop after pushing 7 commits (migration 066)
+to production.
+
+**Detection:** Migration guard FATAL line in Railway logs:
+
+> `[migrationGuard] FATAL: DB is behind code. Run 'pnpm migrate'.
+> code=066_position_match_scope.sql db=065_footprint_candles.sql`
+
+This is the guard working as designed — it refuses boot when code
+expects a migration the DB hasn't applied.
+
+**Root cause:** `RUN_MIGRATIONS_ON_BOOT` was not set on the
+crypto-platform service. The boot sequence skipped the migration step
+and went straight to the guard, which correctly refused.
+
+**Why pre-flight missed it:** This doc previously said "verify env vars
+are set" without an executable check. The verification was performed
+visually and the missing var was not noticed.
+
+**Recovery:**
+
+- Old container kept serving traffic (Railway didn't flip until new
+  deploy reached SUCCESS, which it never did)
+- Set `RUN_MIGRATIONS_ON_BOOT=true` via `railway variables --set`
+- Auto-triggered redeploy applied migration 066 cleanly on next boot
+  (~52s build + ~7s deploy)
+- Total time from crashloop to recovered: ~12 minutes
+- Pre-flight backup at
+  `~/tradr-backups/tradr-prod-pre-phase9-20260425T131511Z.dump` was
+  not needed but remained available throughout
+
+**Prevention:** Pre-flight env-var check is now executable (see
+"Pre-flight Step 2" above). Future rollouts MUST fail-loud on missing
+required vars before push.
