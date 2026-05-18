@@ -104,7 +104,7 @@ const TRADE_CSS = `
     font-family:var(--bebas);font-size:14px;color:rgba(255,255,255,0.4);letter-spacing:1px;
   }
   .tr-asset-tab.active .tr-at-price { color:var(--g);text-shadow:0 0 12px var(--g25); }
-  .tr-asset-tab .tr-at-chg { font-size:8px;letter-spacing:1px; }
+  .tr-asset-tab .tr-at-chg { font-size:10px;letter-spacing:0.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .tr-asset-tab .up { color:var(--g); }
   .tr-asset-tab .dn { color:var(--red); }
 
