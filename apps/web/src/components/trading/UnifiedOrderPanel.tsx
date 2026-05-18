@@ -11,13 +11,14 @@
  *   - Available balance display
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { placeOrder } from "@/api/endpoints/trading";
 import { createTrigger, createOco, listTriggers, cancelTrigger } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
+import { usePnlFlash } from "@/hooks/usePnlFlash";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -137,6 +138,29 @@ export function UnifiedOrderPanel({
     const posCurrentValue = posAbsQty * currentPrice;
     const pnlValue = hasPosition ? (currentPrice - posEntryPrice) * posQty : 0;
     const pnlPct = posUsdSize > 0 ? (pnlValue / posUsdSize) * 100 : 0;
+
+    // Flash the P&L number green/red when it moves (throttled, micro-noise suppressed).
+    const pnlFlash = usePnlFlash(pnlValue, selectedPairId ?? "", 0.01);
+
+    // Position card entrance — animate when a position first appears or the pair
+    // changes, but not on P&L re-renders, and not on a page refresh that lands on
+    // an already-open position. A position is identified by its pair.
+    const posIdentity = hasPosition ? position!.pair_id : null;
+    const seenPos = useRef<string | null | undefined>(undefined);
+    const [cardKey, setCardKey] = useState(0);
+    const [cardEntering, setCardEntering] = useState(false);
+    useEffect(() => {
+        if (seenPos.current === undefined) {
+            // Initial mount — record the baseline without animating.
+            seenPos.current = posIdentity;
+            return;
+        }
+        if (posIdentity && posIdentity !== seenPos.current) {
+            setCardKey((k) => k + 1);
+            setCardEntering(true);
+        }
+        seenPos.current = posIdentity;
+    }, [posIdentity]);
 
     // Derive TP/SL/TSL from active triggers
     const tpTrigger = activeTriggers.find((t) => t.kind === "TAKE_PROFIT_MARKET");
@@ -521,11 +545,16 @@ export function UnifiedOrderPanel({
 
             {/* ── OPEN POSITION CARD ── */}
             {hasPosition && (
-                <div style={{
-                    marginTop: 12, padding: "12px",
-                    border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
-                    background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
-                }}>
+                <div
+                    key={cardKey}
+                    className={cardEntering ? "position-card-enter" : undefined}
+                    style={{
+                        marginTop: 12, padding: "12px",
+                        border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
+                        background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
+                        "--card-accent": posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
+                    } as React.CSSProperties}
+                >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
                             {baseSymbol} {posDirection}{posLeverage > 1 ? ` ${posLeverage}x` : ""}
@@ -550,7 +579,20 @@ export function UnifiedOrderPanel({
                         </div>
                         <div>
                             <span style={smallLabel}>P&L</span>
-                            <div style={{ color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700, fontSize: 10 }}>
+                            <div
+                                key={pnlFlash.key}
+                                className={pnlFlash.dir ? "pnl-flash" : undefined}
+                                style={{
+                                    color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b",
+                                    fontWeight: 700, fontSize: 10,
+                                    display: "inline-block",
+                                    padding: "1px 4px", margin: "-1px -4px",
+                                    borderRadius: 2,
+                                    "--pnl-flash-tint": pnlFlash.dir === "up"
+                                        ? "rgba(0,255,65,0.45)"
+                                        : "rgba(255,59,59,0.45)",
+                                } as React.CSSProperties}
+                            >
                                 {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
                             </div>
                         </div>

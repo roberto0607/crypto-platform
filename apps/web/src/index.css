@@ -460,6 +460,38 @@ canvas, .tv-lightweight-charts, [data-no-theme-transition] {
   border-color: #00ff41;
 }
 
+/* ── Commit 6 — Juice Pass: kinetic feedback ── */
+
+/* Position card entrance — slide + fade with a brief accent-border flash.
+   Timing mirrors revealPanel / fadeUp. --card-accent is set inline per direction. */
+@keyframes position-card-enter {
+  from { opacity: 0; transform: translateY(20px); border-color: var(--card-accent); }
+  55%  { border-color: var(--card-accent); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* P&L tick flash — brief background tint on value change, fading to transparent.
+   Same tint approach as pulse-row; --pnl-flash-tint is set inline (green up / red down).
+   The trigger is throttled to one flash / 250ms in usePnlFlash. */
+@keyframes pnl-flash {
+  from { background-color: var(--pnl-flash-tint); }
+  to   { background-color: transparent; }
+}
+
+/* ELO count-up settle — a single weighty pulse as the number lands. */
+@keyframes elo-settle-pulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* All three degrade to no motion when the user requests reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .position-card-enter { animation: position-card-enter 0.45s ease-out both; }
+  .pnl-flash           { animation: pnl-flash 0.35s ease-out; }
+  .elo-settle-pulse    { animation: elo-settle-pulse 0.3s ease-out; }
+}
+
 /* ── WAR MODE (competition theme override) ── */
 /* Applied via data-theme="tradewars" on <html> */
 [data-theme="tradewars"] .grid-bg {

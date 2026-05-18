@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
+import type { CSSProperties } from "react";
 import type { Match } from "@/api/endpoints/matches";
+import { usePnlFlash } from "@/hooks/usePnlFlash";
 
 function formatPnl(pct: string | null): string {
     if (!pct) return "0.00%";
@@ -52,6 +54,12 @@ export function MatchHeaderBar({
     const oppPnlNum = parseFloat(opponentPnl ?? "0");
     const youWinning = yourPnlNum >= oppPnlNum;
 
+    // Flash each P&L figure green/red when it moves (throttled, re-baselined per match).
+    const yourFlash = usePnlFlash(yourPnlNum, match.id, 0.01);
+    const oppFlash = usePnlFlash(oppPnlNum, match.id, 0.01);
+    const flashTint = (dir: string): string =>
+        dir === "up" ? "rgba(0,255,65,0.45)" : "rgba(255,59,59,0.45)";
+
     const timeMs = match.ends_at ? new Date(match.ends_at).getTime() - Date.now() : Infinity;
     const isUrgent = timeMs < 30 * 60 * 1000 && timeMs > 0;
 
@@ -62,11 +70,13 @@ export function MatchHeaderBar({
                 <div className="lmv-h-left">
                     <span className="lmv-h-name" style={{ color: "var(--ar-orange)" }}>{yourName}</span>
                     <span
-                        className="lmv-h-pnl"
+                        key={yourFlash.key}
+                        className={`lmv-h-pnl${yourFlash.dir ? " pnl-flash" : ""}`}
                         style={{
                             color: yourPnlNum >= 0 ? "var(--ar-g)" : "var(--ar-red)",
                             background: youWinning ? "rgba(0,255,65,0.06)" : "rgba(204,0,0,0.06)",
-                        }}
+                            "--pnl-flash-tint": flashTint(yourFlash.dir),
+                        } as CSSProperties}
                     >
                         {formatPnl(yourPnl)}
                     </span>
@@ -85,11 +95,13 @@ export function MatchHeaderBar({
                 <div className="lmv-h-right">
                     <span className="lmv-h-name" style={{ color: "rgba(255,255,255,0.6)" }}>{opponentName}</span>
                     <span
-                        className="lmv-h-pnl"
+                        key={oppFlash.key}
+                        className={`lmv-h-pnl${oppFlash.dir ? " pnl-flash" : ""}`}
                         style={{
                             color: oppPnlNum >= 0 ? "var(--ar-g)" : "var(--ar-red)",
                             background: !youWinning ? "rgba(0,255,65,0.06)" : "rgba(204,0,0,0.06)",
-                        }}
+                            "--pnl-flash-tint": flashTint(oppFlash.dir),
+                        } as CSSProperties}
                     >
                         {formatPnl(opponentPnl)}
                     </span>
