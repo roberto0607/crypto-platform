@@ -2,6 +2,18 @@
 
 -- ═══ Part A: New assets and trading pairs ═══
 
+-- USD and BTC were originally hand-inserted into the production DB and never
+-- captured here, so a from-scratch rebuild was missing the quote asset (USD)
+-- and BTC entirely — which broke the trading_pairs INSERTs below and migration
+-- 058. Seeded explicitly now so fresh DBs match production.
+INSERT INTO assets (id, symbol, name, decimals)
+VALUES (gen_random_uuid(), 'USD', 'US Dollar', 2)
+ON CONFLICT (symbol) DO NOTHING;
+
+INSERT INTO assets (id, symbol, name, decimals)
+VALUES (gen_random_uuid(), 'BTC', 'Bitcoin', 8)
+ON CONFLICT (symbol) DO NOTHING;
+
 INSERT INTO assets (id, symbol, name, decimals)
 VALUES (gen_random_uuid(), 'ETH', 'Ethereum', 8)
 ON CONFLICT (symbol) DO NOTHING;
@@ -10,14 +22,21 @@ INSERT INTO assets (id, symbol, name, decimals)
 VALUES (gen_random_uuid(), 'SOL', 'Solana', 8)
 ON CONFLICT (symbol) DO NOTHING;
 
+-- fee_bps = 30 on all three pairs to match production.
 INSERT INTO trading_pairs (id, base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
-SELECT gen_random_uuid(), e.id, u.id, 'ETH/USD', 10, 2, 5
+SELECT gen_random_uuid(), b.id, u.id, 'BTC/USD', 30, 2, 5
+FROM assets b, assets u
+WHERE b.symbol = 'BTC' AND u.symbol = 'USD'
+ON CONFLICT (symbol) DO NOTHING;
+
+INSERT INTO trading_pairs (id, base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
+SELECT gen_random_uuid(), e.id, u.id, 'ETH/USD', 30, 2, 5
 FROM assets e, assets u
 WHERE e.symbol = 'ETH' AND u.symbol = 'USD'
 ON CONFLICT (symbol) DO NOTHING;
 
 INSERT INTO trading_pairs (id, base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
-SELECT gen_random_uuid(), s.id, u.id, 'SOL/USD', 10, 2, 5
+SELECT gen_random_uuid(), s.id, u.id, 'SOL/USD', 30, 2, 5
 FROM assets s, assets u
 WHERE s.symbol = 'SOL' AND u.symbol = 'USD'
 ON CONFLICT (symbol) DO NOTHING;

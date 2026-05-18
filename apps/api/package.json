@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "tsx src/db/migrate.ts",
+    "bootstrap": "docker compose -f ../../docker-compose.yml up -d --wait tradr_postgres && pnpm migrate",
     "auth:smoke": "bash scripts/auth-smoke.sh",
     "test": "vitest run && tsx scripts/seed-dev-user.ts",
     "dev:me": "tsx scripts/seed-dev-user.ts",
