@@ -22,6 +22,7 @@ import TradingPage from "@/pages/TradingPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ArenaPage from "@/pages/ArenaPage";
 import CyclePage from "@/pages/CyclePage";
+import ReplayPage from "@/pages/ReplayPage";
 import JournalPage from "@/pages/JournalPage";
 import ProfilePage from "@/pages/ProfilePage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -205,6 +206,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/trade" element={<TradingPage />} />
           <Route path="/arena" element={<ArenaPage />} />
+          <Route path="/replay" element={<ReplayPage />} />
           <Route path="/cycle" element={<CyclePage />} />
           <Route path="/history" element={<JournalPage />} />
           <Route path="/profile" element={<ProfilePage />} />
@@ -215,7 +217,6 @@ export default function App() {
           <Route path="/competitions" element={<Navigate to="/arena" replace />} />
           <Route path="/competitions/:id" element={<Navigate to="/arena" replace />} />
           <Route path="/journal" element={<Navigate to="/history" replace />} />
-          <Route path="/replay" element={<Navigate to="/trade" replace />} />
           <Route path="/orders" element={<Navigate to="/trade" replace />} />
           <Route path="/positions" element={<Navigate to="/trade" replace />} />
           <Route path="/triggers" element={<Navigate to="/trade" replace />} />
