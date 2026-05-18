@@ -543,120 +543,122 @@ export function UnifiedOrderPanel({
                 {btnLabel}
             </button>
 
-            {/* ── OPEN POSITION CARD ── */}
+            {/* ── OPEN POSITION CARD — sticky-pinned to bottom of scroll area ── */}
             {hasPosition && (
-                <div
-                    key={cardKey}
-                    className={cardEntering ? "position-card-enter" : undefined}
-                    style={{
-                        marginTop: 12, padding: "12px",
-                        border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
-                        background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
-                        "--card-accent": posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
-                    } as React.CSSProperties}
-                >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
-                            {baseSymbol} {posDirection}{posLeverage > 1 ? ` ${posLeverage}x` : ""}
-                        </span>
-                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
-                            {fmtUsd(posUsdSize)}
-                        </span>
-                    </div>
-
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
-                        <div>
-                            <span style={smallLabel}>ENTRY</span>
-                            <div style={smallVal}>{fmtUsd(posEntryPrice)}</div>
-                        </div>
-                        <div>
-                            <span style={smallLabel}>CURRENT</span>
-                            <div style={smallVal}>{fmtUsd(currentPrice)}</div>
-                        </div>
-                        <div>
-                            <span style={smallLabel}>VALUE</span>
-                            <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
-                        </div>
-                        <div>
-                            <span style={smallLabel}>P&L</span>
-                            <div
-                                key={pnlFlash.key}
-                                className={pnlFlash.dir ? "pnl-flash" : undefined}
-                                style={{
-                                    color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b",
-                                    fontWeight: 700, fontSize: 10,
-                                    display: "inline-block",
-                                    padding: "1px 4px", margin: "-1px -4px",
-                                    borderRadius: 2,
-                                    "--pnl-flash-tint": pnlFlash.dir === "up"
-                                        ? "rgba(0,255,65,0.45)"
-                                        : "rgba(255,59,59,0.45)",
-                                } as React.CSSProperties}
-                            >
-                                {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
-                            </div>
-                        </div>
-
-                        {/* TP display */}
-                        <div>
-                            <span style={smallLabel}>TP</span>
-                            {editingTp && tpTrigger ? (
-                                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                    <input type="number" value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
-                                        style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
-                                    <span style={{ cursor: "pointer", color: "#00ff41", fontSize: 10 }} onClick={() => handleEditTrigger(tpTrigger, editTpVal)}>OK</span>
-                                    <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingTp(false)}>X</span>
-                                </div>
-                            ) : (
-                                <div style={{ color: tpTrigger ? "#00ff41" : "rgba(255,255,255,0.2)" }}>
-                                    {tpTrigger ? fmtUsd(parseFloat(tpTrigger.trigger_price)) : "--"}
-                                    {tpTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditTpVal(tpTrigger.trigger_price); setEditingTp(true); }}>✏️</span>}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* SL display */}
-                        <div>
-                            <span style={smallLabel}>SL</span>
-                            {editingSl && slTrigger ? (
-                                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                    <input type="number" value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
-                                        style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
-                                    <span style={{ cursor: "pointer", color: "#ff3b3b", fontSize: 10 }} onClick={() => handleEditTrigger(slTrigger, editSlVal)}>OK</span>
-                                    <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingSl(false)}>X</span>
-                                </div>
-                            ) : (
-                                <div style={{ color: slTrigger ? "#ff3b3b" : "rgba(255,255,255,0.2)" }}>
-                                    {slTrigger ? fmtUsd(parseFloat(slTrigger.trigger_price)) : "--"}
-                                    {slTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditSlVal(slTrigger.trigger_price); setEditingSl(true); }}>✏️</span>}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Trailing stop display */}
-                        {tslTrigger && (
-                            <div style={{ gridColumn: "1 / -1" }}>
-                                <span style={smallLabel}>TSL</span>
-                                <div style={{ color: "#f59e0b", fontSize: 10 }}>
-                                    ${parseFloat(tslTrigger.trailing_offset ?? "0").toFixed(2)} offset (stop: {fmtUsd(tslCurrentStop)})
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <button
-                        disabled={closing}
-                        onClick={handleClosePosition}
+                <div className={`${p}-position-card-sticky`}>
+                    <div
+                        key={cardKey}
+                        className={cardEntering ? "position-card-enter" : undefined}
                         style={{
-                            width: "100%", padding: "8px 0",
-                            background: "rgba(255,59,59,0.15)", border: "1px solid rgba(255,59,59,0.4)",
-                            color: "#ff3b3b", fontSize: 10, letterSpacing: 3,
-                            cursor: closing ? "not-allowed" : "pointer",
-                            opacity: closing ? 0.5 : 1, fontFamily: "inherit",
-                        }}
+                            padding: "12px",
+                            border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
+                            background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
+                            "--card-accent": posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
+                        } as React.CSSProperties}
                     >
-                        {closing ? "CLOSING..." : "CLOSE POSITION"}
-                    </button>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
+                                {baseSymbol} {posDirection}{posLeverage > 1 ? ` ${posLeverage}x` : ""}
+                            </span>
+                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
+                                {fmtUsd(posUsdSize)}
+                            </span>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
+                            <div>
+                                <span style={smallLabel}>ENTRY</span>
+                                <div style={smallVal}>{fmtUsd(posEntryPrice)}</div>
+                            </div>
+                            <div>
+                                <span style={smallLabel}>CURRENT</span>
+                                <div style={smallVal}>{fmtUsd(currentPrice)}</div>
+                            </div>
+                            <div>
+                                <span style={smallLabel}>VALUE</span>
+                                <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
+                            </div>
+                            <div>
+                                <span style={smallLabel}>P&L</span>
+                                <div
+                                    key={pnlFlash.key}
+                                    className={pnlFlash.dir ? "pnl-flash" : undefined}
+                                    style={{
+                                        color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b",
+                                        fontWeight: 700, fontSize: 10,
+                                        display: "inline-block",
+                                        padding: "1px 4px", margin: "-1px -4px",
+                                        borderRadius: 2,
+                                        "--pnl-flash-tint": pnlFlash.dir === "up"
+                                            ? "rgba(0,255,65,0.45)"
+                                            : "rgba(255,59,59,0.45)",
+                                    } as React.CSSProperties}
+                                >
+                                    {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
+                                </div>
+                            </div>
+
+                            {/* TP display */}
+                            <div>
+                                <span style={smallLabel}>TP</span>
+                                {editingTp && tpTrigger ? (
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                        <input type="number" value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
+                                            style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
+                                        <span style={{ cursor: "pointer", color: "#00ff41", fontSize: 10 }} onClick={() => handleEditTrigger(tpTrigger, editTpVal)}>OK</span>
+                                        <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingTp(false)}>X</span>
+                                    </div>
+                                ) : (
+                                    <div style={{ color: tpTrigger ? "#00ff41" : "rgba(255,255,255,0.2)" }}>
+                                        {tpTrigger ? fmtUsd(parseFloat(tpTrigger.trigger_price)) : "--"}
+                                        {tpTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditTpVal(tpTrigger.trigger_price); setEditingTp(true); }}>✏️</span>}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* SL display */}
+                            <div>
+                                <span style={smallLabel}>SL</span>
+                                {editingSl && slTrigger ? (
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                        <input type="number" value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
+                                            style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
+                                        <span style={{ cursor: "pointer", color: "#ff3b3b", fontSize: 10 }} onClick={() => handleEditTrigger(slTrigger, editSlVal)}>OK</span>
+                                        <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingSl(false)}>X</span>
+                                    </div>
+                                ) : (
+                                    <div style={{ color: slTrigger ? "#ff3b3b" : "rgba(255,255,255,0.2)" }}>
+                                        {slTrigger ? fmtUsd(parseFloat(slTrigger.trigger_price)) : "--"}
+                                        {slTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditSlVal(slTrigger.trigger_price); setEditingSl(true); }}>✏️</span>}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Trailing stop display */}
+                            {tslTrigger && (
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                    <span style={smallLabel}>TSL</span>
+                                    <div style={{ color: "#f59e0b", fontSize: 10 }}>
+                                        ${parseFloat(tslTrigger.trailing_offset ?? "0").toFixed(2)} offset (stop: {fmtUsd(tslCurrentStop)})
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            disabled={closing}
+                            onClick={handleClosePosition}
+                            style={{
+                                width: "100%", padding: "8px 0",
+                                background: "rgba(255,59,59,0.15)", border: "1px solid rgba(255,59,59,0.4)",
+                                color: "#ff3b3b", fontSize: 10, letterSpacing: 3,
+                                cursor: closing ? "not-allowed" : "pointer",
+                                opacity: closing ? 0.5 : 1, fontFamily: "inherit",
+                            }}
+                        >
+                            {closing ? "CLOSING..." : "CLOSE POSITION"}
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
