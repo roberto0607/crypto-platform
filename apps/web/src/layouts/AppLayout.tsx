@@ -192,6 +192,7 @@ export default function AppLayout() {
                       <NavLink
                         to={item.to}
                         onClick={() => setSidebarOpen(false)}
+                        aria-label={item.label}
                         title={isTradePage ? item.label : undefined}
                         className={({ isActive }) =>
                           `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
@@ -221,6 +222,7 @@ export default function AppLayout() {
                 <NavLink
                   to="/admin"
                   onClick={() => setSidebarOpen(false)}
+                  aria-label="Admin"
                   title={isTradePage ? "Admin" : undefined}
                   className={({ isActive }) =>
                     `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
@@ -253,6 +255,7 @@ export default function AppLayout() {
                 <button
                   onClick={handleLogout}
                   className="text-white/30 hover:text-tradr-red text-xs transition-colors"
+                  aria-label="Logout"
                   title="Logout"
                 >
                   ✕
