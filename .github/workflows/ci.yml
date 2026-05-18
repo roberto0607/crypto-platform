@@ -11,6 +11,13 @@ jobs:
     name: API — Typecheck + Test + Build
     runs-on: ubuntu-latest
 
+    # Test-only placeholder — NOT a real secret. apps/api/src/config.ts builds
+    # its config object (and calls requireEnv("JWT_ACCESS_SECRET")) at module
+    # load, so any step that runs the API code — `pnpm migrate`, `pnpm test` —
+    # needs this set. Job-level so every step inherits it.
+    env:
+      JWT_ACCESS_SECRET: ci-test-secret-not-a-real-secret-do-not-use-in-prod
+
     services:
       postgres:
         image: postgres:16-alpine
