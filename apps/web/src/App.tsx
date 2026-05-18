@@ -211,15 +211,10 @@ export default function App() {
           <Route path="/history" element={<JournalPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          {/* Legacy redirects */}
-          <Route path="/dashboard" element={<Navigate to="/trade" replace />} />
-          <Route path="/portfolio" element={<Navigate to="/trade" replace />} />
+          {/* Legacy redirects — renamed feature URLs that may be bookmarked */}
           <Route path="/competitions" element={<Navigate to="/arena" replace />} />
           <Route path="/competitions/:id" element={<Navigate to="/arena" replace />} />
           <Route path="/journal" element={<Navigate to="/history" replace />} />
-          <Route path="/orders" element={<Navigate to="/trade" replace />} />
-          <Route path="/positions" element={<Navigate to="/trade" replace />} />
-          <Route path="/triggers" element={<Navigate to="/trade" replace />} />
         </Route>
       </Route>
 

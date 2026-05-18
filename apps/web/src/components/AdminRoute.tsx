@@ -11,7 +11,7 @@ export default function AdminRoute() {
     return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />;
   }
 
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
+  if (!isAdmin) return <Navigate to="/trade" replace />;
 
   return <Outlet />;
 }

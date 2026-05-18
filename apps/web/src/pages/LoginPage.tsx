@@ -45,7 +45,7 @@ export default function LoginPage() {
       const res = await login(email, password);
       setTerminalText("tradr@auth:~$ ACCESS GRANTED \u2014 redirecting to arena_");
       setAuth(res.data.accessToken, res.data.user);
-      navigate("/dashboard", { replace: true });
+      navigate("/trade", { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
         err as AxiosError<LegacyApiError | V1ApiError>,

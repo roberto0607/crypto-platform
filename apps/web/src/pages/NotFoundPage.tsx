@@ -6,10 +6,10 @@ export default function NotFoundPage() {
       <h1 className="text-6xl font-bold text-gray-500 mb-2">404</h1>
       <p className="text-lg mb-6">Page not found</p>
       <Link
-        to="/dashboard"
+        to="/trade"
         className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors"
       >
-        Back to Dashboard
+        Back to Trading
       </Link>
     </div>
   );
