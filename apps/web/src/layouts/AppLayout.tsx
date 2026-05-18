@@ -18,6 +18,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/trade", label: "Trade", icon: "\u25C8" },
       { to: "/arena", label: "Arena", icon: "\u2694" },
+      { to: "/replay", label: "Replay", icon: "\u23EA" },
       { to: "/cycle", label: "Cycle", icon: "\u29BF" },
       { to: "/history", label: "History", icon: "\u270E" },
       { to: "/profile", label: "Profile", icon: "\u2666" },
@@ -35,6 +36,7 @@ function breadcrumbLabel(pathname: string): string {
   if (pathname.startsWith("/admin")) return "ADMIN";
   if (pathname.startsWith("/trade")) return "TRADE";
   if (pathname.startsWith("/arena")) return "ARENA";
+  if (pathname.startsWith("/replay")) return "REPLAY";
   if (pathname.startsWith("/history")) return "HISTORY";
   if (pathname.startsWith("/profile")) return "PROFILE";
   if (pathname.startsWith("/settings")) return "SETTINGS";
