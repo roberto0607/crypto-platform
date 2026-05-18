@@ -259,6 +259,12 @@ const TRADE_CSS = `
     padding-top:0;
   }
 
+  /* shared UnifiedOrderPanel root (classPrefix "tr") — padding matches the
+     arena's .lmv-order-section so both consumers of the component align */
+  .tr-order-section {
+    padding:12px 16px;
+  }
+
   .tr-op-section {
     padding:8px 14px;border-bottom:1px solid var(--borderW);
   }
@@ -422,7 +428,7 @@ const TRADE_CSS = `
   .tr-d3{animation-delay:0.13s} .tr-d4{animation-delay:0.18s}
 
   /* ── DIRECTION TOGGLE (LONG/SHORT) ── */
-  .tr-direction-toggle { display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--borderW); }
+  .tr-dir-toggle { display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--borderW); }
   .tr-dir-btn {
     padding:6px;text-align:center;font-family:var(--bebas);
     font-size:18px;letter-spacing:3px;transition:all 0.15s;
@@ -487,6 +493,18 @@ const TRADE_CSS = `
   }
   .tr-pos-badge.short {
     color:var(--red);border:1px solid rgba(255,59,59,0.3);
+  }
+
+  /* sticky position card — pins to the bottom of the scrollable order panel
+     area (.tr-order-panel-top) so an open position stays visible regardless
+     of scroll. Negative horizontal margin cancels .tr-order-section padding
+     for an edge-to-edge bar; the opaque background covers form content
+     scrolling behind it; the top border separates it from that content. */
+  .tr-position-card-sticky {
+    position:sticky;bottom:0;z-index:2;
+    margin:12px -16px 0;padding:12px 16px;
+    background:#050505;
+    border-top:1px solid rgba(255,255,255,0.08);
   }
 
   /* ticker provided by AppLayout */

@@ -225,11 +225,27 @@ const LMV_CSS = `
   }
 
   /* ── ORDER PANEL (reuse TradingPage styles) ── */
+  /* No overflow here: the panel scrolls via its outer flex:1 wrapper. Keeping
+     overflow-y on this content-height element would make it the sticky
+     scroll-ancestor of the position card and leave the card unable to pin. */
   .lmv-order-section {
     min-height: 0;
-    overflow-y: auto;
     padding: 12px 16px;
     border-top: 1px solid var(--ar-borderW);
+  }
+
+  /* sticky position card — pins to the bottom of the scrollable order panel
+     area so an open position stays visible regardless of scroll. Mirrors
+     .tr-position-card-sticky on the trading page; background matches the
+     arena base (--ar-bg) so form content scrolling behind is covered. */
+  .lmv-position-card-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin: 12px -16px 0;
+    padding: 12px 16px;
+    background: #040404;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   /* Order form inline styles */
