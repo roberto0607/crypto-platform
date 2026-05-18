@@ -1,6 +1,14 @@
 import type { PoolClient } from "pg";
 import { pool, acquireClient } from "../db/pool.js";
-import { resolveMatchElo, type TWTier } from "./eloService.js";
+import {
+    resolveMatchElo,
+    ELO_TABLE,
+    checkDemotion,
+    getUserTierTx,
+    updateUserTierTx,
+    TW_TIERS,
+    type TWTier,
+} from "./eloService.js";
 import { getUserTier } from "./tierRepo.js";
 import { getSnapshot } from "../market/snapshotStore.js";
 import { logger as rootLogger } from "../observability/logContext.js";
@@ -18,7 +26,7 @@ export interface MatchRow {
     season_id: string | null;
     challenger_id: string;
     opponent_id: string;
-    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "EXPIRED" | "CANCELLED";
+    status: "PENDING" | "ACTIVE" | "COMPLETED" | "FORFEITED" | "CANCELLED";
     duration_hours: number;
     starting_capital: string;
     challenger_pnl_pct: string | null;
@@ -341,6 +349,129 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         }
 
         await client.query("COMMIT");
+        return updated[0];
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
+/**
+ * Mutual forfeit — resolves an ACTIVE match that expired with zero FILLED
+ * orders (both players accepted but neither traded). Both players take an
+ * ELO loss penalty; the match transitions to FORFEITED with winner_id = NULL.
+ *
+ * Deliberately does NOT call resolveMatchElo: its NULL-winner branch is a
+ * no-op that sets elo_resolved = true, which would poison the match against
+ * any later ELO write. The per-player loss penalty is applied inline below,
+ * mirroring the loser side of resolveMatchElo's normal path. No
+ * match_elo_results row is written (its winner_id/loser_id are NOT NULL);
+ * per-player deltas live in elo_history.
+ */
+export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
+    const client = await acquireClient();
+    try {
+        await client.query("BEGIN");
+
+        const { rows } = await client.query<MatchRow>(
+            `SELECT * FROM matches WHERE id = $1 FOR UPDATE`,
+            [matchId],
+        );
+        if (rows.length === 0) throw new Error("match_not_found");
+
+        const match = rows[0];
+        if (match.status !== "ACTIVE") throw new Error("match_not_active");
+
+        // Exclusively for no-show matches. If any fills exist, the cleanup
+        // job picked the wrong path (completeMatch handles traded matches) —
+        // throw rather than silently mis-resolving a match that had trades.
+        const { rows: fillRows } = await client.query<{ count: string }>(
+            `SELECT count(*) FROM orders
+             WHERE match_id = $1 AND status = 'FILLED'`,
+            [matchId],
+        );
+        if (parseInt(fillRows[0].count, 10) > 0) throw new Error("match_has_trades");
+
+        // Transition the match: FORFEITED, no winner, zero stats (no fills).
+        // elo_resolved is set here directly — resolveMatchElo is never called.
+        const { rows: updated } = await client.query<MatchRow>(
+            `UPDATE matches SET
+                status = 'FORFEITED',
+                winner_id = NULL,
+                forfeit_user_id = NULL,
+                elo_delta = NULL,
+                elo_resolved = true,
+                challenger_pnl_pct = 0,
+                opponent_pnl_pct = 0,
+                challenger_trades_count = 0,
+                opponent_trades_count = 0,
+                challenger_win_rate = 0,
+                opponent_win_rate = 0,
+                challenger_score = 0,
+                opponent_score = 0,
+                completed_at = now()
+             WHERE id = $1
+             RETURNING *`,
+            [matchId],
+        );
+        if (!updated || updated.length === 0) throw new Error("match_update_failed");
+
+        // ── Per-player ELO loss penalty ──
+        // Mirrors the loser side of resolveMatchElo: tier-based loss delta,
+        // loss_count + 1, loss_streak + 1, win_streak reset, elo_history row,
+        // demotion check. No streak multiplier, no badges, no promotion.
+        const playerIds = [match.challenger_id, match.opponent_id];
+        const { rows: players } = await client.query<{
+            id: string;
+            elo_rating: number;
+        }>(
+            `SELECT id, elo_rating FROM users WHERE id = ANY($1) FOR UPDATE`,
+            [playerIds],
+        );
+
+        for (const playerId of playerIds) {
+            const player = players.find((p) => p.id === playerId);
+            if (!player) throw new Error("user_not_found");
+
+            const tierRaw = await getUserTierTx(playerId, client);
+            const tier: TWTier = (TW_TIERS as readonly string[]).includes(tierRaw)
+                ? (tierRaw as TWTier)
+                : "ROOKIE";
+
+            const delta = ELO_TABLE[tier].lose; // negative number
+            const newElo = Math.max(0, player.elo_rating + delta);
+
+            await client.query(
+                `UPDATE users SET
+                    elo_rating = $1,
+                    loss_count = loss_count + 1,
+                    loss_streak = loss_streak + 1,
+                    win_streak = 0
+                 WHERE id = $2`,
+                [newElo, playerId],
+            );
+
+            await client.query(
+                `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id)
+                 VALUES ($1, $2, $3, 'MATCH_LOSS', $4)`,
+                [playerId, player.elo_rating, newElo, matchId],
+            );
+
+            const demotedTo = checkDemotion(tier, newElo);
+            if (demotedTo) {
+                await updateUserTierTx(client, playerId, demotedTo, tier, "MATCH_DEMOTION");
+            }
+
+            logger.info(
+                { matchId, userId: playerId, tier, delta, oldElo: player.elo_rating, newElo },
+                "mutual_forfeit_elo_applied",
+            );
+        }
+
+        await client.query("COMMIT");
+        logger.info({ matchId }, "match_mutual_forfeited");
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
