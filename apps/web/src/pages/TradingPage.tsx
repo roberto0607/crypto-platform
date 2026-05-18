@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { getPositions } from "@/api/endpoints/analytics";
+import { getCandles } from "@/api/endpoints/candles";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
@@ -676,6 +677,8 @@ function OrderBookPanel({
 ───────────────────────────────────────── */
 export default function TradingPage() {
   const pairs = useAppStore((s) => s.pairs);
+  const pairChanges = useAppStore((s) => s.pairChanges);
+  const setPairChange = useAppStore((s) => s.setPairChange);
   const wallets = useAppStore((s) => s.wallets);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
@@ -749,6 +752,39 @@ export default function TradingPage() {
   const activePairs = pairs;
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
 
+  // 24h price change for each asset-bar chip. Fetch a single 1d candle per
+  // pair and compute (close - open) / open. Mount-time only — no refresh
+  // timer; the value naturally updates on remount when navigating back.
+  useEffect(() => {
+    if (!activePairs.length) return;
+    let cancelled = false;
+    (async () => {
+      for (const pair of activePairs) {
+        try {
+          const res = await getCandles(pair.id, { timeframe: "1d", limit: 1 });
+          if (cancelled) return;
+          const candle = res.data.candles?.[0];
+          if (!candle) {
+            setPairChange(pair.id, null);
+            continue;
+          }
+          const open = parseFloat(candle.open);
+          const close = parseFloat(candle.close);
+          if (!(open > 0)) {
+            setPairChange(pair.id, null);
+            continue;
+          }
+          setPairChange(pair.id, (close - open) / open);
+        } catch {
+          if (!cancelled) setPairChange(pair.id, null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePairs, setPairChange]);
+
   // Current price: prefer SSE snapshot, fall back to pair.last_price
   const currentPrice = snapshot?.last
     ? parseFloat(snapshot.last)
@@ -803,6 +839,15 @@ export default function TradingPage() {
           {activePairs.slice(0, 6).map((p) => {
             const isActive = p.id === selectedPairId;
             const price = isActive && snapshot?.last ? parseFloat(snapshot.last) : (p.last_price ? parseFloat(p.last_price) : 0);
+            const change = pairChanges[p.id];
+            const changeClass =
+              change === null || change === undefined
+                ? ""
+                : change > 0
+                  ? "up"
+                  : change < 0
+                    ? "dn"
+                    : "";
             return (
               <div
                 key={p.id}
@@ -812,6 +857,11 @@ export default function TradingPage() {
                 <span>{p.symbol.split("/")[0]}</span>
                 <span className="tr-at-price">
                   ${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+                <span className={`tr-at-chg ${changeClass}`}>
+                  {change === null || change === undefined
+                    ? ""
+                    : `${change >= 0 ? "+" : ""}${(change * 100).toFixed(2)}%`}
                 </span>
               </div>
             );

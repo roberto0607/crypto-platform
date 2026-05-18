@@ -15,6 +15,9 @@ interface AppState {
   userStatus: UserStatus | null;
   riskStatus: RiskStatus | null;
   pairs: TradingPair[];
+  // 24h price change per pair, keyed by pair ID. Decimal change (0.0234 = +2.34%);
+  // null = fetched but unavailable; missing key = not yet fetched.
+  pairChanges: Record<string, number | null>;
   assets: Asset[];
   wallets: Wallet[];
   selectedPairId: string | null;
@@ -29,6 +32,7 @@ interface AppState {
   setUserStatus: (status: UserStatus) => void;
   setRiskStatus: (status: RiskStatus) => void;
   setPairs: (pairs: TradingPair[]) => void;
+  setPairChange: (pairId: string, change: number | null) => void;
   setAssets: (assets: Asset[]) => void;
   setWallets: (wallets: Wallet[]) => void;
   setSelectedPairId: (id: string | null) => void;
@@ -42,6 +46,7 @@ export const useAppStore = create<AppState>((set) => ({
   userStatus: null,
   riskStatus: null,
   pairs: [],
+  pairChanges: {},
   assets: [],
   wallets: [],
   selectedPairId: null,
@@ -58,6 +63,8 @@ export const useAppStore = create<AppState>((set) => ({
   // Filter out test fixture pairs at the chokepoint so every consumer of
   // `pairs` (asset bar, ticker, selector) inherits the filter. See lib/pairs.ts.
   setPairs: (pairs) => set({ pairs: pairs.filter(isRealPair) }),
+  setPairChange: (pairId, change) =>
+    set((s) => ({ pairChanges: { ...s.pairChanges, [pairId]: change } })),
   setAssets: (assets) => set({ assets }),
   setWallets: (wallets) => set({ wallets }),
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
