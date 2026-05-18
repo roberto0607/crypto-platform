@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { pool } from "../../db/pool";
 import { applyFillToPositionTx } from "../../analytics/positionRepo";
-import { completeMatch, forfeitMatch } from "../matchService";
+import { completeMatch, forfeitMatch, cancelActiveMatch } from "../matchService";
 
 type Ctx = {
     challengerId: string;
@@ -74,6 +74,26 @@ async function setupCtx(lastPrice: string): Promise<Ctx> {
     const matchId = matchRows[0]!.id;
 
     return { challengerId, opponentId, baseAssetId, quoteAssetId, pairId, pairSymbol, matchId };
+}
+
+/**
+ * Insert a single FILLED order scoped to the match. Mirrors the column set
+ * closeMatchScopedPositions uses for its synthetic orders, which is the
+ * minimal set the orders table accepts. teardownCtx removes it via pair_id.
+ */
+async function insertFilledOrder(ctx: Ctx): Promise<void> {
+    await pool.query(
+        `INSERT INTO orders (
+            user_id, pair_id, side, type, limit_price,
+            qty, qty_filled, status,
+            reserved_wallet_id, reserved_amount, reserved_consumed,
+            competition_id, match_id
+         ) VALUES ($1, $2, 'BUY', 'MARKET', NULL,
+                   '0.01000000', '0.01000000', 'FILLED',
+                   NULL, '0', '0',
+                   NULL, $3::uuid)`,
+        [ctx.challengerId, ctx.pairId, ctx.matchId],
+    );
 }
 
 async function teardownCtx(ctx: Ctx): Promise<void> {
@@ -257,6 +277,72 @@ describe("Match-scoped positions lifecycle", () => {
             // loss = -200 → pnl_pct = -0.4%.
             expect(match.challenger_pnl_pct).not.toBeNull();
             expect(parseFloat(match.challenger_pnl_pct!)).toBeLessThan(0);
+        });
+    });
+});
+
+describe("cancelActiveMatch — cancel-vs-forfeit ELO-dodge exploit guard", () => {
+    describe("Test 4 — ACTIVE match with zero fills can be cancelled", () => {
+        let ctx: Ctx;
+        beforeAll(async () => {
+            ctx = await setupCtx("50000.00000000");
+        });
+        afterAll(async () => {
+            await teardownCtx(ctx).catch(() => {});
+        });
+
+        it("cancelActiveMatch succeeds and transitions ACTIVE → CANCELLED", async () => {
+            const match = await cancelActiveMatch(ctx.challengerId);
+            expect(match.id).toBe(ctx.matchId);
+            expect(match.status).toBe("CANCELLED");
+        });
+    });
+
+    describe("Test 5 — ACTIVE match with a FILLED order cannot be cancelled (exploit blocked)", () => {
+        let ctx: Ctx;
+        beforeAll(async () => {
+            ctx = await setupCtx("50000.00000000");
+            await insertFilledOrder(ctx);
+        });
+        afterAll(async () => {
+            await teardownCtx(ctx).catch(() => {});
+        });
+
+        it("cancelActiveMatch throws match_has_trades and the match stays ACTIVE", async () => {
+            await expect(cancelActiveMatch(ctx.challengerId)).rejects.toThrow("match_has_trades");
+
+            // The exploit would have left the match CANCELLED; the live fill
+            // count must keep it ACTIVE so the player must FORFEIT instead.
+            const { rows } = await pool.query<{ status: string }>(
+                `SELECT status FROM matches WHERE id = $1`,
+                [ctx.matchId],
+            );
+            expect(rows[0]!.status).toBe("ACTIVE");
+        });
+    });
+
+    describe("Test 6 — PENDING match can be cancelled regardless of fills", () => {
+        let ctx: Ctx;
+        beforeAll(async () => {
+            ctx = await setupCtx("50000.00000000");
+            // Roll the fixture match back to PENDING (setupCtx creates it ACTIVE).
+            await pool.query(
+                `UPDATE matches SET status = 'PENDING', started_at = NULL, ends_at = NULL
+                 WHERE id = $1`,
+                [ctx.matchId],
+            );
+            // A fill present here is artificial, but proves the trade-count
+            // guard is correctly scoped to ACTIVE matches only.
+            await insertFilledOrder(ctx);
+        });
+        afterAll(async () => {
+            await teardownCtx(ctx).catch(() => {});
+        });
+
+        it("cancelActiveMatch succeeds for a PENDING match even with a FILLED order", async () => {
+            const match = await cancelActiveMatch(ctx.challengerId);
+            expect(match.id).toBe(ctx.matchId);
+            expect(match.status).toBe("CANCELLED");
         });
     });
 });

@@ -436,10 +436,20 @@ export async function cancelActiveMatch(userId: string): Promise<MatchRow> {
 
         const match = rows[0];
 
-        // PENDING matches can always be cancelled
+        // PENDING matches can always be cancelled. For ACTIVE matches, gate on
+        // a LIVE fill count — the persisted challenger_trades_count /
+        // opponent_trades_count columns are only written by completeMatch /
+        // forfeitMatch at terminal states, so mid-match they are structurally
+        // always 0 and would let a losing player cancel to dodge the ELO loss
+        // forfeit imposes. This query mirrors calculatePlayerStats' count.
         if (match.status === "ACTIVE") {
-            const totalTrades = (match.challenger_trades_count ?? 0) + (match.opponent_trades_count ?? 0);
-            if (totalTrades > 0) {
+            const { rows: fillRows } = await client.query<{ count: string }>(
+                `SELECT count(*) FROM orders
+                 WHERE match_id = $1 AND status = 'FILLED'`,
+                [match.id],
+            );
+            const liveFillCount = parseInt(fillRows[0].count, 10);
+            if (liveFillCount > 0) {
                 throw new Error("match_has_trades");
             }
         }
