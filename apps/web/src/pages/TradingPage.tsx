@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -116,6 +116,8 @@ const TRADE_CSS = `
   }
   .tr-price-big.up { color:var(--g);text-shadow:0 0 20px var(--g25); }
   .tr-price-big.dn { color:var(--red); }
+  .tr-price-big.down { color:var(--red);text-shadow:0 0 20px var(--red25); }
+  .tr-price-big.flat { color:#fff; }
   .tr-price-chg { font-size:9px;letter-spacing:2px; }
   .tr-price-meta {
     display:flex;gap:16px;margin-left:20px;padding-left:20px;
@@ -664,6 +666,13 @@ export default function TradingPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [fundingRate, setFundingRate] = useState(0);
 
+  // Hero-price color reflects real tick-to-tick movement (not a hardcoded
+  // "up"). prevPriceRef holds the last seen price for the active pair.
+  const prevPriceRef = useRef<number | null>(null);
+  const [priceDirection, setPriceDirection] = useState<"up" | "down" | "flat">(
+    "flat",
+  );
+
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
 
@@ -737,6 +746,25 @@ export default function TradingPage() {
   // Position for selected pair
   const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
+  // Reset price-direction tracking when switching pairs — comparing one
+  // asset's price against another's would produce a bogus up/down flash.
+  useEffect(() => {
+    prevPriceRef.current = null;
+    setPriceDirection("flat");
+  }, [selectedPairId]);
+
+  // Derive hero-price direction from real movement between ticks.
+  useEffect(() => {
+    if (!currentPrice) return; // no price / disconnect — keep last direction
+    const prev = prevPriceRef.current;
+    prevPriceRef.current = currentPrice;
+    if (prev === null) return; // first tick for this pair — stay flat
+    const next =
+      currentPrice > prev ? "up" : currentPrice < prev ? "down" : "flat";
+    // Bail out of the re-render when direction is unchanged (flat ticks).
+    setPriceDirection((cur) => (cur === next ? cur : next));
+  }, [currentPrice]);
+
   if (!selectedPair) {
     return (
       <div className="flex items-center justify-center h-full text-white/30 font-mono text-sm tracking-widest">
@@ -771,7 +799,7 @@ export default function TradingPage() {
         </div>
 
         <div className="tr-price-hero">
-          <span className="tr-price-big up">
+          <span className={`tr-price-big ${priceDirection}`}>
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </span>
           <div className="tr-price-meta">

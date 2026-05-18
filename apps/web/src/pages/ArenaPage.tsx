@@ -13,6 +13,7 @@ import {
 } from "@/api/endpoints/matches";
 import { listCompetitions, getLeaderboard, type LeaderboardEntry } from "@/api/endpoints/competitions";
 import { LiveMatchView } from "@/components/arena/LiveMatchView";
+import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 
 /* ─────────────────────────────────────────
@@ -160,6 +161,7 @@ export default function ArenaPage() {
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
     const pairs = useAppStore((s) => s.pairs);
+    const { addToast } = useToast();
 
     const [tab, setTab] = useState<"SEASON" | "1V1">("1V1");
     const [activeMatch, setActiveMatch] = useState<Match | null>(null);
@@ -292,7 +294,10 @@ export default function ArenaPage() {
         try {
             await acceptMatch(activeMatch.id);
             await loadActiveMatch();
-        } catch { /* ignore */ }
+        } catch (err: any) {
+            const msg = err?.response?.data?.message;
+            addToast("error", msg ?? "Couldn't accept the match. Try again.");
+        }
     }
 
     async function handleForfeit() {
@@ -301,7 +306,10 @@ export default function ArenaPage() {
             await forfeitMatch(activeMatch.id);
             await loadActiveMatch();
             await loadMatchHistory();
-        } catch { /* ignore */ }
+        } catch (err: any) {
+            const msg = err?.response?.data?.message;
+            addToast("error", msg ?? "Couldn't forfeit the match. Try again.");
+        }
     }
 
     const daysLeft = seasonInfo ? formatTimeRemaining(seasonInfo.end_at) : "--";
