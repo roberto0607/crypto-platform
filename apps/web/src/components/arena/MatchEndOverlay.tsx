@@ -74,6 +74,43 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
     const streakMultiplier = eloResult ? parseFloat(eloResult.streak_multiplier) : 1;
     const badges = eloResult?.badges_earned ?? [];
 
+    // ── ELO count-up animation ──
+    // Counts the NEW ELO from old → new and the delta from 0 → final over 800ms
+    // (ease-out), then a single settle pulse. Re-runs once when the detailed
+    // eloResult resolves; static for prefers-reduced-motion users.
+    const reducedMotion =
+        typeof window !== "undefined" &&
+        !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const [displayElo, setDisplayElo] = useState(() => (reducedMotion ? newElo : oldElo));
+    const [displayDelta, setDisplayDelta] = useState(() => (reducedMotion ? eloDelta : 0));
+    const [settleTick, setSettleTick] = useState(0);
+
+    useEffect(() => {
+        // Reduced motion, or nothing to animate — land directly on the final values.
+        if (reducedMotion || oldElo === newElo) {
+            setDisplayElo(newElo);
+            setDisplayDelta(eloDelta);
+            return;
+        }
+        const DURATION = 1200;
+        const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+        const start = performance.now();
+        let raf = requestAnimationFrame(function step(now) {
+            const t = Math.min((now - start) / DURATION, 1);
+            const e = easeOut(t);
+            setDisplayElo(Math.round(oldElo + (newElo - oldElo) * e));
+            setDisplayDelta(Math.round(eloDelta * e));
+            if (t < 1) {
+                raf = requestAnimationFrame(step);
+            } else {
+                setDisplayElo(newElo);
+                setDisplayDelta(eloDelta);
+                setSettleTick((n) => n + 1);
+            }
+        });
+        return () => cancelAnimationFrame(raf);
+    }, [oldElo, newElo, eloDelta, reducedMotion]);
+
     let resultText = "DRAW";
     let resultColor = "var(--ar-gold)";
     if (forfeited) {
@@ -122,7 +159,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                             className="lmv-end-val"
                             style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}
                         >
-                            {won ? `+${eloDelta}` : lost ? `-${eloDelta}` : "0"}
+                            {won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
                             {streakMultiplier > 1 && won && (
                                 <span style={{ fontSize: "0.7em", marginLeft: 6, color: "var(--ar-gold)" }}>
                                     {streakMultiplier}x STREAK
@@ -132,7 +169,13 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                     </div>
                     <div>
                         <div className="lmv-end-label">NEW ELO</div>
-                        <div className="lmv-end-val" style={{ color: "#fff" }}>{newElo}</div>
+                        <div
+                            key={settleTick}
+                            className={`lmv-end-val${settleTick > 0 && !reducedMotion ? " elo-settle-pulse" : ""}`}
+                            style={{ color: "#fff", display: "inline-block" }}
+                        >
+                            {displayElo}
+                        </div>
                     </div>
                 </div>
 
