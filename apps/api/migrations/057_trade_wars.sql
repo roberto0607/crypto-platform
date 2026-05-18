@@ -25,7 +25,11 @@ DELETE FROM wallets           WHERE competition_id IS NOT NULL;
 -- Delete competition-specific tables in FK-safe order (no CASCADE — prevents wiping wallets)
 DELETE FROM competition_leaderboard;
 DELETE FROM competition_participants;
-DELETE FROM matches WHERE season_id IS NOT NULL;
+-- NOTE: the `matches` table is created fresh in Section E below — there is no
+-- pre-existing matches table to wipe on a first-time application of this
+-- migration, so there is no DELETE FROM matches here (a later edit added one
+-- and broke from-scratch rebuilds; the table cannot be both deleted-from in
+-- Section A and created unconditionally in Section E).
 DELETE FROM equity_snapshots WHERE competition_id IS NOT NULL;
 DELETE FROM user_badges;
 DELETE FROM user_tier_history;

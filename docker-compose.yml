@@ -1,16 +1,20 @@
 services:
-  postgres:
+  # TRADR's local Postgres. Renamed from `postgres`/`cp_postgres` and moved
+  # off port 5433 because that port (and the `cp_postgres` container name) is
+  # now held by an unrelated project (ai_trading_agent). 5434 is also taken
+  # (kalshi-edge), so TRADR's dev DB lives on 5435.
+  tradr_postgres:
     image: postgres:16
-    container_name: cp_postgres
+    container_name: tradr_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: cp
       POSTGRES_PASSWORD: cp
       POSTGRES_DB: cp
     ports:
-      - "5433:5432"
+      - "5435:5432"
     volumes:
-      - cp_postgres_data:/var/lib/postgresql/data
+      - tradr_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cp -d cp"]
       interval: 5s
@@ -32,7 +36,7 @@ services:
     container_name: cp_ml
     restart: unless-stopped
     depends_on:
-      postgres:
+      tradr_postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://cp:cp@postgres:5432/cp
@@ -40,5 +44,5 @@ services:
       - "8000:8000"
 
 volumes:
-  cp_postgres_data:
+  tradr_postgres_data:
   cp_redis_data:
