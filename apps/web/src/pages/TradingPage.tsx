@@ -130,7 +130,7 @@ const TRADE_CSS = `
   /* ── MAIN BODY ── */
   .tr-body {
     display:grid;
-    grid-template-columns:1fr 300px;
+    grid-template-columns:1fr 360px;
     grid-template-rows:1fr;
     grid-template-areas: "chart order";
     overflow:hidden;min-height:0;
@@ -170,7 +170,7 @@ const TRADE_CSS = `
   .tr-tab-content::-webkit-scrollbar-thumb { background:var(--border); }
 
   /* order book */
-  .tr-ob { display:grid;grid-template-columns:1fr 1fr;gap:0;height:100%; }
+  .tr-ob { display:grid;grid-template-columns:1.6fr 1fr;gap:0;height:100%; }
   .tr-ob-col { overflow-y:auto;overflow-x:hidden; }
   .tr-ob-col::-webkit-scrollbar { width:2px; }
   .tr-ob-col::-webkit-scrollbar-thumb { background:var(--border); }
