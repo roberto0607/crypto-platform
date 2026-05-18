@@ -8,6 +8,7 @@ import type {
   Wallet,
 } from "@/types/api";
 import type { SseConnectionState } from "@/api/sse";
+import { isRealPair } from "@/lib/pairs";
 
 interface AppState {
   systemStatus: SystemStatus | null;
@@ -54,7 +55,9 @@ export const useAppStore = create<AppState>((set) => ({
   setSystemStatus: (systemStatus) => set({ systemStatus }),
   setUserStatus: (userStatus) => set({ userStatus }),
   setRiskStatus: (riskStatus) => set({ riskStatus }),
-  setPairs: (pairs) => set({ pairs }),
+  // Filter out test fixture pairs at the chokepoint so every consumer of
+  // `pairs` (asset bar, ticker, selector) inherits the filter. See lib/pairs.ts.
+  setPairs: (pairs) => set({ pairs: pairs.filter(isRealPair) }),
   setAssets: (assets) => set({ assets }),
   setWallets: (wallets) => set({ wallets }),
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
