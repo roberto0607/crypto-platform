@@ -9,6 +9,7 @@ import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoi
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { MatchEndOverlay } from "./MatchEndOverlay";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
+import { useToast } from "@/components/ToastProvider";
 import type { Position } from "@/types/api";
 
 /* ─────────────────────────────────────────
@@ -512,6 +513,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const wallets = useAppStore((s) => s.wallets);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const selectPair = useTradingStore((s) => s.selectPair);
+    const { addToast } = useToast();
 
     const [match, setMatch] = useState(initialMatch);
     const [positions, setPositions] = useState<Position[]>([]);
@@ -615,7 +617,10 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
             const { data: full } = await getMatch(match.id);
             setMatch(full.match);
             setShowEndOverlay(true);
-        } catch { /* ignore */ }
+        } catch (err: any) {
+            const msg = err?.response?.data?.message;
+            addToast("error", msg ?? "Couldn't forfeit the match. Try again.");
+        }
     };
 
     // Derived data

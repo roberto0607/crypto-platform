@@ -17,6 +17,7 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { placeOrder } from "@/api/endpoints/trading";
 import { createTrigger, createOco, listTriggers, cancelTrigger } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
+import { useToast } from "@/components/ToastProvider";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -60,6 +61,7 @@ export function UnifiedOrderPanel({
     const submitOrder = useTradingStore((s) => s.submitOrder);
     const snapshot = useTradingStore((s) => s.snapshot);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
+    const { addToast } = useToast();
 
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
     const [usdAmount, setUsdAmount] = useState("");
@@ -322,8 +324,18 @@ export function UnifiedOrderPanel({
     };
 
     const handleEditTrigger = async (oldTrigger: TriggerOrder, newPrice: string) => {
+        // Editing a trigger is cancel-then-create. Track which step failed:
+        // a failed cancel leaves the old trigger intact (nothing lost), but a
+        // failed create AFTER a successful cancel leaves the position with no
+        // protective trigger at all — the user must be told explicitly.
         try {
             await cancelTrigger(oldTrigger.id);
+        } catch (err: any) {
+            const msg = err?.response?.data?.message;
+            addToast("error", msg ?? "Couldn't update trigger. Try again.");
+            return; // old trigger still active — leave the edit panel open
+        }
+        try {
             await createTrigger({
                 pairId: oldTrigger.pair_id,
                 kind: oldTrigger.kind,
@@ -331,8 +343,14 @@ export function UnifiedOrderPanel({
                 triggerPrice: newPrice,
                 qty: oldTrigger.qty,
             });
-            fetchTriggers();
-        } catch { /* non-fatal */ }
+        } catch {
+            addToast(
+                "error",
+                "Trigger update failed — your old trigger is gone. Set a new one immediately.",
+            );
+            return; // keep the edit panel open so the user can retry now
+        }
+        fetchTriggers();
         setEditingTp(false);
         setEditingSl(false);
     };
