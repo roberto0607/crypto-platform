@@ -682,7 +682,9 @@ export default function TradingPage() {
   const snapshot = useTradingStore((s) => s.snapshot);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [fundingRate, setFundingRate] = useState(0);
+  // null = not yet fetched (renders em-dash). A fetched value of 0 is a
+  // genuine, meaningful funding rate and renders as "0.0000%".
+  const [fundingRate, setFundingRate] = useState<number | null>(null);
 
   // Hero-price color reflects real tick-to-tick movement (not a hardcoded
   // "up"). prevPriceRef holds the last seen price for the active pair.
@@ -822,18 +824,40 @@ export default function TradingPage() {
           </span>
           <div className="tr-price-meta">
             <div className="tr-pm-item">
-              <div className="tr-pm-val" style={{ color: fundingRate > 0 ? "var(--g)" : fundingRate < 0 ? "var(--red)" : undefined }}>
-                {fundingRate !== 0
-                  ? `${fundingRate > 0 ? "+" : ""}${(fundingRate * 100).toFixed(4)}%`
-                  : "\u2014"}
+              <div
+                className="tr-pm-val"
+                style={{
+                  color:
+                    fundingRate === null
+                      ? "rgba(255,255,255,0.3)" // not yet fetched
+                      : fundingRate > 0
+                        ? "var(--g)"
+                        : fundingRate < 0
+                          ? "var(--red)"
+                          : undefined, // genuine 0% \u2014 inherit neutral white/60%
+                }}
+              >
+                {fundingRate === null
+                  ? "\u2014"
+                  : `${fundingRate > 0 ? "+" : ""}${(fundingRate * 100).toFixed(4)}%`}
               </div>
               <div className="tr-pm-lbl">FUNDING</div>
             </div>
             <div className="tr-pm-item">
               <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>
-                {snapshot?.ask && snapshot?.bid && parseFloat(snapshot.ask) > 0 && parseFloat(snapshot.bid) > 0
-                  ? `$${(parseFloat(snapshot.ask) - parseFloat(snapshot.bid)).toFixed(2)}`
-                  : "\u2014"}
+                {(() => {
+                  const ask = snapshot?.ask ? parseFloat(snapshot.ask) : 0;
+                  const bid = snapshot?.bid ? parseFloat(snapshot.bid) : 0;
+                  // Collapse to em-dash only when bid/ask are genuinely absent
+                  // or non-positive. A zero spread (bid === ask) is a real
+                  // market state and still renders "$0.00 (0.000%)".
+                  if (!(ask > 0) || !(bid > 0)) return "\u2014";
+                  const spreadDollars = ask - bid;
+                  const midPrice = (ask + bid) / 2;
+                  if (midPrice === 0) return "\u2014";
+                  const spreadPct = (spreadDollars / midPrice) * 100;
+                  return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(3)}%)`;
+                })()}
               </div>
               <div className="tr-pm-lbl">SPREAD</div>
             </div>
@@ -846,7 +870,7 @@ export default function TradingPage() {
         {/* CHART — full height left column */}
         <div className="tr-chart-area">
           <CandlestickChart
-            fundingRate={fundingRate}
+            fundingRate={fundingRate ?? 0}
           />
         </div>
 
