@@ -31,8 +31,6 @@ import { initOrderBookAggregator, stopOrderBookAggregator } from "./market/order
 import { initMacroCorrelation, stopMacroCorrelation } from "./market/macroCorrelationService";
 import { initOptionsGamma, stopOptionsGamma } from "./market/optionsGammaService";
 import { initOnChainFlow, stopOnChainFlow } from "./market/onChainFlowService";
-import { initRegimeClassifier, stopRegimeClassifier } from "./market/regimeClassifier";
-import { initOutcomeTracker, stopOutcomeTracker } from "./market/outcomeTracker";
 
 function getGitCommit(): string {
   try {
@@ -109,8 +107,6 @@ async function start() {
     stopMacroCorrelation();
     stopOptionsGamma();
     stopOnChainFlow();
-    stopRegimeClassifier();
-    stopOutcomeTracker();
     await shutdownQueues(10_000);
     try {
       await app.close();
@@ -148,14 +144,6 @@ async function start() {
   initMacroCorrelation();
   initOptionsGamma();
   initOnChainFlow();
-  initRegimeClassifier();
-
-  // Phase 4 adaptive learning — non-critical, must never crash core server
-  try {
-    initOutcomeTracker();
-  } catch (err) {
-    console.warn("[Phase4] OutcomeTracker failed to init:", (err as Error).message);
-  }
 }
 
 start().catch((err) => {

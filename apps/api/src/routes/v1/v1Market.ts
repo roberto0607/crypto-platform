@@ -12,10 +12,14 @@
  */
 
 import type { FastifyPluginAsync } from "fastify";
+import { z } from "zod";
 import { logger } from "../../observability/logContext";
 import { pool } from "../../db/pool";
 import { getLiveFootprintCandles } from "../../services/footprintAggregator";
 import { estimateLiquidationClusters } from "../../market/liquidationEstimator";
+import { computeLiquidityZones } from "../../market/liquidityZones";
+import { requireUser } from "../../auth/requireUser";
+import { v1HandleError } from "../../http/v1Error";
 import { parseIntParam } from "../../http/pagination";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
@@ -416,6 +420,39 @@ const v1Market: FastifyPluginAsync = async (app) => {
         const live = getLiveFootprintCandles();
         setCache("footprint-live", live, 1000);
         return reply.send(live);
+    });
+
+    // GET /v1/pairs/:pairId/liquidity-zones — liquidity magnet zones (chart overlay)
+    app.get("/pairs/:pairId/liquidity-zones", {
+        schema: {
+            tags: ["Market"],
+            summary: "Get liquidity magnet zones for a pair",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                properties: {
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"] },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const q = z.object({
+                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
+            }).parse(req.query);
+
+            const result = await computeLiquidityZones(pairId, q.timeframe);
+            return reply.send({ ok: true, ...result });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
     });
 };
 

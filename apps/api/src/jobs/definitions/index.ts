@@ -10,9 +10,6 @@ import { competitionLeaderboardJob } from "./competitionLeaderboardJob";
 import { candleRollupJob } from "./candleRollupJob";
 import { weeklyCompetitionJob } from "./weeklyCompetitionJob";
 import { marketMakerJob } from "./marketMakerJob";
-import { signalTrackerJob } from "./signalTrackerJob";
-import { orderFlowSnapshotJob } from "./orderFlowSnapshotJob";
-import { derivativesPollerJob } from "./derivativesPollerJob";
 import { krakenCandleSyncJob } from "./krakenCandleSyncJob";
 import { matchCleanupJob } from "./matchCleanupJob";
 import type { JobDefinition } from "../jobTypes";
@@ -30,9 +27,6 @@ export const allJobs: JobDefinition[] = [
     candleRollupJob,
     weeklyCompetitionJob,
     marketMakerJob,
-    signalTrackerJob,
-    orderFlowSnapshotJob,
-    derivativesPollerJob,
     krakenCandleSyncJob,
     matchCleanupJob,
 ];

@@ -19,7 +19,6 @@ const ADVANCED_INDICATORS = [
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
   { key: "cvd", label: "CVD", color: "#06b6d4" },
-  { key: "marketIntelligence", label: "Market Intelligence", color: "rgba(147,51,234,1)" },
   { key: "fundingRate", label: "Funding Rate", color: "#06b6d4" },
   { key: "openInterest", label: "Open Interest", color: "#eab308" },
   { key: "vpvr", label: "VPVR", color: "#06b6d4" },

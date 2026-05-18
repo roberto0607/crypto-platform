@@ -53,7 +53,6 @@ const defaultIndicatorConfig = {
   liquidityZones: false,
   orderBlocks: false,
   cvd: false,
-  marketIntelligence: false,
   fundingRate: false,
   openInterest: false,
   vpvr: false,
