@@ -37,15 +37,10 @@ import orderBookSignalRoutes from "./routes/orderBookSignalRoutes";
 import macroRoutes from "./routes/macroRoutes";
 import gammaRoutes from "./routes/gammaRoutes";
 import onChainRoutes from "./routes/onChainRoutes";
-import signalRoutes from "./routes/signalRoutes";
-import regimeRoutes from "./routes/regimeRoutes";
-import intelligenceRoutes from "./routes/intelligenceRoutes";
-import learningRoutes from "./routes/learningRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
-import { initBotRunner } from "./bot/botRunner";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
@@ -60,8 +55,6 @@ export interface BuildAppOptions {
   disableKrakenFeed?: boolean;
   /** Skip starting trigger engine (useful for tests). */
   disableTriggerEngine?: boolean;
-  /** Skip starting bot runner (useful for tests). */
-  disableBotRunner?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
@@ -189,7 +182,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         { name: "Assets", description: "Asset definitions" },
         { name: "Triggers", description: "Conditional trigger orders (stop-loss, take-profit, OCO)" },
         { name: "Portfolio", description: "Portfolio analytics, equity snapshots, positions" },
-        { name: "Bot", description: "Strategy bot runs and signals" },
         { name: "Replay", description: "Historical replay engine" },
         { name: "Risk", description: "Risk status and circuit breakers" },
         { name: "Status", description: "System and user status" },
@@ -235,10 +227,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(macroRoutes);
   await app.register(gammaRoutes);
   await app.register(onChainRoutes);
-  await app.register(signalRoutes);
-  await app.register(regimeRoutes);
-  await app.register(intelligenceRoutes);
-  await app.register(learningRoutes);
 
   // ── Error code reference (documentation endpoint) ──
   app.get("/api/errors", {
@@ -307,11 +295,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Trigger engine --
   if (!opts.disableTriggerEngine) {
     app.addHook("onReady", async () => { await startTriggerEngine(); });
-  }
-
-  // -- Bot runner --
-  if (!opts.disableBotRunner) {
-    app.addHook("onReady", () => { initBotRunner(); });
   }
 
   // -- Job runner --

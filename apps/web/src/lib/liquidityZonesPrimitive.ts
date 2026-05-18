@@ -6,7 +6,7 @@ import type {
     SeriesType,
     IPrimitivePaneView,
 } from "lightweight-charts";
-import type { LiquidityZone } from "@/api/endpoints/signals";
+import type { LiquidityZone } from "@/api/endpoints/marketData";
 
 interface MediaScope {
     context: CanvasRenderingContext2D;

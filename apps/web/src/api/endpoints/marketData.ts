@@ -61,6 +61,29 @@ export function fetchLiquidationLevels(ccy: string) {
     return client.get<LiquidationLevelsResponse>(`/v1/market/liquidation-levels/${ccy}`);
 }
 
+export interface LiquidityZone {
+    price: number;
+    width: number;
+    strength: number;
+    structuralScore: number;
+    actionabilityScore: number;
+    type: "support" | "resistance";
+    sources: string[];
+    estimatedLiquidity: string;
+    dollarLiquidity: number;
+}
+
+export function getLiquidityZones(
+    pairId: string,
+    params?: { timeframe?: string },
+) {
+    return client.get<{
+        ok: true;
+        zones: LiquidityZone[];
+        currentPrice: number;
+    }>(`/v1/pairs/${pairId}/liquidity-zones`, { params });
+}
+
 export interface COTWeek {
     date: string;
     nonCommercialLong: number;
