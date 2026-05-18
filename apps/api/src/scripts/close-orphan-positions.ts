@@ -11,7 +11,7 @@
  *   - Finds every match_positions row with closed_at IS NULL whose parent
  *     match has a terminal status.
  *   - Computes exit_price using the same fallback chain as
- *     forceCloseOpenPositions:
+ *     closeMatchScopedPositions:
  *        1. live snapshot (<60s old)  →  getSnapshot(symbol, 60_000)
  *        2. trading_pairs.last_price   →  persisted last price
  *        3. position.entry_price       →  flat close (logged as error)
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     let totalFallbackEntry = 0;
 
     for (const row of orphans) {
-        // Resolve exit price via the same fallback chain forceCloseOpenPositions uses.
+        // Resolve exit price via the same fallback chain closeMatchScopedPositions uses.
         let exitPrice: number | null = null;
         let fallbackSource: "snapshot" | "trading_pairs.last_price" | "entry_price" = "entry_price";
 

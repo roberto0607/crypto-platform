@@ -55,9 +55,6 @@ const TIER_CAPITAL: Record<TWTier, number> = {
     LEGEND: 1_000_000,
 };
 
-/** Minimum trades required for a valid match result */
-const MIN_MATCH_TRADES = 3;
-
 // ── Queries ──
 
 /**
@@ -268,25 +265,6 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
     } finally {
         client.release();
     }
-}
-
-/**
- * Check if a user meets minimum trade requirements for a match.
- */
-export async function checkMatchMinimumRequirements(
-    matchId: string,
-    userId: string,
-): Promise<{ meetsRequirements: boolean; tradesCount: number; minTradesRequired: number }> {
-    const { rows } = await pool.query<{ count: string }>(
-        `SELECT count(*) FROM match_positions WHERE match_id = $1 AND user_id = $2 AND closed_at IS NOT NULL`,
-        [matchId, userId],
-    );
-    const tradesCount = parseInt(rows[0].count, 10);
-    return {
-        meetsRequirements: tradesCount >= MIN_MATCH_TRADES,
-        tradesCount,
-        minTradesRequired: MIN_MATCH_TRADES,
-    };
 }
 
 /**
@@ -656,7 +634,7 @@ async function closeMatchScopedPositions(
     let totalPnl = D("0");
 
     for (const pos of openPositions) {
-        // Exit-price fallback chain (mirrors forceCloseOpenPositions).
+        // Exit-price fallback chain: live snapshot (<60s) → trading_pairs.last_price → avg_entry_price.
         const { rows: pairRows } = await client.query<{
             symbol: string;
             last_price: string | null;
@@ -783,86 +761,3 @@ async function closeMatchScopedPositions(
     };
 }
 
-/**
- * DEPRECATED: superseded by closeMatchScopedPositions. Retained only for
- * the case of any lingering match_positions rows from prior schema work.
- * Safe to remove in a followup.
- *
- * Force-close all open match positions at current market price.
- */
-async function forceCloseOpenPositions(matchId: string, client: PoolClient): Promise<void> {
-    // FOR UPDATE prevents two concurrent completeMatch calls from force-closing
-    // the same position twice.
-    const { rows: openPositions } = await client.query<{
-        id: string;
-        pair_id: string;
-        side: string;
-        entry_price: string;
-        qty: string;
-    }>(
-        `SELECT mp.id, mp.pair_id, mp.side, mp.entry_price, mp.qty
-         FROM match_positions mp
-         WHERE mp.match_id = $1 AND mp.closed_at IS NULL
-         FOR UPDATE`,
-        [matchId],
-    );
-
-    for (const pos of openPositions) {
-        // Get current price from snapshot store. Look up pair symbol + last_price
-        // so we can fall back through snapshot → trading_pairs.last_price → entry_price.
-        const { rows: pairRows } = await client.query<{
-            symbol: string;
-            last_price: string | null;
-        }>(
-            `SELECT symbol, last_price FROM trading_pairs WHERE id = $1`,
-            [pos.pair_id],
-        );
-        const symbol = pairRows[0]?.symbol;
-        const lastPriceStr = pairRows[0]?.last_price ?? null;
-
-        // Preferred: live snapshot (<60s old).
-        let exitPrice: number | null = null;
-        if (symbol) {
-            const snap = await getSnapshot(symbol, 60_000);
-            if (snap) {
-                const snapPrice = parseFloat(snap.last);
-                if (Number.isFinite(snapPrice) && snapPrice > 0) exitPrice = snapPrice;
-            }
-        }
-
-        // Fallback 1: trading_pairs.last_price (most recent persisted price).
-        if (exitPrice === null && lastPriceStr !== null) {
-            const lpNum = parseFloat(lastPriceStr);
-            if (Number.isFinite(lpNum) && lpNum > 0) {
-                exitPrice = lpNum;
-                logger.warn(
-                    { matchId, positionId: pos.id, pairId: pos.pair_id, source: "trading_pairs.last_price" },
-                    "force_close_used_last_price_fallback",
-                );
-            }
-        }
-
-        // Fallback 2: entry_price (flat close). Log as error — this means both
-        // live feed and persisted last_price are stale/missing.
-        if (exitPrice === null) {
-            exitPrice = parseFloat(pos.entry_price);
-            logger.error(
-                { matchId, positionId: pos.id, pairId: pos.pair_id, source: "entry_price" },
-                "force_close_fell_back_to_entry_price_no_market_data",
-            );
-        }
-
-        const entryPrice = parseFloat(pos.entry_price);
-        const qty = parseFloat(pos.qty);
-        const pnl = pos.side === "LONG"
-            ? (exitPrice - entryPrice) * qty
-            : (entryPrice - exitPrice) * qty;
-
-        await client.query(
-            `UPDATE match_positions
-             SET exit_price = $2, pnl = $3, closed_at = now()
-             WHERE id = $1`,
-            [pos.id, exitPrice, pnl],
-        );
-    }
-}

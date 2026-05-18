@@ -102,7 +102,7 @@ All new indicators follow this pattern:
 
 ## Database
 
-- **Production**: `postgresql://postgres:***@shuttle.proxy.rlwy.net:30809/railway`
+- **Production**: Use Railway's `DATABASE_PUBLIC_URL` for local→production queries. Fetch the current value at use time via `railway run --service Postgres bash -c 'echo $DATABASE_PUBLIC_URL'` — do not embed it (even masked) in tracked files.
 - **Local dev**: `postgresql://cp:cp@localhost:5433/cp`
 - **Migrations**: Plain SQL in `apps/api/migrations/`, tracked in `schema_migrations`. Always register in `schema_migrations` when applying manually.
 - **Demo user ID**: `5b44aeb6-81c4-4131-bd06-b87e6fe89f11`

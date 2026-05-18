@@ -1,6 +1,9 @@
 # Node
 node_modules/
 
+# Build outputs
+apps/web/dist/
+
 # Env
 .env
 
