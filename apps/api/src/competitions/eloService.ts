@@ -1,8 +1,4 @@
 import type { PoolClient } from "pg";
-import { logger as rootLogger } from "../observability/logContext";
-// tierRepo used by legacy applyEloChange callers; tx-safe helpers below for resolveMatchElo
-
-const logger = rootLogger.child({ module: "eloService" });
 
 // ── Trade Wars Tier System (4 tiers) ──
 
@@ -18,7 +14,7 @@ function isTWTier(s: string): s is TWTier {
  * Lower tiers are forgiving (easy to gain, hard to lose).
  * Higher tiers are punishing (hard to gain, easy to lose).
  */
-const ELO_TABLE: Record<TWTier, { win: number; lose: number }> = {
+export const ELO_TABLE: Record<TWTier, { win: number; lose: number }> = {
     ROOKIE: { win: 15, lose: -3 },
     PRO:    { win: 12, lose: -8 },
     ELITE:  { win: 10, lose: -15 },
@@ -69,7 +65,7 @@ function checkPromotion(currentTier: TWTier, newElo: number, totalWins: number):
     return null;
 }
 
-function checkDemotion(currentTier: TWTier, newElo: number): TWTier | null {
+export function checkDemotion(currentTier: TWTier, newElo: number): TWTier | null {
     if (currentTier === "ROOKIE") return null;
     if (currentTier === "LEGEND" && newElo < 1800) return "ROOKIE";
     if (currentTier === "ELITE" && newElo < 1500) return "PRO";
@@ -111,56 +107,6 @@ export function calculateEloChange(winnerElo: number, loserElo: number, tier: TW
         winnerDelta: table.win + upsetBonus,
         loserDelta: table.lose,
     };
-}
-
-/**
- * Legacy wrapper — apply ELO changes without streak/tier logic.
- * Used by forfeitMatch where simplified ELO is fine.
- */
-export async function applyEloChange(
-    winnerId: string,
-    loserId: string,
-    matchId: string,
-    tier: TWTier,
-    client: PoolClient,
-): Promise<EloChange> {
-    const { rows: eloRows } = await client.query<{ id: string; elo_rating: number }>(
-        `SELECT id, elo_rating FROM users WHERE id = ANY($1) FOR UPDATE`,
-        [[winnerId, loserId]],
-    );
-
-    // users.id is a PK so duplicates should be impossible. Filter by exact id
-    // and log if the defensive check ever trips — indicates a schema violation.
-    const winnerMatches = eloRows.filter((r) => r.id === winnerId);
-    const loserMatches = eloRows.filter((r) => r.id === loserId);
-    if (winnerMatches.length > 1 || loserMatches.length > 1) {
-        logger.error(
-            { winnerId, loserId, winnerCount: winnerMatches.length, loserCount: loserMatches.length },
-            "elo_duplicate_user_rows_detected",
-        );
-    }
-    const winnerRow = winnerMatches[0];
-    const loserRow = loserMatches[0];
-    if (!winnerRow || !loserRow) throw new Error("user_not_found");
-
-    const change = calculateEloChange(winnerRow.elo_rating, loserRow.elo_rating, tier);
-
-    const newWinnerElo = Math.max(0, winnerRow.elo_rating + change.winnerDelta);
-    const newLoserElo = Math.max(0, loserRow.elo_rating + change.loserDelta);
-
-    await client.query(`UPDATE users SET elo_rating = $1 WHERE id = $2`, [newWinnerElo, winnerId]);
-    await client.query(`UPDATE users SET elo_rating = $1 WHERE id = $2`, [newLoserElo, loserId]);
-
-    await client.query(
-        `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id) VALUES ($1, $2, $3, $4, $5)`,
-        [winnerId, winnerRow.elo_rating, newWinnerElo, "MATCH_WIN", matchId],
-    );
-    await client.query(
-        `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id) VALUES ($1, $2, $3, $4, $5)`,
-        [loserId, loserRow.elo_rating, newLoserElo, "MATCH_LOSS", matchId],
-    );
-
-    return change;
 }
 
 /**
@@ -361,7 +307,7 @@ export async function resolveMatchElo(
 
 // ── Transaction-safe tier helpers ──
 
-async function getUserTierTx(userId: string, client: PoolClient): Promise<string> {
+export async function getUserTierTx(userId: string, client: PoolClient): Promise<string> {
     const { rows } = await client.query<{ tier: string }>(
         `SELECT tier FROM user_tiers WHERE user_id = $1`,
         [userId],
@@ -369,7 +315,7 @@ async function getUserTierTx(userId: string, client: PoolClient): Promise<string
     return rows[0]?.tier ?? "ROOKIE";
 }
 
-async function updateUserTierTx(
+export async function updateUserTierTx(
     client: PoolClient,
     userId: string,
     newTier: string,
