@@ -2,6 +2,7 @@ import WebSocket from "ws";
 import { listActivePairs } from "../trading/pairRepo";
 import { aggregateTick } from "../market/candleAggregator.js";
 import { logger } from "../observability/logContext.js";
+import { coinbaseTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
@@ -85,11 +86,24 @@ function handleMessage(raw: WebSocket.Data): void {
                 const ts = trade.time
                     ? new Date(trade.time).getTime()
                     : Date.now();
-                // Coinbase sends "BUY" or "SELL" — normalize to lowercase
-                const rawSide = typeof trade.side === "string" ? trade.side.toLowerCase() : undefined;
-                const side = rawSide === "buy" || rawSide === "sell" ? rawSide : undefined;
+                // Coinbase sends "BUY" or "SELL" (taker side) — normalize.
+                const side = coinbaseTradeSide(trade);
 
                 aggregateTick(pairId, { price, volume, ts, side });
+
+                // Pressure aggregator hook — runs AFTER aggregateTick so a
+                // failure here can never break the existing CVD/candle path.
+                if (side) {
+                    try {
+                        addPressureSample(ourSymbol, {
+                            ts,
+                            side,
+                            notional: Number(price) * Number(volume),
+                        });
+                    } catch {
+                        // Pressure ingestion must never disrupt the trade feed.
+                    }
+                }
 
                 tradeCount++;
                 if (tradeCount % 50 === 0) {
