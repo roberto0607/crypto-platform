@@ -685,9 +685,10 @@ export default function TradingPage() {
   const snapshot = useTradingStore((s) => s.snapshot);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
   const [positions, setPositions] = useState<Position[]>([]);
-  // null = not yet fetched (renders em-dash). A fetched value of 0 is a
-  // genuine, meaningful funding rate and renders as "0.0000%".
-  const [fundingRate, setFundingRate] = useState<number | null>(null);
+  // Deribit's hourly-applied funding rate (current_funding). null = not yet
+  // fetched (renders em-dash). A fetched value of 0 is a genuine, meaningful
+  // funding rate and renders as "0.0000%".
+  const [fundingRateHourly, setFundingRateHourly] = useState<number | null>(null);
 
   // Hero-price color reflects real tick-to-tick movement (not a hardcoded
   // "up"). prevPriceRef holds the last seen price for the active pair.
@@ -735,12 +736,18 @@ export default function TradingPage() {
     return () => window.removeEventListener("sse:trade.created", handler);
   }, []);
 
-  // Fetch funding rate from basis endpoint
+  // Fetch funding rate from basis endpoint. We display fundingRateHourly
+  // (Deribit current_funding) — the rate actually applied each hour — to
+  // pair honestly with the Market Context Bar's hourly countdown.
   useEffect(() => {
     const fetchFunding = async () => {
       try {
-        const res = await client.get<{ ok: boolean; fundingRate: number }>("/market/basis");
-        setFundingRate(res.data.fundingRate ?? 0);
+        const res = await client.get<{
+          ok: boolean;
+          fundingRateHourly: number;
+          fundingRate8h: number;
+        }>("/market/basis");
+        setFundingRateHourly(res.data.fundingRateHourly ?? 0);
       } catch { /* non-fatal */ }
     };
     fetchFunding();
@@ -872,27 +879,9 @@ export default function TradingPage() {
           <span className={`tr-price-big ${priceDirection}`}>
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </span>
+          {/* Funding rate relocated to the Market Context Bar (chart row).
+              Spread stays here. */}
           <div className="tr-price-meta">
-            <div className="tr-pm-item">
-              <div
-                className="tr-pm-val"
-                style={{
-                  color:
-                    fundingRate === null
-                      ? "rgba(255,255,255,0.3)" // not yet fetched
-                      : fundingRate > 0
-                        ? "var(--g)"
-                        : fundingRate < 0
-                          ? "var(--red)"
-                          : undefined, // genuine 0% \u2014 inherit neutral white/60%
-                }}
-              >
-                {fundingRate === null
-                  ? "\u2014"
-                  : `${fundingRate > 0 ? "+" : ""}${(fundingRate * 100).toFixed(4)}%`}
-              </div>
-              <div className="tr-pm-lbl">FUNDING</div>
-            </div>
             <div className="tr-pm-item">
               <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>
                 {(() => {
@@ -920,7 +909,7 @@ export default function TradingPage() {
         {/* CHART — full height left column */}
         <div className="tr-chart-area">
           <CandlestickChart
-            fundingRate={fundingRate ?? 0}
+            fundingRateHourly={fundingRateHourly}
           />
         </div>
 
