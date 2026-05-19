@@ -21,6 +21,16 @@ import { computeLiquidityZones } from "../../market/liquidityZones";
 import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { parseIntParam } from "../../http/pagination";
+import { getKrakenWsHealth } from "../../market/krakenWs";
+import {
+    getSnapshot as getPressureSnapshot,
+    getStatus as getPressureStatus,
+    isKnownPair,
+    canonicalPair,
+    subscribePressure,
+    unsubscribePressure,
+    KNOWN_PAIRS,
+} from "../../services/pressureAggregator";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -453,6 +463,135 @@ const v1Market: FastifyPluginAsync = async (app) => {
         } catch (err) {
             return v1HandleError(reply, err);
         }
+    });
+
+    // GET /v1/market/pressure?pair=BTCUSD — single buy/sell pressure snapshot
+    app.get("/market/pressure", {
+        schema: {
+            tags: ["Market"],
+            summary: "Buy/sell pressure snapshot (rolling 5-minute window)",
+            querystring: {
+                type: "object",
+                required: ["pair"],
+                properties: { pair: { type: "string" } },
+            },
+            response: {
+                200: { type: "object", additionalProperties: true },
+                404: { type: "object", additionalProperties: true },
+            },
+        },
+    }, async (req, reply) => {
+        const { pair } = req.query as { pair?: string };
+        if (!pair || !isKnownPair(pair)) {
+            return reply.code(404).send({ error: "unknown_pair", pair: pair ?? null });
+        }
+        return reply.send(getPressureSnapshot(pair));
+    });
+
+    // GET /v1/market/pressure/stream?pair=BTCUSD — SSE pressure stream.
+    // Unauthenticated, matching sibling public /v1/market/* endpoints.
+    app.get("/market/pressure/stream", {
+        schema: {
+            tags: ["Market"],
+            summary: "Buy/sell pressure SSE stream",
+            querystring: {
+                type: "object",
+                required: ["pair"],
+                properties: { pair: { type: "string" } },
+            },
+            response: {
+                200: { description: "SSE stream (text/event-stream)", type: "string" },
+                404: { type: "object", additionalProperties: true },
+            },
+        },
+    }, async (req, reply) => {
+        const { pair } = req.query as { pair?: string };
+        if (!pair || !isKnownPair(pair)) {
+            return reply.code(404).send({ error: "unknown_pair", pair: pair ?? null });
+        }
+        const canonical = canonicalPair(pair);
+
+        // SSE headers via Fastify so CORS headers are preserved (per v1Events).
+        reply.header("Content-Type", "text/event-stream");
+        reply.header("Cache-Control", "no-cache");
+        reply.header("Connection", "keep-alive");
+        reply.header("X-Accel-Buffering", "no");
+        reply.raw.writeHead(200, reply.getHeaders() as import("node:http").OutgoingHttpHeaders);
+
+        let closed = false;
+        let periodic: ReturnType<typeof setInterval> | null = null;
+        let heartbeat: ReturnType<typeof setInterval> | null = null;
+        // Coalesces a burst of significant trades into at most one push/sec —
+        // BTC alone clears the $1k threshold many times per second, so an
+        // unthrottled push-per-sample would flood the SSE connection.
+        let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        // cleanup is idempotent via the `closed` flag (per v1Events SSE).
+        const cleanup = () => {
+            if (closed) return;
+            closed = true;
+            if (periodic) clearInterval(periodic);
+            if (heartbeat) clearInterval(heartbeat);
+            if (coalesceTimer) clearTimeout(coalesceTimer);
+            unsubscribePressure(onSignificant);
+        };
+
+        const sendSnapshot = () => {
+            if (closed) return;
+            try {
+                const snap = getPressureSnapshot(canonical);
+                reply.raw.write(`event: pressure\ndata: ${JSON.stringify(snap)}\n\n`);
+            } catch {
+                cleanup();
+            }
+        };
+
+        // Significant new flow for this pair — coalesced to one push/sec.
+        const onSignificant = (changedPair: string) => {
+            if (closed || changedPair !== canonical || coalesceTimer) return;
+            coalesceTimer = setTimeout(() => {
+                coalesceTimer = null;
+                sendSnapshot();
+            }, 1_000);
+        };
+
+        // Initial snapshot immediately on connect.
+        sendSnapshot();
+
+        // Periodic push every 10s as a floor.
+        periodic = setInterval(sendSnapshot, 10_000);
+
+        // Heartbeat comment every 15s (matches v1Events SSE pattern).
+        heartbeat = setInterval(() => {
+            if (closed) return;
+            try {
+                reply.raw.write(": heartbeat\n\n");
+            } catch {
+                cleanup();
+            }
+        }, 15_000);
+
+        subscribePressure(onSignificant);
+        req.raw.on("close", cleanup);
+    });
+
+    // GET /v1/debug/pressure-aggregator — internal aggregator state
+    app.get("/debug/pressure-aggregator", {
+        schema: {
+            tags: ["Market"],
+            summary: "Pressure aggregator internal state (debug)",
+            response: { 200: { type: "object", additionalProperties: true } },
+        },
+    }, async (_req, reply) => {
+        const status = getPressureStatus();
+        return reply.send({
+            ...status,
+            knownPairs: KNOWN_PAIRS,
+            upstream: {
+                // Coinbase WS exposes no health accessor; Kraken does.
+                kraken: getKrakenWsHealth(),
+            },
+        });
     });
 };
 

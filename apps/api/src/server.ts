@@ -18,6 +18,7 @@ import { buildApp } from "./app";
 import { stopKrakenFeed } from "./market/krakenWs";
 import { stopCoinbaseFeed } from "./feeds/coinbaseWs";
 import { stopFootprintAggregator } from "./services/footprintAggregator";
+import { stopPressureAggregator } from "./services/pressureAggregator";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
@@ -102,6 +103,7 @@ async function start() {
     stopKrakenFeed();
     stopCoinbaseFeed();
     stopFootprintAggregator();
+    stopPressureAggregator();
     stopPerpetualBasis();
     stopOrderBookAggregator();
     stopMacroCorrelation();

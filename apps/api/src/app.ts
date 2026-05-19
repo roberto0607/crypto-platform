@@ -40,6 +40,7 @@ import onChainRoutes from "./routes/onChainRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
+import { startPressureAggregator } from "./services/pressureAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
@@ -289,6 +290,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     app.addHook("onReady", () => {
       try { startCoinbaseFeed(); } catch (err) { console.error("[coinbaseWs] failed to start", err); }
       try { startFootprintAggregator(); } catch (err) { console.error("[footprint] failed to start", err); }
+      try { startPressureAggregator(); } catch (err) { console.error("[pressure] failed to start", err); }
     });
   }
 
