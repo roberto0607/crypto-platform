@@ -49,6 +49,7 @@ import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
 import { COTPanel } from "./COTPanel";
+import { PressureCell } from "./PressureCell";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
@@ -198,13 +199,8 @@ const CONTEXT_BAR_CSS = `
   }
   .tr-cr-pressure {
     display:flex;align-items:center;
-    min-width:40px;font-size:11px;color:rgba(255,255,255,0.3);
+    font-size:11px;color:rgba(255,255,255,0.3);
   }
-  .tr-cr-shimmer {
-    letter-spacing:3px;
-    animation:crShimmer 1.6s ease-in-out infinite;
-  }
-  @keyframes crShimmer { 0%,100%{opacity:0.25} 50%{opacity:0.6} }
   .tr-cr-indicators { display:flex;align-items:center; }
   /* Narrow viewports: drop the live-candle cell so funding + pressure
      stay visible. Also hides the divider that trails it. */
@@ -1293,10 +1289,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
                 <span className="tr-cr-divider" />
 
-                {/* Cell 4 — pressure indicator placeholder (Commit C fills this) */}
-                <div className="tr-cr-pressure">
-                    <span className="tr-cr-shimmer">···</span>
-                </div>
+                {/* Cell 4 — live buy/sell pressure (Commit C) */}
+                <PressureCell pair={selectedPairSymbol} />
 
                 {/* Cell 5 — indicators dropdown, pushed to the right edge */}
                 <span className="tr-cr-divider" style={{ marginLeft: "auto" }} />

@@ -24,3 +24,7 @@ apps/api/load/results/
 
 # OS
 .DS_Store
+
+# Playwright MCP session artifacts
+.playwright-mcp/
+toolbar-*.png
