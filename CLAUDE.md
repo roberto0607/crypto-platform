@@ -138,4 +138,74 @@ All new indicators follow this pattern:
 | `DISABLE_RATE_LIMIT` | no | `false` | Skip rate limiting (dev/load test) |
 | `DISABLE_JOB_RUNNER` | no | `false` | Skip background jobs (load test) |
 
+## Visual verification: Playwright MCP
+
+Playwright MCP is wired into Claude Code at user scope. Use it BEFORE
+asking Roberto for DevTools screenshots — it pays for itself the moment
+the question is "does this element exist / what are its computed styles
+/ does it overlap something."
+
+### When to reach for it
+
+- Any "is X rendering?" question about the running app
+- DOM structure / computed style questions (width, display, flex,
+  overflow, min-width)
+- "Does the layout break at viewport Y?"
+- Smoke-testing a UI change end-to-end before committing
+- Reproducing a visual bug Roberto described
+
+Do NOT use it for: questions answerable from source code alone, unit
+test failures, type errors, or anything where the answer is in the repo.
+
+### How to invoke
+
+Mention "playwright mcp" explicitly the first time in a session:
+
+    Use playwright mcp to open http://localhost:5173/trade and ...
+
+After the first call, "use playwright" or "open the page" is enough.
+
+### Prereqs the tool needs
+
+- Dev servers must be running on :5173 (web) and :3001 (api). If they're
+  not, start them yourself with `pnpm dev` in the respective app dir,
+  background them with `>/tmp/tradr-{api,web}.log 2>&1 &`, and poll
+  with curl until both return 200 before navigating.
+- /trade requires auth. There's no .env with test credentials. Options:
+  ask Roberto, or register a fresh throwaway account via the signup
+  flow (local DB gets reseeded regularly so throwaways are cheap).
+
+### Diagnostic prompt template
+
+For DOM/CSS investigations, capture data structurally rather than just
+screenshots — screenshots are good for the final visual but bad for
+answering questions like "what's the computed flex value":
+
+1. Navigate, wait for the target component to render
+2. querySelectorAll the parent, list every child's className +
+   computed width + display + flex
+3. For specific suspects, dump display, flex, min-width, width,
+   max-width, overflow
+4. Test at multiple viewport widths if a media query might be involved
+5. Screenshot final state for Roberto's visual confirmation
+
+### Verify the correct selector before reporting "missing"
+
+A null querySelector result means EITHER the element doesn't exist OR
+the selector is wrong. Always grep the source for the class name first:
+
+    grep -rn "tr-cr-ohlc" apps/web/src
+
+If the class doesn't appear in source, the selector is wrong. Don't
+report "missing from DOM" until you've confirmed the class name is
+spelled correctly. (Real example from May 2026: `.tr-cr-ohlcv` was
+queried for an hour before it turned out the actual class is
+`.tr-cr-ohlc` — no V.)
+
+### Privacy note
+
+Everything Playwright sees goes to Anthropic's API as tool input. Fine
+for localhost with fake/paper-trading data. Don't point it at Railway
+prod with real account state unless Roberto explicitly asks.
+
 # Stage 2 deployed: Funding Rate + Open Interest
