@@ -2,7 +2,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 ARG VITE_API_BASE
 ENV VITE_API_BASE=$VITE_API_BASE
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@10
 COPY package.json ./
 RUN pnpm install --no-frozen-lockfile
 COPY . .

@@ -4,7 +4,7 @@
 # artifacts explicitly copied into the runtime stage below.
 FROM node:20-alpine AS builder
 WORKDIR /app
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@10
 COPY package.json ./
 RUN pnpm install --no-frozen-lockfile
 COPY tsconfig.json ./
@@ -18,7 +18,7 @@ RUN pnpm build
 # emit leaves extensionless ESM imports that plain node cannot resolve.
 FROM node:20-alpine AS runtime
 WORKDIR /app
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@10
 
 # Copy only what's needed at runtime
 COPY --from=builder /app/package.json ./
