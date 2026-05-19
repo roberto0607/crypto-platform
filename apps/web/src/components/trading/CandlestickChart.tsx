@@ -100,12 +100,130 @@ function bucketTime(epochSec: number, tf: Timeframe): number {
     }
 }
 
-interface CandlestickChartProps {
-    onTimeframeChange?: (tf: Timeframe) => void;
-    fundingRate?: number;
+/** Duration of one candle period in seconds. */
+function timeframeSeconds(tf: Timeframe): number {
+    switch (tf) {
+        case "1m":  return 60;
+        case "5m":  return 300;
+        case "15m": return 900;
+        case "1h":  return 3600;
+        case "4h":  return 14400;
+        case "1d":  return 86400;
+        default:    return 60;
+    }
 }
 
-export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: CandlestickChartProps) {
+/**
+ * Next funding application (epoch ms). The /market/basis endpoint sources
+ * funding from Deribit BTC-PERPETUAL, which applies funding continuously
+ * and realizes it hourly on the top of the hour — NOT on the fixed
+ * 00:00/08:00/16:00 UTC boundaries of Binance/Bybit/OKX. Deribit exposes
+ * no settlement timestamp because continuous funding has no discrete
+ * settlement instant; the next hour boundary IS the correct value, not
+ * a fallback.
+ */
+function nextFundingSettlementMs(nowMs: number): number {
+    return Math.floor(nowMs / 3_600_000) * 3_600_000 + 3_600_000;
+}
+
+/** Countdown text: (2h 34m) under >1h, (34m 12s) under 1h, (12s) under 1m. */
+function formatCountdown(msLeft: number): string {
+    const total = Math.max(0, Math.floor(msLeft / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `(${h}h ${m}m)`;
+    if (m > 0) return `(${m}m ${s}s)`;
+    return `(${s}s)`;
+}
+
+/** Compact base-asset volume formatting for the live-candle cell. */
+function formatVol(v: number | null): string {
+    if (v == null) return "—";
+    if (v >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    if (v >= 1) return v.toFixed(2);
+    return v.toFixed(4);
+}
+
+/* ── Market Context Bar (chart toolbar row) CSS ──
+   Injected once into <head>. Colour vars (--g, --red, …) cascade down
+   from .tr-wrap on the trading page. */
+const CONTEXT_BAR_CSS = `
+  .tr-chart-toolbar {
+    display:flex;align-items:center;gap:0;
+    margin-bottom:8px;min-height:30px;
+    font-family:'Space Mono',monospace;
+  }
+  .tr-cr-divider {
+    width:1px;align-self:stretch;flex-shrink:0;
+    margin:3px 12px;
+    background:rgba(255,255,255,0.08);
+  }
+  .tr-cr-tf { display:flex;align-items:center;gap:4px; }
+  .tr-cr-ohlc {
+    display:flex;align-items:center;gap:11px;
+    font-size:11px;color:rgba(255,255,255,0.4);
+    white-space:nowrap;
+  }
+  .tr-chart-toolbar .val {
+    color:rgba(255,255,255,0.85);margin-left:3px;
+  }
+  .tr-chart-toolbar .val.muted { color:rgba(255,255,255,0.3); }
+  .tr-cr-progress {
+    position:relative;display:inline-flex;
+    align-items:center;justify-content:center;
+    width:62px;height:13px;margin-left:3px;
+    background:rgba(255,255,255,0.05);
+    border-radius:2px;overflow:hidden;
+  }
+  .tr-cr-progress .bar {
+    position:absolute;left:0;top:0;bottom:0;
+    background:var(--g12,rgba(0,255,65,0.18));
+    border-right:1px solid var(--g,#00ff41);
+    transition:width 1s linear;
+  }
+  .tr-cr-progress .lbl {
+    position:relative;z-index:1;
+    font-size:9px;color:rgba(255,255,255,0.6);letter-spacing:0.5px;
+  }
+  .tr-cr-funding {
+    display:flex;align-items:center;gap:8px;
+    font-size:11px;white-space:nowrap;
+  }
+  .tr-cr-funding .lbl {
+    font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.3);
+  }
+  .tr-cr-funding .countdown {
+    font-size:10px;color:rgba(255,255,255,0.4);
+  }
+  .tr-cr-pressure {
+    display:flex;align-items:center;
+    min-width:40px;font-size:11px;color:rgba(255,255,255,0.3);
+  }
+  .tr-cr-shimmer {
+    letter-spacing:3px;
+    animation:crShimmer 1.6s ease-in-out infinite;
+  }
+  @keyframes crShimmer { 0%,100%{opacity:0.25} 50%{opacity:0.6} }
+  .tr-cr-indicators { display:flex;align-items:center; }
+  /* Narrow viewports: drop the live-candle cell so funding + pressure
+     stay visible. Also hides the divider that trails it. */
+  @media (max-width:1280px) {
+    .tr-cr-ohlc, .tr-cr-ohlc + .tr-cr-divider { display:none; }
+  }
+`;
+
+interface CandlestickChartProps {
+    onTimeframeChange?: (tf: Timeframe) => void;
+    /**
+     * Deribit's hourly-applied funding rate (`current_funding`). Paired with
+     * an hourly countdown in the Market Context Bar. null = not yet fetched —
+     * renders as a muted em-dash.
+     */
+    fundingRateHourly?: number | null;
+}
+
+export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -169,7 +287,15 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         });
     }, []);
 
-    const [crosshairData, setCrosshairData] = useState<{ open: number; high: number; low: number; close: number; time: number } | null>(null);
+    const [crosshairData, setCrosshairData] = useState<{ open: number; high: number; low: number; close: number; time: number; volume: number | null } | null>(null);
+
+    // Per-second tick driving the live-candle progress bar and the funding
+    // countdown. Deliberately NOT referenced by any effect dep array, so it
+    // only re-runs render() — the imperatively-managed chart canvas is left
+    // untouched. Keeping the live candle in a ref (not state) avoids a full
+    // chart-row re-render on every price tick; the 1s cadence is enough for
+    // a toolbar readout.
+    const [nowMs, setNowMs] = useState(() => Date.now());
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore(useShallow((s) => s.indicatorConfig));
@@ -280,12 +406,21 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 setCrosshairData(null);
                 return;
             }
+            const t = param.time as number;
+            // Volume isn't carried on the candlestick series — look it up from
+            // the raw candle cache by matching the converted bucket time. The
+            // live (forming) candle isn't in the cache, so hovering it yields
+            // null and the volume slot stays an em-dash.
+            const raw = rawCandlesRef.current.find(
+                (c) => new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC === t,
+            );
             setCrosshairData({
                 open: bar.open,
                 high: bar.high,
                 low: bar.low,
                 close: bar.close,
-                time: param.time as number,
+                time: t,
+                volume: raw ? parseFloat(raw.volume) : null,
             });
         });
 
@@ -493,7 +628,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, clearPriceLines, fundingRate]);
+    }, [indicatorConfig, clearPriceLines, fundingRateHourly]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
@@ -918,6 +1053,24 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
         }
     }, []);
 
+    // Inject Market Context Bar (chart toolbar row) CSS
+    useEffect(() => {
+        const id = "context-bar-css";
+        if (!document.getElementById(id)) {
+            const style = document.createElement("style");
+            style.id = id;
+            style.textContent = CONTEXT_BAR_CSS;
+            document.head.appendChild(style);
+        }
+    }, []);
+
+    // Per-second tick: refreshes the live-candle progress bar and the
+    // funding countdown.
+    useEffect(() => {
+        const id = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(id);
+    }, []);
+
     // RAF loop: position DOM label overlays with collision avoidance
     useEffect(() => {
         const allRefs = [pdhLabelRef, pdlLabelRef, priceLabelRef, pdhConnectorRef, pdlConnectorRef];
@@ -1036,70 +1189,128 @@ export function CandlestickChart({ onTimeframeChange, fundingRate = 0 }: Candles
 
     return (
         <div className="flex flex-col h-full">
-            {/* Timeframe selector + Indicator toolbar */}
-            <div className="flex items-center gap-1 mb-2">
-                {TIMEFRAMES.map((tf) => (
-                    <button
-                        key={tf}
-                        onClick={() => handleTimeframeChange(tf)}
+            {/* ── Market Context Bar — chart toolbar row ── */}
+            <div className="tr-chart-toolbar">
+                {/* Cell 1 — timeframe selector */}
+                <div className="tr-cr-tf">
+                    {TIMEFRAMES.map((tf) => (
+                        <button
+                            key={tf}
+                            onClick={() => handleTimeframeChange(tf)}
+                            style={{
+                                padding: "4px 8px", fontSize: 12, borderRadius: 2,
+                                transition: "all 0.15s",
+                                fontFamily: "'Space Mono', monospace",
+                                letterSpacing: 1,
+                                border: timeframe === tf ? "1px solid #00ff41" : "1px solid rgba(0,255,65,0.16)",
+                                background: timeframe === tf ? "#00ff41" : "transparent",
+                                color: timeframe === tf ? "#000" : "rgba(255,255,255,0.5)",
+                            }}
+                        >
+                            {tf}
+                        </button>
+                    ))}
+                    {loading && (
+                        <span className="text-gray-600 text-xs ml-1">Loading...</span>
+                    )}
+                </div>
+
+                <span className="tr-cr-divider" />
+
+                {/* Cell 2 — live candle OHLC + volume + progress-through-period.
+                    Defaults to the forming candle; swaps to the hovered candle
+                    while the crosshair is active (progress bar hidden then). */}
+                <div className="tr-cr-ohlc">
+                    {(() => {
+                        const live = liveCandleRef.current;
+                        const c = crosshairData ?? live;
+                        const fmt = (n: number | undefined) =>
+                            n == null
+                                ? "—"
+                                : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        const up = c != null && c.close >= c.open;
+                        // Progress through the current (live) candle period.
+                        let progressPct = 0;
+                        if (live) {
+                            const durationMs = timeframeSeconds(timeframe) * 1000;
+                            // live.time is the bucket start in epoch seconds, shifted
+                            // by TZ_OFFSET_SEC for Lightweight Charts — undo the shift.
+                            const startMs = ((live.time as number) - TZ_OFFSET_SEC) * 1000;
+                            progressPct = Math.min(100, Math.max(0, ((nowMs - startMs) / durationMs) * 100));
+                        }
+                        return (
+                            <>
+                                <span>O <span className="val">{fmt(c?.open)}</span></span>
+                                <span>H <span className="val">{fmt(c?.high)}</span></span>
+                                <span>L <span className="val">{fmt(c?.low)}</span></span>
+                                <span>C <span className="val" style={{ color: c == null ? undefined : up ? "var(--g)" : "var(--red)" }}>{fmt(c?.close)}</span></span>
+                                {/* TODO(follow-up): wire up a live volume tracker —
+                                    an sse:trade.created accumulator that sums qty
+                                    into the current bucket — so V shows real volume
+                                    on the forming candle, not just on hover. */}
+                                <span>V <span className={`val${crosshairData ? "" : " muted"}`}>
+                                    {crosshairData == null || crosshairData.volume == null
+                                        ? "—"
+                                        : `${formatVol(crosshairData.volume)} ${footprintPair}`}
+                                </span></span>
+                                {!crosshairData && (
+                                    <span className="tr-cr-progress">
+                                        <span className="bar" style={{ width: `${progressPct}%` }} />
+                                        <span className="lbl">{Math.floor(progressPct)}%</span>
+                                    </span>
+                                )}
+                            </>
+                        );
+                    })()}
+                </div>
+
+                <span className="tr-cr-divider" />
+
+                {/* Cell 3 — hourly funding rate + countdown to next hourly accrual */}
+                <div className="tr-cr-funding">
+                    <span className="lbl">FUNDING</span>
+                    <span
+                        className="val"
                         style={{
-                            padding: "4px 8px", fontSize: 12, borderRadius: 2,
-                            transition: "all 0.15s",
-                            fontFamily: "'Space Mono', monospace",
-                            letterSpacing: 1,
-                            border: timeframe === tf ? "1px solid #00ff41" : "1px solid rgba(0,255,65,0.16)",
-                            background: timeframe === tf ? "#00ff41" : "transparent",
-                            color: timeframe === tf ? "#000" : "rgba(255,255,255,0.5)",
+                            color:
+                                fundingRateHourly === null
+                                    ? "rgba(255,255,255,0.3)"
+                                    : fundingRateHourly > 0
+                                        ? "var(--g)"
+                                        : fundingRateHourly < 0
+                                            ? "var(--red)"
+                                            : undefined,
                         }}
                     >
-                        {tf}
-                    </button>
-                ))}
-                <div className="ml-2">
+                        {fundingRateHourly === null
+                            ? "—"
+                            : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
+                    </span>
+                    <span className="countdown">
+                        {formatCountdown(nextFundingSettlementMs(nowMs) - nowMs)}
+                    </span>
+                </div>
+
+                <span className="tr-cr-divider" />
+
+                {/* Cell 4 — pressure indicator placeholder (Commit C fills this) */}
+                <div className="tr-cr-pressure">
+                    <span className="tr-cr-shimmer">···</span>
+                </div>
+
+                {/* Cell 5 — indicators dropdown, pushed to the right edge */}
+                <span className="tr-cr-divider" style={{ marginLeft: "auto" }} />
+                <div className="tr-cr-indicators">
                     <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={setVpvrMode} />
                 </div>
-                {loading && (
-                    <span className="text-gray-600 text-xs ml-2">Loading...</span>
-                )}
             </div>
 
             {/* Chart container */}
             <div className="relative flex-1 min-h-0">
                 <div ref={containerRef} className="absolute inset-0" />
 
-                {/* ── Crosshair OHLCV readout ── */}
-                {crosshairData && (
-                    <div style={{
-                        position: "absolute", top: 8, left: 8, zIndex: 10,
-                        pointerEvents: "none", display: "flex", gap: 16,
-                        fontFamily: "'Space Mono', monospace", fontSize: 11,
-                    }}>
-                        <span>
-                            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginRight: 4 }}>O</span>
-                            <span style={{ color: "rgba(255,255,255,0.8)" }}>
-                                {crosshairData.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                        </span>
-                        <span>
-                            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginRight: 4 }}>H</span>
-                            <span style={{ color: "#00ff41" }}>
-                                {crosshairData.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                        </span>
-                        <span>
-                            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginRight: 4 }}>L</span>
-                            <span style={{ color: "#ff3b3b" }}>
-                                {crosshairData.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                        </span>
-                        <span>
-                            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginRight: 4 }}>C</span>
-                            <span style={{ color: crosshairData.close >= crosshairData.open ? "#fff" : "#ff3b3b" }}>
-                                {crosshairData.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                        </span>
-                    </div>
-                )}
+                {/* Crosshair OHLC readout now lives in the Market Context Bar
+                    (Cell 2), which swaps to the hovered candle on crosshair. */}
 
                 {/* ── PDH/PDL DOM overlay — sits OVER the chart, outside TradingView's canvas ── */}
                 {indicatorConfig.keyLevels && (

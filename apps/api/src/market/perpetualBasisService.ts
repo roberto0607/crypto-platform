@@ -4,7 +4,8 @@
  * Data sources (all public, no auth):
  *   Spot:     Coinbase order book mid-price
  *   Perp:     Deribit BTC-PERPETUAL ticker
- *   Funding:  Deribit funding rate
+ *   Funding:  Deribit funding rate — exposed as fundingRate8h (8h-normalized)
+ *             and fundingRateHourly (current_funding, applied hourly).
  */
 
 interface BasisReading {
@@ -13,7 +14,8 @@ interface BasisReading {
     perpPrice: number;
     basisDollar: number;
     basisPercent: number;
-    fundingRate: number;
+    fundingRate8h: number;
+    fundingRateHourly: number;
 }
 
 interface BasisSnapshot {
@@ -22,7 +24,18 @@ interface BasisSnapshot {
     perpPrice: number;
     basisDollar: number;
     basisPercent: number;
+    /**
+     * @deprecated Alias of `fundingRate8h` (the 8h-normalized rate). Kept for
+     * one release so existing consumers don't break. Use `fundingRate8h` for
+     * the 8h-normalized value, or `fundingRateHourly` for the rate Deribit
+     * actually applies each hour.
+     * TODO(follow-up): remove this alias once grep confirms no consumers.
+     */
     fundingRate: number;
+    /** Deribit `funding_8h` — funding rate normalized to an 8-hour window. */
+    fundingRate8h: number;
+    /** Deribit `current_funding` — the rate Deribit actually applies hourly. */
+    fundingRateHourly: number;
     fundingRateAnnualized: number;
     crowding: string;
     trend: string;
@@ -55,7 +68,7 @@ async function fetchSpotPrice(): Promise<number | null> {
     return (bid + ask) / 2;
 }
 
-async function fetchDeribitTicker(): Promise<{ perpPrice: number; fundingRate: number }> {
+async function fetchDeribitTicker(): Promise<{ perpPrice: number; fundingRate8h: number; fundingRateHourly: number }> {
     const res = await fetch(
         "https://www.deribit.com/api/v2/public/ticker?instrument_name=BTC-PERPETUAL",
     );
@@ -71,7 +84,11 @@ async function fetchDeribitTicker(): Promise<{ perpPrice: number; fundingRate: n
     const r = json.result;
     return {
         perpPrice: r.mark_price,
-        fundingRate: r.funding_8h || r.current_funding || 0,
+        // funding_8h: rate normalized to an 8h window (cross-venue comparison).
+        // current_funding: the rate Deribit actually applies each hour —
+        // Deribit funds continuously, realized hourly, no 8h boundaries.
+        fundingRate8h: r.funding_8h || 0,
+        fundingRateHourly: r.current_funding || 0,
     };
 }
 
@@ -125,7 +142,8 @@ async function poll(): Promise<void> {
             perpPrice: deribit.perpPrice,
             basisDollar,
             basisPercent,
-            fundingRate: deribit.fundingRate,
+            fundingRate8h: deribit.fundingRate8h,
+            fundingRateHourly: deribit.fundingRateHourly,
         };
 
         history.push(reading);
@@ -139,7 +157,7 @@ async function poll(): Promise<void> {
             console.log(
                 `[PerpBasis] spot: $${spotPrice.toFixed(0)}, perp: $${deribit.perpPrice.toFixed(0)}, ` +
                 `basis: $${basisDollar.toFixed(2)} (${basisPercent.toFixed(4)}%), ` +
-                `funding: ${(deribit.fundingRate * 100).toFixed(6)}%, crowding: ${crowding}`,
+                `funding(8h): ${(deribit.fundingRate8h * 100).toFixed(6)}%, crowding: ${crowding}`,
             );
             lastLogTime = Date.now();
         }
@@ -157,7 +175,7 @@ export function getCurrentBasis(): BasisSnapshot | null {
     const crowding = computeCrowding(latest.basisPercent);
     const trend = computeTrend(history);
     // funding_8h → annualized: rate × 3 periods/day × 365 days × 100 for percent
-    const fundingRateAnnualized = latest.fundingRate * 3 * 365 * 100;
+    const fundingRateAnnualized = latest.fundingRate8h * 3 * 365 * 100;
 
     return {
         timestamp: latest.timestamp,
@@ -165,14 +183,16 @@ export function getCurrentBasis(): BasisSnapshot | null {
         perpPrice: latest.perpPrice,
         basisDollar: latest.basisDollar,
         basisPercent: latest.basisPercent,
-        fundingRate: latest.fundingRate,
+        fundingRate: latest.fundingRate8h, // @deprecated alias — see BasisSnapshot
+        fundingRate8h: latest.fundingRate8h,
+        fundingRateHourly: latest.fundingRateHourly,
         fundingRateAnnualized,
         crowding,
         trend,
         history: history.map((r) => ({
             timestamp: r.timestamp,
             basisPercent: r.basisPercent,
-            fundingRate: r.fundingRate,
+            fundingRate: r.fundingRate8h,
         })),
     };
 }
