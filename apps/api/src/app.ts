@@ -117,7 +117,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     origin: corsOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id", "X-Api-Key"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id", "X-Api-Key", "X-Competition-Id"],
 
   });
 
