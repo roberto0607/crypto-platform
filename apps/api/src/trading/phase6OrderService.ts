@@ -26,7 +26,6 @@ import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { txWithEvents } from "../utils/txWithEvents";
 import { processFillForJournal } from "../journal/journalService";
-import { getActiveMatchIdForUser } from "../competitions/matchService";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -70,21 +69,19 @@ export async function placeOrderWithSnapshot(
     idempotencyKey?: string,
     requestId?: string,
     competitionId?: string | null,
-    // matchId semantics:
-    //   undefined → server resolves via getActiveMatchIdForUser (default for HTTP)
-    //   null      → explicit free-play (used by bots/sim)
-    //   string    → caller-specified match (used by Redis queue replay)
+    // matchId is resolved by the caller (HTTP edge / triggers / bots), never here:
+    //   null   → free-play (bots, sim, or no active match)
+    //   string → that match
+    // An omitted arg defaults to free-play. There is deliberately no
+    // server-side re-resolution — see resolvedMatchId below.
     matchId?: string | null,
 ): Promise<PlaceOrderResult> {
     const startMs = performance.now();
 
-    // Resolve matchId: caller-supplied wins, else look up user's active match.
-    // Distinguish undefined (do lookup) from null (explicit free-play) — bots
-    // and the redis queue replay path both pass null to opt out of the lookup.
-    const resolvedMatchId: string | null =
-        matchId !== undefined
-            ? matchId
-            : await getActiveMatchIdForUser(userId);
+    // matchId arrives pre-resolved and is used verbatim. No getActiveMatchIdForUser
+    // fallback: a null where a match was expected must surface as the symptom
+    // (match_id = NULL) rather than be silently re-resolved and mask the bug.
+    const resolvedMatchId: string | null = matchId ?? null;
 
     const logCtx = buildLogContext({
       requestId: requestId ?? "no-request",

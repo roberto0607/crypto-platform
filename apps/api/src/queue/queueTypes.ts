@@ -13,12 +13,12 @@ export interface QueueJob {
   };
   idempotencyKey?: string;
   competitionId?: string;
-  // Captured at enqueue time from the user's then-current active match.
-  // The dequeue path trusts this value rather than re-resolving via
-  // getActiveMatchIdForUser so that if the match ended while the job was
-  // queued, the position attributes to the match that was active when
-  // the order was placed.
-  matchId?: string | null;
+  // Resolved at the HTTP edge (routes/tradingRoutes.ts) from the user's
+  // active match at the moment the order was placed: a real match UUID, or
+  // null for free-play. The dequeue path trusts this value and never
+  // re-resolves — so if the match ends while the job is queued, the fill
+  // still attributes to the match that was active when the order was placed.
+  matchId: string | null;
   enqueuedAt: number;
   resolve: (result: PlaceOrderResult) => void;
   reject: (err: Error) => void;
