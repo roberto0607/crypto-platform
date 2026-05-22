@@ -27,9 +27,9 @@ function getOrCreate(pairId: string): PairQueue {
 }
 
 async function executor(job: QueueJob): Promise<PlaceOrderResult> {
-  // matchId passed through verbatim — the enqueue side captured it at the
-  // moment the user placed the order. Phase6OrderService sees an explicit
-  // value and skips the getActiveMatchIdForUser fallback.
+  // matchId is resolved at the HTTP edge and carried verbatim through the
+  // queue: a real match UUID for a match-scoped order, or null for free-play.
+  // Neither this path nor phase6OrderService re-resolves it.
   return placeOrderWithSnapshot(
     job.userId,
     job.payload,
@@ -42,6 +42,16 @@ async function executor(job: QueueJob): Promise<PlaceOrderResult> {
 
 // ── Public API ──
 
+/**
+ * Enqueue an order for matching. Routes to the Redis-backed queue when Redis
+ * is configured, else an in-memory per-pair queue. Both backends behave
+ * identically with respect to scope.
+ *
+ * matchId is resolved at the HTTP edge by the caller and passed as a concrete
+ * value: null means free-play, a string means that match. It is never
+ * re-resolved downstream — this is what keeps the Redis and in-memory paths
+ * in agreement (see queueTypes.QueueJob.matchId).
+ */
 export function enqueueOrder(
   pairId: string,
   userId: string,
@@ -50,7 +60,7 @@ export function enqueueOrder(
   requestId: string,
   timeoutMs?: number,
   competitionId?: string,
-  matchId?: string | null,
+  matchId: string | null = null,
 ): Promise<PlaceOrderResult> {
   // Redis path — distributed queue
   if (getRedis()) {

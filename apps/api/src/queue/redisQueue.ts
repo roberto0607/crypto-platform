@@ -28,6 +28,12 @@ const LOCK_TTL_S = 30;
 const LOCK_RENEW_MS = 10_000;
 const READ_BLOCK_MS = 5_000;
 
+// Redis stream fields are strings, so null can't be stored directly. matchId
+// crosses the wire as either a real match UUID or this sentinel for free-play
+// (null). A distinct sentinel — rather than "" — lets null round-trip cleanly
+// and reads unambiguously in stream dumps and logs.
+const FREE_PLAY_MATCH = "__free_play__";
+
 let accepting = true;
 
 // ── Pending promise tracking ──
@@ -163,7 +169,7 @@ export async function enqueueRedis(
   requestId: string,
   timeoutMs?: number,
   competitionId?: string,
-  matchId?: string | null,
+  matchId: string | null = null,
 ): Promise<PlaceOrderResult> {
   if (!accepting) throw new AppError("server_shutting_down");
 
@@ -195,9 +201,9 @@ export async function enqueueRedis(
     throw new AppError("pair_queue_overloaded", { pairId, depth });
   }
 
-  // XADD to stream. matchId is serialized as an empty string when null so
-  // the dequeue path can distinguish "no match scope" ("") from "missing
-  // field" (undefined on the parsed object).
+  // XADD to stream. matchId crosses as a concrete value resolved at the HTTP
+  // edge: a real match UUID, or the FREE_PLAY_MATCH sentinel for free-play
+  // (null). No more "" vs undefined ambiguity — the value round-trips intact.
   await redis.xadd(
     key, "*",
     "correlationId", correlationId,
@@ -208,7 +214,7 @@ export async function enqueueRedis(
     "idempotencyKey", idempotencyKey ?? "",
     "requestId", requestId,
     "competitionId", competitionId ?? "",
-    "matchId", matchId ?? "",
+    "matchId", matchId ?? FREE_PLAY_MATCH,
     "enqueuedAt", Date.now().toString(),
   );
 
@@ -353,12 +359,14 @@ async function processJob(
   const enqueuedAt = parseInt(job.enqueuedAt, 10);
 
   try {
-    // matchId: empty-string sentinel → null (explicit free-play). Missing
-    // field (undefined from an older job that pre-dates matchId) → null to
-    // preserve free-play semantics rather than triggering a fresh
-    // getActiveMatchIdForUser lookup inside phase6OrderService.
+    // matchId round-trips as a concrete value from the HTTP edge: a real
+    // match UUID, or the FREE_PLAY_MATCH sentinel (= null / free-play).
+    // Defensive: also map "" / missing to null so any pre-fix job still
+    // queued across a deploy degrades to free-play rather than crashing.
     const queuedMatchId: string | null =
-      typeof job.matchId === "string" && job.matchId !== ""
+      typeof job.matchId === "string" &&
+      job.matchId !== "" &&
+      job.matchId !== FREE_PLAY_MATCH
         ? job.matchId
         : null;
 

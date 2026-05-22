@@ -34,6 +34,7 @@ function makeJob(
     userId: "user-1",
     pairId,
     payload: { pairId, side: "BUY", type: "MARKET", qty: "1" },
+    matchId: null,
     enqueuedAt: Date.now(),
     resolve,
     reject,

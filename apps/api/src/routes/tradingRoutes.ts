@@ -12,6 +12,7 @@ import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
+import { getActiveMatchIdForUser } from "../competitions/matchService";
 
 
 // ── Zod schemas ──
@@ -184,9 +185,16 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
         const competitionId = req.headers["x-competition-id"] as string | undefined;
 
-        // matchId is omitted (undefined) — phase6OrderService resolves
-        // the user's active match server-side via getActiveMatchIdForUser.
-        // No new header is needed; the server knows the user's match state.
+        // Resolve the user's active match HERE, at the HTTP edge, so a concrete
+        // string-or-null crosses the queue boundary. Passing undefined and
+        // relying on phase6OrderService's getActiveMatchIdForUser fallback works
+        // in-process but is lost across the Redis queue: undefined was
+        // serialized to "" and read back as null (free-play), stamping
+        // match_id = NULL on every in-match order/position. Resolving here makes
+        // both queue backends behave identically. No client header needed — the
+        // server knows the user's match state.
+        const matchId = await getActiveMatchIdForUser(actor.id);
+
         const result = await enqueueOrder(
             parsed.data.pairId,
             actor.id,
@@ -199,9 +207,9 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
             },
             idempotencyKey,
             req.id as string,
-            undefined,
+            undefined,        // timeoutMs — use default
             competitionId,
-            undefined,
+            matchId,          // concrete string | null, resolved above
         );
 
         if (!result.fromIdempotencyCache) {
