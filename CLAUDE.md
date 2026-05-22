@@ -267,3 +267,11 @@ TRADR is in a **stable foundation, ready for next features** state. The dev DB
 was restored, the test suite is green (239/239), and the most recently shipped
 work is the match-scoped positions fix above (PR #26). Next priorities follow
 the Indicator Roadmap (Stage 1: MACD / ATR / per-candle delta).
+
+## Known dev env oddities
+
+- **docker-compose port mismatch**: `docker-compose.yml`'s `cp_postgres` is on
+  5433 but the active dev DB is `tradr_postgres` on 5435. Following the
+  `docker compose up -d` instruction would start a database on the wrong port.
+  Either the compose file needs updating to 5435, or the local-dev workflow doc
+  needs to point at `tradr_postgres` instead. Tracked for resolution.
