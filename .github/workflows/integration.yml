@@ -1,0 +1,55 @@
+name: Integration Tests (Redis queue)
+
+# Heavy integration tests that spin up a real Redis via testcontainers. Kept
+# OUT of the main CI workflow (ci.yml) to keep that fast — this runs only on
+# PRs that touch the order queue, trading, or the Redis injection point.
+# GitHub path filters gate the whole workflow, so this lives in its own file.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/api/src/queue/**"
+      - "apps/api/src/trading/**"
+      - "apps/api/src/db/redis.ts"
+      - "apps/api/vitest.integration.config.ts"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  redis-queue-integration:
+    name: Redis queue wire-serialization (testcontainers)
+    runs-on: ubuntu-latest
+
+    # config.ts builds its config object at module load and requireEnv()s
+    # JWT_ACCESS_SECRET. The integration test mocks the DB-touching service, so
+    # no Postgres is needed; testcontainers talks to the runner's host Docker,
+    # so no `services: redis` block is needed either.
+    env:
+      JWT_ACCESS_SECRET: ci-test-secret-not-a-real-secret-do-not-use-in-prod
+      DATABASE_URL: postgresql://cp:cp@localhost:5432/cp
+
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/api/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run Redis-queue integration tests
+        run: |
+          echo "Spinning up an ephemeral Redis via testcontainers and exercising"
+          echo "the enqueue -> Redis Streams wire serialization -> dequeue -> phase6"
+          echo "path. Regression coverage for PR #26 (matchId flattened across the"
+          echo "queue, stamping match_id = NULL on in-match orders/positions)."
+          pnpm test:integration
