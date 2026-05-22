@@ -26,7 +26,7 @@ pnpm migrate          # Run database migrations
 
 Start PostgreSQL before running the API:
 ```bash
-docker compose up -d  # Start PostgreSQL (port 5433) + Redis
+docker compose up -d  # Start PostgreSQL (port 5435) + Redis
 ```
 
 ## Indicator Roadmap
@@ -103,7 +103,7 @@ All new indicators follow this pattern:
 ## Database
 
 - **Production**: Use Railway's `DATABASE_PUBLIC_URL` for local→production queries. Fetch the current value at use time via `railway run --service Postgres bash -c 'echo $DATABASE_PUBLIC_URL'` — do not embed it (even masked) in tracked files.
-- **Local dev**: `postgresql://cp:cp@localhost:5433/cp`
+- **Local dev**: `postgresql://cp:cp@localhost:5435/cp`
 - **Migrations**: Plain SQL in `apps/api/migrations/`, tracked in `schema_migrations`. Always register in `schema_migrations` when applying manually.
 - **Demo user ID**: `5b44aeb6-81c4-4131-bd06-b87e6fe89f11`
 - **Rtirado user ID (production)**: `338d993f-0444-4a0a-b463-d3cb6ce0d959`
@@ -208,4 +208,62 @@ Everything Playwright sees goes to Anthropic's API as tool input. Fine
 for localhost with fake/paper-trading data. Don't point it at Railway
 prod with real account state unless Roberto explicitly asks.
 
-# Stage 2 deployed: Funding Rate + Open Interest
+# Recently shipped
+
+- **Stage 2 deployed: Funding Rate + Open Interest** (Binance public API overlays)
+
+## Match-scoped positions bug (FIXED 2026-05-22, PR #26)
+
+The Redis queue flattened `matchId = undefined` (the route's "look it up
+server-side" signal) to `""` at enqueue and back to `null` at dequeue, so every
+in-match order/position in prod was written with `match_id = NULL`. Worked
+locally because the in-memory queue preserved `undefined`; broke under Redis
+only.
+
+Four downstream consequences, all healed by the same fix:
+- LMV positions invisible (read filter `WHERE match_id = $activeMatchId` found
+  nothing → no close button → users forfeited to escape)
+- Orphan positions appeared on free-play `/trade` after forfeit
+  (`WHERE match_id IS NULL` matched)
+- `cancelActiveMatch`'s "has filled trades?" gate was structurally 0 (reopened
+  the cancel-to-dodge-ELO exploit that 7924b58 was supposed to close)
+- `closeMatchScopedPositions` on completeMatch/forfeitMatch found zero rows
+  (match P&L missed in-match positions)
+
+Prod evidence at fix time: 42 FILLED orders across 8 distinct matches placed
+with `match_id = NULL`; 7 of 8 matches FORFEITED, confirming the behavioral
+hypothesis. Migration 066 confirmed applied 2026-04-25 — column existed, queue
+write path stopped populating it.
+
+Fix: resolve `matchId` at the HTTP edge in `tradingRoutes.ts` (call
+`getActiveMatchIdForUser` before enqueueing) and carry concrete `string | null`
+through the queue. Across Redis, `null` serializes as a distinct
+`__free_play__` sentinel (never `""`); dequeue maps it back symmetrically, with
+`""`/missing defensively mapped to `null` for backward compat with pre-fix
+queued jobs. `phase6OrderService`'s `getActiveMatchIdForUser` fallback was
+REMOVED — a wrong null now surfaces as the symptom rather than being silently
+re-resolved.
+
+Verified end-to-end in prod 2026-05-22 12:01 PM: challenged demo from
+rtirado0607, both sides in LMV opened opposite positions, CLOSE POSITION button
+appeared in both, positions closed cleanly with P&L recorded.
+
+Existing orphans NOT bulk-cleaned — closed manually as encountered. The fix
+only prevents new orphans.
+
+Known follow-ups (backlog, not blocking):
+- Race window: order placed at match-completion boundary could stamp a
+  just-ended matchId. Mitigation: closeMatchScopedPositions sweep after match
+  completion (already runs, but could drain in-flight queue jobs first).
+- Add a Redis-queue integration test so this class of bug can't regress
+  silently (existing tests only exercised the in-memory path).
+- Extract custom-header allowlist to shared constants module (so client
+  interceptor + server CORS can't drift like X-Competition-Id did — same shape
+  of bug as the matchId one).
+
+# Top of mind
+
+TRADR is in a **stable foundation, ready for next features** state. The dev DB
+was restored, the test suite is green (239/239), and the most recently shipped
+work is the match-scoped positions fix above (PR #26). Next priorities follow
+the Indicator Roadmap (Stage 1: MACD / ATR / per-candle delta).
