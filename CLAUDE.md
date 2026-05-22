@@ -270,8 +270,16 @@ the Indicator Roadmap (Stage 1: MACD / ATR / per-candle delta).
 
 ## Known dev env oddities
 
-- **docker-compose port mismatch**: `docker-compose.yml`'s `cp_postgres` is on
-  5433 but the active dev DB is `tradr_postgres` on 5435. Following the
-  `docker compose up -d` instruction would start a database on the wrong port.
-  Either the compose file needs updating to 5435, or the local-dev workflow doc
-  needs to point at `tradr_postgres` instead. Tracked for resolution.
+- **Leftover cp_postgres container on port 5433**: belongs to the
+  unrelated ai_trading_agent project (volume
+  aitradingagent_cp_postgres_data, DB=ai_trading_agent), NOT TRADR.
+  Ignore it. TRADR's compose correctly defines tradr_postgres on
+  port 5435 (volume crypto-platform_tradr_postgres_data, DB=cp),
+  which is what `docker compose up -d` actually starts. The compose
+  file is correct; the confusing part is just that an unrelated
+  project squats on the cp_postgres name+5433.
+
+- **kalshi-edge-postgres on 5434**: also unrelated, belongs to the
+  kalshi-edge project. Mentioned only because it sometimes shows up
+  in `docker ps` and might cause confusion if you forget which
+  containers belong to which projects.
