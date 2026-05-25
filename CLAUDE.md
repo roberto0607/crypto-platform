@@ -263,15 +263,13 @@ Known follow-ups (backlog, not blocking):
 
 # Top of mind
 
-TRADR is in a **stable foundation, ready for next features** state. The dev DB
-was restored, the test suite is green (239 unit + 4 integration), and the
-matchId-via-Redis fix (PR #26) plus its regression test (PR #27) are merged and
-verified in prod. Next priority: the ioredis connection contention follow-up
-surfaced in PR #27's BACKLOG section — give the queue consumer its own dedicated
-ioredis connection so blocking XREADGROUP doesn't monopolize the shared command
-connection. Following that: Indicator Roadmap Stage 1 (MACD / ATR / per-candle
-delta). See [docs/postmortems/2026-05-22-match-id-redis-serialization.md](docs/postmortems/2026-05-22-match-id-redis-serialization.md)
-for the full writeup of the matchId bug.
+TRADR is in a **stable foundation, ready for next features** state. The
+matchId-via-Redis fix (PR #26), its regression test (PR #27), and the
+per-consumer blocking-connection fix (PR #28) are all merged and verified in
+prod. Trade open/close latency is now sub-second under all queue conditions, not
+just when the market-maker bot is active. Next priority: Indicator Roadmap Stage
+1 (MACD / ATR / per-candle delta). See [docs/postmortems/](docs/postmortems/)
+for the matchId bug writeup.
 
 ## Known dev env oddities
 
