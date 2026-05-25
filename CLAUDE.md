@@ -263,12 +263,16 @@ Known follow-ups (backlog, not blocking):
 
 # Top of mind
 
-TRADR is in a **stable foundation, ready for next features** state. The
-matchId-via-Redis fix (PR #26), its regression test (PR #27), and the
-per-consumer blocking-connection fix (PR #28) are all merged and verified in
-prod. Trade open/close latency is now sub-second under all queue conditions, not
-just when the market-maker bot is active. Next priority: Indicator Roadmap Stage
-1 (MACD / ATR / per-candle delta). See [docs/postmortems/](docs/postmortems/)
+TRADR is in a **stable foundation, ready for next features** state. Recent
+fixes all merged and verified in prod: the matchId-via-Redis bug (PR #26) + its
+regression test (PR #27), the per-consumer blocking-connection fix (PR #28), and
+the chart toolbar fit fix (PR #29 — all five cells visible, Indicators gear no
+longer clipped). Trade open/close latency is sub-second under all queue
+conditions, not just when the market-maker bot is active.
+
+**Next priority: Indicator Roadmap Stage 1 — MACD (12/26/9), ATR (14), and
+per-candle delta.** Follow the indicator build pattern in "Architecture Rules"
+and the sub-panel height constants. See [docs/postmortems/](docs/postmortems/)
 for the matchId bug writeup.
 
 ## Known dev env oddities
