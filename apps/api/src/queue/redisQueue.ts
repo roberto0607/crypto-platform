@@ -20,7 +20,7 @@ import {
   pairQueueExecMs,
 } from "../metrics";
 import { logger } from "../observability/logContext";
-import { getRedis, getRedisSub } from "../db/redis.js";
+import { getRedis, getRedisSub, createBlockingRedis } from "../db/redis.js";
 import type { QueueStats } from "./queueTypes";
 
 const GROUP_NAME = "workers";
@@ -51,6 +51,10 @@ const pending = new Map<string, PendingEntry>();
 interface ConsumerState {
   lockRenewTimer: ReturnType<typeof setInterval>;
   stopped: boolean;
+  // This consumer's dedicated connection for the blocking XREADGROUP loop.
+  // Kept on the state so shutdown can disconnect() it to interrupt an in-flight
+  // BLOCK immediately rather than waiting up to READ_BLOCK_MS for it to expire.
+  blockingRedis: ReturnType<typeof createBlockingRedis>;
 }
 
 const consumers = new Map<string, ConsumerState>();
@@ -274,8 +278,23 @@ async function startConsumer(pairId: string): Promise<void> {
   const locked = await redis.set(lockKeyName(pairId), config.instanceId, "EX", LOCK_TTL_S, "NX");
   if (!locked) return; // Another instance holds the lock
 
+  // Dedicated connection for THIS consumer's blocking XREADGROUP loop. Created
+  // only AFTER we own the lock — we never open a blocking connection for a pair
+  // we don't consume. Each consumer gets its own so a blocking read on one pair
+  // can't starve enqueues (command connection) or other pairs' reads.
+  const blockingRedis = createBlockingRedis();
+  try {
+    await blockingRedis.connect();
+  } catch (err) {
+    logger.error({ err, pairId }, "blocking_connection_connect_failed — releasing lock, consumer will NOT start");
+    blockingRedis.disconnect();
+    await redis.eval(RELEASE_LOCK_SCRIPT, 1, lockKeyName(pairId), config.instanceId).catch(() => {});
+    return;
+  }
+
   const state: ConsumerState = {
     stopped: false,
+    blockingRedis,
     lockRenewTimer: setInterval(async () => {
       try {
         const result = await redis.eval(
@@ -297,7 +316,10 @@ async function startConsumer(pairId: string): Promise<void> {
     logger.info({ pairId, rawKey, group: GROUP_NAME, consumer: config.instanceId }, "consumer_loop_starting");
     while (!state.stopped && accepting) {
       try {
-        const entries = await redis.xreadgroup(
+        // Blocking read on the dedicated connection. processJob's XACK/XLEN/
+        // PUBLISH below run on the shared command connection (`redis`) — only
+        // the BLOCK lives on its own connection.
+        const entries = await blockingRedis.xreadgroup(
           "GROUP", GROUP_NAME, config.instanceId,
           "COUNT", "1", "BLOCK", READ_BLOCK_MS.toString(),
           "STREAMS", sk, ">",
@@ -312,6 +334,9 @@ async function startConsumer(pairId: string): Promise<void> {
           }
         }
       } catch (err) {
+        // A shutdown disconnect()'s blockingRedis to interrupt the BLOCK, which
+        // rejects the read with "Connection is closed" — stopped/!accepting is
+        // already set by then, so we break cleanly here rather than retry.
         if (state.stopped || !accepting) break;
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("NOGROUP")) {
@@ -336,6 +361,11 @@ async function startConsumer(pairId: string): Promise<void> {
   } finally {
     clearInterval(state.lockRenewTimer);
     consumers.delete(pairId);
+
+    // Quit this consumer's dedicated blocking connection. If shutdown already
+    // disconnect()'d it to interrupt the BLOCK, quit() on a closed connection
+    // is a no-op we swallow.
+    await blockingRedis.quit().catch(() => {});
 
     // Release lock if we still hold it
     try {
@@ -435,9 +465,14 @@ export async function getRedisQueueStats(): Promise<QueueStats[]> {
 export async function shutdownRedisQueue(timeoutMs: number = 10_000): Promise<void> {
   accepting = false;
 
-  // Signal all consumers to stop
+  // Signal all consumers to stop, and interrupt any in-flight blocking read.
+  // disconnect() closes the socket so a parked XREADGROUP rejects immediately;
+  // the consumer loop sees stopped/!accepting in its catch and breaks, then its
+  // finally cleans up. Without this, shutdown would wait up to READ_BLOCK_MS
+  // (5s) per consumer for the BLOCK to expire on its own.
   for (const state of consumers.values()) {
     state.stopped = true;
+    state.blockingRedis.disconnect();
   }
 
   // Wait for consumers to drain
