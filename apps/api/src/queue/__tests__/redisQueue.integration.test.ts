@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import Redis from "ioredis";
 import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 
-import { setRedis, setRedisSub, getRedis } from "../../db/redis";
+import { setRedis, setRedisSub, setBlockingRedisFactory, getRedis } from "../../db/redis";
 import { config } from "../../config";
 import type { PlaceOrderResult } from "../../trading/phase6OrderService";
 
@@ -72,20 +72,11 @@ let container: StartedRedisContainer;
 let cmd: Redis;
 let sub: Redis;
 
-// All tests deliberately share ONE pairId — DO NOT shard this across multiple
-// pairs to "isolate" tests. It will look cleaner and then hang/time out.
-//
-// Why: ioredis runs every command over a single connection, and a blocking
-// XREADGROUP holds that connection until it returns. The queue runs one
-// consumer per pair, each looping `XREADGROUP ... BLOCK 5000`. With multiple
-// pairs, multiple idle consumers stack blocking reads on the shared command
-// connection and starve each other — an enqueue on pair B can't get its XADD
-// through while pair A's consumer is mid-BLOCK, so it times out. (That failure
-// is exactly how this test surfaced the latent prod issue documented in the
-// PR's BACKLOG section: "ioredis connection contention under blocking reads".)
-//
-// One pair = one consumer = one blocking loop, so each enqueue waits at most a
-// single ~5s idle-block cycle — well under the queue timeout.
+// The four serialization assertions below share one pairId for simplicity —
+// each tests a single enqueue's wire format, so one consumer is all they need.
+// (Concurrent multi-pair behavior, which used to deadlock on the shared
+// connection before the dedicated-blocking-connection fix, has its own test at
+// the bottom of this file.)
 const PAIR_ID = randomUUID();
 
 describe("redisQueue — matchId wire serialization (integration, real Redis; regression for PR #26)", () => {
@@ -99,14 +90,21 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
     await Promise.all([cmd.connect(), sub.connect()]);
     setRedis(cmd);
     setRedisSub(sub);
+    // Each consumer creates its own blocking connection via this factory — point
+    // it at the container (config.redisUrl is empty in tests). Mirrors the
+    // command connection's keyPrefix so XREADGROUP's queue:<pairId> resolves.
+    setBlockingRedisFactory(() =>
+      new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true, keyPrefix: "cp:" }),
+    );
     // Subscribe to the result channel so enqueueRedis promises can resolve.
     await initRedisQueue();
   }, 120_000);
 
   afterAll(async () => {
-    // Generous timeout: a consumer mid-BLOCK takes up to READ_BLOCK_MS (5s) to
-    // notice the stop signal before it removes itself and the wait can finish.
+    // shutdownRedisQueue now disconnect()s each consumer's blocking connection
+    // to interrupt the in-flight BLOCK, so this returns promptly (no ~5s wait).
     await shutdownRedisQueue(8_000);
+    setBlockingRedisFactory(null);
     setRedis(null);
     setRedisSub(null);
     await Promise.all([cmd?.quit().catch(() => {}), sub?.quit().catch(() => {})]);
@@ -184,5 +182,36 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
       .mock.calls.find((c) => c[ARG_REQUEST_ID] === "legacy-job");
     expect(legacyCall, "legacy job should have been processed by the consumer").toBeDefined();
     expect(legacyCall![ARG_MATCH_ID]).toBeNull();
+  });
+
+  // Concurrency regression for the dedicated-blocking-connection fix. Three
+  // distinct pairs enqueued at once → three consumers, each on its OWN blocking
+  // connection. Pre-fix, all consumers shared one connection, so a blocking
+  // read on one pair stalled the others and this batch would serialize into
+  // ~5s idle-block cycles (or deadlock/time out). Post-fix it resolves near
+  // instantly. The sub-second assertion is the "fast, not just eventually"
+  // proof that the architecture — not luck — fixed it.
+  it("processes 3 pairs concurrently with correct matchIds, in under 1 second", async () => {
+    const pairs = [randomUUID(), randomUUID(), randomUUID()];
+    const matchIds = [randomUUID(), randomUUID(), randomUUID()];
+
+    const start = Date.now();
+    await Promise.all(
+      pairs.map((p, i) =>
+        enqueueRedis(p, `u-multi-${i}`, payload(p), undefined, `req-multi-${i}`, undefined, undefined, matchIds[i]),
+      ),
+    );
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(1000);
+
+    // Each pair's order round-tripped through its own consumer with its own
+    // matchId intact (no cross-pair mixups, no lost values).
+    const calls = vi.mocked(placeOrderWithSnapshot).mock.calls;
+    for (let i = 0; i < pairs.length; i++) {
+      const call = calls.find((c) => c[ARG_REQUEST_ID] === `req-multi-${i}`);
+      expect(call, `pair ${i} (req-multi-${i}) should have been processed`).toBeDefined();
+      expect(call![ARG_MATCH_ID]).toBe(matchIds[i]);
+    }
   });
 });
