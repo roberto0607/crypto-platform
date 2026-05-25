@@ -101,55 +101,18 @@ function bucketTime(epochSec: number, tf: Timeframe): number {
     }
 }
 
-/** Duration of one candle period in seconds. */
-function timeframeSeconds(tf: Timeframe): number {
-    switch (tf) {
-        case "1m":  return 60;
-        case "5m":  return 300;
-        case "15m": return 900;
-        case "1h":  return 3600;
-        case "4h":  return 14400;
-        case "1d":  return 86400;
-        default:    return 60;
-    }
-}
-
-/**
- * Next funding application (epoch ms). The /market/basis endpoint sources
- * funding from Deribit BTC-PERPETUAL, which applies funding continuously
- * and realizes it hourly on the top of the hour — NOT on the fixed
- * 00:00/08:00/16:00 UTC boundaries of Binance/Bybit/OKX. Deribit exposes
- * no settlement timestamp because continuous funding has no discrete
- * settlement instant; the next hour boundary IS the correct value, not
- * a fallback.
- */
-function nextFundingSettlementMs(nowMs: number): number {
-    return Math.floor(nowMs / 3_600_000) * 3_600_000 + 3_600_000;
-}
-
-/** Countdown text: (2h 34m) under >1h, (34m 12s) under 1h, (12s) under 1m. */
-function formatCountdown(msLeft: number): string {
-    const total = Math.max(0, Math.floor(msLeft / 1000));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    if (h > 0) return `(${h}h ${m}m)`;
-    if (m > 0) return `(${m}m ${s}s)`;
-    return `(${s}s)`;
-}
-
-/** Compact base-asset volume formatting for the live-candle cell. */
-function formatVol(v: number | null): string {
-    if (v == null) return "—";
-    if (v >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
-    if (v >= 1) return v.toFixed(2);
-    return v.toFixed(4);
-}
-
 /* ── Market Context Bar (chart toolbar row) CSS ──
    Injected once into <head>. Colour vars (--g, --red, …) cascade down
    from .tr-wrap on the trading page. */
 const CONTEXT_BAR_CSS = `
+  .tr-chart-wrap {
+    /* Query container for the toolbar. The cells are now compact enough that all
+       five fit without a container query, but this is retained as the correct
+       containment context for any future width-responsive toolbar rules.
+       inline-size only (not size) so height stays driven by the flex column. */
+    container-type: inline-size;
+    container-name: chart-toolbar;
+  }
   .tr-chart-toolbar {
     display:flex;align-items:center;gap:0;
     margin-bottom:8px;min-height:30px;
@@ -157,12 +120,12 @@ const CONTEXT_BAR_CSS = `
   }
   .tr-cr-divider {
     width:1px;align-self:stretch;flex-shrink:0;
-    margin:3px 12px;
+    margin:3px 6px;
     background:rgba(255,255,255,0.08);
   }
   .tr-cr-tf { display:flex;align-items:center;gap:4px; }
   .tr-cr-ohlc {
-    display:flex;align-items:center;gap:11px;
+    display:flex;align-items:center;gap:6px;
     font-size:11px;color:rgba(255,255,255,0.4);
     white-space:nowrap;
   }
@@ -170,43 +133,18 @@ const CONTEXT_BAR_CSS = `
     color:rgba(255,255,255,0.85);margin-left:3px;
   }
   .tr-chart-toolbar .val.muted { color:rgba(255,255,255,0.3); }
-  .tr-cr-progress {
-    position:relative;display:inline-flex;
-    align-items:center;justify-content:center;
-    width:62px;height:13px;margin-left:3px;
-    background:rgba(255,255,255,0.05);
-    border-radius:2px;overflow:hidden;
-  }
-  .tr-cr-progress .bar {
-    position:absolute;left:0;top:0;bottom:0;
-    background:var(--g12,rgba(0,255,65,0.18));
-    border-right:1px solid var(--g,#00ff41);
-    transition:width 1s linear;
-  }
-  .tr-cr-progress .lbl {
-    position:relative;z-index:1;
-    font-size:9px;color:rgba(255,255,255,0.6);letter-spacing:0.5px;
-  }
   .tr-cr-funding {
-    display:flex;align-items:center;gap:8px;
+    display:flex;align-items:center;gap:4px;
     font-size:11px;white-space:nowrap;
   }
   .tr-cr-funding .lbl {
     font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.3);
   }
-  .tr-cr-funding .countdown {
-    font-size:10px;color:rgba(255,255,255,0.4);
-  }
   .tr-cr-pressure {
     display:flex;align-items:center;
     font-size:11px;color:rgba(255,255,255,0.3);
   }
-  .tr-cr-indicators { display:flex;align-items:center; }
-  /* Narrow viewports: drop the live-candle cell so funding + pressure
-     stay visible. Also hides the divider that trails it. */
-  @media (max-width:1280px) {
-    .tr-cr-ohlc, .tr-cr-ohlc + .tr-cr-divider { display:none; }
-  }
+  .tr-cr-indicators { display:flex;align-items:center;flex-shrink:0; }
 `;
 
 interface CandlestickChartProps {
@@ -291,7 +229,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     // untouched. Keeping the live candle in a ref (not state) avoids a full
     // chart-row re-render on every price tick; the 1s cadence is enough for
     // a toolbar readout.
-    const [nowMs, setNowMs] = useState(() => Date.now());
+    // 1s heartbeat: re-renders the toolbar so the live candle's O/H/L/C (held in
+    // a ref) refreshes. The value itself isn't read; the re-render is the point.
+    const [, setNowMs] = useState(() => Date.now());
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore(useShallow((s) => s.indicatorConfig));
@@ -1184,7 +1124,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     };
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="tr-chart-wrap flex flex-col h-full">
             {/* ── Market Context Bar — chart toolbar row ── */}
             <div className="tr-chart-toolbar">
                 {/* Cell 1 — timeframe selector */}
@@ -1213,48 +1153,26 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
                 <span className="tr-cr-divider" />
 
-                {/* Cell 2 — live candle OHLC + volume + progress-through-period.
-                    Defaults to the forming candle; swaps to the hovered candle
-                    while the crosshair is active (progress bar hidden then). */}
+                {/* Cell 2 — live candle O/H/L/C. Defaults to the forming candle;
+                    swaps to the hovered candle while the crosshair is active. */}
                 <div className="tr-cr-ohlc">
                     {(() => {
-                        const live = liveCandleRef.current;
-                        const c = crosshairData ?? live;
+                        const c = crosshairData ?? liveCandleRef.current;
                         const fmt = (n: number | undefined) =>
                             n == null
                                 ? "—"
                                 : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         const up = c != null && c.close >= c.open;
-                        // Progress through the current (live) candle period.
-                        let progressPct = 0;
-                        if (live) {
-                            const durationMs = timeframeSeconds(timeframe) * 1000;
-                            // live.time is the bucket start in epoch seconds, shifted
-                            // by TZ_OFFSET_SEC for Lightweight Charts — undo the shift.
-                            const startMs = ((live.time as number) - TZ_OFFSET_SEC) * 1000;
-                            progressPct = Math.min(100, Math.max(0, ((nowMs - startMs) / durationMs) * 100));
-                        }
+                        // Compact O/H/L/C only — volume (unwired, "—" off-crosshair) and
+                        // the period-progress bar were dropped so all toolbar cells fit
+                        // without clipping Indicators. Volume stays available on hover via
+                        // the crosshair; see git history for the prior V/progress markup.
                         return (
                             <>
                                 <span>O <span className="val">{fmt(c?.open)}</span></span>
                                 <span>H <span className="val">{fmt(c?.high)}</span></span>
                                 <span>L <span className="val">{fmt(c?.low)}</span></span>
                                 <span>C <span className="val" style={{ color: c == null ? undefined : up ? "var(--g)" : "var(--red)" }}>{fmt(c?.close)}</span></span>
-                                {/* TODO(follow-up): wire up a live volume tracker —
-                                    an sse:trade.created accumulator that sums qty
-                                    into the current bucket — so V shows real volume
-                                    on the forming candle, not just on hover. */}
-                                <span>V <span className={`val${crosshairData ? "" : " muted"}`}>
-                                    {crosshairData == null || crosshairData.volume == null
-                                        ? "—"
-                                        : `${formatVol(crosshairData.volume)} ${footprintPair}`}
-                                </span></span>
-                                {!crosshairData && (
-                                    <span className="tr-cr-progress">
-                                        <span className="bar" style={{ width: `${progressPct}%` }} />
-                                        <span className="lbl">{Math.floor(progressPct)}%</span>
-                                    </span>
-                                )}
                             </>
                         );
                     })()}
@@ -1262,7 +1180,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
                 <span className="tr-cr-divider" />
 
-                {/* Cell 3 — hourly funding rate + countdown to next hourly accrual */}
+                {/* Cell 3 — hourly funding rate (countdown dropped to fit the toolbar) */}
                 <div className="tr-cr-funding">
                     <span className="lbl">FUNDING</span>
                     <span
@@ -1281,9 +1199,6 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                         {fundingRateHourly === null
                             ? "—"
                             : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
-                    </span>
-                    <span className="countdown">
-                        {formatCountdown(nextFundingSettlementMs(nowMs) - nowMs)}
                     </span>
                 </div>
 

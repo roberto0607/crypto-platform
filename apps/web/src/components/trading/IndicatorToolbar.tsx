@@ -90,6 +90,8 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
+        title="Indicators"
+        aria-label="Indicators"
         style={{
           padding: "4px 8px", fontSize: 12, borderRadius: 2,
           transition: "all 0.15s",
@@ -103,7 +105,11 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
         onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; e.currentTarget.style.color = "#fff"; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.5)"; }}
       >
-        Indicators
+        {/* Gear glyph with U+FE0E text-presentation selector so it renders
+            monochrome (terminal aesthetic), not as a colour emoji. The
+            "Indicators" label moved to the title/aria-label to save toolbar
+            width; the active-count badge below still shows. */}
+        <span style={{ fontSize: 14, lineHeight: 1 }}>{"⚙︎"}</span>
         {activeCount > 0 && (
           <span style={{
             background: "#00ff41", color: "#000",
@@ -118,7 +124,12 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
 
       {open && (
         <div style={{
-          position: "absolute", top: "100%", left: 0, marginTop: 4,
+          // Anchor to the trigger's RIGHT edge so the menu opens leftward and
+          // stays within the chart area. The trigger sits at the right edge of
+          // the toolbar, so a left:0 (rightward) menu spills under the order
+          // panel and gets clipped — pre-existing, and worse now the gear
+          // trigger is narrower (anchor sits further right).
+          position: "absolute", top: "100%", right: 0, marginTop: 4,
           background: "#080808",
           border: "1px solid rgba(0,255,65,0.16)",
           borderRadius: 2,
