@@ -263,17 +263,26 @@ Known follow-ups (backlog, not blocking):
 
 # Top of mind
 
-TRADR is in a **stable foundation, ready for next features** state. Recent
-fixes all merged and verified in prod: the matchId-via-Redis bug (PR #26) + its
-regression test (PR #27), the per-consumer blocking-connection fix (PR #28), and
-the chart toolbar fit fix (PR #29 — all five cells visible, Indicators gear no
-longer clipped). Trade open/close latency is sub-second under all queue
-conditions, not just when the market-maker bot is active.
+TRADR is in a **stable, well-instrumented state** after yesterday's four PRs:
+the matchId-via-Redis bug (PR #26) + its regression test (PR #27), the
+per-consumer blocking-connection fix (PR #28), and the chart toolbar fit fix
+(PR #29 — all five cells visible, Indicators gear no longer clipped). Trade
+open/close latency is sub-second under all queue conditions, not just when the
+market-maker bot is active.
 
-**Next priority: Indicator Roadmap Stage 1 — MACD (12/26/9), ATR (14), and
-per-candle delta.** Follow the indicator build pattern in "Architecture Rules"
-and the sub-panel height constants. See [docs/postmortems/](docs/postmortems/)
-for the matchId bug writeup.
+**Indicator Roadmap Stages 1–5 are shipped and in prod**: Stage 1 (MACD 12/26/9,
+ATR 14, per-candle delta), Stage 2 (Funding Rate, Open Interest), Stage 3 (VPVR),
+Stage 4 (Order Book Heatmap, Footprint), Stage 5 (Liquidation Levels, COT report,
+multi-exchange OI). Only **Stage 6 (Post-Match Replay)** remains unbuilt.
+
+**Next focus: shift from feature work to scaling/observability.** Current user
+load is tiny, but the codebase is now mature enough that "can it handle real
+users?" is the right question. First step: load-test to find current limits.
+A k6 harness already exists from Phase 10 PR1 (`apps/api/load/k6/` — 5 scenarios
++ `apps/api/docs/slo-baseline.md`) but hasn't been run against the codebase since
+March; revisit it, record real baseline numbers in slo-baseline.md, and extend
+coverage to the indicator/derivatives endpoints added since. See
+[docs/postmortems/](docs/postmortems/) for the matchId bug writeup.
 
 ## Known dev env oddities
 
