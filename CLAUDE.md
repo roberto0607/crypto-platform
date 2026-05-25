@@ -31,33 +31,37 @@ docker compose up -d  # Start PostgreSQL (port 5435) + Redis
 
 ## Indicator Roadmap
 
-### Already Built
+**Status: Stages 1–5 are all shipped and in prod. Only Stage 6 remains.**
+
+### Already Built (pre-roadmap)
 EMA 20/50/200, VWAP, Bollinger Bands, Volume bars, RSI(14), CVD, Key Levels (PDH/PDL), Liquidity Zones, Order Blocks, Market Intelligence composite score
 
-### Stage 1 (next priority)
+### ✅ Stage 1 — shipped (e0edb0b, 2026-04-02)
 - MACD (12/26/9)
 - ATR (Average True Range, 14-period)
 - Per-candle delta (buy volume - sell volume as histogram)
 
-### Stage 2
-- Funding Rate overlay (Binance public API)
-- Open Interest chart (Binance public API)
+### ✅ Stage 2 — shipped (342fc9f, 2026-04-04)
+- Funding Rate overlay
+- Open Interest chart
+- **Data source: Gate.io + OKX (OI), Deribit (funding) — NOT Binance.** Binance fapi and Bybit are geo-blocked from US Railway servers; the commit subject says "Binance API" but the live code uses US-accessible exchanges. See `apps/api/src/routes/v1/v1Market.ts`.
 
-### Stage 3
-- Volume Profile / VPVR (price-level volume histogram)
+### ✅ Stage 3 — shipped (e2d61b6, 2026-04-08)
+- Volume Profile / VPVR (price-level volume histogram, with POC line + visible/weekly/daily modes)
 
-### Stage 4
-- Order Book Heatmap
-- Footprint Charts
-- Absorption detection
+### ✅ Stage 4 — shipped (749a3bf / 5d8832c, 2026-04-08–09)
+- Order Book Heatmap (LEFT side of chart)
+- Footprint Charts (Kraken trade aggregation, BTC/USD only — see footprint aggregator note in docs)
+- Absorption detection (`detectAbsorption()` in `apps/web/src/lib/footprintPrimitive.ts`)
 
-### Stage 5
-- Liquidation Levels (exchange aggregated)
-- COT Report integration
-- Multi-exchange Open Interest
+### ✅ Stage 5 — shipped (e4de89a, 2026-04-13)
+- Liquidation Levels (estimated, BTC only)
+- COT Report integration (CFTC)
+- Multi-exchange Open Interest (Gate.io + OKX for BTC)
 
-### Stage 6
+### Stage 6 — only remaining stage (deferred)
 - Post-Match Replay — replay a completed 1v1 match candle-by-candle with both players' trades overlaid (priority competitive feature)
+- Deferred: current focus is scaling/observability, not feature work (see "Top of mind")
 
 **Rule**: Build each indicator correctly before moving to the next. No deadlines. Quality over speed.
 
@@ -210,7 +214,7 @@ prod with real account state unless Roberto explicitly asks.
 
 # Recently shipped
 
-- **Stage 2 deployed: Funding Rate + Open Interest** (Binance public API overlays)
+- **Indicator Roadmap Stages 1–5 deployed** (MACD/ATR/Delta, Funding/OI, VPVR, Heatmap/Footprint/Absorption, Liquidation/COT/multi-exchange OI). Funding/OI use Gate.io + OKX + Deribit, not Binance (US geo-block). See the Indicator Roadmap section for commits/dates.
 
 ## Match-scoped positions bug (FIXED 2026-05-22, PR #26)
 
