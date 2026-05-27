@@ -10,6 +10,7 @@ import { findPairById } from "./pairRepo";
 import type { OrderRow } from "./orderRepo";
 import type { TradeRow } from "./tradeRepo";
 import type { Snapshot } from "../market/snapshotStore";
+import { getLatestSimCandle } from "../sim/simCandleRepo";
 import { D, toFixed8 } from "../utils/decimal";
 import { AppError } from "../errors/AppError";
 import { createEvent } from "../events/eventTypes";
@@ -119,19 +120,11 @@ export async function placeOrderWithSnapshot(
     if (body.type === "MARKET") {
         const simConfig = await resolveSimulationConfig(userId, body.pairId);
 
-        const { rows: candleRows } = await pool.query<{
-            volume: string; high: string; low: string;
-        }>(
-            `SELECT volume, high, low FROM candles
-             WHERE pair_id = $1 AND ts <= $2
-             ORDER BY ts DESC LIMIT 1`,
-            [body.pairId, snapshot.ts]
-        );
-        // Defensive: `candleRows[0] ?? null` was already safe from TypeError.
-        // computeMarketExecution below handles null volume/high/low (treats as
-        // missing and falls back to default simulation), so we keep that
-        // behavior rather than rejecting orders on pairs with no candle history.
-        const candle = candleRows[0] ?? null;
+        // 1m-pinned, index-served candle for the sim. null when the pair has no
+        // 1m candle; computeMarketExecution below handles null volume/high/low
+        // (falls back to default simulation) rather than rejecting the order.
+        // See simCandleRepo / docs/designs/2026-05-27-candles-query-index.md.
+        const candle = await getLatestSimCandle(body.pairId, snapshot.ts);
 
         const simResult = computeMarketExecution(
             snapshot,

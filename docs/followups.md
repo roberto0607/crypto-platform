@@ -102,36 +102,43 @@ single-consumer throughput ceiling.
 
 ---
 
-## 🟡 trade_burst order placement p95 2.8× slower than March (201ms vs 72ms, in-mem)
+## 🟡 trade_burst order placement p95 ~3× slower than March — DIAGNOSED (candles seq scan)
 
-**Discovered:** 2026-05-26, load-test baseline (in-memory pass — same backend as
-March, so this is a true regression, not a backend artifact).
+**Discovered:** 2026-05-26 baseline (in-memory pass — same backend as March, so a
+true regression). **Diagnosed:** 2026-05-27. Root cause + fix in
+[docs/designs/2026-05-27-candles-query-index.md](designs/2026-05-27-candles-query-index.md).
 
-| Metric (in-mem) | March 3 (`35aa84a`) | Today (`1eb5fb3`) | Δ |
-|---|---|---|---|
-| order_placement_ms p95 | 72ms | 201ms | ~2.8× |
-| http_req_duration p95 | 64ms | 185ms | ~2.9× |
+| order_placement_ms p95 (in-mem) | value |
+|---|---|
+| March 3 (`35aa84a`) | 72ms |
+| 2026-05-26 (`1eb5fb3`) | 201ms |
+| 2026-05-27 (`fe8433a`, ×2) | 253–254ms |
 
-Still under the 250ms SLO, but the margin shrank from ~3.5× to ~1.2×. Error
-rate stayed 0%.
+Worsening over time, 0% errors, now grazing the 250ms SLO.
 
-**Hypothesis:** PR #26 (matchId-via-Redis fix) added a `getActiveMatchIdForUser`
-lookup at the HTTP edge in `tradingRoutes.ts:196` that now runs on **every**
-`POST /orders`, free-play included. That's a new per-order DB round-trip that
-didn't exist in the March baseline. Heavier candle/schema state since March is a
-secondary suspect.
+**~~Original hypothesis: PR #26's `getActiveMatchIdForUser` lookup at the HTTP edge
+(`tradingRoutes.ts:196`) is a new, possibly-unindexed per-order query on `matches`.~~
+— INVESTIGATED, REFUTED (2026-05-27).** `EXPLAIN ANALYZE`: that query is **0.016ms,
+fully indexed** (`idx_matches_challenger`, `idx_matches_opponent`, partial status
+indexes all exist). Wrong table — not the cause.
 
-**First diagnostic:** `EXPLAIN ANALYZE` the `getActiveMatchIdForUser` query
-against a seeded local DB — confirm it's index-backed (expected: an index on
-`matches(challenger_id|opponent_id, status)` or similar covering the "active
-match for this user" predicate) and not doing a seq scan on `matches`. If
-unindexed, that's the fix. Capture the plan before/after.
+**Actual root cause:** the per-MARKET-order candles lookup in `phase6OrderService` —
+`SELECT volume,high,low FROM candles WHERE pair_id=$1 AND ts<=$2 ORDER BY ts DESC LIMIT 1`
+— omits `timeframe`, so neither `(pair_id,timeframe,ts)` index can seek. `EXPLAIN`:
+**Parallel Seq Scan of ~211k candles + sort = 18.9ms**, the bulk of the ~25ms per-order
+exec. The query is **byte-identical to March** — it's *data growth* (the startup
+backfill keeps adding candles), so the same scan got slower and worsens each restart.
+Under trade_burst's single-pair 10-VU load the in-memory queue serializes orders, so
+~25ms/order × pile-up = the ~254ms p95 tail (median stays ~60ms).
 
-**Scope:** separate PR from the XLEN queue fix above — different subsystem
-(order-edge query vs queue backpressure), and we don't want to entangle a perf
-investigation with a correctness fix.
+Confirmed via a **1-VU control run**: p95 collapsed to ~55ms with `pair_queue_wait_ms`≈0
+→ the tail is serialization amplifying per-order exec, not per-order cost alone.
 
-**Priority:** medium — within SLO today, but it erodes headroom and compounds
-with real load.
+**Fix:** pin `timeframe='1m'` → index seek, **18.9ms → 0.30ms**. Expected: per-order
+exec ~25ms→~6ms; trade_burst 10-VU p95 ~254ms→~72ms. Full design + test/migration/PR-story
+in the design doc above.
+
+**Scope:** own PR, separate from the XLEN queue fix. **Priority:** medium — now
+actionable (one-line query change + integration test).
 
 

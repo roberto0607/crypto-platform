@@ -13,7 +13,7 @@ import {
 import { computeMarketExecution } from "../../sim/slippageModel";
 import { computeAvailableLiquidity } from "../../sim/liquidityModel";
 import { resolveSnapshot } from "../../trading/phase6OrderService";
-import { pool } from "../../db/pool";
+import { getLatestSimCandle } from "../../sim/simCandleRepo";
 import { D, toFixed8 } from "../../utils/decimal";
 
 const simConfigSchema = z.object({
@@ -159,15 +159,9 @@ const v1Sim: FastifyPluginAsync = async (app) => {
             const snapshot = await resolveSnapshot(actor.id, pairId);
             const simConfig = await resolveSimulationConfig(actor.id, pairId);
 
-            const { rows: candleRows } = await pool.query<{
-                volume: string; high: string; low: string;
-            }>(
-                `SELECT volume, high, low FROM candles
-                 WHERE pair_id = $1 AND ts <= $2
-                 ORDER BY ts DESC LIMIT 1`,
-                [pairId, snapshot.ts]
-            );
-            const candle = candleRows[0] ?? null;
+            // 1m-pinned, index-served candle for the sim (same path as order
+            // placement). See simCandleRepo / docs/designs/2026-05-27-candles-query-index.md.
+            const candle = await getLatestSimCandle(pairId, snapshot.ts);
 
             const simResult = computeMarketExecution(
                 snapshot,
