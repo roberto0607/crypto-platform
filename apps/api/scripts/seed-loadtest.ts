@@ -30,7 +30,7 @@ async function seedLoadtest(): Promise<void> {
     const adminHash = await hashPassword(ADMIN_PASS);
     await client.query(
       `INSERT INTO users (id, email, email_normalized, password_hash, role)
-       VALUES (gen_random_uuid(), $1, $2, $3, 'admin')
+       VALUES (gen_random_uuid(), $1, $2, $3, 'ADMIN')
        ON CONFLICT (email_normalized) DO UPDATE
          SET password_hash = EXCLUDED.password_hash,
              role = EXCLUDED.role`,
@@ -88,7 +88,7 @@ async function seedLoadtest(): Promise<void> {
 
       const userResult = await client.query<{ id: string }>(
         `INSERT INTO users (id, email, email_normalized, password_hash, role)
-         VALUES (gen_random_uuid(), $1, $2, $3, 'user')
+         VALUES (gen_random_uuid(), $1, $2, $3, 'USER')
          ON CONFLICT (email_normalized) DO UPDATE
            SET password_hash = EXCLUDED.password_hash
          RETURNING id`,
@@ -100,7 +100,7 @@ async function seedLoadtest(): Promise<void> {
       await client.query(
         `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
          VALUES (gen_random_uuid(), $1, $2, $3, '0.00000000')
-         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid))
          DO UPDATE
            SET balance = EXCLUDED.balance,
                reserved = '0.00000000'`,
@@ -111,7 +111,7 @@ async function seedLoadtest(): Promise<void> {
       await client.query(
         `INSERT INTO wallets (id, user_id, asset_id, balance, reserved)
          VALUES (gen_random_uuid(), $1, $2, '0.00000000', '0.00000000')
-         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'))
+         ON CONFLICT (user_id, asset_id, COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid))
          DO NOTHING`,
         [userId, btcId]
       );
@@ -123,54 +123,12 @@ async function seedLoadtest(): Promise<void> {
       }
     }
 
-    // ── Reset circuit breakers tripped by recon mismatches on loadtest users ──
-    await client.query(`
-      UPDATE circuit_breakers
-      SET status = 'CLOSED', closes_at = NULL, updated_at = NOW()
-      WHERE breaker_key = 'RECONCILIATION_CRITICAL'
-        AND status = 'OPEN'
-    `);
-
-    // ── Reset per-user RATE_ABUSE circuit breakers for loadtest users ──
-    await client.query(`
-      UPDATE circuit_breakers
-      SET status = 'CLOSED', closes_at = NULL, updated_at = NOW()
-      WHERE breaker_key LIKE 'RATE_ABUSE:USER:%'
-        AND breaker_key IN (
-          SELECT 'RATE_ABUSE:USER:' || id::text
-          FROM users
-          WHERE email_normalized LIKE 'loadtest_user_%@loadtest.local'
-        )
-        AND status = 'OPEN'
-    `);
-
-    // ── Ensure all loadtest users are ACTIVE (reset quarantine from recon job) ──
-    await client.query(`
-      INSERT INTO account_limits (user_id, account_status)
-      SELECT id, 'ACTIVE'
-      FROM users
-      WHERE email_normalized LIKE 'loadtest_user_%@loadtest.local'
-      ON CONFLICT (user_id) DO UPDATE
-        SET account_status = 'ACTIVE',
-            updated_at = NOW()
-    `);
-
-    // ── Resolve any open incidents so governance gate passes ──
-    const resolvedResult = await client.query<{ count: string }>(`
-      UPDATE incidents
-      SET status = 'RESOLVED',
-          resolved_by = NULL,
-          resolved_at = NOW(),
-          resolution_summary = '"Reset by loadtest seed script"'
-      WHERE user_id IN (
-        SELECT id FROM users WHERE email_normalized LIKE 'loadtest_user_%@loadtest.local'
-      )
-      AND status = 'OPEN'
-      RETURNING id
-    `);
-    if (resolvedResult.rowCount && resolvedResult.rowCount > 0) {
-      console.log(`  Resolved ${resolvedResult.rowCount} open incidents for loadtest users`);
-    }
+    // ── Risk/governance reset removed ──
+    // The pre-migration-059 seed reset circuit_breakers, account_limits, and
+    // incidents here so the governance gate would pass for loadtest users.
+    // Migration 059_drop_exchange_tables.sql (2026-05-18) dropped all three
+    // tables ("exchange-complexity ... unnecessary for paper trading"), so
+    // there is nothing to reset. Order placement no longer gates on them.
 
     await client.query('COMMIT');
 
