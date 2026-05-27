@@ -100,3 +100,38 @@ single-consumer throughput ceiling.
 
 **Priority:** high — this is the headline scaling blocker from the baseline run.
 
+---
+
+## 🟡 trade_burst order placement p95 2.8× slower than March (201ms vs 72ms, in-mem)
+
+**Discovered:** 2026-05-26, load-test baseline (in-memory pass — same backend as
+March, so this is a true regression, not a backend artifact).
+
+| Metric (in-mem) | March 3 (`35aa84a`) | Today (`1eb5fb3`) | Δ |
+|---|---|---|---|
+| order_placement_ms p95 | 72ms | 201ms | ~2.8× |
+| http_req_duration p95 | 64ms | 185ms | ~2.9× |
+
+Still under the 250ms SLO, but the margin shrank from ~3.5× to ~1.2×. Error
+rate stayed 0%.
+
+**Hypothesis:** PR #26 (matchId-via-Redis fix) added a `getActiveMatchIdForUser`
+lookup at the HTTP edge in `tradingRoutes.ts:196` that now runs on **every**
+`POST /orders`, free-play included. That's a new per-order DB round-trip that
+didn't exist in the March baseline. Heavier candle/schema state since March is a
+secondary suspect.
+
+**First diagnostic:** `EXPLAIN ANALYZE` the `getActiveMatchIdForUser` query
+against a seeded local DB — confirm it's index-backed (expected: an index on
+`matches(challenger_id|opponent_id, status)` or similar covering the "active
+match for this user" predicate) and not doing a seq scan on `matches`. If
+unindexed, that's the fix. Capture the plan before/after.
+
+**Scope:** separate PR from the XLEN queue fix above — different subsystem
+(order-edge query vs queue backpressure), and we don't want to entangle a perf
+investigation with a correctness fix.
+
+**Priority:** medium — within SLO today, but it erodes headroom and compounds
+with real load.
+
+
