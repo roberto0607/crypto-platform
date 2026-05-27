@@ -102,7 +102,13 @@ single-consumer throughput ceiling.
 
 ---
 
-## 🟡 trade_burst order placement p95 ~3× slower than March — DIAGNOSED (candles seq scan)
+## ✅ RESOLVED (PR #31) — trade_burst order placement p95 ~3× slower than March (candles seq scan)
+
+**Resolved 2026-05-27** by pinning the sim candle lookup to `timeframe='1m'` (PR #31,
+merged `e7cda6a`, deployed). Local Redis trade_burst p95 **254ms → 60ms** (0% errors);
+prod candle query **133ms → 0.108ms** (EXPLAIN). New floor recorded in slo-baseline.md.
+Original investigation trail kept below.
+
 
 **Discovered:** 2026-05-26 baseline (in-memory pass — same backend as March, so a
 true regression). **Diagnosed:** 2026-05-27. Root cause + fix in
@@ -140,5 +146,46 @@ in the design doc above.
 
 **Scope:** own PR, separate from the XLEN queue fix. **Priority:** medium — now
 actionable (one-line query change + integration test).
+
+---
+
+## 🟠 `flushStaleStreams` boot flush is a no-op — SCAN MATCH lacks the `cp:` keyPrefix
+
+**Discovered:** 2026-05-27, verifying the candles fix (a local Redis stream stuck at
+XLEN=100 from pre-XLEN-fix testing was NOT cleared on API restart).
+
+`flushStaleStreams` (`redisQueue.ts:~114`) scans with `redis.scan(cursor, "MATCH", "queue:*", ...)`,
+but ioredis's `keyPrefix: "cp:"` is **not** applied to the SCAN MATCH pattern — the real
+keys are `cp:queue:*`. Verified: `SCAN MATCH 'queue:*'` → 0 keys; `MATCH 'cp:queue:*'` → 2.
+So the boot-time flush has **never** matched the real streams; it's a no-op.
+
+**Corrects the XLEN PR design doc** (`docs/designs/2026-05-26-xlen-queue-bug.md`), which
+claimed "the boot flush resets every stream to 0 on the first deploy." It does not — a
+stream stuck ≥`maxQueueDepth` pre-fix would stay stuck after a restart.
+
+**Prod impact: low / latent.** Prod's tiny lifetime order-count keeps streams well under
+100, and the XDEL fix now self-drains them, so this isn't biting prod. But it's wrong and
+the safety net it was meant to provide doesn't exist.
+
+**Fix:** use `rawStreamKey`-style fully-qualified pattern (`cp:queue:*`) in the SCAN, or
+strip/re-add the prefix. Add a test (the existing redis integration harness can assert a
+seeded `cp:queue:*` stream is flushed on init). **Priority:** medium.
+
+---
+
+## 🟠 Prod per-order exec ≈ 190ms (order pipeline, not the candle query)
+
+**Discovered:** 2026-05-27, post-candles-fix prod verification. Demo MARKET orders return
+201/FILLED in sub-second round-trip, but `pair_queue_exec_ms` ≈ 190ms/order. The candle
+query is now 0.108ms (EXPLAIN), so the residual is the rest of the order pipeline —
+matching engine, ledger writes, snapshot, and prod DB round-trip latency over larger
+prod tables (orders/trades/ledger/positions). Local exec is ~8ms by comparison.
+
+Not caused by (and not blocking) the candles fix — the fix removed ~133ms/order in prod.
+But ~190ms server-side per order is the next thing between "feels instant" locally and in
+prod. **Next diagnostic:** instrument/time the phases inside `placeOrderTx` (match vs
+ledger vs snapshot) against prod, or capture per-statement timings. **Priority:** medium —
+sub-second today, but it's the new ceiling on order latency. (Probably needs its own
+investigation, like the trade_burst one.)
 
 

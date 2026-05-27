@@ -198,6 +198,37 @@ the in-mem column. The takeaway for those rows is the **error rate**, not the ms
 
 ---
 
+## Post-fix — 2026-05-27 (candles query pinned to timeframe='1m', PR #31)
+
+The trade_burst regression (per-order candles seq scan) is fixed — PR #31 (`8e3bb73`),
+merged (`e7cda6a`) and deployed to prod (Railway deploy `4ee541c9`, SUCCESS).
+
+### trade_burst — new floor (local, Redis backend, ×2 runs)
+
+| order_placement_ms p95 | http_req p95 | err | source |
+|---|---|---|---|
+| 72ms | 64ms | 0% | March 3 (`35aa84a`, in-mem) |
+| 253–254ms | 240ms | 0% | pre-fix (2026-05-27, `fe8433a`, in-mem) |
+| **60.1 / 60.2ms** | **54 / 53ms** | **0%** | **post-fix (`e7cda6a`, Redis)** |
+
+**60ms p95 is the new floor** (below March despite the Redis round-trip). Per-order
+exec dropped ~25ms → ~8ms. 0% errors — the XLEN fix holds on the Redis write path.
+
+### Candle query — before/after (EXPLAIN ANALYZE)
+
+| | local (211k candles) | prod (805k candles) |
+|---|---|---|
+| old, no timeframe — Parallel Seq Scan | 18.9ms | 133.4ms |
+| fixed, `timeframe='1m'` — Index Scan | 0.30ms | **0.108ms** |
+
+### ⚠️ Caveat: prod per-order exec ≈ 190ms (NOT the candle query)
+Manual demo MARKET orders on prod returned 201/FILLED in sub-second round-trip, but
+`pair_queue_exec_ms` ≈ 190ms/order. The candle query is now 0.1ms, so this residual
+is the rest of the prod order pipeline (matching/ledger/snapshot + prod DB latency
+over larger tables) — pre-existing, separate from this fix. Tracked in followups.md.
+
+---
+
 ## Alert Thresholds (Future)
 
 Once Prometheus + Alertmanager are configured, suggested alert rules:
