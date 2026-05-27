@@ -18,6 +18,7 @@ import {
   pairQueueRejectionsTotal,
   pairQueueWaitMs,
   pairQueueExecMs,
+  pairQueueXdelFailuresTotal,
 } from "../metrics";
 import { logger } from "../observability/logContext";
 import { getRedis, getRedisSub, createBlockingRedis } from "../db/redis.js";
@@ -428,8 +429,28 @@ async function processJob(
     }));
   }
 
-  // ACK + update depth metric
+  // ACK + remove from stream + update depth metric.
+  // XACK only clears the pending-entries list; it does NOT remove the entry from
+  // the stream, so XLEN keeps growing. The enqueue depth guard reads XLEN
+  // (line ~203), so without the XDEL below each pair bricks with
+  // pair_queue_overloaded after maxQueueDepth lifetime orders, even when fully
+  // drained (pending=0, lag=0). XDEL makes XLEN track live depth again.
+  // See docs/designs/2026-05-26-xlen-queue-bug.md.
   await redis.xack(streamKey(pairId), GROUP_NAME, msgId);
+  try {
+    const removed = await redis.xdel(streamKey(pairId), msgId);
+    if (removed === 0) {
+      // Entry already gone (double-process? manual trim?) — not fatal, but
+      // shouldn't happen on the happy path, so surface it.
+      logger.warn({ pairId, msgId }, "xdel_removed_nothing_after_xack");
+    }
+  } catch (err) {
+    // A failed XDEL must NOT break processing — the result is already published
+    // to the caller. It degrades to the old leak for this one message, not a
+    // crash. Track it so a rising counter flags streams growing unbounded again.
+    pairQueueXdelFailuresTotal.inc({ pairId });
+    logger.error({ err, pairId, msgId }, "xdel_failed_after_xack");
+  }
   const depth = await redis.xlen(streamKey(pairId));
   pairQueueDepth.set({ pairId }, depth);
 }

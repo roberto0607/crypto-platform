@@ -269,6 +269,12 @@ export const pairQueueWaitMs = new client.Histogram({
   buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
 });
 
+export const pairQueueXdelFailuresTotal = new client.Counter({
+  name: "pair_queue_xdel_failures_total",
+  help: "XDEL failures after XACK in the Redis order queue (stream entry not removed). Should stay flat at 0; a rising count means streams may grow unbounded again.",
+  labelNames: ["pairId"] as const,
+});
+
 // ── Phase 9 PR5: Reconciliation findings metrics ──
 
 export const reconFindingsTotal = new client.Counter({

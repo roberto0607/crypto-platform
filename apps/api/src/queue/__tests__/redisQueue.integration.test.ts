@@ -38,6 +38,7 @@ vi.mock("../../metrics", () => ({
   pairQueueRejectionsTotal: { inc: vi.fn() },
   pairQueueWaitMs: { observe: vi.fn() },
   pairQueueExecMs: { observe: vi.fn() },
+  pairQueueXdelFailuresTotal: { inc: vi.fn() },
 }));
 
 // Imported after the mocks (vi.mock is hoisted) so these pull in the mocked deps.
@@ -67,6 +68,20 @@ function fieldValue(fields: string[], name: string): string | undefined {
 // requestId, competitionId, matchId) — so requestId is arg index 3, matchId 5.
 const ARG_REQUEST_ID = 3;
 const ARG_MATCH_ID = 5;
+
+// Poll until `pred` is truthy or `timeoutMs` elapses (then throw).
+async function waitFor(pred: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await pred()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+}
+
+// Test-only queue-depth cap for the XLEN regression tests — same proof as the
+// real 100, ~10x faster CI. Applied per-test via a config override + restore.
+const DEPTH_TEST_CAP = 10;
 
 let container: StartedRedisContainer;
 let cmd: Redis;
@@ -212,6 +227,79 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
       const call = calls.find((c) => c[ARG_REQUEST_ID] === `req-multi-${i}`);
       expect(call, `pair ${i} (req-multi-${i}) should have been processed`).toBeDefined();
       expect(call![ARG_MATCH_ID]).toBe(matchIds[i]);
+    }
+  });
+
+  // ── Regression for the XLEN depth bug (see docs/designs/2026-05-26-xlen-queue-bug.md) ──
+  // XACK alone left entries in the stream, so XLEN grew without bound and the
+  // enqueue depth guard (pair_queue_overloaded) tripped permanently after
+  // maxQueueDepth lifetime orders per pair — even fully drained. The fix XDELs
+  // each message after XACK so XLEN tracks live depth. These live in this
+  // describe (not their own) because initRedisQueue after a shutdown doesn't
+  // re-arm the module-level `accepting` flag — sharing this block's already-live
+  // queue keeps it true. Each test overrides config.maxQueueDepth locally.
+
+  // THE FIX: process 2x the cap; the stream drains and the guard never trips.
+  // Without the XDEL this fails at ~cap+1 (enqueue rejects; XLEN never shrinks).
+  it(`processes ${2 * DEPTH_TEST_CAP} orders (2x cap) without tripping pair_queue_overloaded; stream drains to ~0`, async () => {
+    const restore = config.maxQueueDepth;
+    (config as { maxQueueDepth: number }).maxQueueDepth = DEPTH_TEST_CAP;
+    try {
+      const pairId = randomUUID();
+      for (let i = 0; i < 2 * DEPTH_TEST_CAP; i++) {
+        // Each await resolves only after the consumer processed -> acked -> XDEL'd.
+        await enqueueRedis(pairId, `u-${i}`, payload(pairId), undefined, `req-depth-${i}`, undefined, undefined, null);
+      }
+      expect(placeOrderWithSnapshot).toHaveBeenCalledTimes(2 * DEPTH_TEST_CAP);
+
+      // Fully drained: XLEN reflects live depth now, not lifetime order count.
+      const xlen = await getRedis()!.xlen(`queue:${pairId}`);
+      expect(xlen).toBeLessThanOrEqual(1); // ≤1 = small in-flight slack
+    } finally {
+      (config as { maxQueueDepth: number }).maxQueueDepth = restore;
+    }
+  });
+
+  // GUARD STILL WORKS: when the consumer can't keep up, XLEN climbs to the cap
+  // and the (cap+1)th enqueue is rejected — proves the fix didn't remove real
+  // backpressure protection.
+  it("still rejects with pair_queue_overloaded when the consumer is wedged", async () => {
+    const restore = config.maxQueueDepth;
+    (config as { maxQueueDepth: number }).maxQueueDepth = DEPTH_TEST_CAP;
+
+    // Wedge processing: the consumer awaits this gate inside placeOrderWithSnapshot,
+    // so it never acks/XDELs — the stream fills to the cap and stays there.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    try {
+      vi.mocked(placeOrderWithSnapshot).mockImplementation(async () => {
+        await gate;
+        return FAKE_RESULT;
+      });
+
+      const pairId = randomUUID();
+      // Fire `cap` enqueues without awaiting their (now-blocked) resolution.
+      const inflight: Promise<unknown>[] = [];
+      for (let i = 0; i < DEPTH_TEST_CAP; i++) {
+        inflight.push(
+          enqueueRedis(pairId, `u-block-${i}`, payload(pairId), undefined, `req-block-${i}`, undefined, undefined, null).catch(() => {}),
+        );
+      }
+      // Wait until all cap XADDs have landed (none deleted — consumer is wedged).
+      await waitFor(async () => (await getRedis()!.xlen(`queue:${pairId}`)) >= DEPTH_TEST_CAP);
+
+      // The (cap+1)th enqueue must hit the depth guard.
+      await expect(
+        enqueueRedis(pairId, "u-overflow", payload(pairId), undefined, "req-overflow", undefined, undefined, null),
+      ).rejects.toThrow("pair_queue_overloaded");
+
+      // Release the wedge; backlog drains and the stream returns to ~0.
+      releaseGate();
+      await Promise.allSettled(inflight);
+      await waitFor(async () => (await getRedis()!.xlen(`queue:${pairId}`)) <= 1);
+    } finally {
+      releaseGate(); // ensure released even on assertion failure so shutdown isn't blocked
+      (config as { maxQueueDepth: number }).maxQueueDepth = restore;
     }
   });
 });
