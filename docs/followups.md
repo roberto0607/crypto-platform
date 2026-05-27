@@ -48,7 +48,13 @@ dropped table). Should be its own PR after the load-test work lands.
 
 ---
 
-## 🔴 Redis order queue bricks per-pair after 100 lifetime orders (XLEN depth bug)
+## ✅ RESOLVED (PR #30, verified in prod) — Redis order queue bricks per-pair after 100 lifetime orders (XLEN depth bug)
+
+**Resolved 2026-05-26:** XDEL-after-XACK so XLEN tracks live depth (PR #30, merged
+`390d615`). Verified in prod (order 201, depth=0, `pair_queue_xdel_failures_total`=0).
+Original investigation trail below. (Caveat: the boot-flush "safety net" referenced
+below turned out to be a no-op — see the `flushStaleStreams` follow-up.)
+
 
 **Discovered:** 2026-05-26, load-test baseline (Redis pass). All write-heavy
 scenarios failed on `pair_queue_overloaded` (HTTP 503) — 84.5% (trade_burst),
@@ -187,5 +193,17 @@ prod. **Next diagnostic:** instrument/time the phases inside `placeOrderTx` (mat
 ledger vs snapshot) against prod, or capture per-statement timings. **Priority:** medium —
 sub-second today, but it's the new ceiling on order latency. (Probably needs its own
 investigation, like the trade_burst one.)
+
+---
+
+## 🟢 Phase 2B — multi-pair load scenario (unblocked)
+
+Now that the XLEN bug (PR #30) and the candles seq scan (PR #31) are fixed, the load
+harness can finally measure *real* scaling — the single-pair baseline kept hitting a
+false ceiling. Build a multi-pair (BTC+ETH+SOL) write scenario + ramp/stress executors
+to find actual limits, and exercise cross-pair concurrency (PR #28's per-consumer Redis
+connection model) and in-match order flow (PR #26 edge path) under load — none of which
+the single-pair baseline covered. See `docs/designs/2026-05-26-xlen-queue-bug.md` §e.
+**Priority:** the next scaling step (feature-vs-fix call is yours).
 
 
