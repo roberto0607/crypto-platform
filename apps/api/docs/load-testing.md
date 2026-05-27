@@ -55,7 +55,34 @@ DISABLE_RATE_LIMIT=true DISABLE_JOB_RUNNER=true pnpm dev
 
 Both env vars are required because:
 - `DISABLE_RATE_LIMIT=true` — Login: 5 req/min per IP would throttle k6 setup; POST /orders: 60 req/min would throttle burst scenarios
-- `DISABLE_JOB_RUNNER=true` — The reconciliation job (300s interval) re-quarantines loadtest users mid-test; disabling it keeps accounts ACTIVE for the full test window. The outbox worker runs independently and is NOT disabled.
+- `DISABLE_JOB_RUNNER=true` — stops background jobs (market-maker bot, derivatives pollers, etc.) from generating their own orders/load and polluting measurements. The outbox worker runs independently and is NOT disabled. *(Historically this also stopped a reconciliation job from re-quarantining loadtest users — but that subsystem was removed in migration 059, 2026-05-18, so that reason no longer applies.)*
+
+### Queue backend selection
+
+The order pipeline uses one of two queue backends, chosen at startup by the
+`REDIS_URL` env var (`config.ts`: `redisUrl: process.env.REDIS_URL || ""`):
+
+- **`REDIS_URL` empty (default) → in-memory** per-pair queue. Single process, no
+  external dependency. This is what the original March baseline ran on.
+- **`REDIS_URL` set → Redis Streams** (per-pair stream + consumer group). This is
+  the production path. PR #26 (matchId serialization) and PR #28 (per-consumer
+  blocking connection) are **Redis-only** — they cannot be exercised in in-memory
+  mode. Start it with `docker compose up -d redis` (`cp_redis`, maps `6379:6379`),
+  then run the API with `REDIS_URL=redis://localhost:6379 ...`.
+
+Both backends carry a concrete `matchId: string | null` end-to-end and are meant
+to behave identically; only Redis matches prod. Expect order/write p95 to read a
+bit higher under Redis (one extra round-trip per enqueue) — that's the real floor.
+
+**Consumer lifecycle:** the per-pair Streams consumer is **lazily started on first
+enqueue** (`redisQueue.ts`: `ensureConsumer` → `startConsumer`) and is **NOT gated
+by `DISABLE_JOB_RUNNER`**. So `DISABLE_JOB_RUNNER=true` still lets orders flow
+through Redis and get consumed — the job-runner gate in `app.ts` only controls
+`startJobRunner()`, not the queue.
+
+**Health probe:** use `GET /pairs` to confirm the API is up, **not `/health`** —
+`healthRoutes.ts` currently queries the dropped `circuit_breakers` table and may
+500 (see `docs/followups.md`).
 
 ## Step 5 — Run Scenarios
 

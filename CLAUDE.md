@@ -111,6 +111,8 @@ All new indicators follow this pattern:
 - **Migrations**: Plain SQL in `apps/api/migrations/`, tracked in `schema_migrations`. Always register in `schema_migrations` when applying manually.
 - **Demo user ID**: `5b44aeb6-81c4-4131-bd06-b87e6fe89f11`
 - **Rtirado user ID (production)**: `338d993f-0444-4a0a-b463-d3cb6ce0d959`
+- **Risk/governance subsystem removed (migration 059, 2026-05-18)**: `circuit_breakers`, `account_limits`, `incidents`/`incident_events`, `reconciliation_reports`, `repair_runs`, `risk_limits`, `user_quotas` were dropped as "exchange-complexity ... unnecessary for paper trading". Order placement no longer gates on them. **Do not reference these tables** — they no longer exist. Anything describing circuit breakers, account quarantine, or incident governance as live behavior is stale.
+- **⚠️ Incomplete 059 cleanup (dead code, follow-up)**: live `src/` still references the dropped tables — `routes/healthRoutes.ts:92` queries `circuit_breakers` (so `/health` may 500), `outbox/outboxProcessor.ts:47` writes to `incidents` via `openIncidentsForQuarantinedUsers` (reconciliation-gated), and the whole `src/incidents/` module + `routes/v1/v1Incidents.ts` target dropped tables. Tracked in `docs/followups.md`.
 
 ## Coding Principles
 
