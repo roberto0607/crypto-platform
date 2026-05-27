@@ -45,3 +45,58 @@ dropped table). Should be its own PR after the load-test work lands.
 **Not blocking because:** verified the order-placement path
 (`phase6OrderService`, `tradingRoutes.ts`, queue) has no `account_limits` /
 `circuit_breakers` dependency.
+
+---
+
+## 🔴 Redis order queue bricks per-pair after 100 lifetime orders (XLEN depth bug)
+
+**Discovered:** 2026-05-26, load-test baseline (Redis pass). All write-heavy
+scenarios failed on `pair_queue_overloaded` (HTTP 503) — 84.5% (trade_burst),
+28.9% (mixed), 94.8% (outbox). In-memory pass: 0% errors on the same scenarios.
+
+**Root cause:** the per-pair depth guard reads the **total** stream length and
+compares to `config.maxQueueDepth` (default 100):
+
+```
+apps/api/src/queue/redisQueue.ts:202   const depth = await redis.xlen(key);
+apps/api/src/queue/redisQueue.ts:203   if (depth >= config.maxQueueDepth) throw pair_queue_overloaded
+```
+
+But the consumer **`XACK`s without `XDEL`/`XTRIM`**:
+
+```
+apps/api/src/queue/redisQueue.ts:432   await redis.xack(streamKey(pairId), GROUP_NAME, msgId);
+                                       // no XDEL / XTRIM — entry stays in the stream
+```
+
+`XACK` only clears the pending-entries list; it does **not** remove the entry
+from the stream. So `XLEN` counts every order ever `XADD`ed and never shrinks.
+After 100 orders land on a pair's stream (since the last restart), `xlen` stays
+≥100 and **every subsequent order 503s — permanently** — even though the
+consumer is fully caught up. Verified live: `XLEN=100`, consumer group
+`pending=0, lag=0`.
+
+The only thing that clears it is the **startup flush** (`redisQueue.ts:109-125`,
+`XTRIM MAXLEN 0` on boot), so a server restart temporarily "fixes" it.
+
+**Why it's invisible today:** tiny user load (never 100 orders/pair per uptime
+window) + frequent Railway deploys (each restart flushes). Under sustained real
+load it bricks each pair after 100 lifetime orders. The in-memory queue does not
+have this bug — it checks `pq.jobs.length` (`queueManager.ts:77`), which shrinks
+as jobs drain.
+
+**Fix options (own PR):**
+- (a) `XDEL` the message (or periodic `XTRIM`) after `XACK` so the stream tracks
+  live depth; or
+- (b) base the guard on pending/lag (`XPENDING` / consumer-group `lag`) instead
+  of `XLEN`; or
+- (c) `XADD ... MAXLEN ~ N` to cap the stream on write.
+  Option (b) most directly matches the in-memory semantics (`jobs.length` =
+  unprocessed work).
+
+**Caveat / Phase 2B:** the baseline ran all load on a single pair (one consumer).
+Confirm against multi-pair load to separate this XLEN bug from any
+single-consumer throughput ceiling.
+
+**Priority:** high — this is the headline scaling blocker from the baseline run.
+

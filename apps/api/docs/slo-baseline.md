@@ -120,6 +120,84 @@ jq '.metrics.http_req_duration.values["p(95)"]' load/results/reads-YYYYMMDD.json
 
 ---
 
+## Baseline Run — 2026-05-26 (in-memory vs Redis, vs March 3)
+
+Git SHA `1eb5fb3`. Both passes: 50 seeded users, single pair **BTC/USD**,
+`DISABLE_RATE_LIMIT=true DISABLE_JOB_RUNNER=true` (market-maker bot off → thin
+book), local Docker Postgres. In-memory pass: `REDIS_URL` unset. Redis pass:
+`REDIS_URL=redis://localhost:6379` (Redis Streams, confirmed via live
+`cp:queue:*` keys). March 3 rows recorded p95 only; today's passes capture full
+p50/p95/p99.
+
+### Headline comparison — http_req_duration p95 / error rate
+
+| Scenario        | March 3 (in-mem) | Today (in-mem) | Today (Redis)          |
+|-----------------|------------------|----------------|------------------------|
+| auth_smoke      | p95 43ms, 0%     | p95 49ms, 0%   | p95 48ms, 0% ✓         |
+| read_heavy      | p95 35ms, 0%     | p95 8.6ms, 0%  | p95 10ms, 0% ✓         |
+| trade_burst     | p95 64ms, 0%     | p95 185ms, 0%  | **84.5% FAIL** (503s)  |
+| mixed_realistic | p95 41ms, 0.22%  | p95 48ms, 0%   | **28.9% FAIL** (503s)  |
+| outbox_pressure | p95 42ms, 0%     | p95 39ms, 0%   | **94.8% FAIL** (503s)  |
+
+(auth p95 is dominated by the 50 sequential argon2 logins in `setup()`, not the
+measured `/auth/me` calls — consistent across all three columns.)
+
+### Full distribution — today's two passes
+
+| Scenario        | Pass   | p50    | p95     | p99     | RPS   | Err%   | Domain metric (p95)             |
+|-----------------|--------|--------|---------|---------|-------|--------|---------------------------------|
+| auth_smoke      | in-mem | 3.9ms  | 48.6ms  | 52.7ms  | 10.7  | 0.00%  | —                               |
+| auth_smoke      | redis  | 4.3ms  | 47.7ms  | 51.9ms  | 10.7  | 0.00%  | —                               |
+| read_heavy      | in-mem | 3.5ms  | 8.6ms   | 12.3ms  | 185.7 | 0.00%  | read_latency 8.4ms              |
+| read_heavy      | redis  | 5.2ms  | 10.0ms  | 12.9ms  | 182.9 | 0.00%  | read_latency 9.9ms              |
+| trade_burst     | in-mem | 49.5ms | 185.1ms | 226.8ms | 24.7  | 0.00%  | order_placement 201ms; cancel 6.7ms |
+| trade_burst     | redis  | 4.1ms† | 83.3ms† | 199.5ms†| 20.3  | 84.51% | order_placement 93ms†           |
+| mixed_realistic | in-mem | 1.9ms  | 47.9ms  | 70.6ms  | 47.1  | 0.00%  | write 64ms / read 3.3ms         |
+| mixed_realistic | redis  | 5.3ms† | 13.8ms† | 43.9ms† | 48.3  | 28.85% | write 13.5ms / read 12.6ms      |
+| outbox_pressure | in-mem | 29.5ms | 39.5ms  | 50.2ms  | 22.1  | 0.00%  | outbox_order 34.6ms; qdepth max 0 |
+| outbox_pressure | redis  | 5.5ms† | 9.8ms†  | 47.7ms† | 24.6  | 94.78% | outbox_order 8.5ms; qdepth max 0 |
+
+† Redis write-scenario latency blends ~85/29/95% **fast 503 rejections** with the
+minority of successful placements — so these latency cells are NOT comparable to
+the in-mem column. The takeaway for those rows is the **error rate**, not the ms.
+
+### Findings / anomalies
+
+1. **🔴 Redis order queue bricks per-pair after `MAX_QUEUE_DEPTH` (100) lifetime
+   orders — likely a production scaling bug.** Every write-heavy Redis scenario
+   failed on `pair_queue_overloaded` (HTTP 503), *not* on latency. Root cause:
+   the depth guard reads `XLEN(stream)` (`redisQueue.ts:202`), but the consumer
+   `XACK`s **without `XDEL`/`XTRIM`** (`redisQueue.ts:432`), so `XLEN` counts
+   every entry ever added and never shrinks. After 100 orders are `XADD`ed to a
+   pair's stream (between restarts), `xlen` stays ≥100 and all further orders
+   503 — even though the consumer is fully drained (verified `pending=0, lag=0`,
+   `xlen=100`). Only a server restart clears it (startup flush,
+   `redisQueue.ts:109-125`). The in-memory path **cannot** exhibit this: it
+   checks `pq.jobs.length`, which shrinks as jobs drain (hence 0% errors). This
+   is invisible at today's tiny load + frequent deploys, but fatal under
+   sustained real load. **Direct answer to "can it handle real users?" — not
+   yet.** Tracked in `docs/followups.md`.
+
+2. **🟡 trade_burst order placement ~2.8× slower than March (in-mem):** 201ms vs
+   72ms p95. Plausibly the per-order `getActiveMatchIdForUser` DB lookup added at
+   the HTTP edge by PR #26 (now runs on every order) plus heavier schema/candle
+   state. Still under the 250ms SLO, but the margin shrank from ~3.5× to ~1.2×.
+   Worth confirming that lookup is indexed.
+
+3. **🟢 Reads are healthy on both backends:** read_heavy p95 8.6ms (in-mem) /
+   10ms (Redis) at ~185 RPS, 0% errors — well under the 150ms SLO and faster than
+   March's 35ms. Redis adds ~1.5ms read overhead (expected, not concerning).
+
+4. **Redis write latency on *successful* ops is excellent** — the pipeline is
+   fast; the only problem is the XLEN backpressure bug in finding 1.
+
+5. **Single-pair artifact:** all load hit one pair (BTC/USD = one consumer),
+   which both concentrates the queue bug and leaves cross-pair scaling (PR #28)
+   unexercised. Phase 2B's multi-pair scenario is needed to separate "queue bug"
+   from "single-consumer throughput ceiling."
+
+---
+
 ## Alert Thresholds (Future)
 
 Once Prometheus + Alertmanager are configured, suggested alert rules:
