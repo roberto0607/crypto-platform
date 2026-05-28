@@ -429,6 +429,22 @@ const TRADE_CSS = `
   .tr-place-btn:disabled { opacity:0.6;cursor:not-allowed; }
   .tr-place-btn:disabled::before { display:none; }
 
+  /* Order-form sticky submit footer. Base is layout-transparent (display:contents)
+     so the has-position case is unchanged; when there is NO open position the
+     -pinned variant pins the cost summary + submit to the bottom of the scrollable
+     .tr-order-panel-top, so OPEN LONG/SHORT is always reachable regardless of scroll
+     or how tall the OrderDock is. Edge-to-edge + opaque (mirrors the position card),
+     z-index below the card (1 < 2) so the card wins when both could be present. */
+  .tr-order-footer { display:contents; }
+  .tr-order-footer-pinned {
+    display:block;position:sticky;bottom:0;z-index:1;
+    margin:0 -16px;padding:8px 16px 10px;
+    /* fully opaque (matches the position card's #050505) so scrolling form
+       fields — e.g. the TRAILING STOP label — can't bleed through behind the
+       summary rows. Opaque color rather than relying on z-index. */
+    background:#050505;border-top:1px solid var(--borderW);
+  }
+
   /* balance */
   .tr-balance-row {
     display:flex;justify-content:space-between;align-items:center;

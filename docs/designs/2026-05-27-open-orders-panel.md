@@ -167,6 +167,90 @@ wallet `reserved=0.00000000`, balance unchanged (97152.44260807 — a hold relea
 balance). Skipped only the audit_log row + SSE event (immaterial for dead orders). Not
 part of this PR's diff.
 
+## g. Order-form height — sticky submit footer (added to PR A scope 2026-05-27)
+
+The live smoke surfaced a layout problem the dock made visible but did **not** cause:
+
+- **Problem 1 (pre-existing):** in LIMIT mode the order form is taller than
+  `.tr-order-panel-top`, so the `OPEN LONG` button + cost summary sit **below the fold** —
+  the user must scroll to submit, even when the dock is the thin 30px strip. (MARKET mode
+  has one fewer field and just barely fit, which is why nobody noticed.)
+- **Problem 2:** expanding the dock shrinks `.tr-body` → shrinks the right column →
+  shrinks `.tr-order-panel-top`, so scrolling to submit becomes mandatory and the user
+  loses sight of price/amount inputs and the submit button at the same time.
+
+Root cause: the three **optional** fields (TAKE PROFIT, STOP LOSS, TRAILING STOP) compete
+for vertical space with the **critical-path** elements (LIMIT PRICE, AMOUNT, summary,
+submit) inside one scroll container.
+
+### Options
+
+- **Option A — collapse TP/SL/TSL behind "+ Advanced" (default closed).** Shortens the
+  form ~150px. Simple (state + conditional render). Downside: hides functionality from
+  users who set TP/SL at entry time (though they remain settable on the position card
+  after opening).
+- **Option B — sticky submit footer (CHOSEN).** Pin the summary + submit button to the
+  bottom of `.tr-order-panel-top`; TP/SL/TSL scroll above. Doesn't hide anything; the
+  critical elements (cost + submit) are always visible regardless of scroll or dock state.
+
+**Decision: Option B** — keeps all fields visible, and directly satisfies "OPEN LONG +
+cost summary always reachable" in both dock states.
+
+### Feasibility (verified against the code, no scroll-behavior breakage)
+
+`UnifiedOrderPanel` is **shared** by the trade page (`classPrefix="tr"`) and the arena
+(`classPrefix="lmv"`) — those are the only two consumers. The trade page's
+`.tr-order-panel-top` is the `overflow-y:auto` scroll container; the form renders inside
+`.tr-order-section`. The **position card is already** `position:sticky; bottom:0`
+(`.tr-position-card-sticky`, z-index 2, opaque bg) — so a sticky footer must coexist with
+an existing sticky element.
+
+Plan:
+1. **JSX (shared):** wrap the `${p}-summary` block + submit button in
+   `<div className={`${p}-order-footer${hasPosition ? "" : " is-pinned"}`}>`.
+2. **Arena untouched:** `.lmv-order-footer { display: contents; }` makes the wrapper
+   layout-transparent — the arena renders summary+submit in normal flow exactly as today.
+   (Verified the arena's `.lmv-order-section` is a plain padded block with its own
+   `.lmv-position-card-sticky`.)
+3. **Trade page:** `.tr-order-footer.is-pinned { position:sticky; bottom:0; z-index:1;
+   margin:0 -16px; padding:8px 16px 0; background:rgba(5,5,5,0.97); border-top:1px solid
+   var(--borderW); }` — mirrors the card's edge-to-edge opaque treatment, z-index **below**
+   the card (1 < 2). Sticky preserves flow space, so the last field (TSL) stays reachable.
+4. **Dual-sticky resolution:** pin the footer **only when there is no position**
+   (`is-pinned` omitted when `hasPosition`). With a position, the already-sticky position
+   card (CLOSE button) remains the pinned element and the summary/submit scroll — i.e.
+   today's has-position behavior is preserved, and the new pinning fixes the reported
+   no-position case. (Avoids two `bottom:0` stickies fighting.)
+
+### Position-card height check (your 3rd ask)
+
+The position card is already sticky-pinned with an opaque bg, so CLOSE stays visible
+regardless of scroll — structurally it does *not* have Problem 1. **To verify**, the
+re-spot-check will open a MARKET position (local bot provides fills) and confirm the card
++ CLOSE button are visible without scrolling at both dock states, and that footer/card
+don't visually collide.
+
+### Re-test — VERIFIED 2026-05-27 (Playwright, local)
+
+Geometry measured (discriminator: `OPEN LONG` reachable *despite* overflow), screenshots
+in `docs/designs/assets/2026-05-27-open-orders-dock/`:
+- **(a) LIMIT, thin dock** — panel viewport 382px, content 635px (**overflowing**), footer
+  `position:sticky`, `OPEN LONG` at 439–473 inside viewport (bottom 483) → **visible, no
+  scroll**. (`pr-a-footer-1-…`)
+- **(b) dock expanded** — viewport squeezed to 202px, content 618px, `OPEN LONG` at
+  259–293 inside viewport (bottom 303) → **still visible**. (`pr-a-footer-2-…`)
+- **(c) open position** — footer class `tr-order-footer` (no `-pinned`),
+  `display:contents`, not sticky → **no collision**; position card is the sole sticky
+  element, `CLOSE POSITION` visible. Worst case (position + resting limit + dock expanded)
+  the card fills the squeezed 202px panel with CLOSE pinned at the bottom and the form
+  behind it — coherent, CLOSE always reachable. (`pr-a-footer-3-…`)
+
+**Note on tests:** the sticky/`display:contents` behavior is layout, which jsdom can't
+exercise; the discriminator here is the recorded Playwright geometry (overflow present yet
+submit visible). A jsdom unit test could assert the `${p}-order-footer-pinned` class
+toggles with `hasPosition`, but rendering `UnifiedOrderPanel` needs heavy store/API
+mocking for low marginal value — deferred unless we want it as a CI guard.
+
 ## h. Post-spot-check fixes (Issues 1–3, 2026-05-27)
 
 Safari spot-check confirmed the footer works but surfaced three follow-ups, all in
@@ -186,3 +270,10 @@ Safari spot-check confirmed the footer works but surfaced three follow-ups, all 
    chevron are non-interactive `<span>`s whose clicks bubble to the bar. Discriminator
    test clicks the **"Open Orders" label** (not the chevron) and asserts toggle — fails on
    the pre-fix chevron-only handler. Verified live (label click collapses/expands).
+3. **Form fields bled through the pinned footer (visual).** `background:rgba(5,5,5,0.97)`
+   let ~3% of scrolling content (the TRAILING STOP label) show behind the summary rows.
+   **Fix (opaque color, not z-index):** `background:#050505` — matches the position card.
+   Verified live: computed footer bg `rgb(5,5,5)`, no bleed in `pr-a-footer-4-…`.
+
+All 10 web tests pass; typecheck clean. (Final footer class is `tr-order-footer-pinned`,
+applied only when `!hasPosition` — the §g plan's working name was `is-pinned`.)
