@@ -206,4 +206,50 @@ connection model) and in-match order flow (PR #26 edge path) under load — none
 the single-pair baseline covered. See `docs/designs/2026-05-26-xlen-queue-bug.md` §e.
 **Priority:** the next scaling step (feature-vs-fix call is yours).
 
+---
+
+## 🔴 HIGH — Market-maker bot not quoting in prod → LIMIT orders never fill in solo play
+
+**Discovered:** 2026-05-27, investigating order visibility/fills (see
+`docs/designs/2026-05-27-open-orders-panel.md`). This is the **gating issue** that
+makes resting LIMIT orders functionally useless for a solo user in prod.
+
+**Evidence (prod, grounded from Postgres):**
+- During a manual test window (2026-05-27 20:30–21:10 UTC) the **only** BTC/USD orders
+  were the user's own. The bot (`config.botUserId` = `00000000-…-0001`) placed **zero**
+  orders.
+- The **entire current BTC/USD resting book** is just the user's stuck LIMIT BUYs —
+  no asks, no other bids, no bot liquidity at all.
+- All of the user's MARKET fills are `is_system_fill = true` — they filled via the
+  matching engine's system fallback at `pair.last_price`
+  (`matchingEngine.ts:184-191`), **not** against any resting book.
+
+**Why LIMIT orders never fill (and it's NOT a matching bug):**
+- LIMIT orders have **no system-fill fallback** (by design — that would defeat the
+  limit price). A resting LIMIT only fills when a counterparty *crosses* it.
+- With no bot quoting and self-trade prevention (`orderRepo.ts` `excludeUserId`,
+  tested at `tests/trading.test.ts:505`) blocking the user's own market sells from
+  hitting their own bids, **nothing ever crosses a solo user's resting limit.**
+- MARKET orders still work (system fallback). LIMIT orders silently rest forever.
+
+**Open questions for the investigation (diagnose-then-fix, like candles/XLEN):**
+1. Is `DISABLE_MARKET_MAKER` set in the Railway API service env? (config default is
+   `false` — `config.ts:133`.) Cheapest possible cause.
+2. Is the `marketMakerJob` actually registered + running? Is `DISABLE_JOB_RUNNER`
+   set in prod? Is the bot user (`00000000-…-0001`) present and its wallets funded?
+3. **Behavioral correctness even if the bot runs:** the bot posts passive LIMIT
+   bids/asks via `placeOrderWithSnapshot` (`marketMakerJob.ts`). When the bot
+   re-quotes and its new ask drops *below* a user's resting bid (or new bid rises
+   above a user's resting ask), does the bot's incoming order cross & fill the user's
+   resting limit at the maker price? This is the path that would make limit orders
+   actually fill. Verify it works, with a discriminator test.
+
+**Priority:** HIGH. Next investigation after the open-orders-panel UI work (PR A)
+clears. Acceptance criterion #6 ("LIMIT BUY fills at limit price or lower") is *coded*
+correctly (`matchingEngine.ts:166`, tested at `matchingEngine.test.ts:283`) but is
+**unexercisable in solo prod** until this is fixed.
+
+**Not blocking PR A:** the open-orders panel + cancel UI is about *visibility and
+control* of resting orders, which is valuable regardless of whether they fill.
+
 

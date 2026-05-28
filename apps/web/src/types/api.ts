@@ -90,7 +90,10 @@ export interface TradingPair {
 
 export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET" | "LIMIT";
-export type OrderStatus = "OPEN" | "PARTIALLY_FILLED" | "FILLED" | "CANCELLED";
+// NB: order status is "CANCELED" (one L) — matches the backend DB constraint
+// orders_status_check and setOrderStatus(…, "CANCELED"). (Competitions/matches
+// use "CANCELLED" with two L's — a different domain; do not unify them.)
+export type OrderStatus = "OPEN" | "PARTIALLY_FILLED" | "FILLED" | "CANCELED";
 
 export interface Order {
   id: UUID;

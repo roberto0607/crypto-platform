@@ -9,6 +9,7 @@ import { getCandles } from "@/api/endpoints/candles";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
+import OrderDock from "@/components/trading/OrderDock";
 import type { Position, OrderBook as OrderBookType } from "@/types/api";
 
 /* ─────────────────────────────────────────
@@ -135,8 +136,12 @@ const TRADE_CSS = `
     grid-template-rows:1fr;
     grid-template-areas: "chart order";
     overflow:hidden;min-height:0;
-    /* explicit height: viewport minus topbar(~41px) + p-1.5 padding(3px) + asset-bar(46px) + ticker(36px) */
-    height: calc(100vh - 126px);
+    /* Flex-fill the height left in .tr-wrap (asset bar + body + order dock).
+       Was a hardcoded calc(100vh - 126px); the bottom OrderDock needs the body
+       to flex so the two share height without overflow. .tr-wrap has a definite
+       height from AppLayout (h-screen → main flex-1), so flex:1 resolves; the
+       chart's ResizeObserver re-fits when the dock expands/collapses. */
+    flex:1 1 0;
   }
 
   /* ── CHART AREA ── */
@@ -230,6 +235,56 @@ const TRADE_CSS = `
   }
   .tr-es-lbl { font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:2px;text-transform:uppercase; }
   .tr-es-cta { font-size:10px;color:rgba(0,255,65,0.45);letter-spacing:2px;margin-top:6px; }
+
+  /* ── ORDER DOCK (full-width, bottom of .tr-wrap, above AppLayout ticker) ── */
+  .tr-order-dock {
+    flex-shrink:0;display:flex;flex-direction:column;
+    border-top:1px solid var(--border);background:rgba(5,5,5,0.97);overflow:hidden;
+  }
+  .tr-order-dock.collapsed { height:30px; }
+  .tr-order-dock.expanded { height:210px; }
+  /* whole bar is the toggle target (role=button); tabs + chevron are spans */
+  .tr-dock-bar {
+    height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;
+    padding:0 14px;border-bottom:1px solid var(--borderW);
+    cursor:pointer;user-select:none;
+  }
+  .tr-dock-bar[aria-disabled="true"] { cursor:default; }
+  .tr-dock-tabs { display:flex;gap:14px;align-items:center; }
+  .tr-dock-tab {
+    font-family:var(--mono);font-size:9px;letter-spacing:2px;text-transform:uppercase;
+    color:rgba(255,255,255,0.4);display:flex;align-items:center;gap:6px;
+  }
+  .tr-dock-tab.active { color:var(--text); }
+  .tr-dock-count {
+    font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--g);
+    border:1px solid rgba(0,255,65,0.3);padding:0 4px;line-height:14px;
+  }
+  .tr-dock-toggle {
+    color:rgba(255,255,255,0.4);font-size:11px;line-height:1;padding:2px 4px;
+  }
+  .tr-dock-bar:hover:not([aria-disabled="true"]) .tr-dock-toggle,
+  .tr-dock-bar:hover:not([aria-disabled="true"]) .tr-dock-tab.active { color:var(--text); }
+  .tr-dock-bar[aria-disabled="true"] .tr-dock-toggle { opacity:0.35; }
+  .tr-dock-content { flex:1;min-height:0;overflow-y:auto; }
+  .tr-dock-content::-webkit-scrollbar { width:2px; }
+  .tr-dock-content::-webkit-scrollbar-thumb { background:var(--border); }
+
+  /* open-orders table — builds on .tr-ptbl */
+  .tr-ptbl th.tr-oo-num, .tr-ptbl td.tr-oo-num { text-align:right;font-family:var(--mono); }
+  .tr-ptbl th.tr-oo-act, .tr-ptbl td.tr-oo-act { text-align:right; }
+  .tr-oo-fill { display:flex;align-items:center;justify-content:flex-end;gap:6px; }
+  .tr-oo-bar { width:34px;height:4px;border-radius:2px;background:rgba(255,255,255,0.1);overflow:hidden; }
+  .tr-oo-bar-f { height:100%;border-radius:2px; }
+  .tr-oo-bar-f.buy { background:var(--g); }
+  .tr-oo-bar-f.sell { background:var(--red); }
+  .tr-oo-cancel {
+    background:none;border:1px solid var(--borderW);cursor:pointer;
+    font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;
+    color:rgba(255,255,255,0.5);padding:2px 9px;
+  }
+  .tr-oo-cancel:hover:not(:disabled) { color:var(--red);border-color:rgba(255,59,59,0.4); }
+  .tr-oo-cancel:disabled { opacity:0.5;cursor:default; }
 
   /* ── ORDER PANEL ── */
   .tr-order-panel {
@@ -925,13 +980,17 @@ export default function TradingPage() {
             />
           </div>
 
-          {/* Orders/History tabs removed — use History page instead */}
+          {/* Open orders now live in the full-width OrderDock below the body
+              (this was a right-panel tab slot before). */}
 
           <div className="tr-order-panel-book">
             <OrderBookPanel liveBook={liveOrderBook} />
           </div>
         </div>
       </div>
+
+      {/* OPEN-ORDERS DOCK — full width, between the chart row and AppLayout's ticker */}
+      <OrderDock />
 
       {/* ── Competition bottom bar ── */}
       {isInCompetition && activeMatch && (() => {
