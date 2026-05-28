@@ -327,8 +327,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   updateOrder: (orderId, status, filledQty) => {
     const orders = get().openOrders;
-    if (status === "FILLED" || status === "CANCELLED") {
-      // Remove completed/cancelled orders
+    if (status === "FILLED" || status === "CANCELED") {
+      // Remove completed/canceled orders. NB: backend order status is "CANCELED"
+      // (one L); the old "CANCELLED" check silently never matched, so SSE-driven
+      // cancels/fills from non-self sources weren't pruned from the list.
       set({ openOrders: orders.filter((o) => o.id !== orderId) });
     } else {
       // Update in-place

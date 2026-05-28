@@ -234,6 +234,11 @@ const LMV_CSS = `
     border-top: 1px solid var(--ar-borderW);
   }
 
+  /* UnifiedOrderPanel's summary+submit footer wrapper. The arena keeps the
+     original flow layout, so render it layout-transparent (the sticky-footer
+     behavior is trade-page-only — see .tr-order-footer-pinned). */
+  .lmv-order-footer { display: contents; }
+
   /* sticky position card — pins to the bottom of the scrollable order panel
      area so an open position stays visible regardless of scroll. Mirrors
      .tr-position-card-sticky on the trading page; background matches the

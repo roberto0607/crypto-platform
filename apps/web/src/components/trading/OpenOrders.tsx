@@ -2,8 +2,15 @@ import { useState } from "react";
 import Decimal from "decimal.js-light";
 import { useTradingStore } from "@/stores/tradingStore";
 import { formatDecimal } from "@/lib/decimal";
-import Spinner from "@/components/Spinner";
 
+/**
+ * Open-orders table — lives inside the trade-page OrderDock (`OrderDock.tsx`).
+ * Styled with the `tr-` design system (reuses `.tr-ptbl` / `.tr-side-*`), not
+ * generic Tailwind, so it matches the rest of the trade page. Reads the same
+ * `openOrders` store slice that `refreshOpenOrders()` populates from
+ * GET /orders?status=OPEN, and cancels via DELETE /orders/:id (optimistic
+ * remove + revert handled in the store's `cancelOrder`).
+ */
 export default function OpenOrders() {
   const openOrders = useTradingStore((s) => s.openOrders);
   const cancelOrder = useTradingStore((s) => s.cancelOrder);
@@ -14,84 +21,76 @@ export default function OpenOrders() {
     try {
       await cancelOrder(orderId);
     } catch {
-      // Revert handled in store — just clear spinner
+      // Revert is handled in the store — just clear the spinner here.
     }
     setCancellingId(null);
   }
 
   if (openOrders.length === 0) {
     return (
-      <div className="text-xs text-gray-500 py-3 text-center">
-        No open orders
+      <div className="tr-empty-state">
+        <span className="tr-es-lbl">No open orders</span>
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="text-[10px] uppercase text-gray-500 border-b border-gray-800">
-            <th className="px-2 py-1.5 text-left font-medium">Side</th>
-            <th className="px-2 py-1.5 text-left font-medium">Type</th>
-            <th className="px-2 py-1.5 text-right font-medium">Price</th>
-            <th className="px-2 py-1.5 text-right font-medium">Qty</th>
-            <th className="px-2 py-1.5 text-right font-medium">Filled</th>
-            <th className="px-2 py-1.5 text-left font-medium">Status</th>
-            <th className="px-2 py-1.5 text-right font-medium">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {openOrders.map((order) => {
-            const filled = new Decimal(order.qty_filled);
-            const total = new Decimal(order.qty);
-            const pct = total.isZero() ? 0 : filled.div(total).mul(100).toNumber();
-            const isBuy = order.side === "BUY";
+    <table className="tr-ptbl tr-oo-tbl">
+      <thead>
+        <tr>
+          <th>Side</th>
+          <th>Type</th>
+          <th className="tr-oo-num">Price</th>
+          <th className="tr-oo-num">Qty</th>
+          <th className="tr-oo-num">Filled</th>
+          <th>Status</th>
+          <th className="tr-oo-act">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {openOrders.map((order) => {
+          const filled = new Decimal(order.qty_filled);
+          const total = new Decimal(order.qty);
+          const pct = total.isZero() ? 0 : filled.div(total).mul(100).toNumber();
+          const isBuy = order.side === "BUY";
+          const cancelling = cancellingId === order.id;
 
-            return (
-              <tr
-                key={order.id}
-                className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${
-                  isBuy ? "text-green-400" : "text-red-400"
-                }`}
-              >
-                <td className="px-2 py-1.5 font-medium">{order.side}</td>
-                <td className="px-2 py-1.5 text-gray-400">{order.type}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-gray-300">
-                  {order.limit_price ? formatDecimal(order.limit_price, 2) : "MKT"}
-                </td>
-                <td className="px-2 py-1.5 text-right font-mono text-gray-300">
-                  {formatDecimal(order.qty, 6)}
-                </td>
-                <td className="px-2 py-1.5 text-right">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <span className="font-mono text-gray-300">
-                      {formatDecimal(order.qty_filled, 6)}
-                    </span>
-                    {/* Mini progress bar */}
-                    <div className="w-8 h-1.5 rounded-full bg-gray-800 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${isBuy ? "bg-green-500" : "bg-red-500"}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
+          return (
+            <tr key={order.id}>
+              <td>
+                <span className={isBuy ? "tr-side-b" : "tr-side-s"}>{order.side}</span>
+              </td>
+              <td className="tr-dim">{order.type}</td>
+              <td className="tr-oo-num">
+                {order.limit_price ? formatDecimal(order.limit_price, 2) : "MKT"}
+              </td>
+              <td className="tr-oo-num">{formatDecimal(order.qty, 6)}</td>
+              <td className="tr-oo-num">
+                <div className="tr-oo-fill">
+                  <span>{formatDecimal(order.qty_filled, 6)}</span>
+                  <div className="tr-oo-bar">
+                    <div
+                      className={`tr-oo-bar-f ${isBuy ? "buy" : "sell"}`}
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
-                </td>
-                <td className="px-2 py-1.5 text-gray-400">{order.status}</td>
-                <td className="px-2 py-1.5 text-right">
-                  <button
-                    onClick={() => handleCancel(order.id)}
-                    disabled={cancellingId === order.id}
-                    className="text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
-                  >
-                    {cancellingId === order.id ? <Spinner size="sm" /> : "Cancel"}
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                </div>
+              </td>
+              <td className="tr-dim">{order.status}</td>
+              <td className="tr-oo-act">
+                <button
+                  type="button"
+                  className="tr-oo-cancel"
+                  onClick={() => handleCancel(order.id)}
+                  disabled={cancelling}
+                >
+                  {cancelling ? "…" : "Cancel"}
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
