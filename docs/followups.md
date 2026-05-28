@@ -252,4 +252,34 @@ correctly (`matchingEngine.ts:166`, tested at `matchingEngine.test.ts:283`) but 
 **Not blocking PR A:** the open-orders panel + cancel UI is about *visibility and
 control* of resting orders, which is valuable regardless of whether they fill.
 
+---
+
+## 🔵 LOW — Orders enum casing inconsistency in `tradingRoutes.ts` schema
+
+**Discovered:** 2026-05-27, during PR A casing verification (commit `b943ce1`).
+
+**Where:** `apps/api/src/routes/tradingRoutes.ts:130` declares the orders status
+field's JSON-schema enum as `["OPEN", "FILLED", "PARTIALLY_FILLED", "CANCELLED"]`
+— `"CANCELLED"` with **two L's**.
+
+**Source of truth disagrees:** the `orders_status_check` constraint in
+`apps/api/migrations/007_orders_trades.sql:20` uses `"CANCELED"` (one L), and
+`apps/api/src/trading/matchingEngine.ts:549` emits `setOrderStatus(client,
+orderId, "CANCELED")`. The frontend was fixed to match the backend in PR A
+(`b943ce1`) — but this route's JSON schema still drifts.
+
+**Why harmless today:** the dock queries `status=OPEN`, and the JSON schema is
+used for Fastify request validation / OpenAPI docs — not to construct WHERE
+clauses or status emissions. So nothing actually filters or serializes through
+the wrong-cased member today. But if anyone wires a `?status=CANCELED` filter
+through this route, validation will reject it; and any TypeScript client
+generated from the schema will get the wrong literal type for canceled orders,
+diverging from the DB values.
+
+**Fix:** change `"CANCELLED"` → `"CANCELED"` in the
+`apps/api/src/routes/tradingRoutes.ts:130` enum, run `pnpm typecheck`, ship.
+One-line change.
+
+**Priority:** LOW — backend cleanup, no user-visible impact.
+
 
