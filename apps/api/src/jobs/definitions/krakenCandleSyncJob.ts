@@ -67,6 +67,7 @@ async function syncPair(pairId: string, pairSymbol: string, krakenPair: string):
 export const krakenCandleSyncJob: JobDefinition = {
     name: "kraken-candle-sync",
     intervalSeconds: 60,
+    maxRunSeconds: 120, // 120s = 2× the default 60s run timeout; Kraken REST sync across pairs is network-bound
     async run(_ctx) {
         const pairs = await listActivePairs();
         const mapped = pairs.filter((p) => REST_PAIR_MAP[p.symbol]);

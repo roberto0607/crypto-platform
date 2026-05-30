@@ -15,6 +15,7 @@ export const competitionLifecycleJob: JobDefinition = {
     name: "competition-lifecycle",
     intervalSeconds: 60,
     timeoutMs: 120_000,
+    maxRunSeconds: 600, // 600s = 5× the 120s timeout; batch lifecycle transitions (activate/end + payouts) can be heavy
     async run(ctx) {
         // Activate upcoming competitions that have passed start_at
         const toActivate = await listUpcomingToActivate();

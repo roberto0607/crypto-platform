@@ -120,6 +120,7 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
 export const candleRollupJob: JobDefinition = {
     name: "candle-rollup",
     intervalSeconds: 60,
+    maxRunSeconds: 120, // 120s = 2× the default 60s run timeout; multi-timeframe candle batching can stretch under load
     async run(_ctx) {
         // Get all active pairs
         const { rows: pairs } = await pool.query<{ id: string }>(
