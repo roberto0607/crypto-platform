@@ -55,6 +55,7 @@ export const marketMakerJob: JobDefinition = {
     name: "market-maker",
     intervalSeconds: 10,
     timeoutMs: 25_000,
+    maxRunSeconds: 30, // 30s ≈ 1.2× the 25s timeout; a quote cycle is a Kraken snapshot + 3-level quotes per pair (~5s p99)
     async run(ctx) {
         if (config.disableMarketMaker) return;
 

@@ -8,6 +8,7 @@ export const competitionLeaderboardJob: JobDefinition = {
     name: "competition-leaderboard",
     intervalSeconds: 60,
     timeoutMs: 120_000,
+    maxRunSeconds: 180, // 180s = 1.5× the 120s timeout; aggregations across many competitions can run long
     async run(ctx) {
         const activeComps = await listActiveCompetitions();
         for (const comp of activeComps) {

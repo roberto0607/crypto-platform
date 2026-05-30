@@ -208,7 +208,18 @@ the single-pair baseline covered. See `docs/designs/2026-05-26-xlen-queue-bug.md
 
 ---
 
-## 🔴 HIGH — Market-maker bot not quoting in prod → LIMIT orders never fill in solo play
+## ✅ RESOLVED (PR B) — Market-maker bot not quoting in prod → LIMIT orders never fill in solo play
+
+**Resolved 2026-05-29:** bot row unwedged via targeted UPDATE on 2026-05-30
+00:24:25 UTC; durable fix shipped in PR B (this PR). See
+[docs/designs/2026-05-29-job-runner-stale-running-recovery.md](designs/2026-05-29-job-runner-stale-running-recovery.md).
+Original investigation trail kept below — note both "open question" hypotheses
+(#1 config disable; #2 missing registration / bot user / wallets) turned out
+**wrong**. The actual cause was a stale `last_status='RUNNING'` row in `job_runs`
+(market-maker, wedged 2026-03-30) that `findDueJobs` excluded on every tick
+forever; env was clean, the job was registered, and the bot user/wallets existed.
+Post-deploy prod verification of the auto-recovery is tracked as its own entry below.
+
 
 **Discovered:** 2026-05-27, investigating order visibility/fills (see
 `docs/designs/2026-05-27-open-orders-panel.md`). This is the **gating issue** that
@@ -281,5 +292,77 @@ diverging from the DB values.
 One-line change.
 
 **Priority:** LOW — backend cleanup, no user-visible impact.
+
+---
+
+## 🟠 MEDIUM — Post-deploy verification — PR B (job-runner stale-RUNNING recovery)
+
+**ONE-TIME task, run on the next deploy of PR B.** Confirms the durable fix
+actually recovers a wedged job under the real deploy-kill trigger. The manual
+unwedge on 2026-05-30 proved the bot *works*; it did **not** prove the automatic
+recovery (`resetStaleRunningOnStartup` + the `findDueJobs` stale-RUNNING arm)
+fires on a real Railway restart. Until this is checked, the fix is verified only
+by local integration tests. Source: §e of
+[docs/designs/2026-05-29-job-runner-stale-running-recovery.md](designs/2026-05-29-job-runner-stale-running-recovery.md).
+
+1. **Steady-state log check.** Tail `crypto-platform` logs on Railway across a
+   deploy. Expect each boot to log `Job runner startup: reset N stale RUNNING
+   rows`. `N=0` = healthy steady state (nothing wedged); `N>0` = a row was wedged
+   before this boot and is now recovered.
+2. **Deploy-kill recovery (the actual repro).** Restart the `crypto-platform`
+   service via Railway's restart button during the first ~0–10s of a market-maker
+   quoting cycle (mid-tick). Confirm:
+   - next boot logs `Job runner startup: reset 1 stale RUNNING row (was running before this boot)`;
+   - market-maker resumes quoting within ~one tick (~10s);
+   - the `job_runs` row for `market-maker` flips `RUNNING → FAILED → RUNNING → SUCCESS` within ~30s of the restart.
+3. **End-to-end fill.** As `rtirado0607@gmail.com`, place a marketable LIMIT BUY
+   in prod and confirm it fills against a bot ask with `is_system_fill = false` —
+   same end-to-end verification as 2026-05-29 night.
+
+Once verified, mark this entry RESOLVED and link the verification record.
+**Priority:** MEDIUM — preventative verification, not corrective; time-sensitivity
+(run on the next PR B deploy) is captured above. HIGH is reserved for things
+actively broken in prod, which this is not.
+
+---
+
+## 🔵 LOW — `pg_try_advisory_lock` without explicit `pg_advisory_unlock` in `runJob`
+
+**Discovered:** 2026-05-29 during PR B review (by Claude Code); deliberately
+deferred to keep PR B scoped to the stale-RUNNING fix.
+
+**Where:** `apps/api/src/jobs/jobRunner.ts` — `runJob`.
+
+**Behavior:** `runJob` acquires a per-job lock via
+`pg_try_advisory_lock(hashtext($1))` but never explicitly releases it with
+`pg_advisory_unlock`. The lock is *session*-scoped, so it rides the pooled
+connection — `client.release()` returns the connection to the pool **without**
+releasing the lock or resetting session state.
+
+**Risk:** the lock for job A persists on connection C1 after its run. If A's next
+run draws a different connection C2 from the pool, `pg_try_advisory_lock` for A on
+C2 still succeeds — but if C2 is the one still holding A's lock from a prior run,
+a concurrent attempt elsewhere would see false-positive lock contention and skip.
+More generally, stale session-held locks accumulate across the pool and can cause
+spurious `runJob` skips. PR B's new "claimed by another worker" early-return shares
+the same `finally { client.release() }` as the existing lock-contention return, so
+it's consistent with current behavior — but neither path unlocks.
+
+**Likelihood today: low in practice, but not provably safe.** Single API instance,
+jobs already serialized by the advisory lock, and frequent Railway restarts clear
+all session state — so it isn't biting today. But node-postgres' `Pool` does **not**
+run `DISCARD ALL` or release advisory locks on `client.release()` by default
+(contrary to a common assumption), so a reused connection genuinely can retain a
+stale lock. Whether that ever produces a wrong skip depends on pool size and
+connection-reuse timing — murky enough to warrant its own investigation rather than
+a confident "safe."
+
+**Fix:** pair the acquisition with an explicit `pg_advisory_unlock(hashtext($1))`
+in `runJob`'s `finally` — but **only on the path where the lock was actually
+acquired** (the lock-contention early-return must not unlock a lock it never took).
+Ship with a discriminator test: run two `runJob` invocations back-to-back forcing
+the same pooled connection, and confirm the second does not see a stale lock.
+
+**Priority:** LOW — backend hardening, no observed user-visible impact.
 
 

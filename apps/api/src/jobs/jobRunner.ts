@@ -24,8 +24,20 @@ export function registerJobs(defs: JobDefinition[]): void {
 export async function start(): Promise<void> {
     stopping = false;
 
+    // Crash recovery: a row left in RUNNING by a previous process boot is
+    // orphaned (its owner is gone). Reset it to FAILED before the loop starts
+    // so it becomes due again — without this, findDueJobs's stale-RUNNING arm
+    // is the only escape, and this makes recovery immediate on every boot.
+    const resetCount = await jobRepo.resetStaleRunningOnStartup();
+    logger.info(
+        { resetCount },
+        resetCount === 1
+            ? "Job runner startup: reset 1 stale RUNNING row (was running before this boot)"
+            : `Job runner startup: reset ${resetCount} stale RUNNING rows`
+    );
+
     for (const def of definitions.values()) {
-        await jobRepo.upsertJobRow(def.name, def.intervalSeconds, true);
+        await jobRepo.upsertJobRow(def.name, def.intervalSeconds, true, def.maxRunSeconds ?? null);
     }
 
     logger.info(
@@ -70,13 +82,13 @@ async function tick(): Promise<void> {
         if (!def) continue;
         if (stopping) break;
 
-        const promise = runJob(def);
+        const promise = runJob(def, row.last_started_at);
         inflightJobs.add(promise);
         promise.finally(() => inflightJobs.delete(promise));
     }
 }
 
-async function runJob(def: JobDefinition): Promise<void> {
+async function runJob(def: JobDefinition, expectedStartedAt?: string | Date | null): Promise<void> {
     const client = await pool.connect();
     try {
         const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
@@ -89,7 +101,14 @@ async function runJob(def: JobDefinition): Promise<void> {
             return;
         }
 
-        await jobRepo.markStarted(def.name);
+        // Defensive claim: bail if another worker advanced the row between
+        // selection and now (markStarted returns null). triggerJob passes
+        // undefined → unconditional claim. See jobRepo.markStarted.
+        const claimedAt = await jobRepo.markStarted(def.name, expectedStartedAt);
+        if (claimedAt === null) {
+            logger.info({ job: def.name }, "Job claimed by another worker, skipping");
+            return;
+        }
 
         const timeoutMs = def.timeoutMs ?? 60_000;
         const ac = new AbortController();
