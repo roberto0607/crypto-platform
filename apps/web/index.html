@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TRADR — Paper Trade. Compete. Win.</title>
+    <!-- Warm the API connection (DNS + TLS) before the JS bundle runs so the
+         cold-load SSE market-data handshake overlaps the bundle download.
+         crossorigin matches the SSE's anonymous-CORS fetch connection pool.
+         Hardcoded to prod; localhost dev is already fast and unaffected. -->
+    <link rel="preconnect" href="https://crypto-platform-production-691d.up.railway.app" crossorigin />
+    <link rel="dns-prefetch" href="https://crypto-platform-production-691d.up.railway.app" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />

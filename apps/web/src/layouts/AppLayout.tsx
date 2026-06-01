@@ -9,6 +9,7 @@ import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import SystemBanner from "@/components/SystemBanner";
 import { NotificationBell } from "@/components/NotificationBell";
 import TickerBar from "@/components/TickerBar";
+import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import { useSSE } from "@/hooks/useSSE";
 
 // ── Sidebar nav — Trade Wars ──
@@ -296,19 +297,12 @@ export default function AppLayout() {
             </div>
 
             <div className="flex items-center gap-5">
-              <div className="flex items-center gap-1.5 text-[9px] tracking-[2px] font-mono" style={{ color: isHardOffline ? "#ef4444" : sseConnectionState === "reconnecting" || priceStale ? "#f59e0b" : sseConnected ? "var(--theme-primary, #00ff41)" : "#ef4444" }}>
-                <span className={`w-[5px] h-[5px] rounded-full animate-blink ${isHardOffline ? "bg-red-500" : sseConnectionState === "reconnecting" || priceStale ? "bg-yellow-500" : sseConnected ? "bg-tradr-green" : "bg-red-500"}`} style={sseConnected && !priceStale && sseConnectionState !== "reconnecting" && !isHardOffline ? { boxShadow: `0 0 6px var(--theme-primary, #00ff41)` } : undefined} />
-                {isHardOffline ? "OFFLINE" : sseConnectionState === "reconnecting" || priceStale ? "RECONNECTING..." : sseConnected ? "MARKETS LIVE" : "OFFLINE"}
-                {isHardOffline && (
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    className="ml-1.5 px-1.5 py-0.5 border border-red-500/60 text-red-400 hover:bg-red-500/10 tracking-[2px]"
-                  >
-                    REFRESH
-                  </button>
-                )}
-              </div>
+              <MarketStatusBadge
+                status={sseConnectionState}
+                priceStale={priceStale}
+                isHardOffline={isHardOffline}
+                onRefresh={() => window.location.reload()}
+              />
 
               <NotificationBell />
 

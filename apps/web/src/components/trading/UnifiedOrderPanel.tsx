@@ -55,6 +55,9 @@ export function UnifiedOrderPanel({
     const limitPrice = useTradingStore((s) => s.limitPrice);
     const orderSubmitting = useTradingStore((s) => s.orderSubmitting);
     const appInitialized = useAppStore((s) => s.initialized);
+    // Gate placement on a live SSE feed — no orders on stale/absent market data.
+    const sseConnectionState = useAppStore((s) => s.sseConnectionState);
+    const marketReady = sseConnectionState === "connected";
     const setOrderSide = useTradingStore((s) => s.setOrderSide);
     const setOrderType = useTradingStore((s) => s.setOrderType);
     const setQty = useTradingStore((s) => s.setQty);
@@ -238,7 +241,7 @@ export function UnifiedOrderPanel({
     })();
 
     const handlePlaceOrder = async () => {
-        if (!appInitialized || !baseQtyStr) return;
+        if (!appInitialized || !marketReady || !baseQtyStr) return;
         setErrorMsg("");
         setTpSlMsg("");
         setBtnState("idle");
@@ -544,7 +547,12 @@ export function UnifiedOrderPanel({
             </div>
 
             {/* ── SUBMIT ── */}
-            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || hasValidationError} onClick={handlePlaceOrder}>
+            {!marketReady && (
+                <div style={{ fontSize: 9, color: "#22d3ee", letterSpacing: 1, marginBottom: 6, textAlign: "center" }}>
+                    waiting for market data…
+                </div>
+            )}
+            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || !marketReady || hasValidationError} onClick={handlePlaceOrder}>
                 {btnLabel}
             </button>
             </div>
