@@ -53,7 +53,9 @@ export const useAppStore = create<AppState>((set) => ({
   initialized: false,
   serverOffline: false,
   sseConnected: false,
-  sseConnectionState: "disconnected" as SseConnectionState,
+  // Cold load starts in "initializing" (neutral), NOT "disconnected" (red OFFLINE).
+  // The badge must never show OFFLINE until at least one successful connection.
+  sseConnectionState: "initializing" as SseConnectionState,
   lastPriceTickAt: 0,
   setInitialized: (initialized) => set({ initialized }),
   setServerOffline: (serverOffline) => set({ serverOffline }),

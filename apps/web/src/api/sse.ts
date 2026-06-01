@@ -11,7 +11,25 @@ const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
 // If no message (including pings) received for this long, treat connection as dead
 const HEARTBEAT_TIMEOUT_MS = 30_000;
 
-export type SseConnectionState = "connected" | "disconnected" | "reconnecting";
+// Cold-load display grace: hold "initializing" (neutral) this long before
+// flipping to "connecting", so a sub-grace handshake goes initializing→connected
+// without a brief "connecting…" flash.
+const INITIALIZING_GRACE_MS = 500;
+// How long the very first connect may keep retrying (showing "connecting…")
+// before we admit defeat and show red "disconnected". Only applies before any
+// successful connection — a post-connection drop uses "reconnecting" instead.
+const INITIAL_CONNECT_TIMEOUT_MS = 5_000;
+
+// State lifecycle:
+//   cold load:  initializing → connecting → connected
+//   first-connect failure (>5s): initializing/connecting → disconnected
+//   post-drop:  connected → reconnecting (retries) → connected | (60s) hard-offline
+export type SseConnectionState =
+  | "initializing"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected";
 
 export interface SSEHandlers {
   onOrderUpdated?: (event: Extract<SSEEvent, { type: "order.updated" }>) => void;
@@ -33,6 +51,11 @@ export interface SSEHandlers {
 let abortController: AbortController | null = null;
 let reconnectAttempt = 0;
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+// Cold-load display timers — only run during the first connect attempt
+// (before wasConnected). graceTimer flips initializing→connecting; the
+// connect-timeout flips initializing/connecting→disconnected after 5s.
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+let initialConnectTimer: ReturnType<typeof setTimeout> | null = null;
 let wasConnected = false;
 // Stashed so forceReconnectSSE can re-invoke connectSSE with a fresh
 // AbortController. The library terminates its retry loop permanently
@@ -65,14 +88,48 @@ function clearHeartbeatTimer(): void {
   }
 }
 
-export function connectSSE(token: string, handlers: SSEHandlers): () => void {
-  // Disconnect any existing connection first
+function clearInitialConnectTimers(): void {
+  if (graceTimer) {
+    clearTimeout(graceTimer);
+    graceTimer = null;
+  }
+  if (initialConnectTimer) {
+    clearTimeout(initialConnectTimer);
+    initialConnectTimer = null;
+  }
+}
+
+export function connectSSE(
+  token: string,
+  handlers: SSEHandlers,
+  opts: { reconnect?: boolean } = {},
+): () => void {
+  // Disconnect any existing connection first. This synchronously sets state to
+  // "disconnected", but the override below runs in the same tick (Zustand is
+  // synchronous, React batches) so no red OFFLINE ever renders.
   disconnectSSE();
 
   abortController = new AbortController();
   wasConnected = false;
   lastToken = token;
   lastHandlers = handlers;
+
+  // Drive the pre-first-connection display states. A forced reconnect of an
+  // already-established session keeps "reconnecting" (yellow) instead.
+  clearInitialConnectTimers();
+  if (opts.reconnect) {
+    setSseState("reconnecting");
+  } else {
+    setSseState("initializing");
+    graceTimer = setTimeout(() => {
+      // Still trying after the grace window — show "connecting…" (never OFFLINE).
+      if (!wasConnected) setSseState("connecting");
+    }, INITIALIZING_GRACE_MS);
+    initialConnectTimer = setTimeout(() => {
+      // First connect has failed for too long — only now show red OFFLINE.
+      if (!wasConnected) setSseState("disconnected");
+    }, INITIAL_CONNECT_TIMEOUT_MS);
+  }
 
   fetchEventSource(SSE_URL, {
     signal: abortController.signal,
@@ -85,6 +142,7 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
         const isReconnect = wasConnected;
         reconnectAttempt = 0;
         wasConnected = true;
+        clearInitialConnectTimers();
         setSseState("connected");
         resetHeartbeatTimer();
 
@@ -165,7 +223,10 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
     onclose() {
       clearHeartbeatTimer();
-      setSseState("disconnected");
+      // A close before the first successful connect must not flash red OFFLINE —
+      // let the cold-load timers govern. After a successful connect, a server
+      // close surfaces "disconnected" (the library then retries with backoff).
+      if (wasConnected) setSseState("disconnected");
     },
 
     onerror(err) {
@@ -175,12 +236,14 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
 
       // If aborted intentionally, don't reconnect
       if (abortController?.signal.aborted) {
+        clearInitialConnectTimers();
         setSseState("disconnected");
         throw err;
       }
 
       // If token is gone (logged out), don't reconnect
       if (!useAuthStore.getState().isAuthenticated) {
+        clearInitialConnectTimers();
         setSseState("disconnected");
         throw err;
       }
@@ -188,13 +251,17 @@ export function connectSSE(token: string, handlers: SSEHandlers): () => void {
       // 401 = auth expired. Stop retrying, emit event so UI can redirect.
       if (status === 401) {
         console.warn("[sse] 401 unauthorized — stopping retries");
+        clearInitialConnectTimers();
         window.dispatchEvent(new CustomEvent("sse:unauthorized"));
         setSseState("disconnected");
         throw err;
       }
 
-      // Show reconnecting state (502/503/network errors keep retrying)
-      setSseState("reconnecting");
+      // 502/503/network errors keep retrying. If we'd previously connected,
+      // surface "reconnecting" (yellow). On the FIRST connect we instead leave
+      // the cold-load display states (initializing/connecting) in place — they
+      // fall through to red "disconnected" only after INITIAL_CONNECT_TIMEOUT_MS.
+      if (wasConnected) setSseState("reconnecting");
 
       // Exponential backoff: 1s → 2s → 4s → 8s → 30s (never give up)
       const delay = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
@@ -229,11 +296,15 @@ export function forceReconnectSSE(): void {
   }
   setSseState("reconnecting");
   // Re-enter connectSSE: fresh AbortController, fresh fetchEventSource loop.
-  connectSSE(token, handlers);
+  // reconnect:true keeps the yellow "reconnecting" display instead of the
+  // cold-load initializing→connecting sequence (this is a re-established
+  // session, not a first load).
+  connectSSE(token, handlers, { reconnect: true });
 }
 
 export function disconnectSSE(): void {
   clearHeartbeatTimer();
+  clearInitialConnectTimers();
   if (abortController) {
     abortController.abort();
     abortController = null;
