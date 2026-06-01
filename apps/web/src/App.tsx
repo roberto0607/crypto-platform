@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import axios from "axios";
+import { checkHealthWithRetry } from "@/lib/healthCheck";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
@@ -72,18 +72,23 @@ export default function App() {
     let cancelled = false;
 
     async function init() {
-      // 0. Health check — verify backend is reachable
-      try {
-        const apiBase = import.meta.env.VITE_API_BASE ?? "/api";
-        await axios.get(`${apiBase}/health`, { timeout: 5000 });
-        if (!cancelled) setServerOffline(false);
-      } catch {
-        if (!cancelled) {
-          setServerOffline(true);
-          setInitialized(true);
-        }
+      // 0. Health check — verify backend is reachable.
+      // checkHealthWithRetry discriminates failure modes: a 429 (rate limited,
+      // e.g. multi-tab cold load) retries silently and never reports offline; a
+      // single network blip retries before giving up. Only a definitive failure
+      // (5xx, or repeated network errors) returns false → the SERVER OFFLINE wall.
+      const apiBase = import.meta.env.VITE_API_BASE ?? "/api";
+      const online = await checkHealthWithRetry({
+        apiBase,
+        isCancelled: () => cancelled,
+      });
+      if (cancelled) return;
+      if (!online) {
+        setServerOffline(true);
+        setInitialized(true);
         return;
       }
+      setServerOffline(false);
 
       // 1. Fetch system status (public, always)
       try {
