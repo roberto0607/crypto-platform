@@ -20,7 +20,20 @@ interface DeepHealthResult {
 }
 
 const healthRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/health", { schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: { type: "object", properties: { connected: { type: "boolean" }, lastTickAt: { type: "number" }, secondsSinceLastTick: { type: "number" }, status: { type: "string" } } } } } } } }, async () => {
+  // Per-route rate-limit override: /health gets its own dedicated bucket,
+  // independent of the global 100/min-per-IP limit (app.ts).
+  //
+  // Why: the shared 100/min bucket caused /health 429s during multi-tab cold
+  // load (reproduced 2026-05-31 with 4 tabs) — /health competed with every
+  // other endpoint's traffic for the same per-IP budget and got starved.
+  // Rationale: 120/min covers the ~30-40 req/min realistic worst-case
+  // (multi-tab / multi-device cold loads on one home-WiFi IP) with 3-4x
+  // headroom, while keeping a cheap abuse ceiling instead of exempting outright.
+  // Escalation: if this trips again, bump to 240/min or 300/min BEFORE
+  // considering removing the limit on /health entirely.
+  const healthRateLimit = { config: { rateLimit: { max: 120, timeWindow: 60_000 } } };
+
+  app.get("/health", { ...healthRateLimit, schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: { type: "object", properties: { connected: { type: "boolean" }, lastTickAt: { type: "number" }, secondsSinceLastTick: { type: "number" }, status: { type: "string" } } } } } } } }, async () => {
     return { ok: true, service: "api", timestamp: new Date().toISOString(), krakenWs: getKrakenWsHealth() };
   });
 
