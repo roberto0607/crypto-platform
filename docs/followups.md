@@ -365,4 +365,75 @@ the same pooled connection, and confirm the second does not see a stale lock.
 
 **Priority:** LOW — backend hardening, no observed user-visible impact.
 
+---
+
+## ✅ RESOLVED (PR #35) — `/health` 429s during multi-tab cold load → full-page SERVER OFFLINE wall
+
+**Resolved 2026-06-01** by PR #35 (commit `b291dd0`). Client now discriminates
+429 (rate-limited → silent retry, honoring `Retry-After`) from genuine
+unreachability, and `/health` gets a dedicated **120/min** per-route bucket
+independent of the global 100/min-per-IP limit. Verified in prod 2026-06-01
+12:00 AM: opening 8–10 tabs in rapid succession no longer renders the full-page
+wall. Original investigation trail below.
+
+**Discovered:** 2026-05-31 ~10:19 PM, opening 4 Safari tabs of
+`https://gallant-reprieve-production.up.railway.app/trade` in rapid succession
+produced the full-page **"SERVER OFFLINE — Cannot reach the backend API"** wall
+on at least one tab. Web Inspector confirmed at 10:26 PM:
+`Failed to load resource: the server responded with a status of 429 () https://crypto-platform-production-691d.up.railway.app/health`.
+
+**Root cause — two cooperating bugs:**
+- **Server:** `/health` was rate-limited from the shared global 100/min-per-IP
+  bucket, which gets starved by multi-endpoint cold-load traffic.
+- **Client:** treated a 429 on `/health` as "server offline" rather than "rate
+  limited, retry later," so a transient throttle rendered the full-page wall.
+
+**Fix:** client `checkHealthWithRetry` (`apps/web/src/lib/healthCheck.ts`)
+discriminates failure modes (429 → silent retry; 5xx → offline immediately;
+network errors → backoff, offline only after 3 consecutive failures); server
+gives `/health` a dedicated 120/min per-route bucket
+(`apps/api/src/routes/healthRoutes.ts`).
+
+---
+
+## 🟠 MEDIUM — Other endpoints starve the global rate-limit bucket under multi-tab load (follow-on from PR #35)
+
+**Discovered:** 2026-06-01 ~12:01 AM, during post-merge stress-test of the
+`/health` 429 fix (PR #35).
+
+After PR #35 landed, the full-page SERVER OFFLINE wall no longer renders on
+multi-tab cold load. But stress-testing with **8–10 tabs opened in rapid
+succession from one IP** (verified 2026-06-01 12:00–12:01 AM) still produces
+degraded states:
+
+- Some tabs show the green **MARKETS LIVE** badge but **"NO PAIRS AVAILABLE"** in
+  the trading view (i.e. `GET /api/pairs` was 429'd or returned empty).
+- Some tabs show the **OFFLINE** badge with a **REFRESH** button (i.e. SSE failed
+  to establish and didn't recover within ~60s).
+
+**Root cause — same shape as PR #35:** the shared global 100/min-per-IP bucket
+gets starved when ~5+ tabs cold-load simultaneously and each fires ~6 endpoint
+calls (`/api/status`, `/api/pairs`, `/api/assets`, `/api/wallets`, etc.) within a
+few seconds — 30–60 requests against the 100/min budget. Once depleted,
+individual endpoints get 429'd; the UI gracefully degrades but data is missing.
+
+**Fix options to evaluate (rough preference order):**
+- **(c)** Tiered: give the 4–6 cold-load-critical endpoints their own per-route
+  buckets like we did for `/health`, keep global 100/min for everything else
+  (matches the pattern just established; principled).
+- **(a)** Give each implicated endpoint its own dedicated bucket (more granular,
+  more config).
+- **(b)** Loosen the global limit to 200–300/min (simplest; lower abuse ceiling).
+
+**Nested frontend bug:** the **"NO PAIRS AVAILABLE"** message is misleading when
+`/api/pairs` returns 429 — it implies a permanent state when it's transient. The
+frontend should show "loading…" / "retrying…" in that case. Separate, smaller
+frontend fix.
+
+**Realistic-user impact:** limited (1–3 tabs is normal usage; this only trips at
+5+). But stress-testing reveals it, and if TRADR were ever shown to multiple
+devices at once (interview demo, multi-monitor user), it would degrade visibly.
+Worth fixing before any high-stakes demo where ≥3 simultaneous clients on one IP
+is possible. **Priority:** MEDIUM.
+
 
