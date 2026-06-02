@@ -47,8 +47,23 @@ const bookQuery = z.object({
 // ── Plugin (registered without prefix) ──
 const tradingRoutes: FastifyPluginAsync = async (app) => {
 
+  // Per-route rate-limit override: /pairs gets its own dedicated bucket,
+  // independent of the global 100/min-per-IP limit (app.ts).
+  //
+  // Pattern established by PR #35 (/health, b291dd0): cold-load-critical read
+  // endpoints that every tab hits on startup starve the shared global bucket
+  // when ~5+ tabs cold-load from one IP. Driven by the MEDIUM follow-on filed in
+  // docs/followups.md ("Other endpoints starve the global rate-limit bucket under
+  // multi-tab load") — /pairs is in App.tsx's cold-load batch and its starvation
+  // is what produces the misleading "NO PAIRS AVAILABLE" trading view.
+  // Threshold: 60/min = 6-12x cold-load worst case (5 tabs * 1-2 init requests
+  // per tab/min ≈ 5-10 req/min). Tighter than /health's 120/min — this does real
+  // DB work (active-pairs query), /health is cheap.
+  const pairsRateLimit = { config: { rateLimit: { max: 60, timeWindow: 60_000 } } };
+
   // GET /pairs — List active pairs
   app.get("/pairs", {
+    ...pairsRateLimit,
     schema: {
       tags: ["Pairs"],
       summary: "List active trading pairs",
