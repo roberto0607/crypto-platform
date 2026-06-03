@@ -8,7 +8,10 @@ import {
 import { listAssets } from "@/api/endpoints/wallets";
 import { listPairs } from "@/api/endpoints/trading";
 import { useAppStore } from "@/stores/appStore";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
+import { seedAndStripPairs, type TradingPairWire } from "@/lib/pairs";
 import { normalizeApiError } from "@/lib/errors";
+import AdminAssetsPriceCell from "./AdminAssetsPriceCell";
 import { AxiosError } from "axios";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
@@ -82,7 +85,7 @@ export default function AdminAssetsPage() {
         feeBps: pairFees ? parseInt(pairFees, 10) : undefined,
       });
       const res = await listPairs();
-      setPairs(res.data.pairs);
+      setPairs(seedAndStripPairs(res.data.pairs as TradingPairWire[]));
       setPairBase("");
       setPairQuote("");
       setPairSymbol("");
@@ -101,11 +104,9 @@ export default function AdminAssetsPage() {
     setPriceLoading(pairId);
     try {
       await setPrice(pairId, price);
-      setPairs(
-        pairs.map((p) =>
-          p.id === pairId ? { ...p, last_price: price } : p,
-        ),
-      );
+      // Optimistic update — live price lives in pairPricesStore now, not on
+      // the pair object. parseFloat at the boundary (form input is a string).
+      usePairPricesStore.getState().setPairPrice(pairId, parseFloat(price));
       setPriceMap((prev) => ({ ...prev, [pairId]: "" }));
     } catch (err) {
       const { message } = normalizeApiError(err as AxiosError<never>);
@@ -281,7 +282,7 @@ export default function AdminAssetsPage() {
                 {pairs.map((p) => (
                   <tr key={p.id} className="border-b border-gray-800/50">
                     <td className="py-2 pr-3 font-medium">{p.symbol}</td>
-                    <td className="py-2 pr-3">{p.last_price ?? "—"}</td>
+                    <AdminAssetsPriceCell pairId={p.id} />
                     <td className="py-2 pr-3">
                       <Badge color={p.trading_enabled ? "green" : "red"}>
                         {p.trading_enabled ? "Enabled" : "Disabled"}

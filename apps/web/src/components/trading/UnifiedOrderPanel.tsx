@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { placeOrder } from "@/api/endpoints/trading";
 import { createTrigger, createOco, listTriggers, cancelTrigger } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
@@ -65,6 +66,7 @@ export function UnifiedOrderPanel({
     const submitOrder = useTradingStore((s) => s.submitOrder);
     const snapshot = useTradingStore((s) => s.snapshot);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
+    const pairPrice = usePairPricesStore((s) => s.prices[pair.id]);
     const { addToast } = useToast();
 
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
@@ -113,11 +115,14 @@ export function UnifiedOrderPanel({
     }, [selectedPairId]);
 
     const [baseSymbol] = pair.symbol.split("/") as [string, string];
+    // The snapshot-first ordering is load-bearing for replay mode:
+    // onReplayTick writes snapshot but NOT pairPricesStore, so during a
+    // replay session pairPrice holds the stale real-market value while
+    // snapshot.last has the replay price. Do not "simplify" this ternary —
+    // collapsing to pairPrice alone would break replay-mode pricing.
     const currentPrice = snapshot?.last
         ? parseFloat(snapshot.last)
-        : pair.last_price
-            ? parseFloat(pair.last_price)
-            : 0;
+        : pairPrice ?? 0;
 
     const effectivePrice =
         orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;

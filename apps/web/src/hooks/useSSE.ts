@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { connectSSE, disconnectSSE, forceReconnectSSE, type SSEHandlers } from "@/api/sse";
@@ -68,13 +69,10 @@ export function useSSE() {
             source: "live",
           });
         }
-        // Update last_price on the pair in appStore + track tick time
         useAppStore.getState().setLastPriceTickAt(Date.now());
-        const pairs = useAppStore.getState().pairs;
-        const updatedPairs = pairs.map((p) =>
-          p.id === d.pairId ? { ...p, last_price: d.last } : p,
-        );
-        useAppStore.getState().setPairs(updatedPairs);
+        // Live price lives in pairPricesStore, decoupled from `pairs` so a tick
+        // re-renders only that pair's subscribers — not every consumer of `pairs`.
+        usePairPricesStore.getState().setPairPrice(d.pairId, parseFloat(d.last));
         window.dispatchEvent(
           new CustomEvent("sse:price.tick", { detail: d }),
         );
