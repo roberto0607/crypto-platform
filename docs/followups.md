@@ -438,50 +438,76 @@ is possible. **Priority:** MEDIUM.
 
 ---
 
-## [followup-001] Dev seed candle-count check is timeframe-agnostic
+## 🔵 LOW — Dev seed candle-count check is timeframe-agnostic
 
-**Problem:** At `apps/api/scripts/seed-dev-user.ts:88`, the "should I backfill
-candles?" check uses `SELECT COUNT(*) FROM candles WHERE pair_id = $1` with no
-timeframe filter. If the dev DB already holds ≥100 candles of *any* timeframe
-(e.g. `1m`/`1h` accumulated from a running live Kraken feed), the seed decides
-candles are "sufficient" and skips the backfill — so `1d` coverage can be
-absent even though the table looks full. This silently breaks the 24h-change
-feature in dev whenever the live feed has been running for a while (the asset
-chip shows price but no change %, because the daily-open fetch returns empty).
-**Proposed fix:** Make the check `timeframe = '1d'`-specific, or have the seed
-always ensure `1d` coverage regardless of other-timeframe counts.
-**Priority:** P3
-**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+**Discovered:** 2026-06-03, during PR #38 dev verification — the BTC asset chip
+showed a price but no 24h-change %, traced to an empty `1d` candle response.
 
-## [followup-002] usePairChange first-render artifact (cold-load blank-chip window)
+**Where:** `apps/api/scripts/seed-dev-user.ts:88`.
 
-**Problem:** `usePairChange` returns `null` for the ~100–500ms window between
+**Behavior:** the "should I backfill candles?" check runs `SELECT COUNT(*) FROM
+candles WHERE pair_id = $1` with no timeframe filter. If the dev DB already
+holds ≥100 candles of *any* timeframe (e.g. `1m`/`1h` from a running live Kraken
+feed), the seed treats candles as "sufficient" and skips the backfill — so `1d`
+coverage can be absent even though the table looks full. That silently breaks
+the 24h-change feature in dev (daily-open fetch returns empty → chip shows no
+change).
+
+**Fix:** make the check `timeframe = '1d'`-specific, or have the seed always
+ensure `1d` coverage regardless of other-timeframe counts.
+
+**Priority:** LOW — dev-tooling only, no prod or user impact. Source: PR #38
+(decouple-live-prices, 2026-06-03).
+
+---
+
+## 🔵 LOW — `usePairChange` first-render artifact (cold-load blank-chip window)
+
+**Discovered:** 2026-06-03, during PR #38 dev verification (initially misread as
+a data gap; confirmed to be a pre-settle render artifact).
+
+**Where:** `apps/web/src/hooks/usePairChange.ts` + `dailyOpenStore`.
+
+**Behavior:** `usePairChange` returns `null` for the ~100–500ms window between
 mount and the first `/candles` response settling, so the asset chip shows a
-price but no change % during that window. On every hard refresh, users see a
-brief "no change" flash before it populates. Not a regression (pre-existing
-cold-load latency), but visible.
-**Proposed fix:** Persist `dailyOpenStore` to localStorage so the prior
-session's open survives across page loads. On mount, hydrate from localStorage
-(subject to a `dateUTC` freshness check) before the network fetch settles; the
-fetch then refreshes/corrects if needed.
-**Priority:** P3
-**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+price but no change % during that window — a brief "no change" flash on every
+hard refresh. Pre-existing cold-load latency, not a regression.
 
-## [followup-003] API in-memory pair-list cache goes stale after a DB reseed
+**Fix:** persist `dailyOpenStore` to localStorage so the prior session's open
+survives reloads; on mount, hydrate from localStorage (subject to a `dateUTC`
+freshness check) before the network fetch settles, then let the fetch
+refresh/correct.
 
-**Problem:** The API server reads the pair list at startup and caches it in
-memory. After a dev reseed (which can generate new pair UUIDs), the running API
-keeps emitting SSE events with the *old* UUIDs while `/api/pairs` returns the
-*new* ones. Frontend components subscribe to the new UUIDs from `/api/pairs` but
-receive SSE writes keyed by old UUIDs — they never match, and the page freezes
-silently (prices stop ticking with no error). This was the cause of the "frozen
-prices" verification scare during PR #38 and cost ~30 min of diagnosis; it will
-recur on every reseed-without-restart.
-**Proposed fix:** Have the API re-read the pair list on a periodic refresh
-(e.g. every 60s), OR react to a Postgres `LISTEN/NOTIFY` channel on
-`trading_pairs` changes, OR support a `SIGHUP` for explicit refresh. Periodic
-refresh is simplest; `LISTEN/NOTIFY` is most correct.
-**Priority:** P2 (highest of the three — it cost real time and will again)
-**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+**Priority:** LOW — cosmetic, sub-second, no data-correctness impact. Source:
+PR #38 (decouple-live-prices, 2026-06-03).
+
+---
+
+## 🟠 MEDIUM — API in-memory pair-list cache goes stale after a DB reseed
+
+**Discovered:** 2026-06-03, during PR #38 dev verification — surfaced as a
+"frozen prices" scare (the UI stopped ticking with no console error) and cost
+~30 min of diagnosis before being traced to a stale-UUID mismatch.
+
+**Context:** the API reads the pair list at startup and caches it in memory.
+After a dev reseed (which can regenerate pair UUIDs), the running API keeps
+emitting SSE price events keyed by the *old* UUIDs, while `/api/pairs` returns
+the *new* ones. Frontend components subscribe to the new UUIDs but receive SSE
+writes for the old ones — they never match, and the page freezes silently. The
+restart-required workaround was non-obvious; the 30-min diagnosis is concrete
+evidence it recurs on every reseed-without-restart, and the stale-cache shape is
+a latent correctness risk anywhere the pair set changes under a live API.
+
+**Scope of fix:** re-read the pair list rather than caching it for the process
+lifetime. Three options:
+- **Periodic refresh** (e.g. re-read every 60s) — simplest.
+- **Postgres `LISTEN/NOTIFY`** on `trading_pairs` changes — most correct
+  (event-driven, no polling lag).
+- **`SIGHUP`** handler for explicit refresh — cheapest manual escape hatch.
+
+**Priority:** MEDIUM — dev-environment friction today (cost real time, will
+recur), but latent risk if pairs ever change under a live prod API. HIGH is
+reserved for things actively broken in prod, which this is not. Source: PR #38
+(decouple-live-prices, 2026-06-03).
 
 
