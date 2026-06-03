@@ -121,11 +121,74 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   });
 
-  // Rate limiting: global defaults + per-route overrides in route modules
+  // ── Rate limiting: per-user keying with per-IP fallback ──
+  //
+  // History:
+  //   PR #35 (b291dd0): gave /health its own 120/min per-IP bucket — it was
+  //     starving against the shared per-IP global limit under multi-tab cold
+  //     load. That override stays (see healthRoutes.ts): /health is hit BEFORE
+  //     auth resolves, so per-user keying can't help it; it's IP-keyed
+  //     regardless and gets hammered by monitors + load balancers + multi-tab.
+  //   PR #36 (dd01e48): tiered per-route 60/min buckets for /status/system,
+  //     /pairs, /assets, /wallets — a stopgap for the same starvation problem.
+  //     But the cold-load fan-out is ~17 endpoints/tab, not the ~6 estimated,
+  //     so per-route overrides scaled linearly with the endpoint count and
+  //     never caught up. PR #37 (this change) rolls those 4 overrides back.
+  //
+  // Root cause of starvation: per-IP keying. One user with 3 devices on one
+  // home-WiFi IP shared a single budget; an office of 10 users behind one
+  // external IP shared the same budget. The principled fix is to key by USER
+  // when we can identify one, and fall back to IP only for unauthenticated
+  // traffic.
+  //
+  // keyGenerator: resolve the user id from the Bearer JWT and key as
+  //   `user:{sub}`; otherwise key as `ip:{req.ip}`.
+  //
+  //   We DECODE the token WITHOUT VERIFYING it. That is acceptable here because
+  //   rate-limiting is not a security boundary — it's a fairness/abuse control.
+  //   Real authentication runs later as the route-level `requireUser`
+  //   preHandler (auth/requireUser.ts), which fully verifies the signature and
+  //   rejects bad tokens. A forged/expired token at most lets an attacker pick
+  //   which 200/min bucket their own requests count against; it grants no
+  //   access. The decode is pure CPU (microseconds, no crypto, no DB), so it's
+  //   safe to run on every request, authenticated or not.
+  //
+  //   LIFECYCLE: this is why we decode here rather than read req.user.
+  //   @fastify/rate-limit runs at `onRequest`; `requireUser` runs at
+  //   `preHandler`. onRequest fires first, so req.user is still undefined when
+  //   keyGenerator runs — we must resolve the user id from the token directly.
+  //
+  //   FALLBACK to `ip:{req.ip}` on every degenerate case: no Authorization
+  //   header, header not `Bearer `, malformed token, decode throws, or no
+  //   string `sub` claim. So /health, /status/system (pre-login), login, and
+  //   /auth/refresh (runs before a session exists) are all IP-keyed as before.
+  //
+  // Threshold: 200/min per key. Realistic cold load is ~17 requests/tab; at
+  // 200/min per user a single user can cold-load 10+ tabs comfortably, and
+  // each user gets their own budget regardless of shared IP.
   if (!opts.disableRateLimit) {
     await app.register(rateLimit, {
-      max: 100,        // default: 100 requests per window
+      max: 200,           // default: 200 requests per window, per key
       timeWindow: 60_000, // 1-minute window
+      keyGenerator: (req) => {
+        const authHeader = req.headers.authorization ?? "";
+        if (authHeader.startsWith("Bearer ")) {
+          const token = authHeader.slice(7);
+          try {
+            const decoded = app.jwt.decode<{ sub?: unknown }>(token);
+            const sub = decoded?.sub;
+            if (typeof sub === "string" && sub.length > 0) {
+              return `user:${sub}`;
+            }
+          } catch {
+            // Malformed/empty token — fall through to IP keying. Real auth
+            // (requireUser preHandler) will reject it later if the route needs it.
+            // (app.jwt.decode throws on malformed/empty input — verified during
+            // implementation; this catch is the IP-fallback path, not dead code.)
+          }
+        }
+        return `ip:${req.ip}`;
+      },
     });
   }
 
