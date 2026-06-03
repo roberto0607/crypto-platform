@@ -436,4 +436,52 @@ devices at once (interview demo, multi-monitor user), it would degrade visibly.
 Worth fixing before any high-stakes demo where ≥3 simultaneous clients on one IP
 is possible. **Priority:** MEDIUM.
 
+---
+
+## [followup-001] Dev seed candle-count check is timeframe-agnostic
+
+**Problem:** At `apps/api/scripts/seed-dev-user.ts:88`, the "should I backfill
+candles?" check uses `SELECT COUNT(*) FROM candles WHERE pair_id = $1` with no
+timeframe filter. If the dev DB already holds ≥100 candles of *any* timeframe
+(e.g. `1m`/`1h` accumulated from a running live Kraken feed), the seed decides
+candles are "sufficient" and skips the backfill — so `1d` coverage can be
+absent even though the table looks full. This silently breaks the 24h-change
+feature in dev whenever the live feed has been running for a while (the asset
+chip shows price but no change %, because the daily-open fetch returns empty).
+**Proposed fix:** Make the check `timeframe = '1d'`-specific, or have the seed
+always ensure `1d` coverage regardless of other-timeframe counts.
+**Priority:** P3
+**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+
+## [followup-002] usePairChange first-render artifact (cold-load blank-chip window)
+
+**Problem:** `usePairChange` returns `null` for the ~100–500ms window between
+mount and the first `/candles` response settling, so the asset chip shows a
+price but no change % during that window. On every hard refresh, users see a
+brief "no change" flash before it populates. Not a regression (pre-existing
+cold-load latency), but visible.
+**Proposed fix:** Persist `dailyOpenStore` to localStorage so the prior
+session's open survives across page loads. On mount, hydrate from localStorage
+(subject to a `dateUTC` freshness check) before the network fetch settles; the
+fetch then refreshes/corrects if needed.
+**Priority:** P3
+**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+
+## [followup-003] API in-memory pair-list cache goes stale after a DB reseed
+
+**Problem:** The API server reads the pair list at startup and caches it in
+memory. After a dev reseed (which can generate new pair UUIDs), the running API
+keeps emitting SSE events with the *old* UUIDs while `/api/pairs` returns the
+*new* ones. Frontend components subscribe to the new UUIDs from `/api/pairs` but
+receive SSE writes keyed by old UUIDs — they never match, and the page freezes
+silently (prices stop ticking with no error). This was the cause of the "frozen
+prices" verification scare during PR #38 and cost ~30 min of diagnosis; it will
+recur on every reseed-without-restart.
+**Proposed fix:** Have the API re-read the pair list on a periodic refresh
+(e.g. every 60s), OR react to a Postgres `LISTEN/NOTIFY` channel on
+`trading_pairs` changes, OR support a `SIGHUP` for explicit refresh. Periodic
+refresh is simplest; `LISTEN/NOTIFY` is most correct.
+**Priority:** P2 (highest of the three — it cost real time and will again)
+**Source:** PR #38 (decouple-live-prices session, 2026-06-03)
+
 
