@@ -18,21 +18,8 @@ const walletIdParams = z.object({ id: z.string().uuid() });
 // ── Plugin (registered without prefix) ──
 const walletRoutes: FastifyPluginAsync = async (app) => {
 
-  // Per-route rate-limit override: /assets gets its own dedicated bucket,
-  // independent of the global 100/min-per-IP limit (app.ts).
-  //
-  // Pattern established by PR #35 (/health, b291dd0): cold-load-critical read
-  // endpoints that every tab hits on startup starve the shared global bucket
-  // when ~5+ tabs cold-load from one IP. Driven by the MEDIUM follow-on filed in
-  // docs/followups.md ("Other endpoints starve the global rate-limit bucket under
-  // multi-tab load") — /assets is in App.tsx's cold-load batch.
-  // Threshold: 60/min = 6-12x cold-load worst case (5 tabs * 1-2 init requests
-  // per tab/min ≈ 5-10 req/min). Tighter than /health's 120/min — this does real
-  // DB work (active-assets query), /health is cheap.
-  const assetsRateLimit = { config: { rateLimit: { max: 60, timeWindow: 60_000 } } };
-
   // GET /assets — list active assets (authenticated)
-  app.get("/assets", { ...assetsRateLimit, schema: { tags: ["Assets"], summary: "List active assets", description: "Returns all active asset definitions.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, assets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
+  app.get("/assets", { schema: { tags: ["Assets"], summary: "List active assets", description: "Returns all active asset definitions.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, assets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
     const assets = await listActiveAssets();
     return reply.send({ ok: true, assets });
   });
@@ -62,22 +49,7 @@ const walletRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // GET /wallets — list user's wallets (authenticated)
-  // Per-route rate-limit override: /wallets gets its own dedicated bucket,
-  // independent of the global 100/min-per-IP limit (app.ts).
-  //
-  // Pattern established by PR #35 (/health, b291dd0): cold-load-critical read
-  // endpoints that every tab hits on startup starve the shared global bucket
-  // when ~5+ tabs cold-load from one IP. Driven by the MEDIUM follow-on filed in
-  // docs/followups.md ("Other endpoints starve the global rate-limit bucket under
-  // multi-tab load") — /wallets is in App.tsx's cold-load batch.
-  // Threshold: 60/min = 6-12x cold-load worst case (5 tabs * 1-2 init requests
-  // per tab/min ≈ 5-10 req/min). Tighter than /health's 120/min — this does real
-  // DB work (per-user wallet query), /health is cheap.
-  // NOTE: applies ONLY to GET /wallets. The sibling POST /wallets and
-  // GET /wallets/:id/transactions routes stay on the global 100/min default.
-  const walletsRateLimit = { config: { rateLimit: { max: 60, timeWindow: 60_000 } } };
-
-  app.get("/wallets", { ...walletsRateLimit, schema: { tags: ["Wallets"], summary: "List user wallets", description: "Returns all wallets owned by the authenticated user.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, wallets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
+  app.get("/wallets", { schema: { tags: ["Wallets"], summary: "List user wallets", description: "Returns all wallets owned by the authenticated user.", security: [{ bearerAuth: [] }], response: { 200: { type: "object", properties: { ok: { type: "boolean" }, wallets: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
     const actor = req.user!;
     const wallets = await listWalletsByUserId(actor.id);
     return reply.send({ ok: true, wallets });
