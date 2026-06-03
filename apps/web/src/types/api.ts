@@ -80,7 +80,6 @@ export interface TradingPair {
   base_asset_id: UUID;
   quote_asset_id: UUID;
   is_active: boolean;
-  last_price: DecimalString | null;
   fee_bps: number;
   maker_fee_bps: number;
   taker_fee_bps: number;

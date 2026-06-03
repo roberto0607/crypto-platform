@@ -1,8 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import { formatDecimal } from "@/lib/decimal";
-import Badge from "@/components/Badge";
+import PairSelectorRow from "@/components/trading/PairSelectorRow";
 
 export default function PairSelector() {
   const pairs = useAppStore((s) => s.pairs);
@@ -22,28 +21,15 @@ export default function PairSelector() {
 
   return (
     <div className="flex items-center gap-1 overflow-x-auto">
-      {pairs.map((pair) => {
-        const isSelected = pair.id === selectedPairId;
-        return (
-          <button
-            key={pair.id}
-            onClick={() => selectPair(pair.id)}
-            className={`flex items-center gap-2 whitespace-nowrap rounded px-3 py-1.5 text-sm transition-colors ${
-              isSelected
-                ? "bg-gray-800 text-white font-medium"
-                : "text-gray-400 hover:text-gray-200 hover:bg-gray-800/50"
-            }`}
-          >
-            <span>{pair.symbol}</span>
-            {pair.last_price && (
-              <span className="text-xs text-gray-500">
-                {formatDecimal(pair.last_price, 2)}
-              </span>
-            )}
-            {pair.trading_enabled === false && <Badge color="red">Disabled</Badge>}
-          </button>
-        );
-      })}
+      {pairs.map((pair) => (
+        <PairSelectorRow
+          key={pair.id}
+          pairId={pair.id}
+          symbol={pair.symbol}
+          tradingEnabled={pair.trading_enabled}
+          isSelected={pair.id === selectedPairId}
+        />
+      ))}
     </div>
   );
 }

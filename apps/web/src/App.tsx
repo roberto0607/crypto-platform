@@ -11,6 +11,7 @@ import { getSystemStatus, getUserStatus } from "@/api/endpoints/status";
 import { getStatus as getRiskStatus } from "@/api/endpoints/risk";
 import { listPairs } from "@/api/endpoints/trading";
 import { listAssets, listWallets } from "@/api/endpoints/wallets";
+import { seedAndStripPairs, type TradingPairWire } from "@/lib/pairs";
 import AuthLayout from "@/layouts/AuthLayout";
 import AppLayout from "@/layouts/AppLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -117,7 +118,8 @@ export default function App() {
           const [userRes, riskRes, pairsRes, assetsRes, walletsRes] = results;
           if (userRes.status === "fulfilled") setUserStatus(userRes.value.data);
           if (riskRes.status === "fulfilled") setRiskStatus(riskRes.value.data.risk);
-          if (pairsRes.status === "fulfilled") setPairs(pairsRes.value.data.pairs);
+          if (pairsRes.status === "fulfilled")
+            setPairs(seedAndStripPairs(pairsRes.value.data.pairs as TradingPairWire[]));
           if (assetsRes.status === "fulfilled") setAssets(assetsRes.value.data.assets);
           if (walletsRes.status === "fulfilled") setWallets(walletsRes.value.data.wallets);
         }

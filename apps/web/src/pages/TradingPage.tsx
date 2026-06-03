@@ -3,14 +3,19 @@ import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
+import { useDailyOpenStore } from "@/stores/dailyOpenStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
+import AssetTab from "@/components/trading/AssetTab";
 import { getPositions } from "@/api/endpoints/analytics";
 import { getCandles } from "@/api/endpoints/candles";
+import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
+import { isRealPair } from "@/lib/pairs";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
-import type { Position, OrderBook as OrderBookType } from "@/types/api";
+import type { Position, OrderBook as OrderBookType, TradingPair } from "@/types/api";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -743,18 +748,47 @@ function OrderBookPanel({
   );
 }
 
+/**
+ * Fetch each pair's daily OPEN (a single 1d candle) and cache it in
+ * dailyOpenStore. The 24h change is then derived live in <AssetTab> from the
+ * SSE-driven price + this cached open, instead of polling /candles per render.
+ *
+ * Module-scoped — no component-scope deps. `isCancelled` lets the caller abort
+ * an in-flight sweep (effect cleanup). Errors are swallowed per pair: a missing
+ * open just leaves usePairChange returning null (chip shows no change).
+ */
+async function fetchAllOpensInto(
+  pairsToFetch: TradingPair[],
+  isCancelled: () => boolean,
+): Promise<void> {
+  for (const pair of pairsToFetch) {
+    if (isCancelled()) return;
+    try {
+      const res = await getCandles(pair.id, { timeframe: "1d", limit: 1 });
+      if (isCancelled()) return;
+      const open = res.data.candles?.[0]?.open; // axios response; open is a string
+      if (open !== undefined) {
+        useDailyOpenStore.getState().setDailyOpen(pair.id, parseFloat(open));
+      }
+    } catch {
+      // Swallow — chip shows no change until the next refetch attempt.
+    }
+  }
+}
+
 /* ─────────────────────────────────────────
    MAIN TRADE COMPONENT
 ───────────────────────────────────────── */
 export default function TradingPage() {
   const pairs = useAppStore((s) => s.pairs);
-  const pairChanges = useAppStore((s) => s.pairChanges);
-  const setPairChange = useAppStore((s) => s.setPairChange);
   const wallets = useAppStore((s) => s.wallets);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
   const snapshot = useTradingStore((s) => s.snapshot);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
+  const selectedPairPrice = usePairPricesStore((s) =>
+    selectedPairId ? s.prices[selectedPairId] : undefined,
+  );
   const [positions, setPositions] = useState<Position[]>([]);
   // Deribit's hourly-applied funding rate (current_funding). null = not yet
   // fetched (renders em-dash). A fetched value of 0 is a genuine, meaningful
@@ -830,45 +864,45 @@ export default function TradingPage() {
   const activePairs = pairs;
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
 
-  // 24h price change for each asset-bar chip. Fetch a single 1d candle per
-  // pair and compute (close - open) / open. Mount-time only — no refresh
-  // timer; the value naturally updates on remount when navigating back.
+  // 24h price-change derivation: fetch each pair's daily OPEN once into
+  // dailyOpenStore; the change is then computed live in <AssetTab> from
+  // SSE price + cached open via usePairChange. Naturally idempotent —
+  // refetches only pairs not yet in the store, so safe under React
+  // StrictMode's double-invocation in dev and robust to pairs added later.
   useEffect(() => {
-    if (!activePairs.length) return;
+    const active = pairs.filter(isRealPair);
+    if (!active.length) return; // pairs not loaded yet; effect re-runs when they arrive
+    const cached = useDailyOpenStore.getState().opens;
+    const missing = active.filter((p) => !cached[p.id]);
+    if (!missing.length) return; // all opens already cached
     let cancelled = false;
-    (async () => {
-      for (const pair of activePairs) {
-        try {
-          const res = await getCandles(pair.id, { timeframe: "1d", limit: 1 });
-          if (cancelled) return;
-          const candle = res.data.candles?.[0];
-          if (!candle) {
-            setPairChange(pair.id, null);
-            continue;
-          }
-          const open = parseFloat(candle.open);
-          const close = parseFloat(candle.close);
-          if (!(open > 0)) {
-            setPairChange(pair.id, null);
-            continue;
-          }
-          setPairChange(pair.id, (close - open) / open);
-        } catch {
-          if (!cancelled) setPairChange(pair.id, null);
-        }
-      }
-    })();
+    fetchAllOpensInto(missing, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [activePairs, setPairChange]);
+  }, [pairs]);
 
-  // Current price: prefer SSE snapshot, fall back to pair.last_price
+  // Refetch daily opens at each UTC midnight (the open rolls over). Independent
+  // mount-only effect — reads pairs fresh from the store each tick, recomputes
+  // the next midnight from `now` so it can't drift.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    function schedule() {
+      timer = setTimeout(() => {
+        fetchAllOpensInto(useAppStore.getState().pairs.filter(isRealPair), () => false);
+        schedule();
+      }, getMsUntilNextUTCMidnight());
+    }
+    schedule();
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Current price: prefer SSE snapshot, fall back to the cached pair price.
+  // snapshot-first is load-bearing for replay mode (onReplayTick writes
+  // snapshot but NOT pairPricesStore); do not collapse to selectedPairPrice.
   const currentPrice = snapshot?.last
     ? parseFloat(snapshot.last)
-    : selectedPair?.last_price
-      ? parseFloat(selectedPair.last_price)
-      : 0;
+    : selectedPairPrice ?? 0;
 
   // Quote wallet balance (USD)
   const quoteAssetId = selectedPair?.quote_asset_id;
@@ -914,36 +948,14 @@ export default function TradingPage() {
       {/* ASSET BAR */}
       <div className="tr-abar tr-fu">
         <div className="tr-asset-tabs">
-          {activePairs.slice(0, 6).map((p) => {
-            const isActive = p.id === selectedPairId;
-            const price = isActive && snapshot?.last ? parseFloat(snapshot.last) : (p.last_price ? parseFloat(p.last_price) : 0);
-            const change = pairChanges[p.id];
-            const changeClass =
-              change === null || change === undefined
-                ? ""
-                : change > 0
-                  ? "up"
-                  : change < 0
-                    ? "dn"
-                    : "";
-            return (
-              <div
-                key={p.id}
-                className={`tr-asset-tab${isActive ? " active" : ""}`}
-                onClick={() => selectPair(p.id)}
-              >
-                <span>{p.symbol.split("/")[0]}</span>
-                <span className="tr-at-price">
-                  ${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </span>
-                <span className={`tr-at-chg ${changeClass}`}>
-                  {change === null || change === undefined
-                    ? ""
-                    : `${change >= 0 ? "+" : ""}${(change * 100).toFixed(2)}%`}
-                </span>
-              </div>
-            );
-          })}
+          {activePairs.slice(0, 6).map((p) => (
+            <AssetTab
+              key={p.id}
+              pairId={p.id}
+              symbol={p.symbol}
+              isActive={p.id === selectedPairId}
+            />
+          ))}
         </div>
 
         <div className="tr-price-hero">
