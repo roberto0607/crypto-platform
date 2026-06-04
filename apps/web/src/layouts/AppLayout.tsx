@@ -180,7 +180,7 @@ export default function AppLayout() {
           </div>
 
           {/* Nav sections */}
-          <nav className="flex-1 overflow-y-auto">
+          <nav className={`flex-1 ${isTradePage ? "overflow-visible" : "overflow-y-auto"}`}>
             {NAV_SECTIONS.map((section) => (
               <div key={section.label} className={`${isTradePage ? "pt-3 pb-1" : "pt-5 pb-2"}`}>
                 {!isTradePage && (
