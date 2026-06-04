@@ -46,9 +46,14 @@ export default function AssetTab({ pairId, symbol, isActive }: AssetTabProps) {
       onClick={() => selectPair(pairId)}
     >
       <span>{symbol.split("/")[0]}</span>
-      <span className="tr-at-price">
-        ${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-      </span>
+      {/* Active chip drops the price — the hero shows that exact number directly
+          above it (kills the triple-BTC echo, #3). Inactive chips keep price so
+          you can compare assets at a glance. */}
+      {!isActive && (
+        <span className="tr-at-price">
+          ${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </span>
+      )}
       <span className={`tr-at-chg ${changeClass}`}>
         {change === null ? "" : `${change >= 0 ? "+" : ""}${(change * 100).toFixed(2)}%`}
       </span>
