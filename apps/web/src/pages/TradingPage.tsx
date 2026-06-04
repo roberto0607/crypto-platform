@@ -200,14 +200,17 @@ const TRADE_CSS = `
   .tr-ob-hdr {
     display:grid;grid-template-columns:1fr 1fr;
     padding:6px 12px;border-bottom:1px solid var(--borderW);
-    font-size:9px;color:rgba(255,255,255,0.45);letter-spacing:2px;
+    font-size:9px;color:rgba(255,255,255,0.6);letter-spacing:2px;
     text-transform:uppercase;
+    /* sticky so PRICE/QTY stays put when the ladder is scroll-centered on the spread */
+    position:sticky;top:0;z-index:2;background:var(--bg2);
   }
   .tr-ob-hdr span:last-child { text-align:right; }
   .tr-ob-row {
     display:grid;grid-template-columns:1fr 1fr;
     padding:4px 12px;font-size:11px;color:rgba(255,255,255,0.8);position:relative;
     transition:background 0.1s;
+    border-bottom:1px solid rgba(255,255,255,0.025); /* faint grid separator (#28) */
   }
   .tr-ob-row:hover { background:var(--g06); }
   .tr-ob-row .fill {
@@ -227,6 +230,32 @@ const TRADE_CSS = `
     background:rgba(255,255,255,0.03);flex-shrink:0;
     font-family:var(--mono);
   }
+
+  /* order-book depth column — aggregate sentiment split bar (cyan/amber) */
+  .tr-ob-depth {
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:20px;gap:10px;
+  }
+  .tr-ob-depth-cap {
+    font-size:7px;letter-spacing:3px;color:rgba(255,255,255,0.4);
+    text-transform:uppercase;font-family:var(--mono);
+  }
+  .tr-ob-splitbar {
+    position:relative;width:100%;height:8px;display:flex;
+    border-radius:2px;overflow:hidden;background:rgba(255,255,255,0.04);
+  }
+  .tr-ob-splitbar .seg { height:100%;transition:width 0.2s ease; }
+  /* thin center seam = neutral 50% reference; imbalance reads as offset from it */
+  .tr-ob-splitbar .seam {
+    position:absolute;left:50%;top:0;bottom:0;width:1px;
+    background:rgba(0,0,0,0.55);transform:translateX(-0.5px);
+  }
+  .tr-ob-depth-nums {
+    display:flex;align-items:baseline;justify-content:space-between;
+    width:100%;font-family:var(--bebas);
+  }
+  .tr-ob-bidpct { font-size:26px;letter-spacing:1px;line-height:1; }
+  .tr-ob-askpct { font-size:26px;letter-spacing:1px;line-height:1; }
 
   /* positions / orders table */
   .tr-ptbl { width:100%;border-collapse:collapse; }
@@ -326,7 +355,7 @@ const TRADE_CSS = `
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar { width:2px; }
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar-thumb { background:var(--border); }
   .tr-order-panel-book {
-    flex:0 0 150px;max-height:150px;overflow-y:auto;
+    flex:0 0 260px;max-height:260px;overflow-y:auto;
     border-top:1px solid var(--border);
     padding-top:0;
   }
@@ -616,59 +645,140 @@ function formatBookPrice(price: string): string {
 }
 
 /* ── ORDER BOOK DATA ── */
-interface BookRow {
-  price: string;
-  qty: string;
+interface PreparedLevel {
+  price: string; // display-formatted (may contain thousands separators)
+  qty: string;   // display-formatted
+  rawQty: number; // numeric qty, for bar-width scaling
 }
 
-/* ── ORDER BOOK ── */
-function OrderBookPanel({
-  liveBook,
-}: {
-  liveBook: OrderBookType | null;
-}) {
-  // Format live book levels for display (show all levels, not just 8)
-  const book = (() => {
-    if (liveBook && liveBook.asks.length > 0 && liveBook.bids.length > 0) {
-      // Asks from API: ascending (best/lowest first). Reverse so highest is at top, best ask at bottom near spread.
-      const asks = liveBook.asks.map((lvl) => ({
-        price: formatBookPrice(lvl.price), qty: formatBookQty(lvl.qty),
-      })).reverse();
-      // Bids from API: descending (best/highest first). Keep as-is so best bid is at top near spread.
-      const bids = liveBook.bids.map((lvl) => ({
-        price: formatBookPrice(lvl.price), qty: formatBookQty(lvl.qty),
-      }));
-      return { asks, bids };
-    }
-    return { asks: [] as BookRow[], bids: [] as BookRow[] };
-  })();
+export interface PreparedBook {
+  /** Capped to maxLevels nearest the spread, rendered highest-price-at-top. */
+  asks: PreparedLevel[];
+  /** Capped to maxLevels nearest the spread, best bid first (top, near spread). */
+  bids: PreparedLevel[];
+  spread: string;
+  spreadPct: string;
+  /** Aggregate bid depth share 0..100, summed over the FULL book (true imbalance). */
+  bidPct: number;
+  /** Aggregate ask depth share 0..100, summed over the FULL book. */
+  askPct: number;
+  /** Max qty over the VISIBLE (capped) levels only — bar widths scale against this. */
+  maxVisibleQty: number;
+}
 
-  // Use raw liveBook prices for spread (formatted strings have commas that break parseFloat)
-  const bestAskPrice = liveBook?.asks?.[0] ? parseFloat(liveBook.asks[0].price) : 0;
-  const bestBidPrice = liveBook?.bids?.[0] ? parseFloat(liveBook.bids[0].price) : 0;
+/**
+ * Pure transform of a raw live order book into the slice the panel renders.
+ * Mirrors the dayDirection helper: no React, no store reads — the unit-tested
+ * surface for order-book legibility logic.
+ *
+ * - Caps each side to the `maxLevels` levels NEAREST the spread so both sides
+ *   plus the spread divider fit without scrolling (fixes the "all-red wall").
+ * - bidPct/askPct are summed over the FULL book (true imbalance), not the cap.
+ * - maxVisibleQty is the max over the capped set only, so near-spread bars stay
+ *   legible even when a far (clipped) level is huge.
+ * - Empty / one-sided book → empty arrays and zeroed metrics (never throws).
+ */
+export function prepareBook(
+  liveBook: OrderBookType | null,
+  maxLevels = 8,
+): PreparedBook {
+  if (!liveBook || liveBook.asks.length === 0 || liveBook.bids.length === 0) {
+    return {
+      asks: [], bids: [],
+      spread: "0.00", spreadPct: "0.000",
+      bidPct: 0, askPct: 0, maxVisibleQty: 0,
+    };
+  }
+
+  const rawAsks = liveBook.asks; // ascending: best (lowest) first
+  const rawBids = liveBook.bids; // descending: best (highest) first
+
+  // Aggregate depth over the FULL book → true imbalance.
+  const totalBidQty = rawBids.reduce((s, r) => s + parseFloat(r.qty), 0);
+  const totalAskQty = rawAsks.reduce((s, r) => s + parseFloat(r.qty), 0);
+  const totalQty = totalBidQty + totalAskQty || 1;
+  const bidPct = (totalBidQty * 100) / totalQty;
+  const askPct = (totalAskQty * 100) / totalQty;
+
+  // Spread from the best levels (raw prices: formatted strings have commas).
+  // Array non-emptiness is guarded above; `?? "0"` only satisfies the
+  // noUncheckedIndexedAccess compiler, it never fires at runtime here.
+  const bestAskPrice = parseFloat(rawAsks[0]?.price ?? "0");
+  const bestBidPrice = parseFloat(rawBids[0]?.price ?? "0");
   const spreadVal = bestAskPrice - bestBidPrice;
   const spread = spreadVal.toFixed(2);
   const spreadPct = bestBidPrice > 0 ? ((spreadVal / bestBidPrice) * 100).toFixed(3) : "0.000";
 
-  // Sum ALL levels for true depth imbalance (use raw liveBook to avoid formatted-string parsing issues)
-  const rawBids = liveBook?.bids ?? [];
-  const rawAsks = liveBook?.asks ?? [];
-  const totalBidQty = rawBids.reduce((sum, r) => sum + parseFloat(r.qty), 0);
-  const totalAskQty = rawAsks.reduce((sum, r) => sum + parseFloat(r.qty), 0);
-  const totalQty = totalBidQty + totalAskQty || 1;
+  // Cap to the maxLevels nearest the spread.
+  // asks: the lowest = the head of the ascending array; render highest-at-top → reverse.
+  const cappedAsks = rawAsks.slice(0, maxLevels).reverse();
+  // bids: the highest = the head of the descending array; keep order (best bid at top).
+  const cappedBids = rawBids.slice(0, maxLevels);
 
-  // Max qty across all levels for relative bar scaling
-  const maxQty = Math.max(
-    ...rawBids.map((r) => parseFloat(r.qty)),
-    ...rawAsks.map((r) => parseFloat(r.qty)),
-    0.0001, // floor to avoid division by zero
+  const maxVisibleQty = Math.max(
+    ...cappedAsks.map((r) => parseFloat(r.qty)),
+    ...cappedBids.map((r) => parseFloat(r.qty)),
+    0.0001, // floor to avoid divide-by-zero in bar widths
   );
 
-  const hasBook = book.asks.length > 0 && book.bids.length > 0;
+  const fmt = (lvl: { price: string; qty: string }): PreparedLevel => ({
+    price: formatBookPrice(lvl.price),
+    qty: formatBookQty(lvl.qty),
+    rawQty: parseFloat(lvl.qty),
+  });
+
+  return {
+    asks: cappedAsks.map(fmt),
+    bids: cappedBids.map(fmt),
+    spread, spreadPct, bidPct, askPct, maxVisibleQty,
+  };
+}
+
+/**
+ * Bar width % for a ladder level. sqrt-compressed against the capped-set max so
+ * a dust level (qty ~0.0001) next to a huge one stays visible instead of
+ * collapsing to a 0-px sliver — the legibility goal of this panel.
+ */
+function obBarWidth(rawQty: number, maxVisibleQty: number): number {
+  if (maxVisibleQty <= 0) return 0;
+  return Math.sqrt(rawQty / maxVisibleQty) * 100;
+}
+
+/* ── ORDER BOOK ── */
+export function OrderBookPanel({
+  liveBook,
+}: {
+  liveBook: OrderBookType | null;
+}) {
+  const { asks, bids, spread, spreadPct, bidPct, askPct, maxVisibleQty } =
+    prepareBook(liveBook);
+  const hasBook = asks.length > 0 && bids.length > 0;
+
+  // The ladder is taller than its box, so center the scroll on the SPREAD
+  // divider when the book first populates — both sides then read at rest (red
+  // asks above, green bids below) without manual scrolling. Row count is fixed
+  // (8/side), so the spread's offset is stable; we re-center only on the
+  // empty→populated transition, never per price tick — no scroll jank.
+  const ladderRef = useRef<HTMLDivElement>(null);
+  const spreadRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasBook) return;
+    const col = ladderRef.current, sp = spreadRef.current;
+    if (!col || !sp || col.scrollHeight <= col.clientHeight) return;
+    // Center the spread within the area below the sticky header. Measure with
+    // bounding rects (offsetTop is relative to the positioned ancestor, not the
+    // scroll container) and nudge scrollTop by the delta.
+    const hdrH = headerRef.current?.offsetHeight ?? 0;
+    const colTop = col.getBoundingClientRect().top;
+    const spTop = sp.getBoundingClientRect().top;
+    const targetOffset = hdrH + (col.clientHeight - hdrH - sp.offsetHeight) / 2;
+    col.scrollTop += (spTop - colTop) - targetOffset;
+  }, [hasBook]);
 
   return (
     <div className="tr-ob">
-      <div className="tr-ob-col">
+      <div className="tr-ob-col" ref={ladderRef}>
         {!hasBook && (
           <div style={{
             padding: "8px 12px", textAlign: "center",
@@ -676,83 +786,46 @@ function OrderBookPanel({
             fontFamily: "var(--mono)",
           }}>WAITING FOR BOOK DATA...</div>
         )}
-        <div className="tr-ob-hdr">
+        <div className="tr-ob-hdr" ref={headerRef}>
           <span>PRICE</span>
           <span>QTY</span>
         </div>
-        {book.asks.map((r, i) => (
+        {asks.map((r, i) => (
           <div key={i} className="tr-ob-row ask">
-            <div className="fill" style={{ width: `${(parseFloat(r.qty) / maxQty) * 100}%` }} />
+            <div className="fill" style={{ width: `${obBarWidth(r.rawQty, maxVisibleQty)}%` }} />
             <span className="tr-ob-price">{r.price}</span>
             <span className="tr-dim">{r.qty}</span>
           </div>
         ))}
-        <div className="tr-ob-spread">
+        <div className="tr-ob-spread" ref={spreadRef}>
           SPREAD ${spread} ({spreadPct}%)
         </div>
-        {book.bids.map((r, i) => (
+        {bids.map((r, i) => (
           <div key={i} className="tr-ob-row bid">
-            <div className="fill" style={{ width: `${(parseFloat(r.qty) / maxQty) * 100}%` }} />
+            <div className="fill" style={{ width: `${obBarWidth(r.rawQty, maxVisibleQty)}%` }} />
             <span className="tr-ob-price">{r.price}</span>
             <span className="tr-dim">{r.qty}</span>
           </div>
         ))}
       </div>
-      <div
-        className="tr-ob-col"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 20,
-          gap: 12,
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              fontFamily: "var(--bebas)",
-              fontSize: 28,
-              color: "var(--g)",
-              letterSpacing: 2,
-            }}
-          >
-            {((totalBidQty * 100) / totalQty).toFixed(0)}%
-          </div>
-          <div
-            style={{
-              fontSize: 7,
-              color: "rgba(0,255,65,0.4)",
-              letterSpacing: 3,
-              marginTop: 2,
-            }}
-          >
-            BID DEPTH
-          </div>
+      <div className="tr-ob-col tr-ob-depth">
+        <div className="tr-ob-depth-cap">DEPTH IMBALANCE</div>
+        {/* Split bar ties bid vs ask into one surface: cyan share | amber share,
+            with a neutral 50% center seam. Connects the two % numbers (#5),
+            sentiment palette decoupled from the ladder green/red (#6). */}
+        <div className="tr-ob-splitbar">
+          <div className="seg" style={{ width: `${bidPct}%`, background: "var(--ob-bid, #22d3ee)" }} />
+          <div className="seg" style={{ width: `${askPct}%`, background: "var(--ob-ask, #fbbf24)" }} />
+          <div className="seam" />
         </div>
-        <div style={{ width: 1, height: 32, background: "var(--borderW)" }} />
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              fontFamily: "var(--bebas)",
-              fontSize: 28,
-              color: "var(--red)",
-              letterSpacing: 2,
-            }}
-          >
-            {((totalAskQty * 100) / totalQty).toFixed(0)}%
-          </div>
-          <div
-            style={{
-              fontSize: 7,
-              color: "rgba(255,59,59,0.4)",
-              letterSpacing: 3,
-              marginTop: 2,
-            }}
-          >
-            ASK DEPTH
-          </div>
+        <div className="tr-ob-depth-nums">
+          <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #22d3ee)" }}>
+            {bidPct.toFixed(0)}%
+          </span>
+          <span className="tr-ob-depth-cap">BID / ASK</span>
+          <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #fbbf24)" }}>
+            {askPct.toFixed(0)}%
+          </span>
         </div>
       </div>
     </div>
