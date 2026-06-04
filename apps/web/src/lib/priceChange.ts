@@ -21,6 +21,19 @@ export function calculatePriceChange(
   return (currentPrice - dailyOpen.open) / dailyOpen.open;
 }
 
+/**
+ * Map a day-change fraction (from calculatePriceChange / usePairChange) to a
+ * persistent hero-price direction. null (open not cached yet, stale, or no
+ * price) → "flat" so the hero stays neutral white instead of showing a false
+ * green/red. Pure — unit-tested alongside calculatePriceChange.
+ */
+export function dayDirection(change: number | null): "up" | "down" | "flat" {
+  if (change === null) return "flat";
+  if (change > 0) return "up";
+  if (change < 0) return "down";
+  return "flat";
+}
+
 /** Milliseconds until the next UTC midnight, for setTimeout-based daily-open refresh. */
 export function getMsUntilNextUTCMidnight(now: Date = new Date()): number {
   const next = new Date(now);

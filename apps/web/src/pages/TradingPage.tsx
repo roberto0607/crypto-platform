@@ -9,7 +9,8 @@ import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import AssetTab from "@/components/trading/AssetTab";
 import { getPositions } from "@/api/endpoints/analytics";
 import { getCandles } from "@/api/endpoints/candles";
-import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
+import { getMsUntilNextUTCMidnight, dayDirection } from "@/lib/priceChange";
+import { usePairChange } from "@/hooks/usePairChange";
 import { isRealPair } from "@/lib/pairs";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
@@ -120,11 +121,21 @@ const TRADE_CSS = `
   .tr-price-big {
     font-family:var(--bebas);font-size:28px;color:#fff;
     letter-spacing:2px;line-height:1;
+    transition:filter 0.15s ease-out, text-shadow 0.15s ease-out;
   }
   .tr-price-big.up { color:var(--g);text-shadow:0 0 20px var(--g25); }
   .tr-price-big.dn { color:var(--red); }
   .tr-price-big.down { color:var(--red);text-shadow:0 0 20px var(--red25); }
   .tr-price-big.flat { color:#fff; }
+  /* Tick flash — a brief brightness+glow pulse layered ON TOP of the day color
+     (sets filter/text-shadow only, never color). Listed after the day classes
+     so its shadow wins for the ~150ms the class is present, then transitions
+     back. The day color (red/green/white) is preserved throughout. */
+  .tr-price-big.tick-up,
+  .tr-price-big.tick-down {
+    filter:brightness(1.6);
+    text-shadow:0 0 26px rgba(255,255,255,0.6);
+  }
   .tr-price-chg { font-size:9px;letter-spacing:2px; }
   .tr-price-meta {
     display:flex;gap:16px;margin-left:20px;padding-left:20px;
@@ -795,11 +806,14 @@ export default function TradingPage() {
   // funding rate and renders as "0.0000%".
   const [fundingRateHourly, setFundingRateHourly] = useState<number | null>(null);
 
-  // Hero-price color reflects real tick-to-tick movement (not a hardcoded
-  // "up"). prevPriceRef holds the last seen price for the active pair.
+  // Hero-price PERSISTENT color tracks the DAY (open→now, same source as the
+  // chip), derived below from usePairChange. The tick-to-tick movement is now a
+  // brief FLASH layered on top, not a persistent color: prevPriceRef holds the
+  // last seen price; a non-flat tick toggles a transient class for ~150ms.
   const prevPriceRef = useRef<number | null>(null);
-  const [priceDirection, setPriceDirection] = useState<"up" | "down" | "flat">(
-    "flat",
+  const [tickFlash, setTickFlash] = useState<"" | "tick-up" | "tick-down">("");
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
   );
 
   const userId = useAuthStore((s) => s.user?.id);
@@ -904,6 +918,26 @@ export default function TradingPage() {
     ? parseFloat(snapshot.last)
     : selectedPairPrice ?? 0;
 
+  // Persistent hero color = the DAY (open→now), from the same source as the
+  // chip's %: usePairChange (SSE price vs cached daily open). dayChange is null
+  // until the open is cached / a price has ticked.
+  const dayChange = usePairChange(selectedPairId ?? "");
+  // Hold the last known day-direction across transient null windows (the price
+  // store retains the last tick, so disconnect alone won't null this — but a
+  // momentary missing open shouldn't flash neutral). Reset synchronously on
+  // pair switch so no stale color carries to the new asset (React's
+  // derive-state-during-render reset pattern, runs before the first paint of
+  // the new pair).
+  const lastDayDirRef = useRef<"up" | "down" | "flat">("flat");
+  const lastPairForDirRef = useRef<string | null>(selectedPairId);
+  if (lastPairForDirRef.current !== selectedPairId) {
+    lastPairForDirRef.current = selectedPairId;
+    lastDayDirRef.current = "flat";
+  }
+  const dayDir =
+    dayChange === null ? lastDayDirRef.current : dayDirection(dayChange);
+  lastDayDirRef.current = dayDir;
+
   // Quote wallet balance (USD)
   const quoteAssetId = selectedPair?.quote_asset_id;
   const quoteWallet = wallets.find((w) => w.asset_id === quoteAssetId);
@@ -914,24 +948,30 @@ export default function TradingPage() {
   // Position for selected pair
   const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
-  // Reset price-direction tracking when switching pairs — comparing one
-  // asset's price against another's would produce a bogus up/down flash.
+  // Reset tick-flash tracking when switching pairs — comparing one asset's
+  // price against another's would produce a bogus flash.
   useEffect(() => {
     prevPriceRef.current = null;
-    setPriceDirection("flat");
+    clearTimeout(flashTimerRef.current);
+    setTickFlash("");
   }, [selectedPairId]);
 
-  // Derive hero-price direction from real movement between ticks.
+  // Tick FLASH: a brief pulse on real movement between ticks, layered on top of
+  // the persistent day color (does not repaint it). Toggles a transient class
+  // for ~150ms, then clears.
   useEffect(() => {
-    if (!currentPrice) return; // no price / disconnect — keep last direction
+    if (!currentPrice) return; // no price / disconnect
     const prev = prevPriceRef.current;
     prevPriceRef.current = currentPrice;
-    if (prev === null) return; // first tick for this pair — stay flat
-    const next =
-      currentPrice > prev ? "up" : currentPrice < prev ? "down" : "flat";
-    // Bail out of the re-render when direction is unchanged (flat ticks).
-    setPriceDirection((cur) => (cur === next ? cur : next));
+    if (prev === null) return; // first tick for this pair — no flash
+    if (currentPrice === prev) return; // flat tick — nothing to flash
+    setTickFlash(currentPrice > prev ? "tick-up" : "tick-down");
+    clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => setTickFlash(""), 150);
   }, [currentPrice]);
+
+  // Clear any pending flash timer on unmount.
+  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
 
   if (!selectedPair) {
     return (
@@ -959,7 +999,7 @@ export default function TradingPage() {
         </div>
 
         <div className="tr-price-hero">
-          <span className={`tr-price-big ${priceDirection}`}>
+          <span className={`tr-price-big ${dayDir} ${tickFlash}`}>
             ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </span>
           {/* Funding rate relocated to the Market Context Bar (chart row).

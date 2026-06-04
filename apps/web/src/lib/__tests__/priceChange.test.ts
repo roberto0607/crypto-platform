@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calculatePriceChange,
+  dayDirection,
   getMsUntilNextUTCMidnight,
 } from "@/lib/priceChange";
 
@@ -49,6 +50,24 @@ describe("calculatePriceChange", () => {
     expect(
       calculatePriceChange(100, { open: 100, dateUTC: TODAY }, TODAY),
     ).toBe(0);
+  });
+});
+
+describe("dayDirection", () => {
+  it("maps null to flat (open not cached → neutral white, no false color)", () => {
+    expect(dayDirection(null)).toBe("flat");
+  });
+
+  it("maps a positive change to up", () => {
+    expect(dayDirection(0.04)).toBe("up");
+  });
+
+  it("maps a negative change to down", () => {
+    expect(dayDirection(-0.0421)).toBe("down");
+  });
+
+  it("maps exactly 0 to flat", () => {
+    expect(dayDirection(0)).toBe("flat");
   });
 });
 
