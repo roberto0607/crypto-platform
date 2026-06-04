@@ -8,6 +8,7 @@ import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import SystemBanner from "@/components/SystemBanner";
 import { NotificationBell } from "@/components/NotificationBell";
+import { NavIcon } from "@/components/NavIcon";
 import TickerBar from "@/components/TickerBar";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import { useSSE } from "@/hooks/useSSE";
@@ -17,18 +18,18 @@ const NAV_SECTIONS = [
   {
     label: "Main",
     items: [
-      { to: "/trade", label: "Trade", icon: "\u25C8" },
-      { to: "/arena", label: "Arena", icon: "\u2694" },
-      { to: "/replay", label: "Replay", icon: "\u23EA" },
-      { to: "/cycle", label: "Cycle", icon: "\u29BF" },
-      { to: "/history", label: "History", icon: "\u270E" },
-      { to: "/profile", label: "Profile", icon: "\u2666" },
+      { to: "/trade", label: "Trade", icon: "trade" },
+      { to: "/arena", label: "Arena", icon: "arena" },
+      { to: "/replay", label: "Replay", icon: "replay" },
+      { to: "/cycle", label: "Cycle", icon: "cycle" },
+      { to: "/history", label: "History", icon: "history" },
+      { to: "/profile", label: "Profile", icon: "profile" },
     ],
   },
   {
     label: "System",
     items: [
-      { to: "/settings", label: "Settings", icon: "\u2699" },
+      { to: "/settings", label: "Settings", icon: "settings" },
     ],
   },
 ];
@@ -189,12 +190,11 @@ export default function AppLayout() {
                 )}
                 <ul className="list-none">
                   {section.items.map((item) => (
-                    <li key={item.to}>
+                    <li key={item.to} className="group relative">
                       <NavLink
                         to={item.to}
                         onClick={() => setSidebarOpen(false)}
                         aria-label={item.label}
-                        title={isTradePage ? item.label : undefined}
                         className={({ isActive }) =>
                           `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
                           border-l-2 transition-all duration-200 no-underline
@@ -204,9 +204,14 @@ export default function AppLayout() {
                           }`
                         }
                       >
-                        <span className="text-sm w-5 text-center">{item.icon}</span>
+                        <span className="text-sm w-5 text-center"><NavIcon name={item.icon} /></span>
                         {!isTradePage && item.label}
                       </NavLink>
+                      {isTradePage && (
+                        <span className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap px-2 py-1 text-[10px] tracking-[2px] font-mono uppercase bg-[#080808] border border-tradr-green/[0.18] text-white/85 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
+                          {item.label}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -220,23 +225,29 @@ export default function AppLayout() {
                     Admin
                   </div>
                 )}
-                <NavLink
-                  to="/admin"
-                  onClick={() => setSidebarOpen(false)}
-                  aria-label="Admin"
-                  title={isTradePage ? "Admin" : undefined}
-                  className={({ isActive }) =>
-                    `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
-                    border-l-2 transition-all duration-200 no-underline
-                    ${isActive
-                      ? "text-tradr-green border-l-tradr-green bg-tradr-green/[0.06]"
-                      : "text-white/30 border-l-transparent hover:text-white/85 hover:bg-tradr-green/[0.06] hover:border-l-tradr-green/30"
-                    }`
-                  }
-                >
-                  <span className="text-sm w-5 text-center">{"\u2666"}</span>
-                  {!isTradePage && "Admin"}
-                </NavLink>
+                <div className="group relative">
+                  <NavLink
+                    to="/admin"
+                    onClick={() => setSidebarOpen(false)}
+                    aria-label="Admin"
+                    className={({ isActive }) =>
+                      `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
+                      border-l-2 transition-all duration-200 no-underline
+                      ${isActive
+                        ? "text-tradr-green border-l-tradr-green bg-tradr-green/[0.06]"
+                        : "text-white/30 border-l-transparent hover:text-white/85 hover:bg-tradr-green/[0.06] hover:border-l-tradr-green/30"
+                      }`
+                    }
+                  >
+                    <span className="text-sm w-5 text-center"><NavIcon name="admin" /></span>
+                    {!isTradePage && "Admin"}
+                  </NavLink>
+                  {isTradePage && (
+                    <span className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap px-2 py-1 text-[10px] tracking-[2px] font-mono uppercase bg-[#080808] border border-tradr-green/[0.18] text-white/85 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
+                      Admin
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </nav>
@@ -285,6 +296,12 @@ export default function AppLayout() {
               >
                 {sidebarOpen ? "\u2715" : "\u2630"}
               </button>
+
+              {isTradePage && (
+                <span className="t-logo-text t-logo-text-sm">
+                  {isWarTheme ? <>TR<span>A</span>DE W<span>A</span>RS</> : <>TR<span>A</span>DR</>}
+                </span>
+              )}
 
               {!isTradePage && (
                 <div className="text-[10px] text-white/30 tracking-[2px] flex items-center gap-2 font-mono">
