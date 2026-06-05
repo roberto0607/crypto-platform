@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -250,12 +250,23 @@ const TRADE_CSS = `
     position:absolute;left:50%;top:0;bottom:0;width:1px;
     background:rgba(0,0,0,0.55);transform:translateX(-0.5px);
   }
+  /* Stacked bid/ask readout — two rows (number + side label) instead of
+     "53% [BID/ASK] 47%" crammed horizontally, which overflowed the ~98px depth
+     column and wrapped the caption to 3 lines. */
   .tr-ob-depth-nums {
-    display:flex;align-items:baseline;justify-content:space-between;
-    width:100%;font-family:var(--bebas);
+    display:flex;flex-direction:column;align-items:stretch;
+    width:100%;gap:4px;
   }
-  .tr-ob-bidpct { font-size:26px;letter-spacing:1px;line-height:1; }
-  .tr-ob-askpct { font-size:26px;letter-spacing:1px;line-height:1; }
+  .tr-ob-depth-row {
+    display:flex;align-items:baseline;justify-content:space-between;width:100%;
+  }
+  .tr-ob-depth-side {
+    font-size:7px;letter-spacing:3px;color:rgba(255,255,255,0.4);
+    text-transform:uppercase;font-family:var(--mono);
+  }
+  .tr-ob-bidpct, .tr-ob-askpct {
+    font-family:var(--bebas);font-size:26px;letter-spacing:1px;line-height:1;
+  }
 
   /* positions / orders table */
   .tr-ptbl { width:100%;border-collapse:collapse; }
@@ -744,6 +755,31 @@ function obBarWidth(rawQty: number, maxVisibleQty: number): number {
   return Math.sqrt(rawQty / maxVisibleQty) * 100;
 }
 
+/**
+ * Pure scroll math for centering the SPREAD row in the ladder's visible window
+ * (the area below the sticky header). Returns the new scrollTop, or null when
+ * the spread is already within `threshold` px of centered — the null case is
+ * the anti-jank guard so a ResizeObserver storm or an identical re-render never
+ * thrashes the scroll position. Extracted (mirrors prepareBook) so the offset
+ * logic is unit-tested without mounting a ResizeObserver.
+ */
+export function spreadRecenterScrollTop(args: {
+  currentScrollTop: number;
+  /** spread.getBoundingClientRect().top − container.getBoundingClientRect().top */
+  spreadTopWithinViewport: number;
+  containerClientHeight: number;
+  headerHeight: number;
+  spreadHeight: number;
+  threshold?: number;
+}): number | null {
+  const { currentScrollTop, spreadTopWithinViewport, containerClientHeight,
+    headerHeight, spreadHeight, threshold = 4 } = args;
+  const targetOffset = headerHeight + (containerClientHeight - headerHeight - spreadHeight) / 2;
+  const delta = spreadTopWithinViewport - targetOffset;
+  if (Math.abs(delta) <= threshold) return null;
+  return currentScrollTop + delta;
+}
+
 /* ── ORDER BOOK ── */
 export function OrderBookPanel({
   liveBook,
@@ -755,26 +791,54 @@ export function OrderBookPanel({
   const hasBook = asks.length > 0 && bids.length > 0;
 
   // The ladder is taller than its box, so center the scroll on the SPREAD
-  // divider when the book first populates — both sides then read at rest (red
-  // asks above, green bids below) without manual scrolling. Row count is fixed
-  // (8/side), so the spread's offset is stable; we re-center only on the
-  // empty→populated transition, never per price tick — no scroll jank.
+  // divider so both sides read at rest (red asks above, green bids below). The
+  // PR #41 version centered ONCE on empty→populated; on prod the spread drifted
+  // to the bottom afterward because a post-fire layout change — cold web-font
+  // reflow, SSE depth churn changing the ask count, or a late box settle — moved
+  // the spread without re-centering. This re-centers on ALL of those: book-shape
+  // (count) changes, container/row reflow (ResizeObserver), and fonts-ready.
   const ladderRef = useRef<HTMLDivElement>(null);
   const spreadRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!hasBook) return;
+
+  // Stable: reads live DOM each call, delegates the offset math to the pure
+  // helper (which returns null when already centered → no scroll thrash).
+  const centerOnSpread = useCallback(() => {
     const col = ladderRef.current, sp = spreadRef.current;
     if (!col || !sp || col.scrollHeight <= col.clientHeight) return;
-    // Center the spread within the area below the sticky header. Measure with
-    // bounding rects (offsetTop is relative to the positioned ancestor, not the
-    // scroll container) and nudge scrollTop by the delta.
-    const hdrH = headerRef.current?.offsetHeight ?? 0;
-    const colTop = col.getBoundingClientRect().top;
-    const spTop = sp.getBoundingClientRect().top;
-    const targetOffset = hdrH + (col.clientHeight - hdrH - sp.offsetHeight) / 2;
-    col.scrollTop += (spTop - colTop) - targetOffset;
-  }, [hasBook]);
+    const next = spreadRecenterScrollTop({
+      currentScrollTop: col.scrollTop,
+      spreadTopWithinViewport: sp.getBoundingClientRect().top - col.getBoundingClientRect().top,
+      containerClientHeight: col.clientHeight,
+      headerHeight: headerRef.current?.offsetHeight ?? 0,
+      spreadHeight: sp.offsetHeight,
+    });
+    if (next !== null) col.scrollTop = next;
+  }, []);
+
+  // (a) empty→populated and (b) RENDERED book-shape changes. Keyed on the row
+  // COUNTS, not qty/price text — a pure price tick (same counts) won't re-fire.
+  useEffect(() => {
+    centerOnSpread();
+  }, [centerOnSpread, asks.length, bids.length]);
+
+  // (c) container/row size changes — catches the cold web-font reflow and the
+  // late 260px-box settle the diagnosis named as prime prod suspects.
+  useEffect(() => {
+    const col = ladderRef.current, sp = spreadRef.current;
+    if (!col || !sp || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => centerOnSpread());
+    ro.observe(col);
+    ro.observe(sp);
+    return () => ro.disconnect();
+  }, [centerOnSpread]);
+
+  // Re-center once the web fonts (Bebas/Space Mono) have swapped in, so the
+  // first center lands after the font-driven row heights are final, not before.
+  useEffect(() => {
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    if (fonts?.ready) fonts.ready.then(() => centerOnSpread());
+  }, [centerOnSpread]);
 
   return (
     <div className="tr-ob">
@@ -819,13 +883,18 @@ export function OrderBookPanel({
           <div className="seam" />
         </div>
         <div className="tr-ob-depth-nums">
-          <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #22d3ee)" }}>
-            {bidPct.toFixed(0)}%
-          </span>
-          <span className="tr-ob-depth-cap">BID / ASK</span>
-          <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #fbbf24)" }}>
-            {askPct.toFixed(0)}%
-          </span>
+          <div className="tr-ob-depth-row">
+            <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #22d3ee)" }}>
+              {bidPct.toFixed(0)}%
+            </span>
+            <span className="tr-ob-depth-side">BID</span>
+          </div>
+          <div className="tr-ob-depth-row">
+            <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #fbbf24)" }}>
+              {askPct.toFixed(0)}%
+            </span>
+            <span className="tr-ob-depth-side">ASK</span>
+          </div>
         </div>
       </div>
     </div>
