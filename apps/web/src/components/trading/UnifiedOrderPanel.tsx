@@ -37,6 +37,56 @@ function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * Quick-amount (#15): a fraction of the quote balance, floored to whole cents.
+ * Non-positive balance or fraction → 0 (so 25/50/75/MAX never set NaN).
+ */
+export function computeQuickAmount(balance: number, frac: number): number {
+    if (!(balance > 0) || !(frac > 0)) return 0;
+    return Math.floor(balance * frac * 100) / 100;
+}
+
+/**
+ * Leverage risk escalation (#16). Maps a leverage multiple to a visual tier:
+ *   1,2 (and any non-risky value) → neutral accent
+ *   3,5 → warn amber (5x a touch stronger than 3x)
+ *   10  → danger red
+ * `color` drives the selected button border+text and the warning copy;
+ * `faintBorder` tints UNSELECTED risky buttons so they read as risky pre-click.
+ * Pure (mirrors prepareBook/spreadRecenterScrollTop) — unit-tested.
+ */
+export function leverageRisk(lv: number): {
+    tier: "neutral" | "warn" | "danger";
+    color: string;
+    faintBorder: string;
+} {
+    if (lv === 10) return { tier: "danger", color: "#ef4444", faintBorder: "rgba(239,68,68,0.25)" };
+    if (lv === 5) return { tier: "warn", color: "#f59e0b", faintBorder: "rgba(245,158,11,0.25)" };
+    if (lv === 3) return { tier: "warn", color: "#fbbf24", faintBorder: "rgba(251,191,36,0.25)" };
+    return { tier: "neutral", color: "var(--ar-orange, var(--g, #00ff41))", faintBorder: "rgba(255,255,255,0.08)" };
+}
+
+/**
+ * OPEN-button label (#18). For the plain OPEN case with a real size, enrich with
+ * the leverage-applied NOTIONAL and base qty (matches the "effective" hint):
+ *   `OPEN LONG · $1,000.00 · 0.0158 BTC`
+ * Zero/empty qty → plain `OPEN LONG`/`OPEN SHORT`. Caller keeps the PLACING /
+ * ORDER PLACED / FAILED / ADD TO / CLOSE & REVERSE states untouched. Pure.
+ */
+export function openButtonLabel(args: {
+    mode: "LONG" | "SHORT";
+    baseQty: number;
+    effectiveUsd: number;
+    baseSymbol: string;
+    fmtUsd: (n: number) => string;
+}): string {
+    const { mode, baseQty, effectiveUsd, baseSymbol, fmtUsd: fmt } = args;
+    if (baseQty > 0) {
+        return `OPEN ${mode} · ${fmt(effectiveUsd)} · ${baseQty.toFixed(4)} ${baseSymbol}`;
+    }
+    return `OPEN ${mode}`;
+}
+
 interface UnifiedOrderPanelProps {
     pair: TradingPair;
     position: Position | null;
@@ -242,8 +292,15 @@ export function UnifiedOrderPanel({
         if (btnState === "error") return errorMsg || "FAILED";
         if (hasPosition && posDirection === activeMode) return `ADD TO ${activeMode}`;
         if (hasPosition && posDirection !== activeMode) return "CLOSE & REVERSE";
-        return `OPEN ${isLong ? "LONG" : "SHORT"}`;
+        return openButtonLabel({
+            mode: isLong ? "LONG" : "SHORT",
+            baseQty, effectiveUsd, baseSymbol, fmtUsd,
+        });
     })();
+    // The enriched OPEN label (with notional + qty) is the only long one — let it
+    // wrap/shrink so it never clips at the narrower arena width.
+    const btnLabelEnriched =
+        !orderSubmitting && btnState === "idle" && !hasPosition && baseQty > 0;
 
     const handlePlaceOrder = async () => {
         if (!appInitialized || !marketReady || !baseQtyStr) return;
@@ -387,9 +444,13 @@ export function UnifiedOrderPanel({
         setEditingSl(false);
     };
 
-    const handleMax = () => {
-        if (quoteBalance > 0) {
-            setUsdAmount(Math.floor(quoteBalance * 100) / 100 + "");
+    // 25/50/75/MAX quick-amount buttons (#15). MAX is just frac 1.
+    const setQuickAmount = (frac: number) => {
+        const v = computeQuickAmount(quoteBalance, frac);
+        if (v > 0) {
+            setUsdAmount(v + "");
+            setLastOrderUsd(null);
+            setLastOrderFee(null);
         }
     };
 
@@ -440,24 +501,30 @@ export function UnifiedOrderPanel({
 
             {/* ── LEVERAGE ── */}
             <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-                {([1, 2, 3, 5, 10] as const).map((lv) => (
-                    <div
-                        key={lv}
-                        onClick={() => setLeverage(lv)}
-                        style={{
-                            flex: 1, textAlign: "center", padding: "5px 0",
-                            fontSize: 10, letterSpacing: 1, cursor: "pointer",
-                            border: `1px solid ${leverage === lv ? "var(--ar-orange, var(--g, #00ff41))" : "rgba(255,255,255,0.08)"}`,
-                            color: leverage === lv ? "var(--ar-orange, var(--g, #00ff41))" : "rgba(255,255,255,0.3)",
-                            background: leverage === lv ? "rgba(255,255,255,0.04)" : "transparent",
-                        }}
-                    >
-                        {lv}x
-                    </div>
-                ))}
+                {([1, 2, 3, 5, 10] as const).map((lv) => {
+                    const risk = leverageRisk(lv);
+                    const selected = leverage === lv;
+                    return (
+                        <div
+                            key={lv}
+                            onClick={() => setLeverage(lv)}
+                            style={{
+                                flex: 1, textAlign: "center", padding: "5px 0",
+                                fontSize: 10, letterSpacing: 1, cursor: "pointer",
+                                // Selected → tier color; unselected risky → faint tier tint
+                                // so 3x/5x/10x read as risky before they're chosen.
+                                border: `1px solid ${selected ? risk.color : risk.faintBorder}`,
+                                color: selected ? risk.color : "rgba(255,255,255,0.3)",
+                                background: selected ? "rgba(255,255,255,0.04)" : "transparent",
+                            }}
+                        >
+                            {lv}x
+                        </div>
+                    );
+                })}
             </div>
             {leverage > 1 && (
-                <div style={{ fontSize: 9, color: "#f59e0b", marginBottom: 8, letterSpacing: 1 }}>
+                <div style={{ fontSize: 9, color: leverageRisk(leverage).color, marginBottom: 8, letterSpacing: 1 }}>
                     {leverage}x leverage amplifies both gains and losses
                 </div>
             )}
@@ -478,7 +545,24 @@ export function UnifiedOrderPanel({
             <div className={`${p}-field`}>
                 <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span>AMOUNT</span>
-                    <span style={{ color: "var(--ar-orange, var(--g, #00ff41))", cursor: "pointer", fontSize: 9, letterSpacing: 2 }} onClick={handleMax}>MAX</span>
+                    {/* 25/50/75/MAX quick-amount row (#15) — right-aligned on the label
+                        row so panel height stays stable. Inert at zero balance. */}
+                    <span style={{ display: "flex", gap: 8 }}>
+                        {([0.25, 0.5, 0.75, 1] as const).map((frac) => (
+                            <span
+                                key={frac}
+                                onClick={() => setQuickAmount(frac)}
+                                style={{
+                                    color: "var(--ar-orange, var(--g, #00ff41))",
+                                    cursor: quoteBalance > 0 ? "pointer" : "default",
+                                    opacity: quoteBalance > 0 ? 1 : 0.4,
+                                    fontSize: 9, letterSpacing: 1,
+                                }}
+                            >
+                                {frac === 1 ? "MAX" : `${frac * 100}%`}
+                            </span>
+                        ))}
+                    </span>
                 </label>
                 <div className={`${p}-field-wrap`}>
                     <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
@@ -557,7 +641,12 @@ export function UnifiedOrderPanel({
                     waiting for market data…
                 </div>
             )}
-            <button className={btnClass} disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || !marketReady || hasValidationError} onClick={handlePlaceOrder}>
+            <button
+                className={btnClass}
+                style={btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined}
+                disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || !marketReady || hasValidationError}
+                onClick={handlePlaceOrder}
+            >
                 {btnLabel}
             </button>
             </div>
