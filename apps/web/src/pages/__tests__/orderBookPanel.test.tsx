@@ -10,7 +10,7 @@ vi.mock("@/components/trading/AssetTab", () => ({ default: () => null }));
 vi.mock("@/components/trading/UnifiedOrderPanel", () => ({ UnifiedOrderPanel: () => null }));
 vi.mock("@/components/trading/OrderDock", () => ({ default: () => null }));
 
-import { prepareBook, OrderBookPanel } from "@/pages/TradingPage";
+import { prepareBook, OrderBookPanel, spreadRecenterScrollTop } from "@/pages/TradingPage";
 
 /** Build a book. asks ascending (best/lowest first), bids descending (best/highest first). */
 function makeBook(
@@ -124,5 +124,60 @@ describe("OrderBookPanel", () => {
     const segs = container.querySelectorAll<HTMLElement>(".tr-ob-splitbar .seg");
     expect(segs[0]!.style.background).toContain("--ob-bid");
     expect(segs[1]!.style.background).toContain("--ob-ask");
+  });
+
+  it("stacks the depth readout into two labelled rows (no crammed inline caption)", () => {
+    const book = makeBook(asks(8, 1), bids(8, 1));
+    const { container } = render(<OrderBookPanel liveBook={book} />);
+    const rows = container.querySelectorAll(".tr-ob-depth-row");
+    expect(rows).toHaveLength(2);
+    const sides = [...container.querySelectorAll(".tr-ob-depth-side")].map((e) => e.textContent);
+    expect(sides).toEqual(["BID", "ASK"]);
+    // the old single inline "BID / ASK" caption is gone
+    const caps = [...container.querySelectorAll(".tr-ob-depth-cap")].map((e) => e.textContent);
+    expect(caps).not.toContain("BID / ASK");
+  });
+});
+
+describe("spreadRecenterScrollTop", () => {
+  // container 259, header 27, spread 28 → targetOffset = 27 + (259-27-28)/2 = 129
+  const base = { containerClientHeight: 259, headerHeight: 27, spreadHeight: 28 };
+
+  it("returns null when the spread is already within threshold of center", () => {
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 100, spreadTopWithinViewport: 129 })).toBeNull();
+    // within default 4px threshold either side
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 100, spreadTopWithinViewport: 132 })).toBeNull();
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 100, spreadTopWithinViewport: 126 })).toBeNull();
+  });
+
+  it("scrolls DOWN (increases scrollTop) when the spread sits below center (drifted to bottom)", () => {
+    // spread 101px below target → must scroll down by 101 to pull it up to center
+    const next = spreadRecenterScrollTop({ ...base, currentScrollTop: 0, spreadTopWithinViewport: 230 });
+    expect(next).toBe(0 + (230 - 129));
+    expect(next!).toBeGreaterThan(0);
+  });
+
+  it("scrolls UP (decreases scrollTop) when the spread sits above center", () => {
+    const next = spreadRecenterScrollTop({ ...base, currentScrollTop: 150, spreadTopWithinViewport: 60 });
+    expect(next).toBe(150 + (60 - 129)); // 81
+    expect(next!).toBeLessThan(150);
+  });
+
+  it("treats the threshold as inclusive (exactly threshold px → no change)", () => {
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 10, spreadTopWithinViewport: 133 })).toBeNull(); // delta +4
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 10, spreadTopWithinViewport: 134 })).not.toBeNull(); // delta +5
+  });
+
+  it("accounts for header height in the centering target", () => {
+    // taller header pushes the target down → same spread position now reads as above-center
+    const tall = spreadRecenterScrollTop({ ...base, headerHeight: 60, currentScrollTop: 0, spreadTopWithinViewport: 129 });
+    const target = 60 + (259 - 60 - 28) / 2; // 145.5
+    expect(tall).toBeCloseTo(0 + (129 - target), 5);
+  });
+
+  it("honors a custom threshold", () => {
+    // delta +10 is within a 12px threshold → null
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 0, spreadTopWithinViewport: 139, threshold: 12 })).toBeNull();
+    expect(spreadRecenterScrollTop({ ...base, currentScrollTop: 0, spreadTopWithinViewport: 139, threshold: 2 })).not.toBeNull();
   });
 });
