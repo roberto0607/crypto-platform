@@ -15,12 +15,15 @@
   --theme-text-accent: #00ff41;
   --theme-danger: #ff3333;
   --theme-success: #00ff41;
-  /* Order-book aggregate-sentiment palette (depth imbalance only — the ladder
-     bid/ask rows keep their universal green/red). Cyan/amber so the imbalance
-     reads as a distinct surface from the green/red ladder. Defined per-theme
-     so War Theme can override; inherits into .tr-wrap on the trade page. */
-  --ob-bid: #22d3ee; /* cyan */
-  --ob-ask: #fbbf24; /* amber (distinct from chart EMA50 #f59e0b) */
+  /* Order-book aggregate-sentiment palette (depth imbalance + BUY/SELL split).
+     Single terminal scheme: bid/buy green, ask/sell red — same green/red as the
+     ladder and directional change. (PR #41's cyan/amber split was reverted to
+     keep one scheme across the whole terminal; the accepted tradeoff is that
+     depth sentiment again shares green/red with directional change.) Defined
+     per-theme so War Theme can override; inherits into .tr-wrap on the trade
+     page. Kept as named vars so consumers don't change when the palette does. */
+  --ob-bid: #00ff41; /* green (matches --g / candle up) */
+  --ob-ask: #ff3b3b; /* red (matches --red / candle down) */
 }
 
 [data-theme="tradewars"] {
@@ -35,10 +38,10 @@
   --theme-text-accent: #FF6B00;
   --theme-danger: #CC0000;
   --theme-success: #FF6B00;
-  /* War Theme keeps the same cyan/amber sentiment palette — both read on the
+  /* War Theme keeps the same green/red sentiment palette — both read on the
      dark war background and stay distinct from the orange war chrome. */
-  --ob-bid: #22d3ee; /* cyan */
-  --ob-ask: #fbbf24; /* amber */
+  --ob-bid: #00ff41; /* green */
+  --ob-ask: #ff3b3b; /* red */
 }
 
 /* Remove native number-input spinners globally — every number input in the app
