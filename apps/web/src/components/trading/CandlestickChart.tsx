@@ -9,6 +9,7 @@ import {
     type CandlestickData,
     type Time,
     ColorType,
+    TickMarkType,
     type IPriceLine,
 } from "lightweight-charts";
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
@@ -45,6 +46,8 @@ import { MACDPanel } from "./MACDPanel";
 import { ATRPanel } from "./ATRPanel";
 import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
+import { usePairChange } from "@/hooks/usePairChange";
+import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
@@ -52,6 +55,12 @@ import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+// Price-line + last-value-label color by DAY direction (matches the hero):
+// green when the day is up, red when down, neutral grey when flat/unknown.
+function priceLineColorForDay(dir: "up" | "down" | "flat"): string {
+    return dir === "up" ? "#00ff41" : dir === "down" ? "#ff3b3b" : "#9ca3af";
+}
 
 // Lightweight Charts treats timestamps as UTC — offset to local timezone
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
@@ -124,11 +133,23 @@ const CONTEXT_BAR_CSS = `
     background:rgba(255,255,255,0.08);
   }
   .tr-cr-tf { display:flex;align-items:center;gap:4px; }
+  /* O/H/L/C strip: dim the letter LABELS, brighten the .val numbers, and split
+     the four into columns with a hairline divider so it doesn't read as a
+     run-on. The C close keeps its inline g/red coloring (set in JSX). */
   .tr-cr-ohlc {
-    display:flex;align-items:center;gap:6px;
-    font-size:11px;color:rgba(255,255,255,0.4);
-    white-space:nowrap;
+    display:flex;align-items:center;
+    font-size:11px;color:rgba(255,255,255,0.3); /* dimmed labels */
+    white-space:nowrap;font-variant-numeric:tabular-nums;
   }
+  .tr-cr-ohlc > span {
+    display:inline-flex;align-items:baseline;
+    padding:0 9px;
+    border-left:1px solid rgba(255,255,255,0.08);
+  }
+  .tr-cr-ohlc > span:first-child { padding-left:0;border-left:none; }
+  /* Specificity must beat the generic .tr-chart-toolbar .val rule below
+     (equal specificity + later source order would otherwise win). */
+  .tr-chart-toolbar .tr-cr-ohlc .val { color:rgba(255,255,255,0.95); } /* brightened values */
   .tr-chart-toolbar .val {
     color:rgba(255,255,255,0.85);margin-left:3px;
   }
@@ -241,6 +262,30 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const footprintPair = selectedPairSymbol.split("/")[0] ?? "BTC";
     const footprintData = useFootprint(indicatorConfig.footprint ?? false, timeframe, footprintPair);
 
+    // Persistent day direction (open→now), from the same source as the hero
+    // price color (usePairChange → dayDirection). Drives the candle price-LINE +
+    // right-axis last-value label color so the chart's last-price reads the DAY,
+    // not the last tick. Hold the last known direction across transient null
+    // windows (missing open / disconnect) and reset on pair switch — mirrors the
+    // hero's lastDayDirRef pattern so the two never disagree.
+    const dayChange = usePairChange(selectedPairId ?? "");
+    const lastDayDirRef = useRef<"up" | "down" | "flat">("flat");
+    const lastPairForDirRef = useRef<string | null>(selectedPairId);
+    if (lastPairForDirRef.current !== selectedPairId) {
+        lastPairForDirRef.current = selectedPairId;
+        lastDayDirRef.current = "flat";
+    }
+    const dayDir = dayChange === null ? lastDayDirRef.current : dayDirection(dayChange);
+    lastDayDirRef.current = dayDir;
+
+    // Repaint only the price line + its axis label when the DAY direction flips
+    // (not per tick). Candle bodies keep their own per-candle up/down coloring.
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series) return;
+        series.applyOptions({ priceLineColor: priceLineColorForDay(dayDir) });
+    }, [dayDir]);
+
     // Create chart instance
     useEffect(() => {
         if (!containerRef.current) return;
@@ -262,14 +307,26 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 borderColor: "#0a0a0a",
                 timeVisible: true,
                 secondsVisible: false,
-                tickMarkFormatter: (time: number) => {
+                // Honor the lib's tick-type classification instead of inferring
+                // date-vs-time from h===0/m===0. With TZ_OFFSET applied to candle
+                // times, a daily tick is no longer at UTC-midnight, so the old
+                // h===0 test mislabeled day ticks as bare times (the "...Jun 7
+                // then 11PM" inconsistency on 1d, #9). tickMarkType is set by the
+                // lib's spacing logic and is offset-agnostic: day-level ticks
+                // (year/month/day boundaries) render as a date, intraday ticks as
+                // a time — so the axis reads uniformly across 1h and 1d.
+                tickMarkFormatter: (time: number, tickMarkType: TickMarkType) => {
                     const d = new Date(time * 1000);
-                    const h = d.getUTCHours();
-                    const m = d.getUTCMinutes();
-                    if (h === 0 && m === 0) {
+                    if (
+                        tickMarkType === TickMarkType.Year ||
+                        tickMarkType === TickMarkType.Month ||
+                        tickMarkType === TickMarkType.DayOfMonth
+                    ) {
                         const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
                         return `${mo[d.getUTCMonth()]} ${d.getUTCDate()}`;
                     }
+                    const h = d.getUTCHours();
+                    const m = d.getUTCMinutes();
                     const ampm = h >= 12 ? "PM" : "AM";
                     const h12 = h % 12 || 12;
                     return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, "0")}`;
@@ -288,6 +345,10 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             borderDownColor: "#ff3b3b",
             wickUpColor: "#00ff41",
             wickDownColor: "#ff3b3b",
+            // Initial price-line color; the dayDir effect repaints it as the
+            // day direction resolves/flips. lastDayDirRef holds the current
+            // direction without making this once-only effect depend on it.
+            priceLineColor: priceLineColorForDay(lastDayDirRef.current),
         });
 
         chartRef.current = chart;

@@ -874,23 +874,24 @@ export function OrderBookPanel({
       </div>
       <div className="tr-ob-col tr-ob-depth">
         <div className="tr-ob-depth-cap">DEPTH IMBALANCE</div>
-        {/* Split bar ties bid vs ask into one surface: cyan share | amber share,
-            with a neutral 50% center seam. Connects the two % numbers (#5),
-            sentiment palette decoupled from the ladder green/red (#6). */}
+        {/* Split bar ties bid vs ask into one surface: green share | red share,
+            with a neutral 50% center seam. Connects the two % numbers (#5).
+            Palette routed through --ob-bid/--ob-ask (now green/red — PR #41's
+            cyan/amber was reverted to the single terminal scheme). */}
         <div className="tr-ob-splitbar">
-          <div className="seg" style={{ width: `${bidPct}%`, background: "var(--ob-bid, #22d3ee)" }} />
-          <div className="seg" style={{ width: `${askPct}%`, background: "var(--ob-ask, #fbbf24)" }} />
+          <div className="seg" style={{ width: `${bidPct}%`, background: "var(--ob-bid, #00ff41)" }} />
+          <div className="seg" style={{ width: `${askPct}%`, background: "var(--ob-ask, #ff3b3b)" }} />
           <div className="seam" />
         </div>
         <div className="tr-ob-depth-nums">
           <div className="tr-ob-depth-row">
-            <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #22d3ee)" }}>
+            <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #00ff41)" }}>
               {bidPct.toFixed(0)}%
             </span>
             <span className="tr-ob-depth-side">BID</span>
           </div>
           <div className="tr-ob-depth-row">
-            <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #fbbf24)" }}>
+            <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #ff3b3b)" }}>
               {askPct.toFixed(0)}%
             </span>
             <span className="tr-ob-depth-side">ASK</span>
