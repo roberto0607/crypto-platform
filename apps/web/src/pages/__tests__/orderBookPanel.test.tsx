@@ -90,6 +90,20 @@ describe("prepareBook", () => {
     expect(oneSided.asks).toEqual([]);
     expect(oneSided.bidPct).toBe(0);
   });
+
+  it("renders a tight spread as a nonzero spreadPct (no '0.000' underflow)", () => {
+    // $0.10 spread on a ~$63k book = 0.00016% → must not round to a broken zero.
+    const book = makeBook([[63000.1, 1]], [[63000, 1]]);
+    const p = prepareBook(book);
+    expect(p.spread).toBe("0.10");
+    expect(parseFloat(p.spreadPct)).toBeGreaterThan(0);
+    expect(p.spreadPct).not.toBe("0.000");
+    expect(p.spreadPct).not.toBe("0.0000");
+  });
+
+  it("keeps spreadPct a genuine zero when there is no book", () => {
+    expect(prepareBook({ asks: [], bids: [] }).spreadPct).toBe("0.0000");
+  });
 });
 
 describe("OrderBookPanel", () => {

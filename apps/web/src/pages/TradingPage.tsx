@@ -696,7 +696,7 @@ export function prepareBook(
   if (!liveBook || liveBook.asks.length === 0 || liveBook.bids.length === 0) {
     return {
       asks: [], bids: [],
-      spread: "0.00", spreadPct: "0.000",
+      spread: "0.00", spreadPct: "0.0000",
       bidPct: 0, askPct: 0, maxVisibleQty: 0,
     };
   }
@@ -718,7 +718,10 @@ export function prepareBook(
   const bestBidPrice = parseFloat(rawBids[0]?.price ?? "0");
   const spreadVal = bestAskPrice - bestBidPrice;
   const spread = spreadVal.toFixed(2);
-  const spreadPct = bestBidPrice > 0 ? ((spreadVal / bestBidPrice) * 100).toFixed(3) : "0.000";
+  // toFixed(4): a tight spread (e.g. $0.10 on $63k = 0.00016%) underflows 3
+  // decimals and reads as a broken "0.000". 4 decimals shows "0.0002%" — a
+  // real small number. "0.0000" remains a genuine zero when there's no book.
+  const spreadPct = bestBidPrice > 0 ? ((spreadVal / bestBidPrice) * 100).toFixed(4) : "0.0000";
 
   // Cap to the maxLevels nearest the spread.
   // asks: the lowest = the head of the ascending array; render highest-at-top → reverse.
@@ -1155,13 +1158,16 @@ export default function TradingPage() {
                   const bid = snapshot?.bid ? parseFloat(snapshot.bid) : 0;
                   // Collapse to em-dash only when bid/ask are genuinely absent
                   // or non-positive. A zero spread (bid === ask) is a real
-                  // market state and still renders "$0.00 (0.000%)".
+                  // market state and still renders "$0.00 (0.0000%)".
                   if (!(ask > 0) || !(bid > 0)) return "\u2014";
                   const spreadDollars = ask - bid;
                   const midPrice = (ask + bid) / 2;
                   if (midPrice === 0) return "\u2014";
+                  // toFixed(4), matching the order-book ladder divider: a tight
+                  // spread (e.g. $0.10 on $62k = 0.00016%) underflows 3 decimals
+                  // and reads as a broken "0.000". 4 decimals shows "0.0002%".
                   const spreadPct = (spreadDollars / midPrice) * 100;
-                  return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(3)}%)`;
+                  return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(4)}%)`;
                 })()}
               </div>
               <div className="tr-pm-lbl">SPREAD</div>
