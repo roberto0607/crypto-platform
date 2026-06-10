@@ -62,6 +62,32 @@ function priceLineColorForDay(dir: "up" | "down" | "flat"): string {
     return dir === "up" ? "#00ff41" : dir === "down" ? "#ff3b3b" : "#9ca3af";
 }
 
+// Number of recent bars the default view (and the scroll-to-realtime snap)
+// shows. Keeps the auto-fit price axis on recent price action rather than the
+// full loaded history (see PR #45).
+const LIVE_VIEW_BARS = 120;
+
+/**
+ * Whether the time scale is parked at the live (right) edge.
+ *
+ * `range.to` is a fractional bar index; the latest bar sits at index
+ * `barCount - 1`. We're at the live edge when that latest bar is near the
+ * right boundary — i.e. NOT scrolled left into history (`to` well below the
+ * last bar) and NOT over-scrolled right into blank future (`to` well past it).
+ * The tolerance band absorbs the recent-window right padding from the #45
+ * auto-fit and the transient off-by-one while a live candle is forming.
+ *
+ * Exported for unit testing — drives the scroll-to-realtime button's visibility.
+ */
+export function isAtLiveEdge(
+    range: { from: number; to: number } | null,
+    barCount: number,
+): boolean {
+    if (!range || barCount <= 0) return true;
+    const gap = range.to - (barCount - 1);
+    return gap >= -1.5 && gap <= 8;
+}
+
 // Lightweight Charts treats timestamps as UTC — offset to local timezone
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 
@@ -166,6 +192,25 @@ const CONTEXT_BAR_CSS = `
     font-size:11px;color:rgba(255,255,255,0.3);
   }
   .tr-cr-indicators { display:flex;align-items:center;flex-shrink:0; }
+  /* Scroll-to-realtime button — floats bottom-right of the chart pane, just
+     above the x-axis labels and left of the price axis. */
+  .tr-scroll-live {
+    position:absolute; bottom:28px; right:64px; z-index:11;
+    width:30px; height:30px; padding:0;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:50%;
+    background:rgba(8,12,18,0.85);
+    border:1px solid rgba(255,255,255,0.18);
+    color:rgba(255,255,255,0.7);
+    font-family:'Space Mono',monospace; font-size:15px; line-height:1;
+    cursor:pointer;
+    transition:color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  }
+  .tr-scroll-live:hover {
+    color:var(--g, #00ff41);
+    border-color:var(--g, #00ff41);
+    background:rgba(0,255,65,0.08);
+  }
 `;
 
 interface CandlestickChartProps {
@@ -183,6 +228,10 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const priceLinesRef = useRef<IPriceLine[]>([]);
+    // Pinned live-price line — kept SEPARATE from priceLinesRef (which
+    // clearPriceLines() wipes on every overlay re-render). Shows the current
+    // price as a dashed reference line when scrolled off the live edge.
+    const livePriceLineRef = useRef<IPriceLine | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
     const fetchingOlderRef = useRef(false);
@@ -211,6 +260,10 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const [pdhProximity, setPdhProximity] = useState<"pdh" | "pdl" | null>(null);
     const [livePrice, setLivePrice] = useState(0);
     const currentPriceRef = useRef(0);
+    // True when the time scale is parked at the live edge. Drives the
+    // scroll-to-realtime button (hidden at the edge) and the pinned live line
+    // (shown only off-edge). Starts true — #45 opens on the recent window.
+    const [atLiveEdge, setAtLiveEdge] = useState(true);
     const overlayRef = useRef<HTMLDivElement>(null);
     const pdhLabelRef = useRef<HTMLDivElement>(null);
     const pdlLabelRef = useRef<HTMLDivElement>(null);
@@ -288,6 +341,41 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
         if (!series) return;
         series.applyOptions({ priceLineColor: priceLineColorForDay(dayDir) });
     }, [dayDir]);
+
+    // Pinned live-price line: a dashed, day-colored reference at the CURRENT
+    // price, shown ONLY when scrolled off the live edge. At the live edge the
+    // series' own last-value line already marks current price, so we don't draw
+    // a second one (avoids a doubled axis label). This effect owns create /
+    // remove / recolor; per-tick price updates happen in the tick handler.
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series) return;
+
+        if (atLiveEdge) {
+            if (livePriceLineRef.current) {
+                series.removePriceLine(livePriceLineRef.current);
+                livePriceLineRef.current = null;
+            }
+            return;
+        }
+
+        const price = currentPriceRef.current || livePrice;
+        if (!(price > 0)) return;
+
+        const color = priceLineColorForDay(dayDir);
+        if (livePriceLineRef.current) {
+            livePriceLineRef.current.applyOptions({ price, color });
+        } else {
+            livePriceLineRef.current = series.createPriceLine({
+                price,
+                color,
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: "LIVE",
+            });
+        }
+    }, [atLiveEdge, dayDir, livePrice]);
 
     // Create chart instance
     useEffect(() => {
@@ -442,6 +530,27 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             seriesRef.current = null;
             priceLinesRef.current = [];
         };
+    }, []);
+
+    // Snap the viewport back to the live edge — the recent-bar window, matching
+    // the default (first-load) view exactly so the at-edge detection reliably
+    // flips back and the scroll-to-realtime button hides. (We intentionally do
+    // NOT use timeScale().scrollToRealTime(): it restores a rightOffset-relative
+    // position that, after scroll-back, lands a few bars short of the data edge
+    // and inconsistent with the #45 default view, so the button never hides.)
+    const scrollToLive = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) return;
+        const barCount = series.data().length;
+        if (barCount > LIVE_VIEW_BARS) {
+            chart.timeScale().setVisibleLogicalRange({
+                from: barCount - LIVE_VIEW_BARS,
+                to: barCount + 2,
+            });
+        } else {
+            chart.timeScale().fitContent();
+        }
     }, []);
 
     // Remove all price lines
@@ -658,10 +767,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             const fitKey = `${selectedPairId}:${timeframe}`;
             if (lastFitKey.current !== fitKey) {
                 const barCount = lwData.length;
-                const WINDOW = 120;
-                if (barCount > WINDOW) {
+                if (barCount > LIVE_VIEW_BARS) {
                     chartRef.current?.timeScale().setVisibleLogicalRange({
-                        from: barCount - WINDOW,
+                        from: barCount - LIVE_VIEW_BARS,
                         to: barCount + 2, // right padding for the live edge
                     });
                 } else {
@@ -736,6 +844,27 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 .finally(() => {
                     fetchingOlderRef.current = false;
                 });
+        };
+
+        chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+        return () => {
+            chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+        };
+    }, [selectedPairId, timeframe]);
+
+    // Track whether the view is parked at the live edge → drives the
+    // scroll-to-realtime button + pinned live line. Read-only on the time
+    // scale (one more range subscription; doesn't touch the scroll-back loader
+    // or the #45 fit logic).
+    useEffect(() => {
+        const chart = chartRef.current;
+        if (!chart) return;
+
+        const handler = () => {
+            const range = chart.timeScale().getVisibleLogicalRange();
+            const barCount =
+                rawCandlesRef.current.length + (liveCandleRef.current ? 1 : 0);
+            setAtLiveEdge(isAtLiveEdge(range, barCount));
         };
 
         chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
@@ -976,6 +1105,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
             // Update PDH/PDL proximity, zone fills, and label data on each tick
             currentPriceRef.current = price;
+            // Keep the pinned live line (if shown — i.e. scrolled into history)
+            // tracking the current price.
+            livePriceLineRef.current?.applyOptions({ price });
             liquidityPrimitiveRef.current?.setCurrentPrice(price);
             const levels = keyLevelsRef.current;
             if (levels && indicatorConfig.keyLevels) {
@@ -1656,6 +1788,21 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                         </>
                     );
                 })()}
+
+                {/* Scroll-to-realtime button — appears only when scrolled off
+                    the live edge (its presence IS the "viewing history"
+                    indicator). Clears the x-axis labels and the right price
+                    axis. */}
+                {!atLiveEdge && (
+                    <button
+                        type="button"
+                        className="tr-scroll-live"
+                        aria-label="Scroll to latest price"
+                        onClick={scrollToLive}
+                    >
+                        <span aria-hidden="true">»</span>
+                    </button>
+                )}
             </div>
 
             {/* Order Blocks — DOM overlay */}
