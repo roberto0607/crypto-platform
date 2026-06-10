@@ -187,7 +187,10 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
-    const hasLoadedOnce = useRef(false);
+    // The pair:timeframe the viewport was last fit to. Refit when this key
+    // changes (first load + every pair/timeframe switch); leave the viewport
+    // alone when only indicators toggle (same key → indicator-driven refetch).
+    const lastFitKey = useRef<string | null>(null);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
@@ -335,6 +338,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             localization: { timeFormatter: formatDateTime12h },
             rightPriceScale: {
                 borderColor: "#0a0a0a",
+                autoScale: true,
+                scaleMargins: { top: 0.1, bottom: 0.1 },
             },
         });
 
@@ -644,11 +649,25 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
             renderOverlays(candleRes.data.candles);
 
-            // Only fit on the very first load — later re-fetches (from indicator
-            // toggles etc.) must not yank the viewport.
-            if (!hasLoadedOnce.current) {
-                chartRef.current?.timeScale().fitContent();
-                hasLoadedOnce.current = true;
+            // Fit the viewport on first load and on every pair/timeframe switch,
+            // but NOT on indicator-toggle refetches (which carry the same key and
+            // must not yank the viewport). Show a recent window (~120 bars) rather
+            // than the entire loaded history, so the autoScale price axis fits
+            // recent price action instead of the full dataset's extent. Scroll-back
+            // lazy-loads older bars on the left edge (handler below).
+            const fitKey = `${selectedPairId}:${timeframe}`;
+            if (lastFitKey.current !== fitKey) {
+                const barCount = lwData.length;
+                const WINDOW = 120;
+                if (barCount > WINDOW) {
+                    chartRef.current?.timeScale().setVisibleLogicalRange({
+                        from: barCount - WINDOW,
+                        to: barCount + 2, // right padding for the live edge
+                    });
+                } else {
+                    chartRef.current?.timeScale().fitContent();
+                }
+                lastFitKey.current = fitKey;
             }
         } catch {
             // Non-fatal — chart shows empty
