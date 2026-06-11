@@ -416,6 +416,21 @@ const TRADE_CSS = `
   .tr-tt.active { color:var(--g);border-color:var(--border);background:var(--g06); }
   .tr-tt:not(.active):hover { color:#fff;background:var(--faint); }
 
+  /* LIMIT mode: pair LIMIT PRICE + AMOUNT on one 2-col row so selecting LIMIT
+     adds the price field WITHOUT adding vertical height (PR #48 follow-up). The
+     :has() keys off whether both fields are present: LIMIT → two .tr-field
+     children → 2-col grid; MARKET → only AMOUNT → no rule → full-width as before.
+     min-width:0 lets the grid items/inputs shrink into 160px columns (otherwise
+     input intrinsic min-width blows the grid out and clips the right column +
+     the USD unit). Scoped to tr-; the arena's lmv-pa-row has no rule so its
+     fields stack vertically exactly as today — shared component, layout-safe. */
+  .tr-pa-row:has(> .tr-field + .tr-field) {
+    display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start;
+  }
+  .tr-pa-row:has(> .tr-field + .tr-field) > .tr-field { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap input { min-width:0; }
+
   /* input fields */
   .tr-field { margin-top:3px; }
   .tr-field-lbl {
