@@ -68,6 +68,10 @@ export function useSSE() {
             ts: String(event.ts),
             source: "live",
           });
+          // Keep the order book in step with the live price. Throttled to one
+          // fetch per 500ms (leading + coalesced trailing) so a high tick rate
+          // doesn't storm the book endpoint.
+          useTradingStore.getState().refreshBookThrottled();
         }
         useAppStore.getState().setLastPriceTickAt(Date.now());
         // Live price lives in pairPricesStore, decoupled from `pairs` so a tick
