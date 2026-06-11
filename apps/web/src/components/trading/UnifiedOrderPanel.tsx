@@ -529,6 +529,12 @@ export function UnifiedOrderPanel({
                 </div>
             )}
 
+            {/* LIMIT PRICE + AMOUNT share one row. In LIMIT mode the tr-pa-row CSS
+                lays them out as two columns so the limit-price field adds no vertical
+                height; in MARKET mode only AMOUNT is present and it stays full-width.
+                Arena (lmv-pa-row) has no rule for this wrapper, so the fields stack
+                exactly as before there. */}
+            <div className={`${p}-pa-row`}>
             {/* ── LIMIT PRICE ── */}
             {orderType === "LIMIT" && (
                 <div className={`${p}-field`}>
@@ -572,6 +578,7 @@ export function UnifiedOrderPanel({
                     ≈ {baseQty.toFixed(4)} {baseSymbol}{leverage > 1 ? `  (${leverage}x = ${fmtUsd(effectiveUsd)} effective)` : ""}
                 </div>}
             </div>
+            </div>{/* /tr-pa-row */}
 
             {/* ── TAKE PROFIT ── */}
             <div className={`${p}-field`}>

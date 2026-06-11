@@ -366,7 +366,7 @@ const TRADE_CSS = `
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar { width:2px; }
   .tr-order-panel-activity .tr-tab-content::-webkit-scrollbar-thumb { background:var(--border); }
   .tr-order-panel-book {
-    flex:0 0 260px;max-height:260px;overflow-y:auto;
+    flex:0 0 200px;max-height:200px;overflow-y:auto;
     border-top:1px solid var(--border);
     padding-top:0;
   }
@@ -374,7 +374,7 @@ const TRADE_CSS = `
   /* shared UnifiedOrderPanel root (classPrefix "tr") — padding matches the
      arena's .lmv-order-section so both consumers of the component align */
   .tr-order-section {
-    padding:12px 16px;
+    padding:10px 16px;
   }
 
   .tr-op-section {
@@ -408,7 +408,7 @@ const TRADE_CSS = `
   .tr-st-sell:not(.active):hover { background:var(--red12);color:var(--red); }
 
   /* order type */
-  .tr-type-toggle { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px; }
+  .tr-type-toggle { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px; }
   .tr-tt {
     padding:5px;text-align:center;font-size:11px;letter-spacing:3px;
     color:var(--muted);border:1px solid var(--borderW);transition:all 0.15s;cursor:pointer;
@@ -416,11 +416,26 @@ const TRADE_CSS = `
   .tr-tt.active { color:var(--g);border-color:var(--border);background:var(--g06); }
   .tr-tt:not(.active):hover { color:#fff;background:var(--faint); }
 
+  /* LIMIT mode: pair LIMIT PRICE + AMOUNT on one 2-col row so selecting LIMIT
+     adds the price field WITHOUT adding vertical height (PR #48 follow-up). The
+     :has() keys off whether both fields are present: LIMIT → two .tr-field
+     children → 2-col grid; MARKET → only AMOUNT → no rule → full-width as before.
+     min-width:0 lets the grid items/inputs shrink into 160px columns (otherwise
+     input intrinsic min-width blows the grid out and clips the right column +
+     the USD unit). Scoped to tr-; the arena's lmv-pa-row has no rule so its
+     fields stack vertically exactly as today — shared component, layout-safe. */
+  .tr-pa-row:has(> .tr-field + .tr-field) {
+    display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start;
+  }
+  .tr-pa-row:has(> .tr-field + .tr-field) > .tr-field { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap input { min-width:0; }
+
   /* input fields */
-  .tr-field { margin-top:5px; }
+  .tr-field { margin-top:3px; }
   .tr-field-lbl {
     font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:2px;
-    text-transform:uppercase;margin-bottom:6px;display:block;
+    text-transform:uppercase;margin-bottom:4px;display:block;
   }
   .tr-field-wrap {
     display:flex;align-items:center;
@@ -432,7 +447,7 @@ const TRADE_CSS = `
   .tr-field-wrap input {
     flex:1;background:transparent;border:none;outline:none;
     font-family:var(--mono);font-size:13px;color:rgba(255,255,255,0.9);
-    padding:7px 10px;letter-spacing:1px;
+    padding:6px 10px;letter-spacing:1px;
   }
   .tr-field-wrap input::placeholder { color:rgba(255,255,255,0.15); }
   .tr-field-unit {
@@ -450,17 +465,17 @@ const TRADE_CSS = `
   .tr-pct.active { color:var(--g);border-color:var(--g);background:var(--g06); }
 
   /* order summary */
-  .tr-summary { margin-top:6px;border-top:1px solid var(--borderW);padding-top:6px; }
+  .tr-summary { margin-top:4px;border-top:1px solid var(--borderW);padding-top:4px; }
   .tr-sum-row {
     display:flex;justify-content:space-between;
-    font-size:11px;padding:3px 0;
+    font-size:11px;padding:2px 0;
   }
   .tr-sum-lbl { color:rgba(255,255,255,0.55);letter-spacing:1px; }
   .tr-sum-val { color:rgba(255,255,255,0.9); }
 
   /* place order button */
   .tr-place-btn {
-    width:100%;padding:8px;border:none;margin-top:6px;
+    width:100%;padding:7px;border:none;margin-top:4px;
     font-family:var(--mono);font-size:12px;font-weight:700;
     letter-spacing:4px;text-transform:uppercase;cursor:pointer;
     position:relative;overflow:hidden;transition:all 0.2s;
