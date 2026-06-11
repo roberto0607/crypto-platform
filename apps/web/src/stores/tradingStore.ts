@@ -19,6 +19,18 @@ import {
 } from "@/api/endpoints/trading";
 import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
+import { createThrottle } from "@/lib/throttle";
+
+// Order-book refreshes are driven by live price ticks (see useSSE.onPriceTick).
+// Ticks arrive many times per second; this throttle gates them to at most one
+// fetch every 500ms — leading edge fires immediately, with a single coalesced
+// trailing fetch at the window boundary. A separate slow staleness floor in
+// OrderBookPanel (TradingPage.tsx) catches the case where the tick feed dies.
+const BOOK_REFRESH_THROTTLE_MS = 500;
+
+const bookRefreshThrottle = createThrottle(() => {
+  void useTradingStore.getState().refreshBook();
+}, BOOK_REFRESH_THROTTLE_MS);
 
 export interface RecentTrade {
   tradeId: UUID;
@@ -128,6 +140,7 @@ interface TradingState {
   setQty: (qty: string) => void;
   setLimitPrice: (price: string) => void;
   refreshBook: () => Promise<void>;
+  refreshBookThrottled: () => void;
   refreshSnapshot: () => Promise<void>;
   refreshOpenOrders: () => Promise<void>;
   submitOrder: () => Promise<{ order: Order; fills: Fill[] }>;
@@ -195,6 +208,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       qty: "",
       limitPrice: "",
     });
+    // Drop any pending trailing book fetch from the previous pair so it can't
+    // land after the switch (refreshBook also guards on selectedPairId, but
+    // clearing the timer avoids a wasted fetch and resets the leading edge).
+    bookRefreshThrottle.cancel();
     // Refresh all data for the new pair
     const state = get();
     state.refreshBook();
@@ -235,6 +252,12 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         });
       }
     }
+  },
+
+  // Tick-driven book refresh, throttled to BOOK_REFRESH_THROTTLE_MS. Called
+  // from onPriceTick so the book tracks the live price without a fetch per tick.
+  refreshBookThrottled: () => {
+    bookRefreshThrottle();
   },
 
   refreshSnapshot: async () => {

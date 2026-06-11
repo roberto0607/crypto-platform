@@ -689,6 +689,13 @@ export interface PreparedBook {
  *   legible even when a far (clipped) level is huge.
  * - Empty / one-sided book → empty arrays and zeroed metrics (never throws).
  */
+// Staleness floor for the order book. The book is normally refreshed by live
+// price ticks (useSSE.onPriceTick → refreshBookThrottled, ~500ms). This slow
+// interval is the fallback for a silent tick feed: if ticks stop entirely, the
+// book still refreshes at least this often. Kept slow so it doesn't double up
+// with the tick-driven throttle.
+const STALENESS_FLOOR_MS = 5_000;
+
 export function prepareBook(
   liveBook: OrderBookType | null,
   maxLevels = 8,
@@ -803,6 +810,20 @@ export function OrderBookPanel({
   const ladderRef = useRef<HTMLDivElement>(null);
   const spreadRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
+
+  // Staleness floor: while the book is mounted for a selected pair, refresh at
+  // least every STALENESS_FLOOR_MS in case the price-tick feed (the primary
+  // driver, via refreshBookThrottled) goes silent. Normal updates come from
+  // ticks, not this timer.
+  const selectedPairId = useTradingStore((s) => s.selectedPairId);
+  const refreshBook = useTradingStore((s) => s.refreshBook);
+  useEffect(() => {
+    if (!selectedPairId) return;
+    const id = setInterval(() => {
+      refreshBook();
+    }, STALENESS_FLOOR_MS);
+    return () => clearInterval(id);
+  }, [selectedPairId, refreshBook]);
 
   // Stable: reads live DOM each call, delegates the offset math to the pure
   // helper (which returns null when already centered → no scroll thrash).
