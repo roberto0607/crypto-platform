@@ -390,8 +390,8 @@ const TRADE_CSS = `
   /* side toggle BUY/SELL */
   .tr-side-toggle { display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--borderW); }
   .tr-st-buy,.tr-st-sell {
-    padding:9px;text-align:center;font-family:var(--bebas);
-    font-size:18px;letter-spacing:3px;transition:all 0.15s;
+    padding:7px;text-align:center;font-family:var(--bebas);
+    font-size:16px;letter-spacing:3px;transition:all 0.15s;
     border:2px solid transparent;cursor:pointer;
   }
   .tr-st-buy { color:rgba(0,255,65,0.3); }
@@ -410,7 +410,7 @@ const TRADE_CSS = `
   /* order type */
   .tr-type-toggle { display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px; }
   .tr-tt {
-    padding:5px;text-align:center;font-size:11px;letter-spacing:3px;
+    padding:4px;text-align:center;font-size:11px;letter-spacing:3px;
     color:var(--muted);border:1px solid var(--borderW);transition:all 0.15s;cursor:pointer;
   }
   .tr-tt.active { color:var(--g);border-color:var(--border);background:var(--g06); }
@@ -465,13 +465,23 @@ const TRADE_CSS = `
   .tr-pct.active { color:var(--g);border-color:var(--g);background:var(--g06); }
 
   /* order summary */
-  .tr-summary { margin-top:4px;border-top:1px solid var(--borderW);padding-top:4px; }
-  .tr-sum-row {
-    display:flex;justify-content:space-between;
-    font-size:11px;padding:2px 0;
+  /* Summary is glance-only reference — lay the 4 rows as a 2×2 grid (two
+     values per row) so it occupies HALF the vertical height. This is the main
+     lever that keeps the four risk fields + helpers + OPEN unoccluded by the
+     pinned footer in the worst-case filled state (PR #49). Scoped to tr-: the
+     arena's .lmv-summary is a separate rule, untouched → arena stays 4-row.
+     font-size 10 (from 11) buys the horizontal room two values/row needs so
+     6-figure position sizes don't collide with their label. */
+  .tr-summary {
+    margin-top:4px;border-top:1px solid var(--borderW);padding-top:4px;
+    display:grid;grid-template-columns:1fr 1fr;column-gap:14px;row-gap:0;
   }
-  .tr-sum-lbl { color:rgba(255,255,255,0.55);letter-spacing:1px; }
-  .tr-sum-val { color:rgba(255,255,255,0.9); }
+  .tr-sum-row {
+    display:flex;justify-content:space-between;gap:6px;
+    font-size:10px;padding:2px 0;min-width:0;
+  }
+  .tr-sum-lbl { color:rgba(255,255,255,0.55);letter-spacing:1px;white-space:nowrap; }
+  .tr-sum-val { color:rgba(255,255,255,0.9);white-space:nowrap; }
 
   /* place order button */
   .tr-place-btn {
