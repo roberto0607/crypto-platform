@@ -423,13 +423,23 @@ const TRADE_CSS = `
      min-width:0 lets the grid items/inputs shrink into 160px columns (otherwise
      input intrinsic min-width blows the grid out and clips the right column +
      the USD unit). Scoped to tr-; the arena's lmv-pa-row has no rule so its
-     fields stack vertically exactly as today — shared component, layout-safe. */
-  .tr-pa-row:has(> .tr-field + .tr-field) {
+     fields stack vertically exactly as today — shared component, layout-safe.
+
+     tr-ts-row reuses the IDENTICAL rule for TAKE PROFIT|STOP LOSS (PR #50): pairing
+     those two stacked fields into one 2-col row reclaims a field's worth of height so
+     TRAILING STOP clears the pinned footer in the worst-case filled state. align-items:
+     start keeps both inputs top-aligned when only one column's Est. profit/loss helper
+     shows. Arena has no lmv-ts-row rule, so lmv keeps its vertical stack. */
+  .tr-pa-row:has(> .tr-field + .tr-field),
+  .tr-ts-row:has(> .tr-field + .tr-field) {
     display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start;
   }
-  .tr-pa-row:has(> .tr-field + .tr-field) > .tr-field { min-width:0; }
-  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap { min-width:0; }
-  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap input { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) > .tr-field,
+  .tr-ts-row:has(> .tr-field + .tr-field) > .tr-field { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap,
+  .tr-ts-row:has(> .tr-field + .tr-field) .tr-field-wrap { min-width:0; }
+  .tr-pa-row:has(> .tr-field + .tr-field) .tr-field-wrap input,
+  .tr-ts-row:has(> .tr-field + .tr-field) .tr-field-wrap input { min-width:0; }
 
   /* input fields */
   .tr-field { margin-top:3px; }

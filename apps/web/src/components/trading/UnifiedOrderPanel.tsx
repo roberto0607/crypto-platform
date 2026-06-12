@@ -580,6 +580,15 @@ export function UnifiedOrderPanel({
             </div>
             </div>{/* /tr-pa-row */}
 
+            {/* TAKE PROFIT + STOP LOSS share one 2-col row (same :has() mechanism as
+                the LIMIT PRICE|AMOUNT tr-pa-row). Pairing the two stacked fields into
+                one row reclaims a full field's vertical height (~77px) — exactly what
+                TRAILING STOP needs to stay above the pinned footer in the worst-case
+                filled state (PR #50). Each column is self-contained (label + input +
+                its OWN helper), and the grid's align-items:start keeps both inputs
+                top-aligned even when only one column shows a helper. Arena (lmv-ts-row)
+                has no rule, so the two fields stack vertically there exactly as before. */}
+            <div className={`${p}-ts-row`}>
             {/* ── TAKE PROFIT ── */}
             <div className={`${p}-field`}>
                 <label>TAKE PROFIT</label>
@@ -601,6 +610,7 @@ export function UnifiedOrderPanel({
                 {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
                 {!slError && slNum > 0 && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
             </div>
+            </div>{/* /tr-ts-row */}
 
             {/* ── TRAILING STOP ── */}
             <div className={`${p}-field`}>
