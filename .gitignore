@@ -28,3 +28,6 @@ apps/api/load/results/
 # Playwright MCP session artifacts
 .playwright-mcp/
 toolbar-*.png
+
+# Verification screenshots (PR visual proofs — not source)
+pr*.png
