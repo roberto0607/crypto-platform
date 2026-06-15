@@ -640,11 +640,11 @@ export function UnifiedOrderPanel({
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
-                    <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : "--"}</span>
+                    <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>FEE ({pair.taker_fee_bps} bps)</span>
-                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : lastOrderFee ? fmtUsd(lastOrderFee) : "--"}</span>
+                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : lastOrderFee ? fmtUsd(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>

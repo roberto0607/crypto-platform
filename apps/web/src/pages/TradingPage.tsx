@@ -510,6 +510,10 @@ const TRADE_CSS = `
   /* Summary labels join the tier-3 recede (0.55 → 0.40, #53); values stay 0.9. */
   .tr-sum-lbl { color:rgba(255,255,255,0.4);letter-spacing:1px;white-space:nowrap; }
   .tr-sum-val { color:rgba(255,255,255,0.9);white-space:nowrap; }
+  /* Empty POSITION SIZE / FEE ("--" before an amount is entered) dims to match the
+     position card's already-muted TP/SL dashes (0.2) so it reads as intentionally
+     empty, not missing data. Same value used for .lmv-sum-empty in the arena. */
+  .tr-sum-empty { color:rgba(255,255,255,0.2); }
 
   /* place order button */
   .tr-place-btn {
