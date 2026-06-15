@@ -61,6 +61,12 @@ import { PressureCell } from "./PressureCell";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
+// VWAP line + legend color. Brightened lavender: VWAP is the key intraday
+// benchmark, so it must read clearly over candle bodies — but it's
+// non-directional, so deliberately NOT green/red, and distinct from the EMA
+// scheme (cyan/amber/dim-white) so the lines never collide.
+const VWAP_COLOR = "#c4b5fd";
+
 // Price-line + last-value-label color by DAY direction (matches the hero):
 // green when the day is up, red when down, neutral grey when flat/unknown.
 function priceLineColorForDay(dir: "up" | "down" | "flat"): string {
@@ -287,6 +293,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const lastAlertedCrossTimeRef = useRef<number>(0);
     const lastAlertKeyRef = useRef<string | null>(null);
     const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    // VWAP legend chip: latest VWAP value (state for render, ref for the
+    // stale-free per-tick bias recompute) + above/below bias vs latest close.
+    const [vwapValue, setVwapValue] = useState<number | null>(null);
+    const vwapValueRef = useRef<number | null>(null);
+    const [vwapBias, setVwapBias] = useState<"above" | "below" | null>(null);
     const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -758,14 +769,28 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 else addToast("warning", `Death cross · ${tf}`);
             }
 
-            // VWAP
+            // VWAP — brightened lavender, 2px, dashed (reference, not price).
+            // We render our own legend chip, so keep the axis label off.
             if (indicatorConfig.vwap) {
                 if (!vwapSeriesRef.current) {
-                    vwapSeriesRef.current = chart.addSeries(LineSeries, { color: "#a855f7", lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
+                    vwapSeriesRef.current = chart.addSeries(LineSeries, { color: VWAP_COLOR, lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
                 }
-                vwapSeriesRef.current.setData(toLineData(computeVWAP(indCandles)));
+                const vwapPts = computeVWAP(indCandles);
+                vwapSeriesRef.current.setData(toLineData(vwapPts));
+                // Latest VWAP feeds the legend chip. Keep it in a ref too so the
+                // per-tick bias recompute can read it without a stale closure.
+                const lastVwap = vwapPts.length > 0 ? vwapPts[vwapPts.length - 1]!.value : null;
+                vwapValueRef.current = lastVwap;
+                setVwapValue(lastVwap);
+                // Seed bias from the latest close (raw floats — never the rounded
+                // display strings, which would manufacture ties at the boundary).
+                const close = currentPriceRef.current || (candles.length > 0 ? parseFloat(candles[candles.length - 1]!.close) : 0);
+                setVwapBias(lastVwap == null || close <= 0 ? null : close >= lastVwap ? "above" : "below");
             } else if (vwapSeriesRef.current) {
                 chart.removeSeries(vwapSeriesRef.current); vwapSeriesRef.current = null;
+                vwapValueRef.current = null;
+                setVwapValue(null);
+                setVwapBias(null);
             }
 
             // Bollinger Bands
@@ -1183,6 +1208,16 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             // tracking the current price.
             livePriceLineRef.current?.applyOptions({ price });
             liquidityPrimitiveRef.current?.setCurrentPrice(price);
+
+            // VWAP legend bias must stay live even when keyLevels is off (the
+            // keyLevels block below is the only other place that touches price
+            // state). Compare raw floats; functional update no-ops unless the
+            // side actually flips, so a tick that doesn't cross VWAP is free.
+            if (indicatorConfig.vwap && vwapValueRef.current != null) {
+                const bias = price >= vwapValueRef.current ? "above" : "below";
+                setVwapBias((prev) => (prev === bias ? prev : bias));
+            }
+
             const levels = keyLevelsRef.current;
             if (levels && indicatorConfig.keyLevels) {
                 setLivePrice(price);
@@ -1204,7 +1239,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
         window.addEventListener("sse:price.tick", handlePriceTick);
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
-    }, [selectedPairId, timeframe, indicatorConfig.keyLevels]);
+    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap]);
 
     // Live update: candle.closed → append completed candle
     useEffect(() => {
@@ -1654,6 +1689,34 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                         </span>
                     </div>
                 )}
+
+                {/* ── VWAP legend chip ──
+                    Top-left; stacks below the proximity badge when both show.
+                    Label in VWAP lavender; ▲/▼ + value tinted by bias (green on
+                    close ≥ VWAP per the tie rule, red below). Value matches the
+                    O/H/L/C strip's tabular-nums terminal style. */}
+                {indicatorConfig.vwap && vwapValue != null && (() => {
+                    const below = vwapBias === "below";
+                    const tint = below ? "#ff3b3b" : "#00ff41";
+                    return (
+                        <div style={{
+                            position: "absolute", top: pdhProximity ? 48 : 12, left: 12, zIndex: 10,
+                            background: "rgba(8,12,18,0.85)",
+                            border: "1px solid rgba(196,181,253,0.35)",
+                            borderLeft: `3px solid ${VWAP_COLOR}`,
+                            borderRadius: 4,
+                            padding: "5px 11px 5px 9px",
+                            display: "flex", alignItems: "baseline", gap: 7,
+                            fontFamily: "monospace", fontSize: 11,
+                            fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+                        }}>
+                            <span style={{ color: VWAP_COLOR, letterSpacing: 1.5, fontWeight: 600 }}>VWAP</span>
+                            <span style={{ color: tint, fontWeight: 600 }}>
+                                {below ? "▼" : "▲"} {vwapValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
+                    );
+                })()}
 
                 {/* ── Liquidity Zones: gradient bands + pill labels + badge ── */}
                 {indicatorConfig.liquidityZones && liquidityZonesRef.current.length > 0 && (() => {
