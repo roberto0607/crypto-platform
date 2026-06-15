@@ -447,9 +447,20 @@ const TRADE_CSS = `
 
   /* input fields */
   .tr-field { margin-top:3px; }
-  .tr-field-lbl {
-    font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:2px;
-    text-transform:uppercase;margin-bottom:4px;display:block;
+  /* Type hierarchy (PR #53): the field labels are bare <label> elements (no
+     class — the old .tr-field-lbl rule was dead, matching nothing) that
+     inherited 16px/0.88 from the panel root, making them the LOUDEST text on
+     the panel — the "flat wall". Style them here as the small, quiet,
+     wide-tracked uppercase terminal labels the dead rule always intended, so
+     the eye is led to the input VALUES (0.9) instead. tr-scoped descendant
+     selector: hits only the trade panel's .tr-field labels; the arena's
+     .lmv-field labels are a separate prefix and stay untouched. AMOUNT's
+     quick-amount buttons (25/50/75/MAX) live in the same <label> but carry
+     their own inline styles, which override this rule → they keep their look.
+     Opacity-only on the unit (0.35) and summary label (0.40) below. */
+  .tr-field > label {
+    font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:2px;
+    text-transform:uppercase;
   }
   .tr-field-wrap {
     display:flex;align-items:center;
@@ -465,7 +476,9 @@ const TRADE_CSS = `
   }
   .tr-field-wrap input::placeholder { color:rgba(255,255,255,0.15); }
   .tr-field-unit {
-    font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:2px;
+    /* Quietest text on the panel (#53): the unit is pure noise once the field
+       is known → recede furthest, to 0.35. Tracking stays 2px. */
+    font-size:10px;color:rgba(255,255,255,0.35);letter-spacing:2px;
     padding:0 12px;border-left:1px solid var(--borderW);flex-shrink:0;
   }
 
@@ -494,7 +507,8 @@ const TRADE_CSS = `
     display:flex;justify-content:space-between;gap:6px;
     font-size:10px;padding:2px 0;min-width:0;
   }
-  .tr-sum-lbl { color:rgba(255,255,255,0.55);letter-spacing:1px;white-space:nowrap; }
+  /* Summary labels join the tier-3 recede (0.55 → 0.40, #53); values stay 0.9. */
+  .tr-sum-lbl { color:rgba(255,255,255,0.4);letter-spacing:1px;white-space:nowrap; }
   .tr-sum-val { color:rgba(255,255,255,0.9);white-space:nowrap; }
 
   /* place order button */
