@@ -4,6 +4,9 @@ import {
     CandlestickSeries,
     LineSeries,
     LineStyle,
+    createSeriesMarkers,
+    type ISeriesMarkersPluginApi,
+    type SeriesMarker,
     type IChartApi,
     type ISeriesApi,
     type CandlestickData,
@@ -26,10 +29,12 @@ import {
     computeMACD,
     computeATR,
     computeCandleDelta,
+    detectEMACrosses,
     type Candle as IndicatorCandle,
     type Point,
     type MACDResult,
 } from "@/lib/indicators";
+import { useToast } from "@/components/ToastProvider";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
 import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
 import { OrderbookHeatmapPrimitive, type HeatmapLevel } from "@/lib/orderbookHeatmapPrimitive";
@@ -275,6 +280,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const ema20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const ema50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const ema200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    // EMA golden/death cross markers plugin (v5: createSeriesMarkers).
+    const emaCrossMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    // Live-alert dedup: time of the newest cross we've already toasted, keyed by
+    // pair:timeframe so a load/switch primes (never re-toasts history).
+    const lastAlertedCrossTimeRef = useRef<number>(0);
+    const lastAlertKeyRef = useRef<string | null>(null);
     const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -317,6 +328,17 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
     const footprintPair = selectedPairSymbol.split("/")[0] ?? "BTC";
     const footprintData = useFootprint(indicatorConfig.footprint ?? false, timeframe, footprintPair);
+    const { addToast } = useToast();
+
+    // renderOverlays doesn't depend on timeframe/selectedPairId (it runs off the
+    // candles arg), so mirror both into refs for the EMA-cross alert gate + dedup
+    // key — otherwise the closure inside renderOverlays would read stale values.
+    const timeframeRef = useRef(timeframe);
+    const selectedPairIdRef = useRef(selectedPairId);
+    useEffect(() => {
+        timeframeRef.current = timeframe;
+        selectedPairIdRef.current = selectedPairId;
+    }, [timeframe, selectedPairId]);
 
     // Persistent day direction (open→now), from the same source as the hero
     // price color (usePairChange → dayDirection). Drives the candle price-LINE +
@@ -529,6 +551,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             chartRef.current = null;
             seriesRef.current = null;
             priceLinesRef.current = [];
+            // The markers plugin lives on the (now-removed) series; drop the ref
+            // so the next mount recreates it cleanly.
+            emaCrossMarkersRef.current = null;
         };
     }, []);
 
@@ -664,12 +689,18 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 chart.removeSeries(ema20SeriesRef.current); ema20SeriesRef.current = null;
             }
 
+            // EMA 50 / 200 — compute once; the arrays feed both the line series
+            // (when toggled) and the golden/death cross detection (which runs
+            // unconditionally below so alerts fire even when the lines are hidden).
+            const ema50pts = computeEMA(indCandles, 50);
+            const ema200pts = computeEMA(indCandles, 200);
+
             // EMA 50
             if (indicatorConfig.ema50) {
                 if (!ema50SeriesRef.current) {
                     ema50SeriesRef.current = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                 }
-                ema50SeriesRef.current.setData(toLineData(computeEMA(indCandles, 50)));
+                ema50SeriesRef.current.setData(toLineData(ema50pts));
             } else if (ema50SeriesRef.current) {
                 chart.removeSeries(ema50SeriesRef.current); ema50SeriesRef.current = null;
             }
@@ -679,9 +710,52 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 if (!ema200SeriesRef.current) {
                     ema200SeriesRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                 }
-                ema200SeriesRef.current.setData(toLineData(computeEMA(indCandles, 200)));
+                ema200SeriesRef.current.setData(toLineData(ema200pts));
             } else if (ema200SeriesRef.current) {
                 chart.removeSeries(ema200SeriesRef.current); ema200SeriesRef.current = null;
+            }
+
+            // EMA golden/death crosses: chart markers (Step 2) + live alert (Step 3).
+            const emaCrosses = detectEMACrosses(ema50pts, ema200pts);
+
+            // Markers render ONLY when BOTH EMA lines are toggled on. detectEMACrosses
+            // already returns ascending by time (the library requires sorted markers).
+            if (indicatorConfig.ema50 && indicatorConfig.ema200) {
+                const markers: SeriesMarker<Time>[] = emaCrosses.map((c) =>
+                    c.type === "golden"
+                        ? { time: c.time as Time, position: "belowBar", shape: "arrowUp", text: "GC", color: "#00ff41" }
+                        : { time: c.time as Time, position: "aboveBar", shape: "arrowDown", text: "DC", color: "#ff3b3b" },
+                );
+                if (!emaCrossMarkersRef.current) {
+                    emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, markers);
+                } else {
+                    emaCrossMarkersRef.current.setMarkers(markers);
+                }
+            } else if (emaCrossMarkersRef.current) {
+                emaCrossMarkersRef.current.setMarkers([]);
+            }
+
+            // Live alert: detection runs regardless of toggle, but the toast is
+            // gated to 4h/1d. renderOverlays also runs on every load / pair /
+            // timeframe switch (replaying full history), so key the dedup on
+            // pair:timeframe and PRIME it (record the newest historical cross
+            // without toasting) the first time a key is seen. Only a cross newer
+            // than the primed value on the SAME key — i.e. a fresh live
+            // candle.closed — fires exactly one toast.
+            const tf = timeframeRef.current;
+            const alertKey = `${selectedPairIdRef.current ?? ""}:${tf}`;
+            const newestCross = emaCrosses.length > 0 ? emaCrosses[emaCrosses.length - 1]! : null;
+            if (lastAlertKeyRef.current !== alertKey) {
+                lastAlertKeyRef.current = alertKey;
+                lastAlertedCrossTimeRef.current = newestCross ? newestCross.time : 0;
+            } else if (
+                newestCross &&
+                newestCross.time > lastAlertedCrossTimeRef.current &&
+                (tf === "4h" || tf === "1d")
+            ) {
+                lastAlertedCrossTimeRef.current = newestCross.time;
+                if (newestCross.type === "golden") addToast("success", `Golden cross · ${tf}`);
+                else addToast("warning", `Death cross · ${tf}`);
             }
 
             // VWAP
@@ -739,7 +813,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, clearPriceLines, fundingRateHourly]);
+    }, [indicatorConfig, clearPriceLines, fundingRateHourly, addToast]);
 
     // Fetch candles when pair or timeframe changes
     const fetchCandles = useCallback(async () => {
