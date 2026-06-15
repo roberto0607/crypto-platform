@@ -160,6 +160,70 @@ describe("OrderBookPanel", () => {
   });
 });
 
+describe("OrderBookPanel tick flash (#56)", () => {
+  // The make-or-break rules: a level flashes ONLY when its own qty changes,
+  // keyed by PRICE so the ladder reordering never strobes the whole book.
+
+  it("never flashes on first render", () => {
+    const { container } = render(<OrderBookPanel liveBook={makeBook(asks(4, 1), bids(4, 1))} />);
+    expect(container.querySelectorAll(".tr-ob-row.tick")).toHaveLength(0);
+  });
+
+  it("flashes ONLY the level whose qty changed, not the whole book", () => {
+    const a = makeBook(asks(4, 1), bids(4, 1));
+    const { container, rerender } = render(<OrderBookPanel liveBook={a} />);
+    expect(container.querySelectorAll(".tr-ob-row.tick")).toHaveLength(0);
+
+    // Same prices; bump exactly ONE ask level's qty (price 101: 1 → 5).
+    const b = makeBook([[100, 1], [101, 5], [102, 1], [103, 1]], bids(4, 1));
+    rerender(<OrderBookPanel liveBook={b} />);
+
+    const ticking = container.querySelectorAll(".tr-ob-row.tick");
+    expect(ticking).toHaveLength(1);
+    // …and it is the row at the price that changed.
+    expect(ticking[0]!.querySelector(".tr-ob-price")!.textContent).toBe("101.000");
+  });
+
+  it("does NOT flash on a reorder when the surviving levels' qty is unchanged", () => {
+    // Book A: asks 100..103. Book B: ladder shifted up — 100 leaves, 104 enters,
+    // but 101/102/103 survive with the SAME qty. Nothing should flash.
+    const a = makeBook(asks(4, 1, 100), bids(4, 1));
+    const { container, rerender } = render(<OrderBookPanel liveBook={a} />);
+    const b = makeBook(asks(4, 1, 101), bids(4, 1)); // 101..104
+    rerender(<OrderBookPanel liveBook={b} />);
+    expect(container.querySelectorAll(".tr-ob-row.tick")).toHaveLength(0);
+  });
+
+  it("does NOT flash a newly-entered level (no prior qty to compare)", () => {
+    const a = makeBook(asks(3, 1, 100), bids(3, 1)); // asks 100,101,102
+    const { container, rerender } = render(<OrderBookPanel liveBook={a} />);
+    // Add a brand-new nearer ask level (99) with the others unchanged.
+    const b = makeBook([[99, 7], [100, 1], [101, 1], [102, 1]], bids(3, 1));
+    rerender(<OrderBookPanel liveBook={b} />);
+    expect(container.querySelectorAll(".tr-ob-row.tick")).toHaveLength(0);
+  });
+
+  it("flashes the imbalance number when its displayed % changes", () => {
+    const a = makeBook(asks(8, 1), bids(8, 1)); // 50 / 50
+    const { container, rerender } = render(<OrderBookPanel liveBook={a} />);
+    expect(container.querySelectorAll(".tr-ob-bidpct.tick, .tr-ob-askpct.tick")).toHaveLength(0);
+    // Tilt the book heavily to asks → both % change.
+    const b = makeBook(asks(8, 9), bids(8, 1)); // ~10 / 90
+    rerender(<OrderBookPanel liveBook={b} />);
+    expect(container.querySelector(".tr-ob-bidpct.tick")).not.toBeNull();
+    expect(container.querySelector(".tr-ob-askpct.tick")).not.toBeNull();
+  });
+
+  it("does NOT flash the imbalance number on sub-percent float jitter", () => {
+    // Both states round to the same displayed integer (50%), so no flash.
+    const a = makeBook([[100, 1000]], [[99, 1000]]);       // exactly 50.00%
+    const { container, rerender } = render(<OrderBookPanel liveBook={a} />);
+    const b = makeBook([[100, 1000]], [[99, 1001]]);       // 50.02% → rounds to 50%
+    rerender(<OrderBookPanel liveBook={b} />);
+    expect(container.querySelectorAll(".tr-ob-bidpct.tick, .tr-ob-askpct.tick")).toHaveLength(0);
+  });
+});
+
 describe("spreadRecenterScrollTop", () => {
   // container 259, header 27, spread 28 → targetOffset = 27 + (259-27-28)/2 = 129
   const base = { containerClientHeight: 259, headerHeight: 27, spreadHeight: 28 };
