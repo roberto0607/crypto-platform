@@ -213,7 +213,7 @@ const TRADE_CSS = `
   .tr-ob-row {
     display:grid;grid-template-columns:1fr 1fr;
     padding:2px 12px;font-size:10px;line-height:1.3;color:rgba(255,255,255,0.8);position:relative;
-    transition:background 0.1s;
+    transition:background 0.15s ease-out, filter 0.15s ease-out;
     border-bottom:1px solid rgba(255,255,255,0.025); /* faint grid separator (#28) */
   }
   .tr-ob-row:hover { background:var(--g06); }
@@ -223,6 +223,15 @@ const TRADE_CSS = `
   }
   .tr-ob-row.ask .fill { background:rgba(255,59,59,0.06); }
   .tr-ob-row.bid .fill { background:rgba(0,255,65,0.06); }
+  /* Tick flash (#56) — a brief brightness pulse + faint side-tinted wash when a
+     level's qty changes, following the hero price's brightness-pulse model
+     (filter:brightness, transition back; NOT a colour flip). The side colour is
+     preserved: bids pulse green, asks pulse red. Keyed by price in JS so ONLY the
+     level that actually changed pulses — a reorder or a newly-entered level does
+     not flash, so the book never strobes. */
+  .tr-ob-row.tick { filter:brightness(1.6); }
+  .tr-ob-row.ask.tick { background:rgba(255,59,59,0.13); }
+  .tr-ob-row.bid.tick { background:rgba(0,255,65,0.13); }
   .tr-ob-row span { position:relative;z-index:1;letter-spacing:1px; }
   .tr-ob-row.ask span.tr-ob-price { color:#ff3b3b; }
   .tr-ob-row.bid span.tr-ob-price { color:#00ff41; }
@@ -270,7 +279,13 @@ const TRADE_CSS = `
   }
   .tr-ob-bidpct, .tr-ob-askpct {
     font-family:var(--bebas);font-size:26px;letter-spacing:1px;line-height:1;
+    transition:filter 0.15s ease-out, text-shadow 0.15s ease-out;
   }
+  /* Imbalance numbers pulse on change (#56) — same brightness+glow model as the
+     hero price, glow tinted to each side's own colour (no recolour). The split-bar
+     widths already ease (.seg transition:width) so bar and numbers move together. */
+  .tr-ob-bidpct.tick { filter:brightness(1.6);text-shadow:0 0 14px var(--ob-bid, #00ff41); }
+  .tr-ob-askpct.tick { filter:brightness(1.6);text-shadow:0 0 14px var(--ob-ask, #ff3b3b); }
 
   /* positions / orders table */
   .tr-ptbl { width:100%;border-collapse:collapse; }
@@ -713,6 +728,7 @@ interface PreparedLevel {
   price: string; // display-formatted (may contain thousands separators)
   qty: string;   // display-formatted
   rawQty: number; // numeric qty, for bar-width scaling
+  rawPrice: number; // numeric price — stable React key + per-level flash identity (#56)
 }
 
 export interface PreparedBook {
@@ -805,6 +821,7 @@ export function prepareBook(
     price: formatBookPrice(lvl.price),
     qty: formatBookQty(lvl.qty),
     rawQty: parseFloat(lvl.qty),
+    rawPrice: parseFloat(lvl.price),
   });
 
   return {
@@ -849,6 +866,54 @@ export function spreadRecenterScrollTop(args: {
   return currentScrollTop + delta;
 }
 
+/**
+ * Brief brightness-pulse flash on a numeric change — the order-book sibling of
+ * the hero price's tick flash (same prevRef + 150ms + transient-class model).
+ * Returns true for ~`durationMs` after `value` changes, then false. NO flash on
+ * the first observation (prev === null) or on an unchanged value, so a level
+ * entering the window, the first book load, or a reorder that preserves a level's
+ * qty all stay quiet — mirroring the hero's "first tick, no flash" rule.
+ */
+function useTickFlash(value: number, durationMs = 150): boolean {
+  const prevRef = useRef<number | null>(null);
+  const [flash, setFlash] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = value;
+    if (prev === null) return; // first observation — establish baseline, no flash
+    if (value === prev) return; // unchanged — nothing to flash
+    setFlash(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setFlash(false), durationMs);
+  }, [value, durationMs]);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+  return flash;
+}
+
+/**
+ * One order-book ladder row. Keyed by rawPrice upstream so the component instance
+ * persists across ladder reorders; useTickFlash(rawQty) then pulses the row ONLY
+ * when THIS price level's qty actually changes. A level that just entered the
+ * window mounts fresh (no prev → no flash), so reorders never strobe the book.
+ */
+function ObRow({ side, price, qty, rawQty, barWidth }: {
+  side: "ask" | "bid";
+  price: string;
+  qty: string;
+  rawQty: number;
+  barWidth: number;
+}) {
+  const flash = useTickFlash(rawQty);
+  return (
+    <div className={`tr-ob-row ${side}${flash ? " tick" : ""}`}>
+      <div className="fill" style={{ width: `${barWidth}%` }} />
+      <span className="tr-ob-price">{price}</span>
+      <span className="tr-dim">{qty}</span>
+    </div>
+  );
+}
+
 /* ── ORDER BOOK ── */
 export function OrderBookPanel({
   liveBook,
@@ -858,6 +923,12 @@ export function OrderBookPanel({
   const { asks, bids, spread, spreadPct, bidPct, askPct, maxVisibleQty } =
     prepareBook(liveBook);
   const hasBook = asks.length > 0 && bids.length > 0;
+
+  // Imbalance numbers flash on change (#56). Gated on the DISPLAYED integer
+  // (toFixed(0)) so sub-percent float jitter every tick doesn't strobe them;
+  // the split-bar widths already ease via CSS, so bar + numbers move together.
+  const bidFlash = useTickFlash(Math.round(bidPct));
+  const askFlash = useTickFlash(Math.round(askPct));
 
   // The ladder is taller than its box, so center the scroll on the SPREAD
   // divider so both sides read at rest (red asks above, green bids below). The
@@ -937,22 +1008,28 @@ export function OrderBookPanel({
           <span>PRICE</span>
           <span>QTY</span>
         </div>
-        {asks.map((r, i) => (
-          <div key={i} className="tr-ob-row ask">
-            <div className="fill" style={{ width: `${obBarWidth(r.rawQty, maxVisibleQty)}%` }} />
-            <span className="tr-ob-price">{r.price}</span>
-            <span className="tr-dim">{r.qty}</span>
-          </div>
+        {asks.map((r) => (
+          <ObRow
+            key={r.rawPrice}
+            side="ask"
+            price={r.price}
+            qty={r.qty}
+            rawQty={r.rawQty}
+            barWidth={obBarWidth(r.rawQty, maxVisibleQty)}
+          />
         ))}
         <div className="tr-ob-spread" ref={spreadRef}>
           SPREAD ${spread} ({spreadPct}%)
         </div>
-        {bids.map((r, i) => (
-          <div key={i} className="tr-ob-row bid">
-            <div className="fill" style={{ width: `${obBarWidth(r.rawQty, maxVisibleQty)}%` }} />
-            <span className="tr-ob-price">{r.price}</span>
-            <span className="tr-dim">{r.qty}</span>
-          </div>
+        {bids.map((r) => (
+          <ObRow
+            key={r.rawPrice}
+            side="bid"
+            price={r.price}
+            qty={r.qty}
+            rawQty={r.rawQty}
+            barWidth={obBarWidth(r.rawQty, maxVisibleQty)}
+          />
         ))}
       </div>
       <div className="tr-ob-col tr-ob-depth">
@@ -968,13 +1045,13 @@ export function OrderBookPanel({
         </div>
         <div className="tr-ob-depth-nums">
           <div className="tr-ob-depth-row">
-            <span className="tr-ob-bidpct" style={{ color: "var(--ob-bid, #00ff41)" }}>
+            <span className={`tr-ob-bidpct${bidFlash ? " tick" : ""}`} style={{ color: "var(--ob-bid, #00ff41)" }}>
               {bidPct.toFixed(0)}%
             </span>
             <span className="tr-ob-depth-side">BID</span>
           </div>
           <div className="tr-ob-depth-row">
-            <span className="tr-ob-askpct" style={{ color: "var(--ob-ask, #ff3b3b)" }}>
+            <span className={`tr-ob-askpct${askFlash ? " tick" : ""}`} style={{ color: "var(--ob-ask, #ff3b3b)" }}>
               {askPct.toFixed(0)}%
             </span>
             <span className="tr-ob-depth-side">ASK</span>
