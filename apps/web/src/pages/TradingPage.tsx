@@ -1250,7 +1250,11 @@ export default function TradingPage() {
                   return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(4)}%)`;
                 })()}
               </div>
-              <div className="tr-pm-lbl">SPREAD</div>
+              {/* "FILL SPREAD" (not just "SPREAD") distinguishes this internal
+                  order-book spread — the one orders actually fill against — from
+                  the Kraken reference spread shown in the order-book divider
+                  below. Resolves the confusing two-"SPREAD" read (#54). */}
+              <div className="tr-pm-lbl">FILL SPREAD</div>
             </div>
           </div>
         </div>
