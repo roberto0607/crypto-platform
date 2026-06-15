@@ -199,16 +199,20 @@ const TRADE_CSS = `
   .tr-ob-col:first-child { border-right:1px solid var(--borderW); }
   .tr-ob-hdr {
     display:grid;grid-template-columns:1fr 1fr;
-    padding:6px 12px;border-bottom:1px solid var(--borderW);
+    padding:4px 12px;border-bottom:1px solid var(--borderW);
     font-size:9px;color:rgba(255,255,255,0.6);letter-spacing:2px;
     text-transform:uppercase;
     /* sticky so PRICE/QTY stays put when the ladder is scroll-centered on the spread */
     position:sticky;top:0;z-index:2;background:var(--bg2);
   }
   .tr-ob-hdr span:last-child { text-align:right; }
+  /* Tighter rows (#52): padding 4px→2px, font 11px→10px, controlled line-height
+     so ~14/side of depth-25 data packs into the fixed 200px box while price+qty
+     stay legible. The .fill depth bar is top:0/bottom:0 absolute, so it tracks
+     the new row height automatically and stays proportional. */
   .tr-ob-row {
     display:grid;grid-template-columns:1fr 1fr;
-    padding:4px 12px;font-size:11px;color:rgba(255,255,255,0.8);position:relative;
+    padding:2px 12px;font-size:10px;line-height:1.3;color:rgba(255,255,255,0.8);position:relative;
     transition:background 0.1s;
     border-bottom:1px solid rgba(255,255,255,0.025); /* faint grid separator (#28) */
   }
@@ -224,7 +228,7 @@ const TRADE_CSS = `
   .tr-ob-row.bid span.tr-ob-price { color:#00ff41; }
   .tr-ob-row span:last-child { text-align:right;color:rgba(255,255,255,0.4); }
   .tr-ob-spread {
-    padding:6px 12px;text-align:center;font-size:9px;
+    padding:4px 12px;text-align:center;font-size:9px;
     color:rgba(255,255,255,0.4);letter-spacing:2px;
     border-top:1px solid rgba(255,255,255,0.12);border-bottom:1px solid rgba(255,255,255,0.12);
     background:rgba(255,255,255,0.03);flex-shrink:0;
@@ -733,7 +737,13 @@ const STALENESS_FLOOR_MS = 5_000;
 
 export function prepareBook(
   liveBook: OrderBookType | null,
-  maxLevels = 8,
+  // 15/side (was 8). Kraken WS book is depth-25 (#47), so this shows real data,
+  // not padding. The ladder is scroll-centered on the spread, so a higher cap
+  // deepens the SCROLLABLE book without shrinking rows; the tighter row CSS
+  // (.tr-ob-row, 18px) is what raises the count VISIBLE at a glance in the fixed
+  // 200px box. Both levers together make the book read liquidity like a pro
+  // terminal (PR #52).
+  maxLevels = 15,
 ): PreparedBook {
   if (!liveBook || liveBook.asks.length === 0 || liveBook.bids.length === 0) {
     return {

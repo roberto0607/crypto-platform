@@ -38,6 +38,12 @@ describe("prepareBook", () => {
     expect(p.bids).toHaveLength(8);
   });
 
+  it("defaults to 15 levels/side (#52 density bump)", () => {
+    const p = prepareBook(makeBook(asks(20, 1), bids(20, 1)));
+    expect(p.asks).toHaveLength(15);
+    expect(p.bids).toHaveLength(15);
+  });
+
   it("respects a custom maxLevels", () => {
     const p = prepareBook(makeBook(asks(12, 1), bids(12, 1)), 5);
     expect(p.asks).toHaveLength(5);
@@ -108,10 +114,11 @@ describe("prepareBook", () => {
 
 describe("OrderBookPanel", () => {
   it("renders exactly maxLevels ask + bid rows and one spread divider", () => {
-    const book = makeBook(asks(10, 1), bids(10, 1));
+    // Default cap is 15/side (#52); feed a deeper book so the cap is what bounds it.
+    const book = makeBook(asks(20, 1), bids(20, 1));
     const { container } = render(<OrderBookPanel liveBook={book} />);
-    expect(container.querySelectorAll(".tr-ob-row.ask")).toHaveLength(8);
-    expect(container.querySelectorAll(".tr-ob-row.bid")).toHaveLength(8);
+    expect(container.querySelectorAll(".tr-ob-row.ask")).toHaveLength(15);
+    expect(container.querySelectorAll(".tr-ob-row.bid")).toHaveLength(15);
     expect(container.querySelectorAll(".tr-ob-spread")).toHaveLength(1);
   });
 
