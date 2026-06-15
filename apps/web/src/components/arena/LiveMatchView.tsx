@@ -369,6 +369,10 @@ const LMV_CSS = `
   }
   .lmv-sum-lbl { color: var(--ar-muted); }
   .lmv-sum-val { color: rgba(255,255,255,0.7); }
+  /* Empty POSITION SIZE / FEE dash dims to 0.2 — matching this card's own
+     already-muted TP/SL dashes — so all four empty states read consistently
+     as intentionally empty rather than missing data. */
+  .lmv-sum-empty { color: rgba(255,255,255,0.2); }
   .lmv-place-btn {
     width: 100%;
     padding: 10px;
