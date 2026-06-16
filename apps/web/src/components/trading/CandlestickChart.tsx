@@ -51,6 +51,7 @@ import { MACDPanel } from "./MACDPanel";
 import { ATRPanel } from "./ATRPanel";
 import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
+import { BollingerFillPrimitive } from "@/lib/bollingerFillPrimitive";
 import { usePairChange } from "@/hooks/usePairChange";
 import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
@@ -66,6 +67,17 @@ const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 // non-directional, so deliberately NOT green/red, and distinct from the EMA
 // scheme (cyan/amber/dim-white) so the lines never collide.
 const VWAP_COLOR = "#c4b5fd";
+
+// Bollinger Bands — slate/steel-blue family, deliberately OUT of the purple
+// lane so the bands never collide with the VWAP lavender (#c4b5fd) or the EMA
+// scheme (EMA20 blue / EMA50 amber / EMA200 red). Every overlay gets its own
+// lane: green/red=price, blue/amber/red=EMA, lavender=VWAP, slate=BB.
+//   edges = dimmer slate (the volatility boundaries)
+//   middle = brighter slate, solid (the SMA20 mean reads as the center of mass)
+//   fill  = very faint slate channel (candles read clearly through it)
+const BB_EDGE = "rgba(129,140,170,0.55)";
+const BB_MID = "#aeb9d4";
+const BB_FILL = "rgba(129,140,170,0.07)";
 
 // Price-line + last-value-label color by DAY direction (matches the hero):
 // green when the day is up, red when down, neutral grey when flat/unknown.
@@ -301,6 +313,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const bbFillPrimitiveRef = useRef<BollingerFillPrimitive | null>(null);
+    // BB squeeze chip: latest bandwidth (upper−lower)/middle as a %, plus a
+    // squeeze flag when bandwidth sits at/near its lookback low.
+    const [bbBandwidth, setBbBandwidth] = useState<number | null>(null);
+    const [bbSqueeze, setBbSqueeze] = useState<boolean>(false);
     const [rsiData, setRsiData] = useState<Point[]>([]);
     const [macdData, setMacdData] = useState<MACDResult>({ macd: [], signal: [], histogram: [] });
     const [atrData, setAtrData] = useState<Point[]>([]);
@@ -489,6 +506,15 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
         const pdhPdlZonePrimitive = new PdhPdlZonePrimitive();
         series.attachPrimitive(pdhPdlZonePrimitive);
         pdhPdlZonePrimitiveRef.current = pdhPdlZonePrimitive;
+
+        // Attach Bollinger Bands fill primitive (faint slate channel between the
+        // upper/lower bands; zOrder "bottom" so candles read through it). Toggled
+        // by feeding empty data when bollingerBands is off — same pattern as the
+        // other primitives, which attach once and gate via setData.
+        const bbFillPrimitive = new BollingerFillPrimitive(BB_FILL);
+        series.attachPrimitive(bbFillPrimitive);
+        bbFillPrimitive.setChart(chart);
+        bbFillPrimitiveRef.current = bbFillPrimitive;
 
         // Attach VPVR primitive (RIGHT side)
         const vpvrPrimitive = new VPVRPrimitive();
@@ -797,17 +823,45 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             if (indicatorConfig.bollingerBands) {
                 const bb = computeBollingerBands(indCandles, 20, 2);
                 if (!bbMiddleSeriesRef.current) {
-                    bbMiddleSeriesRef.current = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-                    bbUpperSeriesRef.current = chart.addSeries(LineSeries, { color: "rgba(99,102,241,0.5)", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-                    bbLowerSeriesRef.current = chart.addSeries(LineSeries, { color: "rgba(99,102,241,0.5)", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    bbMiddleSeriesRef.current = chart.addSeries(LineSeries, { color: BB_MID, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    bbUpperSeriesRef.current = chart.addSeries(LineSeries, { color: BB_EDGE, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    bbLowerSeriesRef.current = chart.addSeries(LineSeries, { color: BB_EDGE, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                 }
                 bbMiddleSeriesRef.current.setData(toLineData(bb.middle));
                 bbUpperSeriesRef.current!.setData(toLineData(bb.upper));
                 bbLowerSeriesRef.current!.setData(toLineData(bb.lower));
+
+                // Faint channel fill between the bands. upper/middle/lower are
+                // index-aligned (same loop in computeBollingerBands), so we pair
+                // them by index to feed the primitive.
+                bbFillPrimitiveRef.current?.setData(
+                    bb.upper.map((u, i) => ({ time: u.time, upper: u.value, lower: bb.lower[i]!.value })),
+                );
+
+                // Squeeze chip: per-bar bandwidth = (upper − lower) / middle.
+                // SQUEEZE fires when the latest bandwidth sits at/near a lookback
+                // low (≤ 1.05× the min of the last 100 bars) — a volatility pinch
+                // that often precedes expansion.
+                const bw = bb.middle.map((m, i) =>
+                    m.value !== 0 ? (bb.upper[i]!.value - bb.lower[i]!.value) / m.value : 0,
+                );
+                if (bw.length > 0) {
+                    const latest = bw[bw.length - 1]!;
+                    const lookback = bw.slice(-100);
+                    const minBw = Math.min(...lookback);
+                    setBbBandwidth(latest);
+                    setBbSqueeze(lookback.length >= 20 && latest <= minBw * 1.05);
+                } else {
+                    setBbBandwidth(null);
+                    setBbSqueeze(false);
+                }
             } else {
                 if (bbMiddleSeriesRef.current) { chart.removeSeries(bbMiddleSeriesRef.current); bbMiddleSeriesRef.current = null; }
                 if (bbUpperSeriesRef.current) { chart.removeSeries(bbUpperSeriesRef.current); bbUpperSeriesRef.current = null; }
                 if (bbLowerSeriesRef.current) { chart.removeSeries(bbLowerSeriesRef.current); bbLowerSeriesRef.current = null; }
+                bbFillPrimitiveRef.current?.setData([]);
+                setBbBandwidth(null);
+                setBbSqueeze(false);
             }
 
             // RSI (computed here, rendered in sub-panel)
@@ -1713,6 +1767,35 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                             <span style={{ color: VWAP_COLOR, letterSpacing: 1.5, fontWeight: 600 }}>VWAP</span>
                             <span style={{ color: tint, fontWeight: 600 }}>
                                 {below ? "▼" : "▲"} {vwapValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
+                    );
+                })()}
+
+                {/* ── Bollinger Bands squeeze chip ──
+                    Stacks below the VWAP chip (third tier after proximity badge +
+                    VWAP chip). Label "BB" in slate; value = latest bandwidth as a
+                    %. SQUEEZE flag tints amber (neutral-bright, NOT green/red which
+                    mean direction) when bandwidth sits at/near its lookback low. */}
+                {indicatorConfig.bollingerBands && bbBandwidth != null && (() => {
+                    const base = pdhProximity ? 48 : 12;
+                    const vwapShown = indicatorConfig.vwap && vwapValue != null;
+                    const top = base + (vwapShown ? 36 : 0);
+                    return (
+                        <div style={{
+                            position: "absolute", top, left: 12, zIndex: 10,
+                            background: "rgba(8,12,18,0.85)",
+                            border: "1px solid rgba(129,140,170,0.35)",
+                            borderLeft: `3px solid ${BB_MID}`,
+                            borderRadius: 4,
+                            padding: "5px 11px 5px 9px",
+                            display: "flex", alignItems: "baseline", gap: 7,
+                            fontFamily: "monospace", fontSize: 11,
+                            fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+                        }}>
+                            <span style={{ color: BB_MID, letterSpacing: 1.5, fontWeight: 600 }}>BB</span>
+                            <span style={{ color: bbSqueeze ? "#f5b942" : "#9aa6c2", fontWeight: 600 }}>
+                                {bbSqueeze ? "SQUEEZE " : "BW "}{(bbBandwidth * 100).toFixed(1)}%
                             </span>
                         </div>
                     );
