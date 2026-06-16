@@ -138,6 +138,12 @@ export function useSSE() {
         );
       },
 
+      onMatchEnded: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:match.ended", { detail: event.data }),
+        );
+      },
+
       onChallengeReceived: (event) => {
         window.dispatchEvent(
           new CustomEvent("sse:challenge.received", { detail: event.data }),
