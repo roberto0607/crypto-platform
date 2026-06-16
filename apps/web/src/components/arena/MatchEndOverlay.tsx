@@ -5,6 +5,9 @@ import client from "@/api/client";
 function formatPnl(pct: string | null): string {
     if (!pct) return "0.00%";
     const n = parseFloat(pct);
+    // Clamp anything that rounds to zero to a clean "0.00%" — a forfeit-win has
+    // ~zero P&L, and "-0.00%" on a YOU WON screen reads as broken.
+    if (Math.abs(n) < 0.005) return "0.00%";
     return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 }
 

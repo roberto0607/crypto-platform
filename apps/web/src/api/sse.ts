@@ -43,6 +43,7 @@ export interface SSEHandlers {
   onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
   onMatchStarted?: (event: Extract<SSEEvent, { type: "match.started" }>) => void;
+  onMatchEnded?: (event: Extract<SSEEvent, { type: "match.ended" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
   onPing?: (ts: number) => void;
   onReconnected?: () => void;
@@ -214,6 +215,9 @@ export function connectSSE(
           break;
         case "match.started":
           handlers.onMatchStarted?.(event);
+          break;
+        case "match.ended":
+          handlers.onMatchEnded?.(event);
           break;
         case "challenge.received":
           handlers.onChallengeReceived?.(event);

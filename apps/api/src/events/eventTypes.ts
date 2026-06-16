@@ -122,6 +122,28 @@ export interface MatchStartedData {
   startedAt: string;
 }
 
+/**
+ * Terminal match event — published to BOTH participants the instant a match
+ * ends, so the opponent's WON/LOST/FORFEITED screen renders without waiting
+ * for a poll tick. Carries the match-level verdict (winner, pnls, elo deltas)
+ * so the client needs no re-fetch for the primary result; the overlay's
+ * existing GET /v1/matches/:id/result call enriches the ELO display after.
+ *
+ * `reason` discriminates the three terminal transitions. The event is named
+ * generically (match.ended, not forfeit-specific) so the same per-user channel
+ * can later carry other match-lifecycle pushes.
+ */
+export interface MatchEndedData {
+  matchId: string;
+  winnerUserId: string | null;
+  loserUserId: string | null;
+  forfeitUserId: string | null;
+  reason: "forfeit" | "timeout" | "mutual_forfeit";
+  challengerPnlPct: string | null;
+  opponentPnlPct: string | null;
+  eloDeltas: { winner: number; loser: number } | null;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -152,6 +174,7 @@ export type AppEvent =
   | EventEnvelope<"notification.created", NotificationCreatedData>
   | EventEnvelope<"signal.new", SignalNewData>
   | EventEnvelope<"match.started", MatchStartedData>
+  | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"challenge.received", ChallengeReceivedData>;
 
 // ── Helper to create events ──

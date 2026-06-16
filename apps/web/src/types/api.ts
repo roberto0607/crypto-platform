@@ -482,6 +482,7 @@ export type SSEEvent =
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
   | EventEnvelope<"signal.new", SignalNewEvent>
   | EventEnvelope<"match.started", MatchStartedEvent>
+  | EventEnvelope<"match.ended", MatchEndedEvent>
   | EventEnvelope<"challenge.received", ChallengeReceivedEvent>;
 
 export interface ChallengeReceivedEvent {
@@ -498,4 +499,15 @@ export interface MatchStartedEvent {
   opponentId: string;
   duration: number;
   startedAt: string;
+}
+
+export interface MatchEndedEvent {
+  matchId: string;
+  winnerUserId: string | null;
+  loserUserId: string | null;
+  forfeitUserId: string | null;
+  reason: "forfeit" | "timeout" | "mutual_forfeit";
+  challengerPnlPct: string | null;
+  opponentPnlPct: string | null;
+  eloDeltas: { winner: number; loser: number } | null;
 }

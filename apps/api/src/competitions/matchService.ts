@@ -9,6 +9,7 @@ import {
     TW_TIERS,
     type TWTier,
 } from "./eloService.js";
+import type { MatchEloResult } from "./eloService.js";
 import { getUserTier } from "./tierRepo.js";
 import { getSnapshot } from "../market/snapshotStore.js";
 import { logger as rootLogger } from "../observability/logContext.js";
@@ -62,6 +63,42 @@ const TIER_CAPITAL: Record<TWTier, number> = {
     ELITE:  250_000,
     LEGEND: 1_000_000,
 };
+
+/**
+ * Publish a terminal `match.ended` event to BOTH participants. Called after
+ * COMMIT in every terminal transition (forfeit, timer-expiry complete, mutual
+ * forfeit) so the opponent's browser renders the verdict instantly instead of
+ * waiting for its next poll tick. Per-user delivery over the existing SSE
+ * eventBus — same transport createMatch/acceptMatch already use.
+ *
+ * `loserUserId` is derived from the winner (the non-winner participant);
+ * `null` for a draw / mutual forfeit (winner_id is null). `eloDeltas` is null
+ * when no winner was resolved (draw / mutual forfeit).
+ */
+function publishMatchEnded(
+    match: MatchRow,
+    reason: "forfeit" | "timeout" | "mutual_forfeit",
+    eloResult: MatchEloResult | null,
+): void {
+    const winnerUserId = match.winner_id;
+    const loserUserId = winnerUserId
+        ? (winnerUserId === match.challenger_id ? match.opponent_id : match.challenger_id)
+        : null;
+    const data = {
+        matchId: match.id,
+        winnerUserId,
+        loserUserId,
+        forfeitUserId: match.forfeit_user_id,
+        reason,
+        challengerPnlPct: match.challenger_pnl_pct,
+        opponentPnlPct: match.opponent_pnl_pct,
+        eloDeltas: eloResult
+            ? { winner: eloResult.eloChanges.winner.delta, loser: eloResult.eloChanges.loser.delta }
+            : null,
+    };
+    publish(createEvent("match.ended", data, { userId: match.challenger_id }));
+    publish(createEvent("match.ended", data, { userId: match.opponent_id }));
+}
 
 // ── Queries ──
 
@@ -266,6 +303,10 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         }
 
         await client.query("COMMIT");
+
+        // Push the verdict to both players so the opponent's screen flips
+        // instantly (forfeiter already has it from this request's response).
+        publishMatchEnded(updated[0], "forfeit", eloResult);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
@@ -349,6 +390,9 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         }
 
         await client.query("COMMIT");
+
+        // Timer-expiry completion — push the verdict to both players.
+        publishMatchEnded(updated[0], "timeout", eloResult);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
@@ -472,6 +516,9 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
 
         await client.query("COMMIT");
         logger.info({ matchId }, "match_mutual_forfeited");
+
+        // No winner — both players see DRAW. Push so both screens flip instantly.
+        publishMatchEnded(updated[0], "mutual_forfeit", null);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");

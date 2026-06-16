@@ -10,7 +10,7 @@ import { MatchHeaderBar } from "./MatchHeaderBar";
 import { MatchEndOverlay } from "./MatchEndOverlay";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
-import type { Position } from "@/types/api";
+import type { Position, MatchEndedEvent } from "@/types/api";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -577,29 +577,68 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         }
     }, []);
 
-    // Poll match state every 15s
-    useEffect(() => {
-        const poll = async () => {
-            try {
-                const { data } = await getActiveMatch();
-                if (data.match) {
-                    setMatch(data.match);
-                    if (data.match.status === "COMPLETED" || data.match.status === "FORFEITED") {
-                        setShowEndOverlay(true);
-                    }
-                } else {
-                    // No active match — fetch final state by ID for accurate result display
-                    try {
-                        const { data: full } = await getMatch(match.id);
-                        setMatch(full.match);
-                    } catch { /* ignore — overlay will use existing match state */ }
+    // Re-fetch authoritative match state from the server. Shared by the slow
+    // poll safety net and the reconnect refetch. The `match.ended` SSE push is
+    // the fast path (sub-second); this only catches a push that never arrived.
+    const syncMatchState = useCallback(async () => {
+        try {
+            const { data } = await getActiveMatch();
+            if (!isMounted.current) return;
+            if (data.match) {
+                setMatch(data.match);
+                if (data.match.status === "COMPLETED" || data.match.status === "FORFEITED") {
                     setShowEndOverlay(true);
                 }
-            } catch { /* ignore */ }
-        };
-        const id = setInterval(poll, 15_000);
-        return () => clearInterval(id);
+            } else {
+                // No active match — fetch final state by ID for accurate result display
+                try {
+                    const { data: full } = await getMatch(match.id);
+                    if (isMounted.current) setMatch(full.match);
+                } catch { /* ignore — overlay will use existing match state */ }
+                if (isMounted.current) setShowEndOverlay(true);
+            }
+        } catch { /* ignore */ }
     }, [match.id]);
+
+    // Fast path: the opponent's verdict arrives via the `match.ended` SSE push.
+    // Patch the terminal fields from the payload and flip the overlay — no
+    // re-fetch needed for the verdict (the overlay's own GET /result call
+    // enriches the ELO count-up afterward). This is what makes the WON/LOST
+    // screen appear instantly instead of on the next poll tick.
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const d = (e as CustomEvent<MatchEndedEvent>).detail;
+            if (!d || d.matchId !== match.id || !isMounted.current) return;
+            setMatch((prev) => ({
+                ...prev,
+                status: d.reason === "timeout" ? "COMPLETED" : "FORFEITED",
+                winner_id: d.winnerUserId,
+                forfeit_user_id: d.forfeitUserId,
+                challenger_pnl_pct: d.challengerPnlPct,
+                opponent_pnl_pct: d.opponentPnlPct,
+                elo_delta: d.eloDeltas?.winner ?? prev.elo_delta,
+            }));
+            setShowEndOverlay(true);
+        };
+        window.addEventListener("sse:match.ended", handler);
+        return () => window.removeEventListener("sse:match.ended", handler);
+    }, [match.id]);
+
+    // Safety net: poll every 30s in case a push was missed (slowed from 15s now
+    // that the SSE push is the primary signal).
+    useEffect(() => {
+        const id = setInterval(syncMatchState, 30_000);
+        return () => clearInterval(id);
+    }, [syncMatchState]);
+
+    // The eventBus has no replay buffer: a tab disconnected at the instant
+    // `match.ended` fires misses it permanently. On SSE reconnect, re-sync so
+    // the verdict resolves immediately rather than waiting up to 30s.
+    useEffect(() => {
+        const handler = () => { void syncMatchState(); };
+        window.addEventListener("sse:reconnected", handler);
+        return () => window.removeEventListener("sse:reconnected", handler);
+    }, [syncMatchState]);
 
     // Check for match end by timer
     useEffect(() => {
