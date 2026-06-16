@@ -80,24 +80,32 @@ function publishMatchEnded(
     reason: "forfeit" | "timeout" | "mutual_forfeit",
     eloResult: MatchEloResult | null,
 ): void {
-    const winnerUserId = match.winner_id;
-    const loserUserId = winnerUserId
-        ? (winnerUserId === match.challenger_id ? match.opponent_id : match.challenger_id)
-        : null;
-    const data = {
-        matchId: match.id,
-        winnerUserId,
-        loserUserId,
-        forfeitUserId: match.forfeit_user_id,
-        reason,
-        challengerPnlPct: match.challenger_pnl_pct,
-        opponentPnlPct: match.opponent_pnl_pct,
-        eloDeltas: eloResult
-            ? { winner: eloResult.eloChanges.winner.delta, loser: eloResult.eloChanges.loser.delta }
-            : null,
-    };
-    publish(createEvent("match.ended", data, { userId: match.challenger_id }));
-    publish(createEvent("match.ended", data, { userId: match.opponent_id }));
+    // Best-effort notification. The transaction already COMMITted before this
+    // runs, so a publish failure must NEVER propagate — the forfeit/complete
+    // succeeded and the user's request must return 200 regardless of whether
+    // the push fires (a missed push falls back to the client's poll/reconnect).
+    try {
+        const winnerUserId = match.winner_id;
+        const loserUserId = winnerUserId
+            ? (winnerUserId === match.challenger_id ? match.opponent_id : match.challenger_id)
+            : null;
+        const data = {
+            matchId: match.id,
+            winnerUserId,
+            loserUserId,
+            forfeitUserId: match.forfeit_user_id,
+            reason,
+            challengerPnlPct: match.challenger_pnl_pct,
+            opponentPnlPct: match.opponent_pnl_pct,
+            eloDeltas: eloResult
+                ? { winner: eloResult.eloChanges.winner.delta, loser: eloResult.eloChanges.loser.delta }
+                : null,
+        };
+        publish(createEvent("match.ended", data, { userId: match.challenger_id }));
+        publish(createEvent("match.ended", data, { userId: match.opponent_id }));
+    } catch (err) {
+        logger.error({ err, matchId: match.id, reason }, "match_ended_publish_failed");
+    }
 }
 
 // ── Queries ──

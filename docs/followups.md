@@ -511,3 +511,55 @@ reserved for things actively broken in prod, which this is not. Source: PR #38
 (decouple-live-prices, 2026-06-03).
 
 
+
+---
+
+## 🟠 MEDIUM — Two tier systems share `user_tiers.tier` with incompatible vocabularies
+
+**Discovered:** 2026-06-16, root-causing the forfeit 500 fixed by migration 069
+(`user_tiers_tier_check`). Surfaced while widening that constraint.
+
+**Context:** `user_tiers.tier` is written by **two independent tier systems that
+use different, non-overlapping vocabularies**:
+
+- **Trade Wars 1v1 ELO** — `apps/api/src/competitions/eloService.ts` (`TW_TIERS`):
+  `ROOKIE, PRO, ELITE, LEGEND`. Written by `updateUserTierTx` on match
+  promotion/demotion (`resolveMatchElo`).
+- **Weekly competitions** — `apps/api/src/competitions/tierRepo.ts` +
+  `jobs/definitions/weeklyCompetitionJob.ts` (`competitionTypes.TIERS`):
+  `ROOKIE, TRADER, SPECIALIST, EXPERT, MASTER, LEGEND`. Written by
+  `updateUserTier` (`WEEKLY_PROMOTION`/`WEEKLY_DEMOTION`).
+
+Both upsert the **same** `user_tiers` row for a user. Migration 069 had to set
+`user_tiers_tier_check` to the **union** of both vocabularies precisely because
+either-system-only would 500 the other.
+
+**Concrete failure mode (latent, not yet biting):** the vocabularies collide on
+read. If the TW system writes `tier='PRO'` and then the weekly job reads it via
+`getUserTier` (typed `TierName`) and calls `tierUp`/`tierDown`
+(`weeklyUtils.ts`), those index `TIER_ORDER` by `'PRO'` — which is **undefined**
+in the 6-tier order map → `idx` is `undefined`, so `tierUp` returns
+`TIERS[undefined + 1]` = `TIERS[NaN]` = `undefined`, i.e. a wrong/no-op neighbor
+and a corrupted tier transition. Symmetrically, TW's `getUserTierTx` maps any
+non-TW value (e.g. `'MASTER'`) to `ROOKIE` via `isTWTier(...) ? ... : "ROOKIE"`,
+silently resetting a weekly-earned tier to ROOKIE for matchmaking/capital.
+
+**Why it isn't biting today:** prod `user_tiers` holds only `ROOKIE` rows — no
+promotion from *either* system has persisted yet (TW's was 500ing; weekly hasn't
+promoted anyone under current load). The moment both systems promote the same
+user, the reads above misbehave.
+
+**Needs a decision (own PR):** pick one of —
+- **Separate the columns** — e.g. `user_tiers.tw_tier` vs `competition_tier`, each
+  with its own constraint; each system reads/writes its own.
+- **Namespace the values** — prefix (`TW_PRO`, `WK_MASTER`) so reads can't
+  cross-interpret; both systems learn their own namespace.
+- **Pick one system per user** — declare a single canonical tier and have the
+  other system derive/ignore.
+
+`competitions_tier_check` is intentionally **left at the 6-tier list** (it backs
+60 legitimate weekly rows) — do not "align" it to the 4-tier TW set.
+
+**Priority:** MEDIUM — latent correctness bug, no current user impact (gated by
+the ROOKIE-only state above), but it will surface as soon as cross-system
+promotions occur. Not blocking the forfeit-500 fix.
