@@ -39,6 +39,13 @@ function compactK(v: number): string {
   return `$${Math.round(v)}`;
 }
 
+/** Price-axis tick formatter: $100K / $1K / $100 / $0.10 — no cents on big numbers. */
+function axisPrice(v: number): string {
+  if (v >= 1000) return `$${Math.round(v / 1000)}K`;
+  if (v >= 1) return `$${Math.round(v)}`;
+  return `$${v.toFixed(2)}`;
+}
+
 const LINE_DATA: LineData<Time>[] = BTC_MONTHLY_CLOSE.map(([ym, v]) => ({
   time: `${ym}-01` as Time,
   value: v,
@@ -62,7 +69,7 @@ const STATIC_MARKERS: SeriesMarker<Time>[] = [
     position: "aboveBar" as const,
     shape: "arrowDown" as const,
     color: RED,
-    text: `${compactK(c.topPrice)} ▼${Math.abs(c.drawdownPct)}%`,
+    text: `▼${Math.abs(c.drawdownPct)}%`,
   })),
   ...BTC_CYCLES.map((c) => ({
     time: monthBucket(c.bottomDate),
@@ -98,6 +105,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
         textColor: "rgba(255,255,255,0.45)",
         attributionLogo: false,
       },
+      localization: { priceFormatter: axisPrice },
       grid: {
         vertLines: { color: "rgba(0,255,65,0.05)" },
         horzLines: { color: "rgba(0,255,65,0.05)" },
@@ -111,6 +119,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
         borderColor: "rgba(0,255,65,0.18)",
         timeVisible: false,
         secondsVisible: false,
+        rightOffset: 8,
       },
       crosshair: {
         vertLine: { color: "rgba(0,255,65,0.16)", labelBackgroundColor: "#0d1a0d" },
@@ -123,6 +132,9 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+      // Pin the range (data spans 0.06 → ~116K) so log autoscale can't overshoot
+      // to millions and squash the line. Bump maxValue if BTC prints above ~$180K.
+      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0.05, maxValue: 200000 } }),
     });
     series.setData(LINE_DATA);
 
@@ -181,7 +193,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
 
   return (
     <div>
-      <div ref={containerRef} className="w-full h-[420px]" />
+      <div ref={containerRef} className="w-full h-[340px]" />
       <div className="mt-1.5 text-[9px] text-white/25 tracking-[1px] font-mono leading-4">
         Line = monthly closes; cycle-top / ATH markers are intraday wicks, so they sit
         above the line — expected, not a data error.

@@ -23,6 +23,8 @@ function underwater(days: number): string {
   return `${days} d (~${Math.round(days / 30.4)} mo)`;
 }
 
+const MAX_DD = 94; // cycle 1, the deepest — normalizes the magnitude bars
+
 interface Props {
   currentPrice?: number;
 }
@@ -49,34 +51,48 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
         <tbody>
           {BTC_CYCLES.map((c) => (
             <tr key={c.n} className="border-b border-tradr-green/[0.08]">
-              <td className="px-3 py-2 text-white/50">#{c.n}</td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td className="px-3 py-2.5 text-white/50">#{c.n}</td>
+              <td className="px-3 py-2.5 whitespace-nowrap">
                 <span className="text-white/85">{usd(c.topPrice)}</span>
                 <span className="text-white/30 ml-2">{monthYear(c.topDate)}</span>
               </td>
-              <td className="px-3 py-2 whitespace-nowrap">
+              <td className="px-3 py-2.5 whitespace-nowrap">
                 <span className="text-white/85">{usd(c.bottomPrice)}</span>
                 <span className="text-white/30 ml-2">{monthYear(c.bottomDate)}</span>
               </td>
-              <td className="px-3 py-2 text-right font-bold text-tradr-red">{c.drawdownPct}%</td>
-              <td className="px-3 py-2 text-right text-white/60 whitespace-nowrap">
+              <td className="px-3 py-2.5 text-right align-middle">
+                <div className="text-[13px] font-bold text-tradr-red leading-none">{c.drawdownPct}%</div>
+                <div
+                  className="mt-1 h-[3px] bg-tradr-red/70 rounded-sm"
+                  style={{ width: `${(Math.abs(c.drawdownPct) / MAX_DD) * 100}%`, marginLeft: "auto" }}
+                />
+              </td>
+              <td className="px-3 py-2.5 text-right text-white/60 whitespace-nowrap">
                 {underwater(c.daysUnderwater)}
               </td>
             </tr>
           ))}
 
           {/* Live NOW row — the ongoing drawdown from the Oct-2025 ATH. */}
-          <tr className="bg-tradr-green/[0.04]">
-            <td className="px-3 py-2 text-tradr-green tracking-[1px]">NOW</td>
-            <td className="px-3 py-2 whitespace-nowrap">
+          <tr className="bg-tradr-green/[0.07] border-t border-tradr-green/30">
+            <td className="px-3 py-2.5 text-[12px] font-bold tracking-[1px] text-tradr-green">NOW</td>
+            <td className="px-3 py-2.5 whitespace-nowrap">
               <span className="text-white/85">{usd(BTC_ATH.price)}</span>
               <span className="text-white/30 ml-2">{monthYear(BTC_ATH.date)}</span>
             </td>
-            <td className="px-3 py-2 text-white/30">—</td>
-            <td className="px-3 py-2 text-right font-bold text-tradr-red">
-              {liveDrawdown !== null ? `${liveDrawdown}%` : "—"}
+            <td className="px-3 py-2.5 text-white/30">—</td>
+            <td className="px-3 py-2.5 text-right align-middle">
+              <div className="text-[15px] font-bold text-tradr-red leading-none">
+                {liveDrawdown !== null ? `${liveDrawdown}%` : "—"}
+              </div>
+              {liveDrawdown !== null && (
+                <div
+                  className="mt-1 h-[3px] bg-tradr-red/70 rounded-sm"
+                  style={{ width: `${(Math.abs(liveDrawdown) / MAX_DD) * 100}%`, marginLeft: "auto" }}
+                />
+              )}
             </td>
-            <td className="px-3 py-2 text-right text-white/60 whitespace-nowrap">
+            <td className="px-3 py-2.5 text-right text-white/60 whitespace-nowrap">
               {daysSinceAth} d … and counting
             </td>
           </tr>
