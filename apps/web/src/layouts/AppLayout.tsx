@@ -287,7 +287,7 @@ export default function AppLayout() {
         )}
 
         {/* ── MAIN CONTENT ── */}
-        <div className={`flex-1 flex flex-col ${isTradePage ? "h-screen overflow-hidden" : "min-h-screen"} lg:pb-9`}>
+        <div className={`flex-1 min-w-0 flex flex-col ${isTradePage ? "h-screen overflow-hidden" : "min-h-screen"} lg:pb-9`}>
           {/* Topbar */}
           <header className={`flex items-center justify-between ${isTradePage ? "px-3 py-2" : "px-8 py-4"} border-b border-tradr-green/[0.18] bg-tradr-bg/60 backdrop-blur-sm sticky top-0 z-40`}>
             <div className="flex items-center gap-4">
