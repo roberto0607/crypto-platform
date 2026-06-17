@@ -74,6 +74,10 @@ export default function AppLayout() {
     return () => document.removeEventListener("mousedown", handler);
   }, [userMenuOpen]);
   const isTradePage = location.pathname === "/trade";
+  // Sidebar is always the collapsed 52px icon rail (Option A) — TradingView-style,
+  // consistent across routes. Kept separate from isTradePage so the main content /
+  // topbar / chart-full-bleed logic stays route-dependent.
+  const railCollapsed = true;
   const isWarTheme = currentTheme === "tradewars";
 
   useSystemStatusPolling();
@@ -167,12 +171,12 @@ export default function AppLayout() {
         <aside className={`
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
           lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-50
-          ${isTradePage ? "w-[52px]" : "w-[220px]"} border-r border-tradr-green/[0.18] bg-tradr-bg/95
+          ${railCollapsed ? "w-[52px]" : "w-[220px]"} border-r border-tradr-green/[0.18] bg-tradr-bg/95
           flex flex-col transition-all duration-200 ease-in-out
         `}>
           {/* Logo */}
-          <div className={`${isTradePage ? "px-0 justify-center" : "px-5"} py-6 border-b border-tradr-green/[0.18] flex items-center gap-2.5`}>
-            {!isTradePage && (
+          <div className={`${railCollapsed ? "px-0 justify-center" : "px-5"} py-6 border-b border-tradr-green/[0.18] flex items-center gap-2.5`}>
+            {!railCollapsed && (
               <span className="t-logo-text">
                 {isWarTheme ? <>TR<span>A</span>DE W<span>A</span>RS</> : <>TR<span>A</span>DR</>}
               </span>
@@ -181,10 +185,10 @@ export default function AppLayout() {
           </div>
 
           {/* Nav sections */}
-          <nav className={`flex-1 ${isTradePage ? "overflow-visible" : "overflow-y-auto"}`}>
+          <nav className={`flex-1 ${railCollapsed ? "overflow-visible" : "overflow-y-auto"}`}>
             {NAV_SECTIONS.map((section) => (
-              <div key={section.label} className={`${isTradePage ? "pt-3 pb-1" : "pt-5 pb-2"}`}>
-                {!isTradePage && (
+              <div key={section.label} className={`${railCollapsed ? "pt-3 pb-1" : "pt-5 pb-2"}`}>
+                {!railCollapsed && (
                   <div className="px-5 mb-2 text-[8px] text-white/30 tracking-[4px] uppercase font-mono">
                     {section.label}
                   </div>
@@ -197,7 +201,7 @@ export default function AppLayout() {
                         onClick={() => setSidebarOpen(false)}
                         aria-label={item.label}
                         className={({ isActive }) =>
-                          `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
+                          `flex items-center ${railCollapsed ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
                           border-l-2 transition-all duration-200 no-underline
                           ${isActive
                             ? "text-tradr-green border-l-tradr-green bg-tradr-green/[0.06]"
@@ -206,9 +210,9 @@ export default function AppLayout() {
                         }
                       >
                         <span className="text-sm w-5 text-center"><NavIcon name={item.icon} /></span>
-                        {!isTradePage && item.label}
+                        {!railCollapsed && item.label}
                       </NavLink>
-                      {isTradePage && (
+                      {railCollapsed && (
                         <span className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap px-2 py-1 text-[10px] tracking-[2px] font-mono uppercase bg-[#080808] border border-tradr-green/[0.18] text-white/85 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
                           {item.label}
                         </span>
@@ -220,8 +224,8 @@ export default function AppLayout() {
             ))}
 
             {isAdmin && (
-              <div className={`${isTradePage ? "pt-1 pb-1" : "pt-2 pb-2"}`}>
-                {!isTradePage && (
+              <div className={`${railCollapsed ? "pt-1 pb-1" : "pt-2 pb-2"}`}>
+                {!railCollapsed && (
                   <div className="px-5 mb-2 text-[8px] text-white/30 tracking-[4px] uppercase font-mono">
                     Admin
                   </div>
@@ -232,7 +236,7 @@ export default function AppLayout() {
                     onClick={() => setSidebarOpen(false)}
                     aria-label="Admin"
                     className={({ isActive }) =>
-                      `flex items-center ${isTradePage ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
+                      `flex items-center ${railCollapsed ? "justify-center px-0 py-2" : "gap-3 px-5 py-2.5"} text-[11px] tracking-[1px] font-mono
                       border-l-2 transition-all duration-200 no-underline
                       ${isActive
                         ? "text-tradr-green border-l-tradr-green bg-tradr-green/[0.06]"
@@ -241,9 +245,9 @@ export default function AppLayout() {
                     }
                   >
                     <span className="text-sm w-5 text-center"><NavIcon name="admin" /></span>
-                    {!isTradePage && "Admin"}
+                    {!railCollapsed && "Admin"}
                   </NavLink>
-                  {isTradePage && (
+                  {railCollapsed && (
                     <span className="pointer-events-none absolute left-full ml-2 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap px-2 py-1 text-[10px] tracking-[2px] font-mono uppercase bg-[#080808] border border-tradr-green/[0.18] text-white/85 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
                       Admin
                     </span>
@@ -254,11 +258,11 @@ export default function AppLayout() {
           </nav>
 
           {/* User info at bottom */}
-          <div className={`mt-auto border-t border-tradr-green/[0.18] ${isTradePage ? "px-0 py-3 justify-center" : "px-5 py-4"} flex items-center gap-2.5`}>
+          <div className={`mt-auto border-t border-tradr-green/[0.18] ${railCollapsed ? "px-0 py-3 justify-center" : "px-5 py-4"} flex items-center gap-2.5`}>
             <div className="w-8 h-8 rounded-full border border-tradr-green/[0.18] bg-tradr-bg2 flex items-center justify-center text-xs text-tradr-green font-mono flex-shrink-0">
               {initials}
             </div>
-            {!isTradePage && (
+            {!railCollapsed && (
               <>
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] text-white/85 tracking-[1px] truncate font-mono">
