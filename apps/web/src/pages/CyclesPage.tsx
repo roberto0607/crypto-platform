@@ -2,6 +2,7 @@ import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import CycleDrawdownTable from "@/components/cycles/CycleDrawdownTable";
 import BtcHistoryChart from "@/components/cycles/BtcHistoryChart";
+import SeasonalityGrid from "@/components/cycles/SeasonalityGrid";
 
 // Cycles — factual Bitcoin cycle-history reference (drawdowns + halvings).
 //
@@ -31,6 +32,13 @@ export default function CyclesPage() {
 
       <div className="mt-8">
         <BtcHistoryChart currentPrice={currentPrice} />
+      </div>
+
+      <div className="mt-10">
+        <div className="text-[10px] tracking-[3px] text-white/30 uppercase mb-3">
+          Seasonality · monthly close-to-close returns
+        </div>
+        <SeasonalityGrid />
       </div>
 
       <div className="mt-6 text-[9px] text-white/25 tracking-[1px] leading-4 max-w-3xl">
