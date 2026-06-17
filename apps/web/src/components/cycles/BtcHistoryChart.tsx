@@ -5,6 +5,8 @@ import {
   createSeriesMarkers,
   ColorType,
   PriceScaleMode,
+  LineStyle,
+  CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
@@ -44,6 +46,13 @@ function axisPrice(v: number): string {
   if (v >= 1000) return `$${Math.round(v / 1000)}K`;
   if (v >= 1) return `$${Math.round(v)}`;
   return `$${v.toFixed(2)}`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Full-precision price for the floating tooltip (axis stays compact $K). */
+function tipPrice(v: number): string {
+  return v >= 1 ? `$${Math.round(v).toLocaleString("en-US")}` : `$${v.toFixed(2)}`;
 }
 
 const LINE_DATA: LineData<Time>[] = BTC_MONTHLY_CLOSE.map(([ym, v]) => ({
@@ -94,6 +103,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   // Mount once: build chart + static line + static markers + resize observer.
   useEffect(() => {
@@ -113,7 +123,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       rightPriceScale: {
         borderColor: "rgba(0,255,65,0.18)",
         mode: PriceScaleMode.Logarithmic,
-        scaleMargins: { top: 0.12, bottom: 0.08 },
+        scaleMargins: { top: 0.04, bottom: 0.08 },
       },
       timeScale: {
         borderColor: "rgba(0,255,65,0.18)",
@@ -122,8 +132,9 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
         rightOffset: 8,
       },
       crosshair: {
-        vertLine: { color: "rgba(0,255,65,0.16)", labelBackgroundColor: "#0d1a0d" },
-        horzLine: { color: "rgba(0,255,65,0.16)", labelBackgroundColor: "#0d1a0d" },
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "rgba(0,255,65,0.20)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0d1a0d" },
+        horzLine: { color: "rgba(0,255,65,0.20)", width: 1, style: LineStyle.Dashed, labelBackgroundColor: "#0d1a0d" },
       },
     });
 
@@ -144,6 +155,30 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
     chartRef.current = chart;
     seriesRef.current = series;
     markersRef.current = markers;
+
+    // Floating combined tooltip ("Mon YYYY · $X close") that tracks the cursor.
+    // chart.remove() on unmount tears the subscription down — no manual unsubscribe.
+    chart.subscribeCrosshairMove((param) => {
+      const tip = tooltipRef.current;
+      if (!tip) return;
+      if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+        tip.style.display = "none";
+        return;
+      }
+      const d = param.seriesData.get(series) as { value?: number } | undefined;
+      const value = d?.value;
+      if (value === undefined) {
+        tip.style.display = "none";
+        return;
+      }
+      const [yr, mo] = String(param.time).split("-");
+      const label = `${MONTHS[Number(mo) - 1]} ${yr}`;
+      tip.textContent = `${label} · ${tipPrice(value)} close`;
+      tip.style.display = "block";
+      const w = containerRef.current?.clientWidth ?? 0;
+      const clampedX = Math.max(48, Math.min(param.point.x, w - 48));
+      tip.style.left = `${clampedX}px`;
+    });
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -193,7 +228,14 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
 
   return (
     <div>
-      <div ref={containerRef} className="w-full h-[340px]" />
+      <div className="relative">
+        <div ref={containerRef} className="w-full h-[340px]" />
+        <div
+          ref={tooltipRef}
+          className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-sm border border-tradr-green/30 bg-[#0a0f0a]/95 px-2 py-1 text-[10px] font-mono text-white/85"
+          style={{ display: "none", top: 8, left: 0 }}
+        />
+      </div>
       <div className="mt-1.5 text-[9px] text-white/25 tracking-[1px] font-mono leading-4">
         Line = monthly closes; cycle-top / ATH markers are intraday wicks, so they sit
         above the line — expected, not a data error.
