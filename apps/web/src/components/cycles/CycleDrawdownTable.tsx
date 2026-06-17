@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { BTC_CYCLES, BTC_ATH } from "@/lib/btcCycles";
 
 // ── Bitcoin cycle drawdown table ──
@@ -34,6 +35,13 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
     : null;
   const daysSinceAth = Math.floor((Date.now() - Date.parse(BTC_ATH.date)) / 86_400_000);
 
+  // Grow the drawdown bars from 0 → target on mount (one rAF after first paint).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   return (
     <div className="overflow-x-auto border border-tradr-green/[0.18] bg-tradr-bg2/40">
       <table className="w-full font-mono text-[11px] border-collapse">
@@ -61,7 +69,10 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
               <td className="px-3 py-2.5 text-right align-middle">
                 <div className="text-[13px] font-bold text-tradr-red leading-none">{c.drawdownPct}%</div>
                 <div className="mt-1.5 h-[3px] w-full rounded-sm bg-tradr-red/10 flex justify-end">
-                  <div className="h-full rounded-sm bg-tradr-red/70" style={{ width: `${Math.abs(c.drawdownPct)}%` }} />
+                  <div
+                    className="h-full rounded-sm bg-tradr-red/70 transition-[width] duration-700 ease-out"
+                    style={{ width: mounted ? `${Math.abs(c.drawdownPct)}%` : "0%" }}
+                  />
                 </div>
               </td>
               <td className="px-3 py-2.5 text-right text-white/60 whitespace-nowrap">
@@ -72,7 +83,10 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
 
           {/* Live NOW row — the ongoing drawdown from the Oct-2025 ATH. */}
           <tr className="bg-tradr-green/[0.07] border-t border-tradr-green/30">
-            <td className="px-3 py-2.5 text-[12px] font-bold tracking-[1px] text-tradr-green">NOW</td>
+            <td className="px-3 py-2.5 text-[12px] font-bold tracking-[1px] text-tradr-green whitespace-nowrap">
+              <span className="inline-block w-1.5 h-1.5 mr-1.5 rounded-full bg-tradr-green align-middle animate-pulse" />
+              NOW
+            </td>
             <td className="px-3 py-2.5 whitespace-nowrap">
               <span className="text-white/85">{usd(BTC_ATH.price)}</span>
               <span className="text-white/30 ml-2">{monthYear(BTC_ATH.date)}</span>
@@ -84,7 +98,10 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
               </div>
               {liveDrawdown !== null && (
                 <div className="mt-1.5 h-[3px] w-full rounded-sm bg-tradr-red/10 flex justify-end">
-                  <div className="h-full rounded-sm bg-tradr-red/70" style={{ width: `${Math.abs(liveDrawdown)}%` }} />
+                  <div
+                    className="h-full rounded-sm bg-tradr-red/70 transition-[width] duration-700 ease-out"
+                    style={{ width: mounted ? `${Math.abs(liveDrawdown)}%` : "0%" }}
+                  />
                 </div>
               )}
             </td>

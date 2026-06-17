@@ -16,7 +16,7 @@ export default function CyclesPage() {
   );
 
   return (
-    <div className="font-mono text-white/85 max-w-5xl">
+    <div className="font-mono text-white/85 w-full">
       <div className="flex items-baseline gap-3">
         <h1 className="text-2xl tracking-[4px] text-tradr-green">CYCLES</h1>
         <span className="text-tradr-green/40">//</span>
