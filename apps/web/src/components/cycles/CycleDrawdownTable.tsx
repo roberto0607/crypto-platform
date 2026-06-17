@@ -23,8 +23,6 @@ function underwater(days: number): string {
   return `${days} d (~${Math.round(days / 30.4)} mo)`;
 }
 
-const MAX_DD = 94; // cycle 1, the deepest — normalizes the magnitude bars
-
 interface Props {
   currentPrice?: number;
 }
@@ -62,10 +60,9 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
               </td>
               <td className="px-3 py-2.5 text-right align-middle">
                 <div className="text-[13px] font-bold text-tradr-red leading-none">{c.drawdownPct}%</div>
-                <div
-                  className="mt-1 h-[3px] bg-tradr-red/70 rounded-sm"
-                  style={{ width: `${(Math.abs(c.drawdownPct) / MAX_DD) * 100}%`, marginLeft: "auto" }}
-                />
+                <div className="mt-1.5 h-[3px] w-full rounded-sm bg-tradr-red/10 flex justify-end">
+                  <div className="h-full rounded-sm bg-tradr-red/70" style={{ width: `${Math.abs(c.drawdownPct)}%` }} />
+                </div>
               </td>
               <td className="px-3 py-2.5 text-right text-white/60 whitespace-nowrap">
                 {underwater(c.daysUnderwater)}
@@ -86,10 +83,9 @@ export default function CycleDrawdownTable({ currentPrice }: Props) {
                 {liveDrawdown !== null ? `${liveDrawdown}%` : "—"}
               </div>
               {liveDrawdown !== null && (
-                <div
-                  className="mt-1 h-[3px] bg-tradr-red/70 rounded-sm"
-                  style={{ width: `${(Math.abs(liveDrawdown) / MAX_DD) * 100}%`, marginLeft: "auto" }}
-                />
+                <div className="mt-1.5 h-[3px] w-full rounded-sm bg-tradr-red/10 flex justify-end">
+                  <div className="h-full rounded-sm bg-tradr-red/70" style={{ width: `${Math.abs(liveDrawdown)}%` }} />
+                </div>
               )}
             </td>
             <td className="px-3 py-2.5 text-right text-white/60 whitespace-nowrap">
