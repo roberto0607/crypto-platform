@@ -1,24 +1,41 @@
-// Cycles — Bitcoin cycle-history reference.
+import { useAppStore } from "@/stores/appStore";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
+import CycleDrawdownTable from "@/components/cycles/CycleDrawdownTable";
+import BtcHistoryChart from "@/components/cycles/BtcHistoryChart";
+
+// Cycles — factual Bitcoin cycle-history reference (drawdowns + halvings).
 //
-// Placeholder while the factual cycle-history view (drawdowns + halvings
-// table/chart) is rebuilt. No data fetching, no live calls, no AI.
+// Static dataset (@/lib/btcCycles) + ONE live input: the current BTC price,
+// resolved from appStore.pairs by base symbol and read out of pairPricesStore
+// (same path TradingPage/TickerItem use). No data API, no AI, no forecasting.
 export default function CyclesPage() {
+  const pairs = useAppStore((s) => s.pairs);
+  const btcPairId = pairs.find((p) => p.symbol.split("/")[0] === "BTC")?.id;
+  const currentPrice = usePairPricesStore((s) =>
+    btcPairId ? s.prices[btcPairId] : undefined,
+  );
+
   return (
-    <div className="font-mono text-white/85 max-w-3xl">
+    <div className="font-mono text-white/85 max-w-5xl">
       <div className="flex items-baseline gap-3">
         <h1 className="text-2xl tracking-[4px] text-tradr-green">CYCLES</h1>
         <span className="text-tradr-green/40">//</span>
       </div>
-
       <div className="mt-2 text-[10px] tracking-[3px] text-white/30 uppercase">
-        Bitcoin cycle history — drawdowns · halvings
+        Bitcoin cycle history · drawdowns · halvings
       </div>
 
-      <div className="mt-8 border border-tradr-green/[0.18] bg-tradr-bg2/40 px-5 py-6">
-        <div className="text-[11px] tracking-[1px] leading-6 text-white/50">
-          This view is being rebuilt as a factual cycle-history reference.
-          Check back soon.
-        </div>
+      <div className="mt-6">
+        <CycleDrawdownTable currentPrice={currentPrice} />
+      </div>
+
+      <div className="mt-8">
+        <BtcHistoryChart currentPrice={currentPrice} />
+      </div>
+
+      <div className="mt-6 text-[9px] text-white/25 tracking-[1px] leading-4 max-w-3xl">
+        Factual reference — not advice and not a forecast. The ~12–18-month
+        post-halving ATH rhythm is an observed pattern across four events, not a law.
       </div>
     </div>
   );
