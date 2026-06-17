@@ -143,9 +143,10 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      // Pin the range (data spans 0.06 → ~116K) so log autoscale can't overshoot
-      // to millions and squash the line. Bump maxValue if BTC prints above ~$180K.
-      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0.05, maxValue: 200000 } }),
+      // Pin the range (data spans 0.06 → ~116K; ATH $126K) so log autoscale can't
+      // overshoot. Top pinned near the ATH so the next-decade "$400K" gridline drops
+      // out and the top label lands ~$200K. Bump maxValue if BTC prints above ~$130K.
+      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0.05, maxValue: 150000 } }),
     });
     series.setData(LINE_DATA);
 
@@ -228,8 +229,12 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
 
   return (
     <div>
+      <style>{`
+        @keyframes cyclesReveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+        .cycles-chart-reveal { animation: cyclesReveal 700ms ease-out both; }
+      `}</style>
       <div className="relative">
-        <div ref={containerRef} className="w-full h-[340px]" />
+        <div ref={containerRef} className="w-full h-[340px] cycles-chart-reveal" />
         <div
           ref={tooltipRef}
           className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-sm border border-tradr-green/30 bg-[#0a0f0a]/95 px-2 py-1 text-[10px] font-mono text-white/85"
