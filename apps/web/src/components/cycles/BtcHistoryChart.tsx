@@ -123,7 +123,10 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       rightPriceScale: {
         borderColor: "rgba(0,255,65,0.18)",
         mode: PriceScaleMode.Logarithmic,
-        scaleMargins: { top: 0.04, bottom: 0.08 },
+        // Top headroom so the highest auto log-label clears the pane edge (was clipped at 0.04).
+        // lightweight-charts always places a gridline above the data max; this margin gives that
+        // label room without pushing it to a far-overshoot value.
+        scaleMargins: { top: 0.06, bottom: 0.08 },
       },
       timeScale: {
         borderColor: "rgba(0,255,65,0.18)",
@@ -143,12 +146,27 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      // Pin the range (data spans 0.06 → ~116K; ATH $126K) so log autoscale can't
-      // overshoot. Top pinned near the ATH so the next-decade "$400K" gridline drops
-      // out and the top label lands ~$200K. Bump maxValue if BTC prints above ~$130K.
-      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0.05, maxValue: 150000 } }),
+      // Pin the range just above the ~$116K monthly-close max (ATH $126K) so log autoscale can't
+      // overshoot; the top auto-label lands ~$360K (with the $100K reference line + $40K tick below
+      // it) rather than a far-overshoot $900K. Bump maxValue if the monthly-close series exceeds ~$126K.
+      autoscaleInfoProvider: () => ({ priceRange: { minValue: 0.05, maxValue: 130000 } }),
     });
     series.setData(LINE_DATA);
+
+    // $100K reference gridline — log autoscale jumps $40K straight to the top label,
+    // leaving the band where the line actually lives unmarked. lightweight-charts'
+    // log scale exposes no custom-tick API, so augment with one faint dotted line +
+    // a neutral "$100K" axis label (priceFormatter renders the $K text). Torn down by
+    // chart.remove() on unmount.
+    series.createPriceLine({
+      price: 100000,
+      color: "rgba(0,255,65,0.10)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true,
+      axisLabelColor: "#0a0f0a",
+      axisLabelTextColor: "rgba(255,255,255,0.45)",
+    });
 
     const markers = createSeriesMarkers(series, sortMarkers(STATIC_MARKERS));
     chart.timeScale().fitContent();
