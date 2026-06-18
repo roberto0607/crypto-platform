@@ -48,6 +48,11 @@ function axisPrice(v: number): string {
   return `$${v.toFixed(2)}`;
 }
 
+// Even decades spanning the data ($0.05–$126K) — perfectly even on a log scale, all
+// inside the pinned range so every one renders. Drawn as a clip-proof HTML axis overlay
+// (lightweight-charts paints its own axis in-canvas, where scaleMargins clips the top label).
+const PRICE_TICKS = [0.1, 1, 10, 100, 1000, 10000, 100000];
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Full-precision price for the floating tooltip (axis stays compact $K). */
@@ -104,6 +109,7 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const axisRef = useRef<HTMLDivElement>(null);
 
   // Mount once: build chart + static line + static markers + resize observer.
   useEffect(() => {
@@ -118,15 +124,16 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       localization: { priceFormatter: axisPrice },
       grid: {
         vertLines: { color: "rgba(0,255,65,0.05)" },
-        horzLines: { color: "rgba(0,255,65,0.05)" },
+        // Horizontal gridlines drawn by the HTML axis overlay so they match our labels.
+        horzLines: { visible: false },
       },
       rightPriceScale: {
-        borderColor: "rgba(0,255,65,0.18)",
+        // Kept visible so log mode + autoscale stay active (visible:false reverts the scale to
+        // linear). Its canvas auto-labels are masked by the HTML axis overlay's opaque gutter cover.
+        visible: true,
+        borderVisible: false,
         mode: PriceScaleMode.Logarithmic,
-        // Top headroom so the highest auto log-label clears the pane edge (was clipped at 0.04).
-        // lightweight-charts always places a gridline above the data max; this margin gives that
-        // label room without pushing it to a far-overshoot value.
-        scaleMargins: { top: 0.06, bottom: 0.08 },
+        scaleMargins: { top: 0.04, bottom: 0.08 },
       },
       timeScale: {
         borderColor: "rgba(0,255,65,0.18)",
@@ -153,27 +160,42 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
     });
     series.setData(LINE_DATA);
 
-    // $100K reference gridline — log autoscale jumps $40K straight to the top label,
-    // leaving the band where the line actually lives unmarked. lightweight-charts'
-    // log scale exposes no custom-tick API, so augment with one faint dotted line +
-    // a neutral "$100K" axis label (priceFormatter renders the $K text). Torn down by
-    // chart.remove() on unmount.
-    series.createPriceLine({
-      price: 100000,
-      color: "rgba(0,255,65,0.10)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Dotted,
-      axisLabelVisible: true,
-      axisLabelColor: "#0a0f0a",
-      axisLabelTextColor: "rgba(255,255,255,0.45)",
-    });
-
     const markers = createSeriesMarkers(series, sortMarkers(STATIC_MARKERS));
     chart.timeScale().fitContent();
 
     chartRef.current = chart;
     seriesRef.current = series;
     markersRef.current = markers;
+
+    // HTML price axis (even decades) — clip-proof labels + faint gridlines positioned via
+    // priceToCoordinate. The canvas price scale stays VISIBLE (hiding it disables log mode +
+    // autoscale), so we mask its auto-labels with an opaque cover over the scale's gutter and
+    // draw our own clean decade labels on top. Re-run on resize (pane height changes the mapping).
+    const renderAxis = () => {
+      const s = seriesRef.current;
+      const chartApi = chartRef.current;
+      const axis = axisRef.current;
+      if (!s || !chartApi || !axis) return;
+      const gutter = chartApi.priceScale("right").width();
+      axis.innerHTML = "";
+      // Opaque strip covering lightweight-charts' own (clipped/auto) price labels.
+      const cover = document.createElement("div");
+      cover.style.cssText = `position:absolute;top:0;bottom:0;right:0;width:${gutter}px;background:#040404;`;
+      axis.appendChild(cover);
+      for (const tick of PRICE_TICKS) {
+        const y = s.priceToCoordinate(tick);
+        if (y == null) continue;
+        const line = document.createElement("div");
+        line.style.cssText = `position:absolute;left:0;right:${gutter}px;top:${y}px;height:1px;background:rgba(0,255,65,0.05);`;
+        axis.appendChild(line);
+        const label = document.createElement("div");
+        label.className = "text-[10px] font-mono text-white/45";
+        label.style.cssText = `position:absolute;right:0;width:${gutter}px;top:${y}px;transform:translateY(-50%);text-align:right;padding-right:6px;`;
+        label.textContent = axisPrice(tick);
+        axis.appendChild(label);
+      }
+    };
+    renderAxis();
 
     // Floating combined tooltip ("Mon YYYY · $X close") that tracks the cursor.
     // chart.remove() on unmount tears the subscription down — no manual unsubscribe.
@@ -206,6 +228,8 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
           height: entry.contentRect.height,
         });
       }
+      // priceToCoordinate depends on pane height — re-place the HTML axis on resize.
+      renderAxis();
     });
     observer.observe(containerRef.current);
 
@@ -253,6 +277,13 @@ export default function BtcHistoryChart({ currentPrice }: Props) {
       `}</style>
       <div className="relative">
         <div ref={containerRef} className="w-full h-[340px] cycles-chart-reveal" />
+        {/* HTML price axis overlay (gridlines + labels) — clip-proof; pointer-events:none
+            so the crosshair/tooltip below still receive mouse events. */}
+        <div
+          ref={axisRef}
+          className="pointer-events-none absolute inset-0"
+          style={{ overflow: "visible" }}
+        />
         <div
           ref={tooltipRef}
           className="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-sm border border-tradr-green/30 bg-[#0a0f0a]/95 px-2 py-1 text-[10px] font-mono text-white/85"
