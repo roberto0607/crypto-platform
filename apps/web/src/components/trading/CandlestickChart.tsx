@@ -114,6 +114,11 @@ export function isAtLiveEdge(
 // Lightweight Charts treats timestamps as UTC — offset to local timezone
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 
+// Min interval between live RSI recomputes on price ticks. Ticks fire many
+// times/sec and computeRSI runs over ~750 candles; 1s is ample for a readout
+// (this is not an order-entry path) and keeps the work bounded to ~1/sec.
+const RSI_LIVE_THROTTLE_MS = 1000;
+
 function formatDateTime12h(epochSec: number): string {
     const d = new Date(epochSec * 1000);
     const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -257,6 +262,8 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const livePriceLineRef = useRef<IPriceLine | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
+    // Timestamp (ms) of the last live RSI recompute — throttles the per-tick path.
+    const lastRsiComputeRef = useRef(0);
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
     // The pair:timeframe the viewport was last fit to. Refit when this key
@@ -1258,6 +1265,26 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
             // Update PDH/PDL proximity, zone fills, and label data on each tick
             currentPriceRef.current = price;
+
+            // Live RSI: recompute over [closed candles + the forming candle] so
+            // the last RSI point tracks intra-candle price (TradingView
+            // semantics — same last point recomputed, not a new bar). THROTTLED:
+            // ticks fire many times/sec, computeRSI runs over ~750 candles, so we
+            // recompute at most once per RSI_LIVE_THROTTLE_MS. candle.closed still
+            // finalizes the bar via renderOverlays (last-write-wins is fine).
+            if (indicatorConfig.rsi && liveCandleRef.current && rawCandlesRef.current.length >= 15) {
+                const nowMs = Date.now();
+                if (nowMs - lastRsiComputeRef.current >= RSI_LIVE_THROTTLE_MS) {
+                    lastRsiComputeRef.current = nowMs;
+                    const live = liveCandleRef.current;
+                    const liveInd: IndicatorCandle = {
+                        time: live.time as number,
+                        open: live.open, high: live.high, low: live.low, close: live.close,
+                        volume: 0,
+                    };
+                    setRsiData(computeRSI([...rawCandlesRef.current.map(apiCandleToIndicator), liveInd], 14));
+                }
+            }
             // Keep the pinned live line (if shown — i.e. scrolled into history)
             // tracking the current price.
             livePriceLineRef.current?.applyOptions({ price });
@@ -1293,7 +1320,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
         window.addEventListener("sse:price.tick", handlePriceTick);
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
-    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap]);
+    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi]);
 
     // Live update: candle.closed → append completed candle
     useEffect(() => {
