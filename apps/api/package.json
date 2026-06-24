@@ -34,6 +34,7 @@
     "load:all": "pnpm load:auth && pnpm load:reads && pnpm load:writes && pnpm load:mixed && pnpm load:outbox",
     "openapi": "tsx src/scripts/generateOpenapi.ts",
     "backfill": "tsx src/scripts/backfillCandles.ts",
+    "candles:backfill": "tsx scripts/backfill-candles.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],
