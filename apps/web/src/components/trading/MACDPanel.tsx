@@ -7,6 +7,7 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
+    type MouseEventParams,
 } from "lightweight-charts";
 import type { MACDResult } from "@/lib/indicators";
 import { SubPanelHeader } from "./SubPanelHeader";
@@ -24,6 +25,7 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     const signalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const histSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
+    const [hovered, setHovered] = useState<{ macd: number; signal: number; hist: number } | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -34,7 +36,10 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             timeScale: { visible: false },
-            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+            crosshair: {
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
+                horzLine: { visible: false },
+            },
         });
 
         const macdSeries = chart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, priceScaleId: "macd" });
@@ -65,6 +70,30 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, data.macd.length]);
 
+    // Hover readout: mirror the main chart's crosshair and show all three values
+    // (macd / signal / hist) at the cursor's time. The three arrays are index-
+    // and time-aligned (computeMACD), so one findIndex resolves all three. The
+    // marker projects onto the macd line; off-chart reverts to the latest.
+    useEffect(() => {
+        if (!mainChart) return;
+        const handler = (param: MouseEventParams) => {
+            const sub = chartRef.current;
+            const series = macdSeriesRef.current;
+            if (!sub || !series) return;
+            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const t = param.time as number;
+            const i = data.macd.findIndex((p) => p.time === t);
+            if (i < 0) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const macd = data.macd[i]!.value;
+            const signal = data.signal[i]?.value ?? 0;
+            const hist = data.histogram[i]?.value ?? 0;
+            sub.setCrosshairPosition(macd, param.time, series);
+            setHovered({ macd, signal, hist });
+        };
+        mainChart.subscribeCrosshairMove(handler);
+        return () => mainChart.unsubscribeCrosshairMove(handler);
+    }, [mainChart, data]);
+
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
     }, [externalHeight, collapsed]);
@@ -93,11 +122,15 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
 
     const lastMacd = data.macd.length > 0 ? data.macd[data.macd.length - 1]!.value : 0;
     const lastSignal = data.signal.length > 0 ? data.signal[data.signal.length - 1]!.value : 0;
+    const lastHist = data.histogram.length > 0 ? data.histogram[data.histogram.length - 1]!.value : 0;
+    const shownMacd = hovered?.macd ?? lastMacd;
+    const shownSignal = hovered?.signal ?? lastSignal;
+    const shownHist = hovered?.hist ?? lastHist;
 
     return (
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="MACD 12/26/9"
-                rightContent={<><span style={{ color: "#3b82f6" }}>{lastMacd.toFixed(2)}</span>{" "}<span style={{ color: "#f97316" }}>{lastSignal.toFixed(2)}</span></>} />
+                rightContent={<><span style={{ color: "#3b82f6" }}>{shownMacd.toFixed(2)}</span>{" "}<span style={{ color: "#f97316" }}>{shownSignal.toFixed(2)}</span>{" "}<span style={{ color: shownHist >= 0 ? "#16a34a" : "#dc2626" }}>{shownHist.toFixed(2)}</span></>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 100), overflow: "hidden" }} />
         </div>
     );

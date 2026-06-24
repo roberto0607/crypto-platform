@@ -7,6 +7,7 @@ import {
     type ISeriesApi,
     type Time,
     type IPriceLine,
+    type MouseEventParams,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
 import { SubPanelHeader } from "./SubPanelHeader";
@@ -23,6 +24,7 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const avgLineRef = useRef<IPriceLine | null>(null);
     const [collapsed, setCollapsed] = useState(true);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -33,7 +35,10 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             timeScale: { visible: false },
-            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+            crosshair: {
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
+                horzLine: { visible: false },
+            },
         });
 
         const series = chart.addSeries(LineSeries, { color: "#a855f7", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceScaleId: "atr" });
@@ -57,6 +62,26 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, atrData.length]);
+
+    // Hover readout: mirror the main chart's crosshair onto this panel and show
+    // the exact ATR at the cursor's time (exact match — data is 1:1 with candles
+    // on the same TZ_OFFSET_SEC domain). Off-chart reverts to the latest value.
+    useEffect(() => {
+        if (!mainChart) return;
+        const handler = (param: MouseEventParams) => {
+            const sub = chartRef.current;
+            const series = seriesRef.current;
+            if (!sub || !series) return;
+            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const t = param.time as number;
+            const point = atrData.find((p) => p.time === t);
+            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            sub.setCrosshairPosition(point.value, param.time, series);
+            setHovered(point.value);
+        };
+        mainChart.subscribeCrosshairMove(handler);
+        return () => mainChart.unsubscribeCrosshairMove(handler);
+    }, [mainChart, atrData]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
@@ -86,11 +111,12 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
     }, [collapsed, mainChart]);
 
     const lastATR = atrData.length > 0 ? atrData[atrData.length - 1]!.value : 0;
+    const shownATR = hovered ?? lastATR;
 
     return (
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="ATR 14"
-                rightContent={<span style={{ color: "#a855f7" }}>${lastATR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>} />
+                rightContent={<span style={{ color: "#a855f7" }}>${shownATR.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 120), overflow: "hidden" }} />
         </div>
     );
