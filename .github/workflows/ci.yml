@@ -24,7 +24,8 @@ jobs:
         env:
           POSTGRES_USER: cp
           POSTGRES_PASSWORD: cp
-          POSTGRES_DB: cp
+          # Tests run against a *_test database (see src/testing/resetDb.ts guard).
+          POSTGRES_DB: cp_test
         ports:
           - 5433:5432
         options: >-
@@ -58,12 +59,12 @@ jobs:
       - name: Run migrations
         run: pnpm migrate
         env:
-          DATABASE_URL: postgresql://cp:cp@localhost:5433/cp
+          DATABASE_URL: postgresql://cp:cp@localhost:5433/cp_test
 
       - name: Test
         run: pnpm test
         env:
-          DATABASE_URL: postgresql://cp:cp@localhost:5433/cp
+          DATABASE_URL: postgresql://cp:cp@localhost:5433/cp_test
           JWT_ACCESS_SECRET: ci-test-secret
           NODE_ENV: test
 

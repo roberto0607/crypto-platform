@@ -13,6 +13,19 @@ export async function ensureMigrations(): Promise<void> {
 
 /** Truncate all application tables in FK-safe order. */
 export async function resetTestData(): Promise<void> {
+  // Safety guard: refuse to truncate anything that isn't a dedicated *_test
+  // database. This makes it impossible for a misconfigured run (e.g. tests
+  // accidentally pointed at the dev DB) to wipe real data. Override with
+  // ALLOW_DESTRUCTIVE_RESET=1 only if you really mean it.
+  const { rows } = await pool.query<{ db: string }>("SELECT current_database() AS db");
+  const db = rows[0]?.db ?? "";
+  if (!/_test$/.test(db) && process.env.ALLOW_DESTRUCTIVE_RESET !== "1") {
+    throw new Error(
+      `resetTestData refused: current database '${db}' is not a *_test database. ` +
+        `Point DATABASE_URL at a *_test DB, or set ALLOW_DESTRUCTIVE_RESET=1 to override.`,
+    );
+  }
+
   await pool.query(`
     TRUNCATE TABLE
       ledger_entries,
