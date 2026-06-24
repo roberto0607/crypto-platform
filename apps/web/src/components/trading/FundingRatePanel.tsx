@@ -6,8 +6,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
+    type MouseEventParams,
 } from "lightweight-charts";
-import { fetchFundingRate, type FundingRateEntry } from "@/api/endpoints/marketData";
+import { fetchFundingRate, type FundingRateEntry, type FundingHistoryPoint } from "@/api/endpoints/marketData";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface FundingRatePanelProps {
@@ -36,6 +37,7 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
     const [entry, setEntry] = useState<FundingRateEntry | null>(null);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -45,7 +47,10 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             timeScale: { visible: false },
-            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+            crosshair: {
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
+                horzLine: { visible: false },
+            },
         });
         const series = chart.addSeries(HistogramSeries, { priceScaleId: "fr", priceLineVisible: false, lastValueVisible: false });
         series.createPriceLine({ price: 0, color: "#444444", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
@@ -62,6 +67,31 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
         mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart]);
+
+    // Hover readout: mirror the main chart's crosshair. Funding is a SPARSE
+    // (~8h) series, so exact-match would almost never hit — instead step-lookup
+    // the most-recent point at/before the cursor time (the rate IN EFFECT then).
+    // Raw history times are pre-offset, so compare against the TZ-adjusted time.
+    useEffect(() => {
+        if (!mainChart) return;
+        const handler = (param: MouseEventParams) => {
+            const sub = chartRef.current;
+            const series = seriesRef.current;
+            if (!sub || !series) return;
+            const hist = entry?.history;
+            if (param.time == null || !hist || hist.length === 0) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const t = param.time as number;
+            let found: FundingHistoryPoint | null = null;
+            for (let i = hist.length - 1; i >= 0; i--) {
+                if (hist[i]!.time + TZ_OFFSET_SEC <= t) { found = hist[i]!; break; }
+            }
+            if (!found) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            sub.setCrosshairPosition(found.value, param.time, series);
+            setHovered(found.value);
+        };
+        mainChart.subscribeCrosshairMove(handler);
+        return () => mainChart.unsubscribeCrosshairMove(handler);
+    }, [mainChart, entry]);
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
@@ -105,9 +135,10 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     }, [entry, mainChart]);
 
     const rate = entry?.rate ?? 0;
+    const shownRate = hovered ?? rate;
     const nextTime = entry?.nextFundingTime ?? 0;
     const countdown = nextTime > 0 ? formatCountdown(nextTime - Date.now()) : "--";
-    const rateStr = (rate >= 0 ? "+" : "") + (rate * 100).toFixed(4) + "%";
+    const rateStr = (shownRate >= 0 ? "+" : "") + (shownRate * 100).toFixed(4) + "%";
 
     const histLen = entry?.history?.length ?? 0;
 
@@ -115,7 +146,7 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
         <div style={{ position: "relative" }}>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="FUNDING RATE"
                 rightContent={<>
-                    <span style={{ color: rate >= 0 ? "#16a34a" : "#dc2626" }}>{rateStr}</span>
+                    <span style={{ color: shownRate >= 0 ? "#16a34a" : "#dc2626" }}>{rateStr}</span>
                     <span style={{ color: "rgba(255,255,255,0.3)", marginLeft: 8 }}>Next: {countdown}</span>
                 </>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 80), overflow: "hidden" }} />
