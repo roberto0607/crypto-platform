@@ -6,9 +6,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
-import { fetchFundingRate, type FundingRateEntry, type FundingHistoryPoint } from "@/api/endpoints/marketData";
+import { fetchFundingRate, type FundingRateEntry } from "@/api/endpoints/marketData";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface FundingRatePanelProps {
@@ -70,30 +70,25 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
         return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart, entry?.history?.length]);
 
-    // Hover readout: mirror the main chart's crosshair. Funding is a SPARSE
-    // (~8h) series, so exact-match would almost never hit — instead step-lookup
-    // the most-recent point at/before the cursor time (the rate IN EFFECT then).
-    // Raw history times are pre-offset, so compare against the TZ-adjusted time.
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = seriesRef.current;
-            if (!sub || !series) return;
+    // Hover readout (price-chart hover). Funding is a SPARSE (~8h) series, so
+    // exact-match would almost never hit — step-lookup the most-recent point
+    // at/before the cursor time (the rate IN EFFECT then). Raw history times are
+    // pre-offset, so compare against the TZ-adjusted time.
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
             const hist = entry?.history;
-            if (param.time == null || !hist || hist.length === 0) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
-            let found: FundingHistoryPoint | null = null;
+            if (!hist || hist.length === 0) return null;
             for (let i = hist.length - 1; i >= 0; i--) {
-                if (hist[i]!.time + TZ_OFFSET_SEC <= t) { found = hist[i]!; break; }
+                if (hist[i]!.time + TZ_OFFSET_SEC <= t) return { value: hist[i]!.value, price: hist[i]!.value };
             }
-            if (!found) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(found.value, param.time, series);
-            setHovered(found.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, entry]);
+            return null;
+        },
+        setHovered,
+        deps: [entry],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

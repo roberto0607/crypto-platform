@@ -6,9 +6,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
 import type { CvdPoint, CvdDivergence, CvdDataSource } from "@/lib/cvd";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 
 interface CvdPanelProps {
     cvdData: CvdPoint[];
@@ -139,26 +139,22 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         };
     }, [mainChart, cvdData.length]);
 
-    // Hover readout: mirror the main chart's crosshair and show the exact CVD at
-    // the cursor's time (exact match — 1:1 with candles, same TZ domain). The
-    // marker is projected on the positive series (both series share the default
-    // price scale, so it sits at the true value regardless of sign).
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = posSeriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
-            const point = cvdData.find((p) => p.time === t);
-            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(point.value, param.time, series);
-            setHovered(point.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, cvdData]);
+    // Hover readout: show the exact CVD at the cursor's time on price-chart hover
+    // (exact match — 1:1 with candles, same TZ domain). The marker projects on
+    // the positive series (both share the default price scale, so it sits at the
+    // true value regardless of sign) — looked up from cvdData, not the split
+    // series (whose value is 0 on the wrong side of zero).
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => posSeriesRef.current,
+        lookup: (t) => {
+            const p = cvdData.find((x) => x.time === t);
+            return p ? { value: p.value, price: p.value } : null;
+        },
+        setHovered,
+        deps: [cvdData],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

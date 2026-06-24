@@ -6,9 +6,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface DeltaPanelProps {
@@ -65,24 +65,19 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, deltaData.length]);
 
-    // Hover readout: mirror the main chart's crosshair and show the exact delta
-    // at the cursor's time (exact match — 1:1 with candles, same TZ domain).
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = seriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
-            const point = deltaData.find((p) => p.time === t);
-            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(point.value, param.time, series);
-            setHovered(point.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, deltaData]);
+    // Hover readout: show the exact delta at the cursor's time on price-chart
+    // hover (exact match — 1:1 with candles, same TZ domain).
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
+            const p = deltaData.find((x) => x.time === t);
+            return p ? { value: p.value, price: p.value } : null;
+        },
+        setHovered,
+        deps: [deltaData],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

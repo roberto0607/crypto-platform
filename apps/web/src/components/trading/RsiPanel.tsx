@@ -5,10 +5,10 @@ import {
     LineStyle,
     type IChartApi,
     type ISeriesApi,
-    type MouseEventParams,
     type Time,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface RsiPanelProps {
@@ -66,35 +66,19 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, rsiData.length]);
 
-    // Hover readout: mirror the main chart's crosshair onto the RSI panel. When
-    // the cursor is over the price chart, find the RSI point at that time (time
-    // domains match — both are TZ_OFFSET_SEC adjusted) and project a synced
-    // crosshair marker + show the exact value in the header. Off-chart reverts
-    // to the latest RSI. Same hovered??last idiom as the main OHLC legend.
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = seriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null) {
-                sub.clearCrosshairPosition();
-                setHoveredRsi(null);
-                return;
-            }
-            const t = param.time as number;
-            const point = rsiData.find((p) => p.time === t);
-            if (!point) {
-                sub.clearCrosshairPosition();
-                setHoveredRsi(null);
-                return;
-            }
-            sub.setCrosshairPosition(point.value, param.time, series);
-            setHoveredRsi(point.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, rsiData]);
+    // Hover readout: show the exact RSI at the cursor's time on price-chart hover
+    // (exact match — RSI is 1:1 with candles on the same TZ_OFFSET_SEC domain).
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
+            const p = rsiData.find((x) => x.time === t);
+            return p ? { value: p.value, price: p.value } : null;
+        },
+        setHovered: setHoveredRsi,
+        deps: [rsiData],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
