@@ -6,6 +6,7 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
+    type MouseEventParams,
 } from "lightweight-charts";
 import type { CvdPoint, CvdDivergence, CvdDataSource } from "@/lib/cvd";
 
@@ -30,8 +31,10 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     const posSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
     const negSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     const lastValue = cvdData.length > 0 ? cvdData[cvdData.length - 1]!.value : 0;
+    const shownValue = hovered ?? lastValue;
 
     const badgeInfo = useMemo(() => {
         if (dataSource === "REAL") return { label: "LIVE", dot: true, color: "rgba(0,230,118,0.7)" };
@@ -55,7 +58,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
             rightPriceScale: { visible: false },
             timeScale: { visible: false },
             crosshair: {
-                vertLine: { visible: false },
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
                 horzLine: { visible: false },
             },
             height: 60,
@@ -134,6 +137,27 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         };
     }, [mainChart, cvdData.length]);
 
+    // Hover readout: mirror the main chart's crosshair and show the exact CVD at
+    // the cursor's time (exact match — 1:1 with candles, same TZ domain). The
+    // marker is projected on the positive series (both series share the default
+    // price scale, so it sits at the true value regardless of sign).
+    useEffect(() => {
+        if (!mainChart) return;
+        const handler = (param: MouseEventParams) => {
+            const sub = chartRef.current;
+            const series = posSeriesRef.current;
+            if (!sub || !series) return;
+            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const t = param.time as number;
+            const point = cvdData.find((p) => p.time === t);
+            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            sub.setCrosshairPosition(point.value, param.time, series);
+            setHovered(point.value);
+        };
+        mainChart.subscribeCrosshairMove(handler);
+        return () => mainChart.unsubscribeCrosshairMove(handler);
+    }, [mainChart, cvdData]);
+
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
     }, [externalHeight, collapsed]);
@@ -188,9 +212,9 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
                         fontFamily: "Oxanium, monospace",
                         fontSize: 10,
                         fontWeight: 700,
-                        color: lastValue >= 0 ? "#00e676" : "#ff3c3c",
+                        color: shownValue >= 0 ? "#00e676" : "#ff3c3c",
                     }}>
-                        {formatCvdValue(lastValue)}
+                        {formatCvdValue(shownValue)}
                     </span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }}>

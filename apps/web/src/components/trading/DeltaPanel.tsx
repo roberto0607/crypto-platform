@@ -6,6 +6,7 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
+    type MouseEventParams,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
 import { SubPanelHeader } from "./SubPanelHeader";
@@ -21,6 +22,7 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {
         if (!containerRef.current) return;
@@ -31,7 +33,10 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             timeScale: { visible: false },
-            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+            crosshair: {
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
+                horzLine: { visible: false },
+            },
         });
 
         const series = chart.addSeries(HistogramSeries, { priceScaleId: "delta", priceLineVisible: false, lastValueVisible: false });
@@ -58,6 +63,25 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, deltaData.length]);
 
+    // Hover readout: mirror the main chart's crosshair and show the exact delta
+    // at the cursor's time (exact match — 1:1 with candles, same TZ domain).
+    useEffect(() => {
+        if (!mainChart) return;
+        const handler = (param: MouseEventParams) => {
+            const sub = chartRef.current;
+            const series = seriesRef.current;
+            if (!sub || !series) return;
+            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            const t = param.time as number;
+            const point = deltaData.find((p) => p.time === t);
+            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            sub.setCrosshairPosition(point.value, param.time, series);
+            setHovered(point.value);
+        };
+        mainChart.subscribeCrosshairMove(handler);
+        return () => mainChart.unsubscribeCrosshairMove(handler);
+    }, [mainChart, deltaData]);
+
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
     }, [externalHeight, collapsed]);
@@ -80,12 +104,13 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
     }, [collapsed, mainChart]);
 
     const lastDelta = deltaData.length > 0 ? deltaData[deltaData.length - 1]!.value : 0;
-    const fmtDelta = Math.abs(lastDelta) >= 1000 ? (lastDelta / 1000).toFixed(1) + "K" : lastDelta.toFixed(0);
+    const shownDelta = hovered ?? lastDelta;
+    const fmtDelta = Math.abs(shownDelta) >= 1000 ? (shownDelta / 1000).toFixed(1) + "K" : shownDelta.toFixed(0);
 
     return (
         <div>
             <SubPanelHeader collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} label="EST. DELTA"
-                rightContent={<span style={{ color: lastDelta >= 0 ? "#22c55e" : "#ef4444" }}>{lastDelta >= 0 ? "+" : ""}{fmtDelta}</span>} />
+                rightContent={<span style={{ color: shownDelta >= 0 ? "#22c55e" : "#ef4444" }}>{shownDelta >= 0 ? "+" : ""}{fmtDelta}</span>} />
             <div ref={containerRef} style={{ height: collapsed ? 0 : (externalHeight ?? 80), overflow: "hidden" }} />
         </div>
     );
