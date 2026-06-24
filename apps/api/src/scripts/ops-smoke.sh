@@ -34,7 +34,7 @@ ADMIN_LOGIN=$(curl -sf -c "$ADMIN_COOKIES" -X POST "$BASE/auth/login" \
 ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
 ADMIN_ID=$(echo "$ADMIN_LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
 
-PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -c \
+PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -c \
   "UPDATE users SET role = 'ADMIN' WHERE id = '$ADMIN_ID';" > /dev/null
 
 ADMIN_LOGIN=$(curl -sf -c "$ADMIN_COOKIES" -X POST "$BASE/auth/login" \
@@ -122,9 +122,9 @@ curl -sf -X POST "$BASE/admin/assets" \
   -H "Content-Type: application/json" \
   -d '{"symbol":"USD","name":"US Dollar"}' > /dev/null 2>&1 || true
 
-BTC_ID=$(PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -t -A -c \
+BTC_ID=$(PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -t -A -c \
   "SELECT id FROM assets WHERE symbol = 'BTC' LIMIT 1;")
-USD_ID=$(PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -t -A -c \
+USD_ID=$(PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -t -A -c \
   "SELECT id FROM assets WHERE symbol = 'USD' LIMIT 1;")
 TRADER_ID=$(echo "$TRADER_LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
 
@@ -133,11 +133,11 @@ curl -sf -X POST "$BASE/admin/pairs" \
   -H "Content-Type: application/json" \
   -d "{\"baseAssetId\":\"$BTC_ID\",\"quoteAssetId\":\"$USD_ID\",\"symbol\":\"BTC/USD\"}" > /dev/null 2>&1 || true
 
-PAIR_ID=$(PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -t -A -c \
+PAIR_ID=$(PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -t -A -c \
   "SELECT id FROM trading_pairs WHERE symbol = 'BTC/USD' LIMIT 1;")
 
 # Set a last_price so risk checks pass
-PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -c \
+PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -c \
   "UPDATE trading_pairs SET last_price = '50000.00' WHERE id = '$PAIR_ID';" > /dev/null 2>&1 || true
 
 # Credit trader USD wallet
