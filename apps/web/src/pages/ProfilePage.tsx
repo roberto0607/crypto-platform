@@ -234,7 +234,13 @@ export default function ProfilePage() {
                                 const yourPnl = isChallenger ? m.challenger_pnl_pct : m.opponent_pnl_pct;
                                 const won = m.winner_id === user?.id;
                                 const lost = m.winner_id && m.winner_id !== user?.id;
-                                const delta = m.elo_delta ?? 0;
+                                // Mirror Arena: show this user's real per-match ELO change —
+                                // winner_elo_delta on a win, loser_elo_delta (already negative) on a loss.
+                                const eloDisplay = won
+                                    ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
+                                    : lost
+                                        ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`
+                                        : "0";
                                 return (
                                     <tr key={m.id}>
                                         <td style={{ color: "rgba(255,255,255,0.7)" }}>{opponentName}</td>
@@ -249,7 +255,7 @@ export default function ProfilePage() {
                                             {yourPnl ? (parseFloat(yourPnl) >= 0 ? "+" : "") + parseFloat(yourPnl).toFixed(2) + "%" : "--"}
                                         </td>
                                         <td style={{ color: won ? "var(--pf-g)" : lost ? "var(--pf-red)" : "var(--pf-muted)" }}>
-                                            {won ? `+${delta}` : lost ? `-${delta}` : "0"}
+                                            {eloDisplay}
                                         </td>
                                         <td style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
                                             {m.completed_at ? new Date(m.completed_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "--"}
