@@ -63,10 +63,12 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        // Guard the empty-chart race: lightweight-charts throws "Value is null"
+        // if setVisibleRange runs before this panel's series has data.
+        const handler = (range: unknown) => { if (!range || history.length === 0) return; sub.timeScale().setVisibleRange(range as never); };
         mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, history.length]);
 
     // Hover readout: mirror the main chart's crosshair. OI is a SPARSE periodic
     // series, so step-lookup the most-recent point at/before the cursor time

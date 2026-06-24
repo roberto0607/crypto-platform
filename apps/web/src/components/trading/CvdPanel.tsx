@@ -123,7 +123,9 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
         const cvdTimeScale = chartRef.current.timeScale();
 
         const handler = (range: unknown) => {
-            if (!range) return;
+            // Guard the empty-chart race: lightweight-charts throws "Value is null"
+            // if setVisibleLogicalRange runs before this panel's series has data.
+            if (!range || cvdData.length === 0) return;
             const r = range as { from: number; to: number };
             const len = cvdData.length || 750;
             const pad = Math.max(0, r.to - (len - 1));

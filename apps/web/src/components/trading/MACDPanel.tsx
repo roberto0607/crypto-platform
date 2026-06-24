@@ -60,7 +60,9 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
         const handler = (range: unknown) => {
-            if (!range) return;
+            // Guard the empty-chart race: lightweight-charts throws "Value is null"
+            // if setVisibleLogicalRange runs before this panel's series has data.
+            if (!range || data.macd.length === 0) return;
             const r = range as { from: number; to: number };
             const len = data.macd.length || 750;
             const pad = Math.max(0, r.to - (len - 1));
