@@ -63,10 +63,12 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleRange(range as never); };
+        // Guard the empty-chart race: lightweight-charts throws "Value is null"
+        // if setVisibleRange runs before this panel's series has data.
+        const handler = (range: unknown) => { if (!range || !entry?.history?.length) return; sub.timeScale().setVisibleRange(range as never); };
         mainChart.timeScale().subscribeVisibleTimeRangeChange(handler);
         return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, entry?.history?.length]);
 
     // Hover readout: mirror the main chart's crosshair. Funding is a SPARSE
     // (~8h) series, so exact-match would almost never hit — instead step-lookup

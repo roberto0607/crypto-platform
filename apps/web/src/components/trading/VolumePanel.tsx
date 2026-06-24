@@ -46,13 +46,15 @@ export function VolumePanel({ candles, mainChart, height: externalHeight }: Volu
     useEffect(() => {
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
-        const handler = (range: unknown) => { if (range) sub.timeScale().setVisibleLogicalRange(range as never); };
+        // Guard the empty-chart race: lightweight-charts throws "Value is null"
+        // if setVisibleLogicalRange runs before this panel's series has data.
+        const handler = (range: unknown) => { if (!range || candles.length === 0) return; sub.timeScale().setVisibleLogicalRange(range as never); };
         mainChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-        // Sync immediately on mount
+        // Sync immediately on mount (only once data exists)
         const currentRange = mainChart.timeScale().getVisibleLogicalRange();
-        if (currentRange) sub.timeScale().setVisibleLogicalRange(currentRange);
+        if (currentRange && candles.length > 0) sub.timeScale().setVisibleLogicalRange(currentRange);
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-    }, [mainChart]);
+    }, [mainChart, candles.length]);
 
     // Resize chart when height changes
     useEffect(() => {

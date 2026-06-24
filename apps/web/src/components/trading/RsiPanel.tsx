@@ -54,7 +54,9 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
         if (!mainChart || !chartRef.current) return;
         const sub = chartRef.current;
         const handler = (range: unknown) => {
-            if (!range) return;
+            // Guard the empty-chart race: lightweight-charts throws "Value is null"
+            // if setVisibleLogicalRange runs before this panel's series has data.
+            if (!range || rsiData.length === 0) return;
             const r = range as { from: number; to: number };
             const len = rsiData.length || 750;
             const pad = Math.max(0, r.to - (len - 1));
