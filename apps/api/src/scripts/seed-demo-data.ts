@@ -111,6 +111,7 @@ interface PosDef {
   entryPrice: number;
   exitPrice: number;
   qty: number;
+  pnl: number; // realized P&L for this position (the value stored in match_positions.pnl)
   durationMinutes: number;
 }
 
@@ -125,38 +126,56 @@ function generatePositions(
 
   function makeTrades(count: number, totalPnlPct: number, capital: number): PosDef[] {
     const trades: PosDef[] = [];
-    const avgPnlPerTrade = totalPnlPct / count;
 
+    // The set of positions for a player MUST realize exactly the player's
+    // headline P&L: Σ(position.pnl) == (totalPnlPct/100) * capital. Replay's
+    // reconstruction reads match_positions.pnl, so this is what makes the
+    // reconstructed final equal the stored matches.*_pnl_pct (the oracle).
+    //
+    // Distribute the target across `count` positions using random positive
+    // weights, working in integer cents and giving the LAST position the
+    // remainder so the rounded sum is EXACT (no float drift). Then back-solve
+    // each exit price from the assigned pnl so entry/exit/qty/side/pnl all
+    // agree on the row, with a realistic implied price move.
+    const targetCents = Math.round((totalPnlPct / 100) * capital * 100);
+    const weights = Array.from({ length: count }, () => 0.5 + Math.random());
+    const weightSum = weights.reduce((a, b) => a + b, 0);
+
+    let assignedCents = 0;
     for (let i = 0; i < count; i++) {
       const pair = pairs[i % pairs.length]!;
       const base = basePrices[pair]!;
       const side: "LONG" | "SHORT" = i % 2 === 0 ? "LONG" : "SHORT";
 
-      // Vary PnL per trade around the average
-      const jitter = (Math.random() - 0.5) * Math.abs(avgPnlPerTrade) * 0.5;
-      const tradePnlPct = avgPnlPerTrade + jitter;
-      const priceDelta = base * (Math.abs(tradePnlPct) / 100);
-
-      const tradeCapital = capital * (0.05 + Math.random() * 0.20); // 5-25% of capital
-      const qty = tradeCapital / base;
-
-      let entryPrice: number;
-      let exitPrice: number;
-
-      if (side === "LONG") {
-        entryPrice = base + (Math.random() - 0.5) * base * 0.02;
-        exitPrice = tradePnlPct > 0 ? entryPrice + priceDelta : entryPrice - priceDelta;
+      // Per-position pnl (cents); the last position absorbs the remainder so
+      // Σ(pnl) is exactly the target.
+      let pnlCents: number;
+      if (i === count - 1) {
+        pnlCents = targetCents - assignedCents;
       } else {
-        entryPrice = base + (Math.random() - 0.5) * base * 0.02;
-        exitPrice = tradePnlPct > 0 ? entryPrice - priceDelta : entryPrice + priceDelta;
+        pnlCents = Math.round((weights[i]! / weightSum) * targetCents);
+        assignedCents += pnlCents;
       }
+      const pnl = pnlCents / 100;
+
+      // Size the position so the implied price move is realistic (0.5–4%):
+      // qty = |pnl| / priceMove. Guard qty > 0 so a zero-pnl row can't divide by 0.
+      const moveFrac = 0.005 + Math.random() * 0.035;
+      const priceDelta = base * moveFrac;
+      const qty = Math.max(0.0001, Math.round((Math.abs(pnl) / priceDelta) * 10000) / 10000);
+
+      const entryPrice = Math.round((base + (Math.random() - 0.5) * base * 0.02) * 100) / 100;
+      // LONG: exit = entry + pnl/qty ; SHORT: exit = entry - pnl/qty
+      const exitRaw = side === "LONG" ? entryPrice + pnl / qty : entryPrice - pnl / qty;
+      const exitPrice = Math.round(exitRaw * 100) / 100;
 
       trades.push({
         pair,
         side,
-        entryPrice: Math.round(entryPrice * 100) / 100,
-        exitPrice: Math.round(exitPrice * 100) / 100,
-        qty: Math.round(qty * 10000) / 10000,
+        entryPrice,
+        exitPrice,
+        qty,
+        pnl,
         durationMinutes: 5 + Math.floor(Math.random() * 235), // 5 min to 4 hours
       });
     }
@@ -325,15 +344,12 @@ async function seed() {
         const pairId = pairMap.get(pos.pair)!;
         const openedAt = minutesAfter(startedAt, 30 + posIdx * 60 + Math.floor(Math.random() * 30));
         const closedAt = minutesAfter(openedAt, pos.durationMinutes);
-        const pnl = pos.side === "LONG"
-          ? (pos.exitPrice - pos.entryPrice) * pos.qty
-          : (pos.entryPrice - pos.exitPrice) * pos.qty;
 
         await client.query(
           `INSERT INTO match_positions (id, match_id, user_id, pair_id, side, entry_price, qty, exit_price, pnl, opened_at, closed_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [positionId(i, posIdx), matchId, winnerId, pairId, pos.side,
-           pos.entryPrice, pos.qty, pos.exitPrice, Math.round(pnl * 100) / 100,
+           pos.entryPrice, pos.qty, pos.exitPrice, pos.pnl,
            openedAt, closedAt],
         );
         posIdx++;
@@ -344,15 +360,12 @@ async function seed() {
         const pairId = pairMap.get(pos.pair)!;
         const openedAt = minutesAfter(startedAt, 30 + posIdx * 60 + Math.floor(Math.random() * 30));
         const closedAt = minutesAfter(openedAt, pos.durationMinutes);
-        const pnl = pos.side === "LONG"
-          ? (pos.exitPrice - pos.entryPrice) * pos.qty
-          : (pos.entryPrice - pos.exitPrice) * pos.qty;
 
         await client.query(
           `INSERT INTO match_positions (id, match_id, user_id, pair_id, side, entry_price, qty, exit_price, pnl, opened_at, closed_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [positionId(i, posIdx), matchId, loserId, pairId, pos.side,
-           pos.entryPrice, pos.qty, pos.exitPrice, Math.round(pnl * 100) / 100,
+           pos.entryPrice, pos.qty, pos.exitPrice, pos.pnl,
            openedAt, closedAt],
         );
         posIdx++;
