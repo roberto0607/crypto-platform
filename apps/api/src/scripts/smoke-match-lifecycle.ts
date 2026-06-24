@@ -16,7 +16,7 @@
  *
  * Usage:
  *   cd apps/api
- *   DATABASE_URL="postgresql://cp:cp@localhost:5433/cp" npx tsx src/scripts/smoke-match-lifecycle.ts
+ *   DATABASE_URL="postgresql://cp:cp@localhost:5435/cp" npx tsx src/scripts/smoke-match-lifecycle.ts
  */
 
 import "dotenv/config";
