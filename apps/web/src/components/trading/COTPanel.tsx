@@ -3,9 +3,11 @@ import {
     createChart,
     BaselineSeries,
     LineStyle,
+    CrosshairMode,
     type IChartApi,
     type ISeriesApi,
     type Time,
+    type MouseEventParams,
 } from "lightweight-charts";
 import { fetchCOT, type COTWeek } from "@/api/endpoints/marketData";
 import { SubPanelHeader } from "./SubPanelHeader";
@@ -37,6 +39,7 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
     const seriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
     const [collapsed, setCollapsed] = useState(true);
     const [weeks, setWeeks] = useState<COTWeek[]>([]);
+    const [hovered, setHovered] = useState<number | null>(null);
 
     const base = (pairSymbol.split("/")[0] ?? "BTC").toUpperCase();
     const supported = base === "BTC";
@@ -49,7 +52,14 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
             grid: { vertLines: { visible: false }, horzLines: { color: "rgba(255,255,255,0.04)" } },
             rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
             timeScale: { visible: false, borderVisible: false },
-            crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
+            // Self-contained crosshair: COT isn't main-synced (weekly UTC vs
+            // intraday), so it reads its OWN hover. Magnet snaps the cursor to
+            // the nearest weekly point so seriesData always resolves a real value.
+            crosshair: {
+                mode: CrosshairMode.Magnet,
+                vertLine: { visible: true, color: "rgba(255,255,255,0.2)", width: 1, labelVisible: false },
+                horzLine: { visible: false },
+            },
         });
         // Single BaselineSeries — splits coloring at zero automatically.
         const series = chart.addSeries(BaselineSeries, {
@@ -76,7 +86,24 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
 
         chartRef.current = chart;
         seriesRef.current = series;
-        return () => { chart.remove(); chartRef.current = null; seriesRef.current = null; };
+
+        // Hover readout — subscribe to THIS chart's own crosshair (not mainChart;
+        // COT can't main-sync). param.time is in COT's own weekly-UTC domain, so
+        // seriesData.get reads the hovered week's netPosition directly.
+        const handler = (param: MouseEventParams) => {
+            const s = seriesRef.current;
+            if (!s || param.time == null) { setHovered(null); return; }
+            const d = param.seriesData.get(s) as { value?: number } | undefined;
+            setHovered(d && typeof d.value === "number" ? d.value : null);
+        };
+        chart.subscribeCrosshairMove(handler);
+
+        return () => {
+            chart.unsubscribeCrosshairMove(handler);
+            chart.remove();
+            chartRef.current = null;
+            seriesRef.current = null;
+        };
     }, []);
 
     useEffect(() => {
@@ -120,9 +147,11 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
     }, [weeks]);
 
     const latest = weeks.length > 0 ? weeks[weeks.length - 1] : null;
-    const net = latest?.netPosition ?? 0;
+    // Hovered week's netPosition while hovering the COT panel, else the latest —
+    // same `hovered ?? last` idiom as the other panels' readouts.
+    const net = hovered ?? latest?.netPosition ?? 0;
     const netColor = net >= 0 ? "rgb(0, 255, 100)" : "rgb(255, 80, 80)";
-    const netLabel = latest
+    const netLabel = (hovered != null || latest)
         ? `Institutional Net: ${formatNet(net)} contracts (${net >= 0 ? "NET LONG" : "NET SHORT"})`
         : "Institutional Net: —";
 
