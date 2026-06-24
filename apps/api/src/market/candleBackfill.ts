@@ -49,7 +49,7 @@ export interface BackfillResult {
     durationMs: number;
 }
 
-async function insertCandleBatch(
+export async function insertCandleBatch(
     pairId: string,
     timeframe: string,
     candles: Array<{ time: number; open: string; high: string; low: string; close: string; volume: string }>,
