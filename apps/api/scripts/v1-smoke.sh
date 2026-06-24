@@ -28,7 +28,7 @@ ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | python3 -c "import sys,json; print(json.load
 ADMIN_ID=$(echo "$ADMIN_LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['user']['id'])")
 
 # Promote to admin via DB
-PGPASSWORD=cp psql -h localhost -p 5433 -U cp -d cp -c \
+PGPASSWORD=cp psql -h localhost -p 5435 -U cp -d cp -c \
   "UPDATE users SET role = 'ADMIN' WHERE id = '$ADMIN_ID';" > /dev/null
 
 # Re-login for admin token
