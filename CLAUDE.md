@@ -31,7 +31,7 @@ docker compose up -d  # Start PostgreSQL (port 5435) + Redis
 
 ## Indicator Roadmap
 
-**Status: Stages 1–5 are all shipped and in prod. Only Stage 6 remains.**
+**Status: Stages 1–6 are all shipped and in prod. The roadmap is complete.**
 
 ### Already Built (pre-roadmap)
 EMA 20/50/200, VWAP, Bollinger Bands, Volume bars, RSI(14), CVD, Key Levels (PDH/PDL), Liquidity Zones, Order Blocks, Market Intelligence composite score
@@ -59,9 +59,12 @@ EMA 20/50/200, VWAP, Bollinger Bands, Volume bars, RSI(14), CVD, Key Levels (PDH
 - COT Report integration (CFTC)
 - Multi-exchange Open Interest (Gate.io + OKX for BTC)
 
-### Stage 6 — only remaining stage (deferred)
-- Post-Match Replay — replay a completed 1v1 match candle-by-candle with both players' trades overlaid (priority competitive feature)
-- Deferred: current focus is scaling/observability, not feature work (see "Top of mind")
+### ✅ Stage 6 — shipped (PRs #78–#81, 2026-06-24)
+- Post-Match Replay — auto-playing candle-by-candle replay of a completed 1v1 at `/matches/:id/replay`: split candle chart (entry ▲/▼ + exit trade markers per player) on top, dual P&L "race" (challenger orange / opponent cyan, 0% baseline) below, with Play/Pause/Restart + scrubber + 1×/2×/4×. Reached via the **REPLAY** button on COMPLETED Arena match-history rows.
+- **How it works**: `GET /v1/matches/:id/replay` reconstructs each player's per-candle P&L from `match_positions` × 5m candles (`apps/api/src/competitions/replay/`). The reconstruction is unit + oracle tested — the curve's final point equals the stored headline `*_pnl_pct` (oracle delta ~1e-15). Backend is the source of truth; the frontend never recomputes P&L.
+- **Shipped across**: #78 (windowed 5m candle backfill, Coinbase — Kraken can't serve deep 5m), #79 (reconcile demo `match_positions` P&L to the stored headline so the oracle is satisfiable), #80 (endpoint + pure reconstruction + tests), #81 (UI).
+- **⚠️ KNOWN LIMITATION — replay works on demo/seeded matches only.** `match_positions` is populated *only by the seed* (`matchService.ts` calls it "deprecated"); real matches use the non-temporal `positions` aggregate (no side/entry/exit/open-close), so they return a friendly "no replay available" (`no_replay_data`, 422). Enabling real-match replay needs a per-trade event log (or an `equity_snapshots`-based curve) — a clean future enhancement, not a bug.
+- **Route distinction (don't confuse)**: `/matches/:id/replay` is THIS post-match replay; `/replay` is the unrelated **solo historical-candle practice** subsystem (`replay_sessions`, `apps/api/src/replay/`, `replay.ts`).
 
 **Rule**: Build each indicator correctly before moving to the next. No deadlines. Quality over speed.
 
@@ -276,10 +279,13 @@ per-consumer blocking-connection fix (PR #28), and the chart toolbar fit fix
 open/close latency is sub-second under all queue conditions, not just when the
 market-maker bot is active.
 
-**Indicator Roadmap Stages 1–5 are shipped and in prod**: Stage 1 (MACD 12/26/9,
+**Indicator Roadmap Stages 1–6 are shipped and in prod**: Stage 1 (MACD 12/26/9,
 ATR 14, per-candle delta), Stage 2 (Funding Rate, Open Interest), Stage 3 (VPVR),
 Stage 4 (Order Book Heatmap, Footprint), Stage 5 (Liquidation Levels, COT report,
-multi-exchange OI). Only **Stage 6 (Post-Match Replay)** remains unbuilt.
+multi-exchange OI), **Stage 6 (Post-Match Replay — shipped PRs #78–#81)**. The
+indicator/competitive roadmap is now complete (Stage 6 replay works on demo
+matches only — real-match replay needs a per-trade event log; see the Stage 6
+section).
 
 **Next focus: shift from feature work to scaling/observability.** Current user
 load is tiny, but the codebase is now mature enough that "can it handle real
