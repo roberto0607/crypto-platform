@@ -5,9 +5,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
 import { fetchOpenInterest, type OIHistoryPoint } from "@/api/endpoints/marketData";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface OpenInterestPanelProps {
@@ -70,29 +70,24 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
         return () => mainChart.timeScale().unsubscribeVisibleTimeRangeChange(handler);
     }, [mainChart, history.length]);
 
-    // Hover readout: mirror the main chart's crosshair. OI is a SPARSE periodic
-    // series, so step-lookup the most-recent point at/before the cursor time
-    // (the OI IN EFFECT then) rather than exact-match. Raw history times are
-    // pre-offset, so compare against the TZ-adjusted cursor time.
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = seriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null || history.length === 0) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
-            let found: OIHistoryPoint | null = null;
+    // Hover readout (price-chart hover). OI is a SPARSE periodic series, so
+    // step-lookup the most-recent point at/before the cursor time (the OI IN
+    // EFFECT then) rather than exact-match. Raw history times are pre-offset, so
+    // compare against the TZ-adjusted cursor time.
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
+            if (history.length === 0) return null;
             for (let i = history.length - 1; i >= 0; i--) {
-                if (history[i]!.time + TZ_OFFSET_SEC <= t) { found = history[i]!; break; }
+                if (history[i]!.time + TZ_OFFSET_SEC <= t) return { value: history[i]!.value, price: history[i]!.value };
             }
-            if (!found) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(found.value, param.time, series);
-            setHovered(found.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, history]);
+            return null;
+        },
+        setHovered,
+        deps: [history],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

@@ -7,9 +7,9 @@ import {
     type ISeriesApi,
     type Time,
     type IPriceLine,
-    type MouseEventParams,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface ATRPanelProps {
@@ -65,25 +65,19 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, atrData.length]);
 
-    // Hover readout: mirror the main chart's crosshair onto this panel and show
-    // the exact ATR at the cursor's time (exact match — data is 1:1 with candles
-    // on the same TZ_OFFSET_SEC domain). Off-chart reverts to the latest value.
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = seriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
-            const point = atrData.find((p) => p.time === t);
-            if (!point) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(point.value, param.time, series);
-            setHovered(point.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, atrData]);
+    // Hover readout: show the exact ATR at the cursor's time on price-chart hover
+    // (exact match — data is 1:1 with candles on the same TZ_OFFSET_SEC domain).
+    usePanelCrosshairHover<number>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
+            const p = atrData.find((x) => x.time === t);
+            return p ? { value: p.value, price: p.value } : null;
+        },
+        setHovered,
+        deps: [atrData],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });

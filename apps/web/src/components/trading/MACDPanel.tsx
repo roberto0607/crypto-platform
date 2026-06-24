@@ -7,9 +7,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
 import type { MACDResult } from "@/lib/indicators";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface MACDPanelProps {
@@ -72,29 +72,25 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
         return () => mainChart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
     }, [mainChart, data.macd.length]);
 
-    // Hover readout: mirror the main chart's crosshair and show all three values
-    // (macd / signal / hist) at the cursor's time. The three arrays are index-
-    // and time-aligned (computeMACD), so one findIndex resolves all three. The
-    // marker projects onto the macd line; off-chart reverts to the latest.
-    useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = chartRef.current;
-            const series = macdSeriesRef.current;
-            if (!sub || !series) return;
-            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const t = param.time as number;
+    // Hover readout: show all three values (macd / signal / hist) at the cursor's
+    // time on price-chart hover. The three arrays are index- and time-aligned
+    // (computeMACD), so one findIndex resolves all three; the marker projects
+    // onto the macd line.
+    usePanelCrosshairHover<{ macd: number; signal: number; hist: number }>({
+        mainChart,
+        getChart: () => chartRef.current,
+        getSeries: () => macdSeriesRef.current,
+        lookup: (t) => {
             const i = data.macd.findIndex((p) => p.time === t);
-            if (i < 0) { sub.clearCrosshairPosition(); setHovered(null); return; }
+            if (i < 0) return null;
             const macd = data.macd[i]!.value;
             const signal = data.signal[i]?.value ?? 0;
             const hist = data.histogram[i]?.value ?? 0;
-            sub.setCrosshairPosition(macd, param.time, series);
-            setHovered({ macd, signal, hist });
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
-    }, [mainChart, data]);
+            return { value: { macd, signal, hist }, price: macd };
+        },
+        setHovered,
+        deps: [data],
+    });
 
     useEffect(() => {
         if (chartRef.current && !collapsed && externalHeight) chartRef.current.applyOptions({ height: externalHeight });
