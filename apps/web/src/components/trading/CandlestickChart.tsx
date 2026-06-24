@@ -114,10 +114,11 @@ export function isAtLiveEdge(
 // Lightweight Charts treats timestamps as UTC — offset to local timezone
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 
-// Min interval between live RSI recomputes on price ticks. Ticks fire many
-// times/sec and computeRSI runs over ~750 candles; 1s is ample for a readout
-// (this is not an order-entry path) and keeps the work bounded to ~1/sec.
-const RSI_LIVE_THROTTLE_MS = 1000;
+// Min interval between live price-derived indicator recomputes (RSI/MACD/ATR)
+// on price ticks. Ticks fire many times/sec and each compute runs over ~750
+// candles; 1s is ample for a readout (not an order-entry path) and keeps the
+// shared work bounded to ~1/sec regardless of how many of the three are on.
+const LIVE_INDICATOR_THROTTLE_MS = 1000;
 
 function formatDateTime12h(epochSec: number): string {
     const d = new Date(epochSec * 1000);
@@ -262,8 +263,9 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const livePriceLineRef = useRef<IPriceLine | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
-    // Timestamp (ms) of the last live RSI recompute — throttles the per-tick path.
-    const lastRsiComputeRef = useRef(0);
+    // Timestamp (ms) of the last live indicator recompute (RSI/MACD/ATR shared) —
+    // throttles the per-tick path.
+    const lastLiveIndicatorComputeRef = useRef(0);
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
     // The pair:timeframe the viewport was last fit to. Refit when this key
@@ -1266,23 +1268,32 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             // Update PDH/PDL proximity, zone fills, and label data on each tick
             currentPriceRef.current = price;
 
-            // Live RSI: recompute over [closed candles + the forming candle] so
-            // the last RSI point tracks intra-candle price (TradingView
-            // semantics — same last point recomputed, not a new bar). THROTTLED:
-            // ticks fire many times/sec, computeRSI runs over ~750 candles, so we
-            // recompute at most once per RSI_LIVE_THROTTLE_MS. candle.closed still
-            // finalizes the bar via renderOverlays (last-write-wins is fine).
-            if (indicatorConfig.rsi && liveCandleRef.current && rawCandlesRef.current.length >= 15) {
+            // Live price-derived indicators (RSI/MACD/ATR): recompute over
+            // [closed candles + the forming candle] so each panel's last point
+            // tracks intra-candle price (TradingView semantics — same last point
+            // recomputed, not a new bar). All three are price-only, so they share
+            // ONE forming-candle series and ONE throttle gate. THROTTLED: ticks
+            // fire many times/sec and each compute runs over ~750 candles, so we
+            // recompute at most once per LIVE_INDICATOR_THROTTLE_MS regardless of
+            // how many are on. candle.closed still finalizes every panel via
+            // renderOverlays (last-write-wins on the shared state is fine).
+            // CVD/Delta are excluded — they need volume, which price.tick lacks.
+            const liveIndicatorsOn = indicatorConfig.rsi || indicatorConfig.macd || indicatorConfig.atr;
+            if (liveIndicatorsOn && liveCandleRef.current) {
                 const nowMs = Date.now();
-                if (nowMs - lastRsiComputeRef.current >= RSI_LIVE_THROTTLE_MS) {
-                    lastRsiComputeRef.current = nowMs;
+                if (nowMs - lastLiveIndicatorComputeRef.current >= LIVE_INDICATOR_THROTTLE_MS) {
+                    lastLiveIndicatorComputeRef.current = nowMs;
                     const live = liveCandleRef.current;
                     const liveInd: IndicatorCandle = {
                         time: live.time as number,
                         open: live.open, high: live.high, low: live.low, close: live.close,
                         volume: 0,
                     };
-                    setRsiData(computeRSI([...rawCandlesRef.current.map(apiCandleToIndicator), liveInd], 14));
+                    // Build the forming-candle series ONCE, reuse for all three.
+                    const series = [...rawCandlesRef.current.map(apiCandleToIndicator), liveInd];
+                    if (indicatorConfig.rsi && series.length >= 15) setRsiData(computeRSI(series, 14));
+                    if (indicatorConfig.macd && series.length >= 35) setMacdData(computeMACD(series));
+                    if (indicatorConfig.atr && series.length >= 15) setAtrData(computeATR(series, 14));
                 }
             }
             // Keep the pinned live line (if shown — i.e. scrolled into history)
@@ -1320,7 +1331,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
 
         window.addEventListener("sse:price.tick", handlePriceTick);
         return () => window.removeEventListener("sse:price.tick", handlePriceTick);
-    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi]);
+    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
 
     // Live update: candle.closed → append completed candle
     useEffect(() => {
