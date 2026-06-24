@@ -24,6 +24,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import ArenaPage from "@/pages/ArenaPage";
 import CyclesPage from "@/pages/CyclesPage";
 import ReplayPage from "@/pages/ReplayPage";
+import MatchReplayPage from "@/pages/MatchReplayPage";
 import JournalPage from "@/pages/JournalPage";
 import ProfilePage from "@/pages/ProfilePage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -213,6 +214,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/trade" element={<TradingPage />} />
           <Route path="/arena" element={<ArenaPage />} />
+          <Route path="/matches/:id/replay" element={<MatchReplayPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/cycle" element={<CyclesPage />} />
           <Route path="/history" element={<JournalPage />} />

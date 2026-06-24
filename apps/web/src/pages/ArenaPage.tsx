@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { useAppStore } from "@/stores/appStore";
@@ -108,6 +109,8 @@ const ARENA_CSS = `
   .ar-win { color:var(--ar-g);font-size:9px;letter-spacing:2px;border:1px solid rgba(0,255,65,0.3);padding:2px 8px; }
   .ar-loss { color:var(--ar-red);font-size:9px;letter-spacing:2px;border:1px solid rgba(255,59,59,0.3);padding:2px 8px; }
   .ar-draw { color:var(--ar-gold);font-size:9px;letter-spacing:2px;border:1px solid rgba(255,215,0,0.3);padding:2px 8px; }
+  .ar-replay-btn { background:transparent;color:var(--ar-orange);border:1px solid var(--ar-orange);padding:3px 10px;font-family:var(--ar-mono);font-size:9px;letter-spacing:2px;cursor:pointer;white-space:nowrap; }
+  .ar-replay-btn:hover { background:rgba(255,107,0,0.12); }
 
   /* Challenge form */
   .ar-challenge-form { display:flex;gap:8px;align-items:center;margin-bottom:16px; }
@@ -158,6 +161,7 @@ function formatPnl(pct: string | null): string {
 }
 
 export default function ArenaPage() {
+    const navigate = useNavigate();
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
     const pairs = useAppStore((s) => s.pairs);
@@ -527,6 +531,7 @@ export default function ArenaPage() {
                                             <th>THEIR P&L</th>
                                             <th>ELO</th>
                                             <th>DATE</th>
+                                            <th></th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -564,6 +569,16 @@ export default function ArenaPage() {
                                                     </td>
                                                     <td style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
                                                         {m.completed_at ? new Date(m.completed_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "--"}
+                                                    </td>
+                                                    <td>
+                                                        {m.status === "COMPLETED" && (
+                                                            <button
+                                                                className="ar-replay-btn"
+                                                                onClick={() => navigate(`/matches/${m.id}/replay`)}
+                                                            >
+                                                                ▶ REPLAY
+                                                            </button>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             );
