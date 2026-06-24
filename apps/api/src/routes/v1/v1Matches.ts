@@ -11,6 +11,7 @@ import {
     getActiveMatchForUser,
     getMatchHistory,
 } from "../../competitions/matchService.js";
+import { getMatchReplay, ReplayError } from "../../competitions/replay/replayService.js";
 import { pool } from "../../db/pool.js";
 import { parseIntParam } from "../../http/pagination.js";
 
@@ -123,6 +124,37 @@ const v1Matches: FastifyPluginAsync = async (app) => {
             }
             return reply.send({ ok: true, match });
         } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/matches/:id/replay — per-candle P&L reconstruction for replay
+    app.get("/matches/:id/replay", {
+        schema: {
+            tags: ["Matches"],
+            summary: "Get candle-by-candle replay data (both players' reconstructed P&L curves)",
+            security: [{ bearerAuth: [] }],
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { id } = req.params as { id: string };
+            const userId = req.user!.id;
+            // Mirror GET /matches/:id: only the two participants may view.
+            const match = await getMatchById(id);
+            if (!match) {
+                return reply.code(404).send({ ok: false, error: "match_not_found" });
+            }
+            if (match.challenger_id !== userId && match.opponent_id !== userId) {
+                return reply.code(403).send({ ok: false, error: "forbidden" });
+            }
+            const replay = await getMatchReplay(id);
+            return reply.send({ ok: true, ...replay });
+        } catch (err) {
+            if (err instanceof ReplayError) {
+                const status = err.code === "match_not_found" ? 404 : 422;
+                return reply.code(status).send({ ok: false, error: err.code });
+            }
             return v1HandleError(reply, err);
         }
     });
