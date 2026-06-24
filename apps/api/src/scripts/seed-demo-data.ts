@@ -17,7 +17,7 @@ import { Pool } from "pg";
 const DATABASE_URL =
   process.env.DATABASE_PUBLIC_URL ||
   process.env.DATABASE_URL ||
-  "postgresql://cp:cp@localhost:5433/cp";
+  "postgresql://cp:cp@localhost:5435/cp";
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 
