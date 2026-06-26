@@ -10,10 +10,17 @@ import type { IChartApi, ISeriesApi, MouseEventParams, SeriesType } from "lightw
  * (`setCrosshairPosition`), and pushes the value through `setHovered`. Off-chart
  * (or no match) it clears the marker and reverts to latest.
  *
+ * Also subscribes the panel's OWN chart crosshair so the readout updates when
+ * the cursor is over the panel itself (the native crosshair already draws the
+ * marker, so the self-handler does NOT call `setCrosshairPosition`). The two
+ * subscriptions never cross-fire: `setCrosshairPosition`/`clearCrosshairPosition`
+ * pass `skipEvent=true`, so the main path's programmatic crosshair updates can't
+ * re-trigger the own subscription. The cursor is over exactly one chart at a
+ * time, both call the same `setHovered`, and each clears on its own `null`.
+ *
  * The per-panel variance lives ENTIRELY in `lookup` (exact-match, index-aligned
- * multi-value, step-lookup, etc.) and the marker series. PR 1 is main-only — a
- * pure extraction of today's behavior; the panel's own self-hover subscription
- * is added here in PR 2.
+ * multi-value, step-lookup, etc.) and the marker series. A panel that can't
+ * main-sync (COT — its own x-domain) passes `mainChart: null` → self-only.
  */
 interface PanelCrosshairHoverArgs<T> {
     /** The main price chart whose crosshair drives this panel. `null` → no subscription. */
@@ -39,19 +46,40 @@ export function usePanelCrosshairHover<T>({
     deps,
 }: PanelCrosshairHoverArgs<T>): void {
     useEffect(() => {
-        if (!mainChart) return;
-        const handler = (param: MouseEventParams) => {
-            const sub = getChart();
-            const series = getSeries();
-            if (!sub || !series) return;
-            if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            const r = lookup(param.time as number);
-            if (!r) { sub.clearCrosshairPosition(); setHovered(null); return; }
-            sub.setCrosshairPosition(r.price, param.time, series);
-            setHovered(r.value);
-        };
-        mainChart.subscribeCrosshairMove(handler);
-        return () => mainChart.unsubscribeCrosshairMove(handler);
+        const cleanups: Array<() => void> = [];
+
+        // Price-chart hover: the main crosshair drives this panel — resolve the
+        // value at the cursor time and PROJECT a synced marker onto the panel.
+        if (mainChart) {
+            const mainHandler = (param: MouseEventParams) => {
+                const sub = getChart();
+                const series = getSeries();
+                if (!sub || !series) return;
+                if (param.time == null) { sub.clearCrosshairPosition(); setHovered(null); return; }
+                const r = lookup(param.time as number);
+                if (!r) { sub.clearCrosshairPosition(); setHovered(null); return; }
+                sub.setCrosshairPosition(r.price, param.time, series);
+                setHovered(r.value);
+            };
+            mainChart.subscribeCrosshairMove(mainHandler);
+            cleanups.push(() => mainChart.unsubscribeCrosshairMove(mainHandler));
+        }
+
+        // Self hover: cursor over THIS panel. The native crosshair already draws
+        // the marker, so DON'T setCrosshairPosition — just read the value. The
+        // own param.time snaps to a data point's time (same domain `lookup` uses).
+        const own = getChart();
+        if (own) {
+            const ownHandler = (param: MouseEventParams) => {
+                if (param.time == null) { setHovered(null); return; }
+                const r = lookup(param.time as number);
+                setHovered(r ? r.value : null);
+            };
+            own.subscribeCrosshairMove(ownHandler);
+            cleanups.push(() => own.unsubscribeCrosshairMove(ownHandler));
+        }
+
+        return () => { for (const off of cleanups) off(); };
         // `lookup`/`getChart`/`getSeries`/`setHovered` are captured fresh whenever
         // `deps` (the data identity) changes — matching each panel's original
         // `[mainChart, <data>]` dependency list exactly.
