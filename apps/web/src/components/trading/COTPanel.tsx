@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
     createChart,
     BaselineSeries,
@@ -7,9 +7,9 @@ import {
     type IChartApi,
     type ISeriesApi,
     type Time,
-    type MouseEventParams,
 } from "lightweight-charts";
 import { fetchCOT, type COTWeek } from "@/api/endpoints/marketData";
+import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 
 interface COTPanelProps {
@@ -87,19 +87,7 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
         chartRef.current = chart;
         seriesRef.current = series;
 
-        // Hover readout — subscribe to THIS chart's own crosshair (not mainChart;
-        // COT can't main-sync). param.time is in COT's own weekly-UTC domain, so
-        // seriesData.get reads the hovered week's netPosition directly.
-        const handler = (param: MouseEventParams) => {
-            const s = seriesRef.current;
-            if (!s || param.time == null) { setHovered(null); return; }
-            const d = param.seriesData.get(s) as { value?: number } | undefined;
-            setHovered(d && typeof d.value === "number" ? d.value : null);
-        };
-        chart.subscribeCrosshairMove(handler);
-
         return () => {
-            chart.unsubscribeCrosshairMove(handler);
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -124,27 +112,47 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
         return () => clearInterval(id);
     }, [loadData]);
 
-    // Feed the baseline series. Defensive pipeline: convert date → unix sec,
-    // sort ascending, dedupe by time (keep last occurrence). lightweight-charts
-    // requires unique, strictly-ascending time values.
-    useEffect(() => {
-        const series = seriesRef.current;
-        if (!series) return;
-        if (weeks.length === 0) { series.setData([]); return; }
-
-        const byTime = new Map<number, number>();
+    // Defensive pipeline: convert date → unix sec, dedupe by time (keep last
+    // occurrence — lightweight-charts requires unique, strictly-ascending times).
+    // Shared by the series feed AND the hover lookup so both read the same map.
+    const netByTime = useMemo(() => {
+        const m = new Map<number, number>();
         for (const w of weeks) {
             const t = dateToUnixSec(w.date);
             if (!Number.isFinite(t)) continue;
-            byTime.set(t, w.netPosition); // later occurrences overwrite earlier
+            m.set(t, w.netPosition); // later occurrences overwrite earlier
         }
-        const points = Array.from(byTime.entries())
+        return m;
+    }, [weeks]);
+
+    // Feed the baseline series (sorted ascending).
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series) return;
+        if (netByTime.size === 0) { series.setData([]); return; }
+
+        const points = Array.from(netByTime.entries())
             .sort((a, b) => a[0] - b[0])
             .map(([time, value]) => ({ time: time as Time, value }));
 
         series.setData(points);
         chartRef.current?.timeScale().fitContent();
-    }, [weeks]);
+    }, [netByTime]);
+
+    // Hover readout — self-only (COT's weekly UTC domain can't main-sync, so
+    // mainChart is null). param.time snaps to a week (Magnet); look it up in the
+    // same deduped map the series was fed.
+    usePanelCrosshairHover<number>({
+        mainChart: null,
+        getChart: () => chartRef.current,
+        getSeries: () => seriesRef.current,
+        lookup: (t) => {
+            const v = netByTime.get(t);
+            return v !== undefined ? { value: v, price: v } : null;
+        },
+        setHovered,
+        deps: [netByTime],
+    });
 
     const latest = weeks.length > 0 ? weeks[weeks.length - 1] : null;
     // Hovered week's netPosition while hovering the COT panel, else the latest —
