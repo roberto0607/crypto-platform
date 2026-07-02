@@ -125,12 +125,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const user = userResult.rows[0];
 
         await consumeInviteTx(client, invite.id);
-        await client.query("COMMIT");
 
-        // Fire-and-forget: create wallets for all active assets
-        autoCreateWallets(user.id).catch((err) =>
-            logger.error({ err, userId: user.id }, "auto_wallet_creation_failed"),
-        );
+        // Create free-play wallets + fund the USD wallet with starting capital,
+        // in the SAME transaction as user creation so a registered user is
+        // guaranteed funded before they can trade (idempotent — see autoCreateWallets).
+        await autoCreateWallets(user.id, null, client);
+
+        await client.query("COMMIT");
 
         inviteConsumedTotal.inc();
 
@@ -174,10 +175,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     try {
       const user = await createUser({ email, emailNormalized, passwordHash });
 
-      // Fire-and-forget: create wallets for all active assets
-      autoCreateWallets(user.id).catch((err) =>
-          logger.error({ err, userId: user.id }, "auto_wallet_creation_failed"),
-      );
+      // Create free-play wallets + fund the USD wallet with starting capital.
+      // Awaited (its own transaction) before the 201 so a registered user is
+      // guaranteed funded before they can trade. Idempotent — see autoCreateWallets.
+      await autoCreateWallets(user.id);
 
       await auditLog({
         actorUserId: user.id,

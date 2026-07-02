@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import type { PoolClient } from "pg";
 import type { CompetitionRow, TierName } from "./competitionTypes.js";
+import { STARTING_CAPITAL_USD } from "../wallets/startingCapital.js";
 
 const COLUMNS = `id, name, description, start_at, end_at, starting_balance_usd,
     status, max_participants, pairs_allowed, created_by, created_at, updated_at,
@@ -32,7 +33,7 @@ export async function createCompetition(
             params.description ?? null,
             params.startAt,
             params.endAt,
-            params.startingBalanceUsd ?? "100000.00000000",
+            params.startingBalanceUsd ?? STARTING_CAPITAL_USD,
             params.maxParticipants ?? null,
             JSON.stringify(params.pairsAllowed ?? "all"),
             params.createdBy ?? null,
