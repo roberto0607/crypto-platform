@@ -31,6 +31,10 @@ const KRAKEN_WS_SYMBOL_OVERRIDES: Record<string, string> = {
     "XBT/USD": "BTC/USD",
 };
 
+/** Curated universe size — shared by the one-time backfill script and the
+ *  periodic refresh job so they never drift apart. */
+export const DEFAULT_SYNC_LIMIT = 75;
+
 /** Default decimals for newly created assets — matches the existing BTC/ETH/SOL
  *  convention (assets.decimals) and wallets.balance's NUMERIC(28,8) precision.
  *  Not derived per-asset from Kraken/Coinbase (their reported decimals vary and
@@ -63,8 +67,9 @@ interface KrakenCandidateRaw {
 
 /** Fetch Kraken's USD-quoted, online spot pairs. Does NOT live-verify WS
  *  symbols yet — call verifyKrakenWsSymbols() on the result before trusting
- *  wsCandidate as an actual WS v2 subscribe symbol. */
-async function fetchKrakenCandidates(): Promise<KrakenCandidateRaw[]> {
+ *  wsCandidate as an actual WS v2 subscribe symbol. Exported for delisting
+ *  checks (checkDelistings) in addition to discoverSyncCandidates. */
+export async function fetchKrakenCandidates(): Promise<KrakenCandidateRaw[]> {
     const res = await fetch(`${KRAKEN_BASE_URL}/AssetPairs`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`Kraken AssetPairs HTTP ${res.status}`);
     const json = await res.json() as { error: string[]; result: Record<string, KrakenAssetPair> };
@@ -163,7 +168,7 @@ export interface CoinbaseCandidate {
     volumeUsd24h: number;
 }
 
-async function fetchCoinbaseCandidates(): Promise<CoinbaseCandidate[]> {
+export async function fetchCoinbaseCandidates(): Promise<CoinbaseCandidate[]> {
     const res = await fetch(`${COINBASE_BASE_URL}?product_type=SPOT&limit=1000`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`Coinbase products HTTP ${res.status}`);
     const json = await res.json() as { products: CoinbaseProduct[] };
@@ -337,4 +342,74 @@ export async function syncSymbols(limit: number): Promise<{ candidates: SyncCand
     const candidates = await discoverSyncCandidates(limit);
     const results = await applyCandidates(candidates);
     return { candidates, results };
+}
+
+export interface DelistingResult {
+    exchangeRowsDeactivated: number;
+    pairsDeactivated: number;
+}
+
+/**
+ * Check every currently-active exchange_symbol_map row against a fresh
+ * fetch of each exchange's online USD pairs. A pair that drops out of the
+ * "top N by volume" ranking is NOT a delisting — this checks the full raw
+ * listing (fetchKrakenCandidates/fetchCoinbaseCandidates, unfiltered by
+ * intersection or rank) for each exchange independently, so a pair that's
+ * merely gone quiet in volume stays mapped and tradeable.
+ *
+ * Deactivates one exchange's mapping row at a time — trading_pairs.is_active
+ * only flips off once BOTH exchange rows are inactive, so a pair delisted on
+ * one exchange but still live on the other keeps trading (the whole point of
+ * dual-sourcing Kraken + Coinbase).
+ */
+export async function checkDelistings(client: PoolClient): Promise<DelistingResult> {
+    const [krakenRaw, coinbaseRaw] = await Promise.all([
+        fetchKrakenCandidates(),
+        fetchCoinbaseCandidates(),
+    ]);
+    const krakenOnline = new Set(krakenRaw.map((k) => k.baseSymbol));
+    const coinbaseOnline = new Set(coinbaseRaw.map((c) => c.baseSymbol));
+
+    const { rows } = await client.query<{
+        id: string;
+        pair_id: string;
+        exchange: "kraken" | "coinbase";
+        pair_symbol: string;
+        base_symbol: string;
+    }>(
+        `SELECT esm.id, esm.pair_id, esm.exchange, tp.symbol AS pair_symbol, a.symbol AS base_symbol
+         FROM exchange_symbol_map esm
+         JOIN trading_pairs tp ON tp.id = esm.pair_id
+         JOIN assets a ON a.id = tp.base_asset_id
+         WHERE esm.is_active = true`,
+    );
+
+    let exchangeRowsDeactivated = 0;
+    const touchedPairIds = new Set<string>();
+
+    for (const row of rows) {
+        const stillOnline = row.exchange === "kraken"
+            ? krakenOnline.has(row.base_symbol)
+            : coinbaseOnline.has(row.base_symbol);
+        if (stillOnline) continue;
+
+        await client.query(`UPDATE exchange_symbol_map SET is_active = false WHERE id = $1`, [row.id]);
+        exchangeRowsDeactivated++;
+        touchedPairIds.add(row.pair_id);
+        logger.info({ pairSymbol: row.pair_symbol, exchange: row.exchange }, "symbol_refresh_exchange_delisted");
+    }
+
+    let pairsDeactivated = 0;
+    for (const pairId of touchedPairIds) {
+        const { rows: activeRows } = await client.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM exchange_symbol_map WHERE pair_id = $1 AND is_active = true`,
+            [pairId],
+        );
+        if (Number(activeRows[0]!.count) === 0) {
+            await client.query(`UPDATE trading_pairs SET is_active = false WHERE id = $1`, [pairId]);
+            pairsDeactivated++;
+        }
+    }
+
+    return { exchangeRowsDeactivated, pairsDeactivated };
 }

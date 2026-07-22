@@ -30,15 +30,13 @@
  */
 import "dotenv/config";
 import { pool } from "../src/db/pool";
-import { discoverSyncCandidates, applyCandidates, type SyncCandidate } from "../src/market/symbolSync";
-
-const DEFAULT_LIMIT = 75;
+import { discoverSyncCandidates, applyCandidates, DEFAULT_SYNC_LIMIT, type SyncCandidate } from "../src/market/symbolSync";
 
 function parseLimit(): number {
     const idx = process.argv.indexOf("--limit");
-    if (idx === -1) return DEFAULT_LIMIT;
+    if (idx === -1) return DEFAULT_SYNC_LIMIT;
     const val = Number(process.argv[idx + 1]);
-    return Number.isFinite(val) && val > 0 ? val : DEFAULT_LIMIT;
+    return Number.isFinite(val) && val > 0 ? val : DEFAULT_SYNC_LIMIT;
 }
 
 async function findAlreadyMappedSymbols(symbols: string[]): Promise<Set<string>> {
