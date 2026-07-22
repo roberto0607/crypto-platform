@@ -36,6 +36,7 @@ const ERROR_STATUS: Record<string, number> = {
   trigger_not_found: 404,
   run_not_found: 404,
   api_key_not_found: 404,
+  stream_not_found: 404,
   // 400 (state errors)
   replay_not_active: 400,
   replay_already_stopped: 400,
