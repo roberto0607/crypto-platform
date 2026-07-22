@@ -11,11 +11,10 @@ import { pool } from "../db/pool.js";
 import {
     fetchCoinbaseCandles,
     sleep,
-    CB_PAIR_MAP,
     TF_TO_GRANULARITY,
     type CoinbaseGranularity,
 } from "../marketData/coinbaseRest.js";
-import { listActivePairs } from "../trading/pairRepo.js";
+import { loadActiveSymbols } from "./symbolRegistry.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 
 const logger = rootLogger.child({ module: "candleBackfill" });
@@ -194,8 +193,7 @@ export async function runBackfill(): Promise<BackfillResult> {
     let totalInserted = 0;
     let totalErrors = 0;
 
-    const pairs = await listActivePairs();
-    const mappedPairs = pairs.filter((p) => CB_PAIR_MAP[p.symbol]);
+    const mappedPairs = await loadActiveSymbols("coinbase");
 
     if (mappedPairs.length === 0) {
         logger.warn("No active pairs with Coinbase REST mapping found");
@@ -204,21 +202,21 @@ export async function runBackfill(): Promise<BackfillResult> {
 
     const plans = buildTimeframePlans();
 
-    logger.info({ pairs: mappedPairs.map((p) => p.symbol) }, "candle_backfill_starting");
+    logger.info({ pairs: mappedPairs.map((p) => p.ourSymbol) }, "candle_backfill_starting");
 
     for (const pair of mappedPairs) {
-        const productId = CB_PAIR_MAP[pair.symbol]!;
+        const productId = pair.restSymbol;
 
         for (const plan of plans) {
             try {
                 const inserted = await backfillPairTimeframe(
-                    pair.id, pair.symbol, productId, plan,
+                    pair.pairId, pair.ourSymbol, productId, plan,
                 );
                 totalInserted += inserted;
             } catch (err) {
                 totalErrors++;
                 logger.warn(
-                    { pair: pair.symbol, tf: plan.ourTf, err: (err as Error).message },
+                    { pair: pair.ourSymbol, tf: plan.ourTf, err: (err as Error).message },
                     "backfill_tf_failed",
                 );
             }
@@ -226,12 +224,12 @@ export async function runBackfill(): Promise<BackfillResult> {
 
         // Roll up 4h from the freshly-backfilled 1h data
         try {
-            const rolled = await rollup4hFromHourly(pair.id);
+            const rolled = await rollup4hFromHourly(pair.pairId);
             totalInserted += rolled;
         } catch (err) {
             totalErrors++;
             logger.warn(
-                { pair: pair.symbol, tf: "4h", err: (err as Error).message },
+                { pair: pair.ourSymbol, tf: "4h", err: (err as Error).message },
                 "backfill_4h_rollup_failed",
             );
         }

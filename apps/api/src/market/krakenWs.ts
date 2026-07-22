@@ -2,7 +2,7 @@ import WebSocket from "ws";
 import { setSnapshot } from "./snapshotStore";
 import { publish } from "../events/eventBus";
 import { createEvent } from "../events/eventTypes";
-import { listActivePairs } from "../trading/pairRepo";
+import { loadActiveSymbols, type ActiveSymbol } from "./symbolRegistry.js";
 import { pool } from "../db/pool.js";
 import { config } from "../config.js";
 import { aggregateTick, flushDueCandles } from "./candleAggregator.js";
@@ -21,33 +21,31 @@ const lastSyncTime = new Map<string, number>();
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 
-// Kraken WS v2 uses BTC (not XBT) — symbols match ours directly
-export const SYMBOL_MAP: Record<string, string> = {
-    "BTC/USD": "BTC/USD",
-    "ETH/USD": "ETH/USD",
-    "SOL/USD": "SOL/USD",
-};
+// DB-driven active symbol set (trading_pairs × exchange_symbol_map) —
+// replaces the old hardcoded SYMBOL_MAP literal. Populated by
+// refreshSymbols() on connect and re-polled every SYMBOL_REFRESH_INTERVAL_MS
+// so new/delisted pairs are picked up without a reconnect.
+let activeSymbols: ActiveSymbol[] = [];
+let wsToOurSymbol: Record<string, string> = {};
 
-const REVERSE_MAP: Record<string, string> = {};
-for (const [ours, kraken] of Object.entries(SYMBOL_MAP)) {
-    REVERSE_MAP[kraken] = ours;
-}
-
-// Lazy cache: our symbol → pair UUID (populated on first connect)
+// our symbol → pair UUID — exported for krakenBookRoutes.ts.
 export let symbolToPairId: Record<string, string> = {};
-let pairCacheReady = false;
+let symbolsReady = false;
 
-async function loadPairCache(): Promise<void> {
+const SYMBOL_REFRESH_INTERVAL_MS = 5 * 60_000;
+let symbolRefreshInterval: ReturnType<typeof setInterval> | null = null;
+
+async function refreshSymbols(): Promise<ActiveSymbol[]> {
     try {
-        const pairs = await listActivePairs();
-        const map: Record<string, string> = {};
-        for (const p of pairs) {
-            map[p.symbol] = p.id;
-        }
-        symbolToPairId = map;
-        pairCacheReady = true;
+        const symbols = await loadActiveSymbols("kraken");
+        activeSymbols = symbols;
+        wsToOurSymbol = Object.fromEntries(symbols.map((s) => [s.wsSymbol, s.ourSymbol]));
+        symbolToPairId = Object.fromEntries(symbols.map((s) => [s.ourSymbol, s.pairId]));
+        symbolsReady = true;
+        return symbols;
     } catch {
-        // Will retry on next connect
+        // Will retry on next connect / next refresh tick
+        return activeSymbols;
     }
 }
 
@@ -83,33 +81,47 @@ export function getKrakenWsHealth(): {
     return { connected: wsConnected, lastTickAt, secondsSinceLastTick, status };
 }
 
+function sendSubscription(socket: WebSocket, method: "subscribe" | "unsubscribe", symbols: string[]): void {
+    if (symbols.length === 0) return;
+
+    socket.send(JSON.stringify({ method, params: { channel: "ticker", symbol: symbols } }));
+    socket.send(JSON.stringify({ method, params: { channel: "trade", symbol: symbols, snapshot: false } }));
+    socket.send(JSON.stringify({ method, params: { channel: "book", depth: 25, symbol: symbols, snapshot: true } }));
+}
+
 function subscribe(socket: WebSocket): void {
-    const symbols = Object.values(SYMBOL_MAP);
+    sendSubscription(socket, "subscribe", activeSymbols.map((s) => s.wsSymbol));
+}
 
-    // Ticker: bid/ask/last for snapshots and price.tick events
-    socket.send(JSON.stringify({
-        method: "subscribe",
-        params: { channel: "ticker", symbol: symbols },
-    }));
+/**
+ * Re-fetch the active symbol set and diff it against what this connection is
+ * currently subscribed to, sending incremental subscribe/unsubscribe
+ * messages for just the delta — no reconnect. Runs on a
+ * SYMBOL_REFRESH_INTERVAL_MS timer so new pairs (backfill script or the
+ * periodic symbol-refresh job) and delistings are picked up live.
+ */
+async function reconcileSubscriptions(): Promise<void> {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // Trade: individual trades with real volume for candle aggregation
-    socket.send(JSON.stringify({
-        method: "subscribe",
-        params: { channel: "trade", symbol: symbols, snapshot: false },
-    }));
+    const before = new Set(activeSymbols.map((s) => s.wsSymbol));
+    const after = await refreshSymbols();
+    const afterSet = new Set(after.map((s) => s.wsSymbol));
 
-    // Book: 25-level depth for order flow analysis
-    socket.send(JSON.stringify({
-        method: "subscribe",
-        params: { channel: "book", depth: 25, symbol: symbols, snapshot: true },
-    }));
+    const added = after.filter((s) => !before.has(s.wsSymbol)).map((s) => s.wsSymbol);
+    const removed = [...before].filter((wsSymbol) => !afterSet.has(wsSymbol));
+
+    if (added.length === 0 && removed.length === 0) return;
+
+    sendSubscription(ws, "subscribe", added);
+    sendSubscription(ws, "unsubscribe", removed);
+    logger.info({ added, removed }, "kraken_ws_subscriptions_reconciled");
 }
 
 async function handleTickerMessage(data: any[]): Promise<void> {
     lastTickAt = Date.now();
     for (const tick of data) {
         const krakenSymbol = tick.symbol;
-        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        const ourSymbol = wsToOurSymbol[krakenSymbol];
         if (!ourSymbol) continue;
 
         const last = String(tick.last);
@@ -161,7 +173,7 @@ async function handleTickerMessage(data: any[]): Promise<void> {
 function handleTradeMessage(data: any[]): void {
     for (const trade of data) {
         const krakenSymbol = trade.symbol;
-        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        const ourSymbol = wsToOurSymbol[krakenSymbol];
         if (!ourSymbol) continue;
 
         const pairId = symbolToPairId[ourSymbol];
@@ -251,7 +263,7 @@ function handleBookMessage(data: any[], type: string): void {
         const krakenSymbol = entry.symbol;
         if (!krakenSymbol) continue;
 
-        const ourSymbol = REVERSE_MAP[krakenSymbol];
+        const ourSymbol = wsToOurSymbol[krakenSymbol];
         if (!ourSymbol) continue;
 
         const pairId = symbolToPairId[ourSymbol];
@@ -295,7 +307,7 @@ function connect(): void {
         console.log("[krakenWs] connected");
         wsConnected = true;
         reconnectAttempt = 0;
-        if (!pairCacheReady) await loadPairCache();
+        if (!symbolsReady) await refreshSymbols();
         subscribe(ws!);
         if (!flushInterval) {
             flushInterval = setInterval(() => {
@@ -303,6 +315,16 @@ function connect(): void {
                     logger.error({ err }, "candle_flush_failed");
                 });
             }, 5_000);
+        }
+
+        // Live symbol reconciliation — picks up new pairs (backfill script,
+        // periodic symbol-refresh job) and delistings without a reconnect.
+        if (!symbolRefreshInterval) {
+            symbolRefreshInterval = setInterval(() => {
+                reconcileSubscriptions().catch((err: unknown) => {
+                    logger.error({ err }, "kraken_ws_symbol_reconcile_failed");
+                });
+            }, SYMBOL_REFRESH_INTERVAL_MS);
         }
 
         // One-time candle backfill on first connect (fire-and-forget)
@@ -370,6 +392,10 @@ export function stopKrakenFeed(): void {
     if (watchdogInterval) {
         clearInterval(watchdogInterval);
         watchdogInterval = null;
+    }
+    if (symbolRefreshInterval) {
+        clearInterval(symbolRefreshInterval);
+        symbolRefreshInterval = null;
     }
     flushDueCandles().catch((err: unknown) => {
         logger.error({ err }, "shutdown_flush_due_candles_failed");
