@@ -45,7 +45,25 @@ const MAX_RETRIES = 3;
 export interface BackfillResult {
     totalInserted: number;
     totalErrors: number;
+    totalSkipped: number;
     durationMs: number;
+}
+
+/**
+ * True when the most recent candle for this (pair, timeframe) is recent
+ * enough that a full 7-day re-walk would be wasted work — e.g. on every
+ * boot once the curated universe is ~75 pairs. "Recent" allows a few candle
+ * periods of slack, since backfill runs once at boot and the live feed's
+ * candle aggregator may not have flushed the very latest bar yet.
+ */
+async function hasRecentCandle(pairId: string, timeframe: string, candleSeconds: number): Promise<boolean> {
+    const { rows } = await pool.query<{ ts: string }>(
+        `SELECT ts FROM candles WHERE pair_id = $1 AND timeframe = $2 ORDER BY ts DESC LIMIT 1`,
+        [pairId, timeframe],
+    );
+    if (rows.length === 0) return false;
+    const ageSeconds = (Date.now() - new Date(rows[0]!.ts).getTime()) / 1000;
+    return ageSeconds < candleSeconds * 3;
 }
 
 export async function insertCandleBatch(
@@ -192,12 +210,13 @@ export async function runBackfill(): Promise<BackfillResult> {
     const start = Date.now();
     let totalInserted = 0;
     let totalErrors = 0;
+    let totalSkipped = 0;
 
     const mappedPairs = await loadActiveSymbols("coinbase");
 
     if (mappedPairs.length === 0) {
         logger.warn("No active pairs with Coinbase REST mapping found");
-        return { totalInserted: 0, totalErrors: 0, durationMs: Date.now() - start };
+        return { totalInserted: 0, totalErrors: 0, totalSkipped: 0, durationMs: Date.now() - start };
     }
 
     const plans = buildTimeframePlans();
@@ -209,6 +228,10 @@ export async function runBackfill(): Promise<BackfillResult> {
 
         for (const plan of plans) {
             try {
+                if (await hasRecentCandle(pair.pairId, plan.ourTf, plan.candleSeconds)) {
+                    totalSkipped++;
+                    continue;
+                }
                 const inserted = await backfillPairTimeframe(
                     pair.pairId, pair.ourSymbol, productId, plan,
                 );
@@ -222,10 +245,15 @@ export async function runBackfill(): Promise<BackfillResult> {
             }
         }
 
-        // Roll up 4h from the freshly-backfilled 1h data
+        // Roll up 4h from the freshly-backfilled 1h data — skip if the 4h
+        // series is already current (same recency check as the fetch loop).
         try {
-            const rolled = await rollup4hFromHourly(pair.pairId);
-            totalInserted += rolled;
+            if (await hasRecentCandle(pair.pairId, "4h", 4 * 3600)) {
+                totalSkipped++;
+            } else {
+                const rolled = await rollup4hFromHourly(pair.pairId);
+                totalInserted += rolled;
+            }
         } catch (err) {
             totalErrors++;
             logger.warn(
@@ -235,7 +263,7 @@ export async function runBackfill(): Promise<BackfillResult> {
         }
     }
 
-    const result = { totalInserted, totalErrors, durationMs: Date.now() - start };
+    const result = { totalInserted, totalErrors, totalSkipped, durationMs: Date.now() - start };
     logger.info(result, "candle_backfill_complete");
     return result;
 }
