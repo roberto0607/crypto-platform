@@ -173,6 +173,24 @@ export default function App() {
     };
   }, [isAuthenticated, initialized]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Poll GET /pairs periodically so non-subscribed pairs' live prices (shown
+  // in the selector row/ticker via usePairPricesStore, seeded from
+  // last_price by seedAndStripPairs) stay reasonably fresh now that
+  // price.tick SSE is scoped to only the actively-viewed chart's pair (Gate
+  // 2's interest-set design — the open chart stays fully real-time via its
+  // own subscribeBars call; this poll covers every other pair in the row).
+  useEffect(() => {
+    if (!initialized || !isAuthenticated) return;
+
+    const interval = setInterval(() => {
+      listPairs()
+        .then((res) => setPairs(seedAndStripPairs(res.data.pairs as TradingPairWire[])))
+        .catch(() => {});
+    }, 7_000);
+
+    return () => clearInterval(interval);
+  }, [initialized, isAuthenticated, setPairs]);
+
   if (!initialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950">

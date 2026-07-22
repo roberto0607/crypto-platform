@@ -15,7 +15,8 @@ import {
     TickMarkType,
     type IPriceLine,
 } from "lightweight-charts";
-import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
+import type { Candle, Timeframe } from "@/api/endpoints/candles";
+import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/lib/datafeedAdapter";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
@@ -263,6 +264,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const livePriceLineRef = useRef<IPriceLine | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
     const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
+    // One adapter instance per chart — its internal request-token counter is
+    // shared across fetchCandles and the scroll-back pagination fetch below,
+    // so a pair/timeframe switch invalidates BOTH in-flight requests, not
+    // just the one that triggered the switch.
+    const datafeedRef = useRef(createDatafeedAdapter());
     // Timestamp (ms) of the last live indicator recompute (RSI/MACD/ATR shared) —
     // throttles the per-tick path.
     const lastLiveIndicatorComputeRef = useRef(0);
@@ -911,14 +917,15 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
         hasMoreRef.current = true;
         fetchingOlderRef.current = false;
         try {
-            const candleRes = await getCandles(selectedPairId, { timeframe, limit: 750 });
+            const candles = await datafeedRef.current.getBars(selectedPairId, timeframe, { limit: 750 });
+            if (candles === null) return; // superseded by a newer pair/timeframe switch
 
-            rawCandlesRef.current = candleRes.data.candles;
+            rawCandlesRef.current = candles;
             liveCandleRef.current = null;
-            const lwData = candleRes.data.candles.map(candleToLW);
+            const lwData = candles.map(candleToLW);
             seriesRef.current.setData(lwData);
 
-            renderOverlays(candleRes.data.candles);
+            renderOverlays(candles);
 
             // Fit the viewport on first load and on every pair/timeframe switch,
             // but NOT on indicator-toggle refetches (which carry the same key and
@@ -972,13 +979,12 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 return;
             }
 
-            getCandles(selectedPairId, {
-                timeframe,
+            datafeedRef.current.getBars(selectedPairId, timeframe, {
                 limit: 500,
                 before: oldest.ts,
             })
-                .then((res) => {
-                    const olderCandles = res.data.candles;
+                .then((olderCandles) => {
+                    if (olderCandles === null) return; // superseded by a newer pair/timeframe switch
                     if (olderCandles.length === 0) {
                         hasMoreRef.current = false;
                         return;
@@ -1236,15 +1242,18 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
         }
     }, [renderOverlays]);
 
-    // Live update: price.tick → update current candle
+    // Live update: subscribeBars — price.tick updates the forming candle,
+    // candle.closed appends the completed one. One adapter subscription
+    // covers both (see lib/datafeedAdapter.ts); the adapter already filters
+    // by pairId/timeframe before invoking either callback, so neither
+    // handler needs to re-check `detail.pairId`/`detail.timeframe` itself.
     useEffect(() => {
         if (!selectedPairId) return;
 
-        const handlePriceTick = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail.pairId !== selectedPairId || !seriesRef.current) return;
+        const handlePriceTick = (tick: PriceTick) => {
+            if (!seriesRef.current) return;
 
-            const price = parseFloat(detail.last);
+            const price = parseFloat(tick.last);
             const now = Math.floor(Date.now() / 1000);
             const candleTime = (bucketTime(now, timeframe) + TZ_OFFSET_SEC) as Time;
 
@@ -1329,44 +1338,34 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             }
         };
 
-        window.addEventListener("sse:price.tick", handlePriceTick);
-        return () => window.removeEventListener("sse:price.tick", handlePriceTick);
-    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
-
-    // Live update: candle.closed → append completed candle
-    useEffect(() => {
-        if (!selectedPairId) return;
-
-        const handleCandleClosed = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail.pairId !== selectedPairId || !seriesRef.current) return;
-            if (detail.timeframe !== timeframe) return;
+        const handleCandleClosed = (candle: CandleClosedTick) => {
+            if (!seriesRef.current) return;
 
             seriesRef.current.update({
-                time: (detail.ts / 1000 + TZ_OFFSET_SEC) as Time,
-                open: parseFloat(detail.open),
-                high: parseFloat(detail.high),
-                low: parseFloat(detail.low),
-                close: parseFloat(detail.close),
+                time: (candle.ts / 1000 + TZ_OFFSET_SEC) as Time,
+                open: parseFloat(candle.open),
+                high: parseFloat(candle.high),
+                low: parseFloat(candle.low),
+                close: parseFloat(candle.close),
             });
 
             liveCandleRef.current = null;
 
             const newCandle: Candle = {
-                ts: new Date(detail.ts).toISOString(),
-                open: detail.open,
-                high: detail.high,
-                low: detail.low,
-                close: detail.close,
-                volume: detail.volume ?? "0",
+                ts: new Date(candle.ts).toISOString(),
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+                volume: candle.volume ?? "0",
             };
             rawCandlesRef.current = [...rawCandlesRef.current, newCandle];
             renderOverlays(rawCandlesRef.current);
         };
 
-        window.addEventListener("sse:candle.closed", handleCandleClosed);
-        return () => window.removeEventListener("sse:candle.closed", handleCandleClosed);
-    }, [selectedPairId, timeframe, renderOverlays]);
+        const handle = datafeedRef.current.subscribeBars(selectedPairId, timeframe, handlePriceTick, handleCandleClosed);
+        return () => datafeedRef.current.unsubscribeBars(handle);
+    }, [selectedPairId, timeframe, renderOverlays, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
 
     // Liquidity zones: fetch on mount + 60s refresh
     useEffect(() => {
