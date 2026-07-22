@@ -41,10 +41,33 @@ async function createFixturePair(uid: string, baseSymbol: string, quoteAssetId: 
     return { pairId, baseAssetId, baseSymbol };
 }
 
+/**
+ * Every currently-active base symbol for an exchange, straight from the DB —
+ * used to keep pre-existing/leftover fixture rows from OTHER test files
+ * (e.g. tests/v1-contracts.test.ts, which doesn't clean up its fixtures)
+ * "online" in every mocked exchange response below. Without this, checkDelistings'
+ * unscoped "all active exchange_symbol_map rows" query would treat any such
+ * leftover row as delisted the moment it's missing from a mock that was only
+ * ever meant to describe THIS test's own fixture.
+ */
+async function getActiveBaseSymbols(exchange: "kraken" | "coinbase"): Promise<string[]> {
+    const { rows } = await pool.query<{ symbol: string }>(
+        `SELECT a.symbol
+         FROM exchange_symbol_map esm
+         JOIN trading_pairs tp ON tp.id = esm.pair_id
+         JOIN assets a ON a.id = tp.base_asset_id
+         WHERE esm.exchange = $1 AND esm.is_active = true`,
+        [exchange],
+    );
+    return rows.map((r) => r.symbol);
+}
+
 describe("checkDelistings", () => {
     let uid: string;
     let quoteAssetId: string;
     let originalFetch: typeof fetch;
+    let backgroundKrakenBases: string[];
+    let backgroundCoinbaseBases: string[];
     const createdPairIds: string[] = [];
     const createdAssetIds: string[] = [];
 
@@ -57,6 +80,11 @@ describe("checkDelistings", () => {
         quoteAssetId = rows[0]!.id;
         createdAssetIds.push(quoteAssetId);
         originalFetch = global.fetch;
+
+        // Snapshot BEFORE this test's own fixture exists, so its own pair is
+        // never accidentally included as "background".
+        backgroundKrakenBases = await getActiveBaseSymbols("kraken");
+        backgroundCoinbaseBases = await getActiveBaseSymbols("coinbase");
     });
 
     afterEach(async () => {
@@ -77,11 +105,14 @@ describe("checkDelistings", () => {
     });
 
     function mockExchangeResponses(krakenOnlineBases: string[], coinbaseOnlineBases: string[]) {
+        const allKrakenBases = [...new Set([...backgroundKrakenBases, ...krakenOnlineBases])];
+        const allCoinbaseBases = [...new Set([...backgroundCoinbaseBases, ...coinbaseOnlineBases])];
+
         global.fetch = (async (url: string | URL | Request) => {
             const href = url.toString();
             if (href.includes("kraken.com")) {
                 const result: Record<string, unknown> = {};
-                for (const base of krakenOnlineBases) {
+                for (const base of allKrakenBases) {
                     result[`${base}USD`] = {
                         wsname: `${base}/USD`,
                         altname: `${base}USD`,
@@ -93,7 +124,7 @@ describe("checkDelistings", () => {
                 return new Response(JSON.stringify({ error: [], result }), { status: 200 });
             }
             if (href.includes("coinbase.com")) {
-                const products = coinbaseOnlineBases.map((base) => ({
+                const products = allCoinbaseBases.map((base) => ({
                     product_id: `${base}-USD`,
                     base_currency_id: base,
                     quote_currency_id: "USD",

@@ -67,6 +67,17 @@ beforeAll(async () => {
         payload: { price: "50000" },
     });
 
+    // GET /pairs and GET /v1/pairs only return exchange-backed pairs
+    // (listActivePairsForDisplay() in pairRepo.ts) — this admin-created test
+    // pair has no real Kraken/Coinbase listing, so it needs a fixture
+    // exchange_symbol_map row to be visible to the GET /v1/pairs contract
+    // test below.
+    await pool.query(
+        `INSERT INTO exchange_symbol_map (pair_id, exchange, ws_symbol, rest_symbol, is_active)
+         VALUES ($1, 'kraken', $2, $2, true), ($1, 'coinbase', $3, $3, true)`,
+        [pairId, `X${uid}/USD`, `X${uid}-USD`],
+    );
+
     // 5. Wallets
     const bwRes = await app.inject({
         method: "POST",

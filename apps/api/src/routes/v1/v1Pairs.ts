@@ -4,11 +4,12 @@ import { z } from "zod";
 import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { parseLimit } from "../../http/pagination";
-import { listActivePairsLimited } from "../../trading/pairRepo";
+import { listActivePairsForDisplay } from "../../trading/pairRepo";
 import { pool } from "../../db/pool.js";
 
 const pairsQuery = z.object({
     limit: z.string().optional(),
+    search: z.string().optional(),
 });
 
 const v1Pairs: FastifyPluginAsync = async (app) => {
@@ -16,12 +17,13 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
         schema: {
             tags: ["Pairs"],
             summary: "List trading pairs (v1 paginated)",
-            description: "Returns active trading pairs with optional limit.",
+            description: "Returns active trading pairs with optional limit. `search` does trigram-ranked symbol search (datafeed searchSymbols) instead of returning the full list.",
             security: [{ bearerAuth: [] }],
             querystring: {
                 type: "object",
                 properties: {
-                    limit: { type: "string", description: "Max results to return (default 50, max 100)" },
+                    limit: { type: "string", description: "Max results to return (default 50, max 100; default 20 when searching)" },
+                    search: { type: "string", description: "Trigram-ranked symbol search (e.g. \"btc\")" },
                 },
             },
             response: {
@@ -40,8 +42,9 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
             const queryParsed = pairsQuery.safeParse(req.query);
             const q = queryParsed.success ? queryParsed.data : {};
 
-            const limit = parseLimit(q.limit);
-            const pairs = await listActivePairsLimited(limit);
+            const pairs = q.search
+                ? await listActivePairsForDisplay({ search: q.search, limit: q.limit ? parseLimit(q.limit) : undefined })
+                : await listActivePairsForDisplay({ limit: parseLimit(q.limit) });
 
             return reply.send({ data: pairs, nextCursor: null });
         } catch (err) {
