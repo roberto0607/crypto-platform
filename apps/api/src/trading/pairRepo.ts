@@ -109,3 +109,49 @@ export async function listActivePairsLimited(limit: number): Promise<PairRow[]> 
 
     return result.rows;
 }
+
+/**
+ * Pairs list for user-facing display (GET /pairs, GET /v1/pairs) — unlike
+ * listActivePairs()/listActivePairsLimited() (used internally by the feed
+ * layer and jobs, which keep their existing is_active-only semantics), this
+ * additionally requires an active exchange_symbol_map row: a trading_pairs
+ * row with no live exchange backing is never shown to users, whether that's
+ * a leftover test/load-test fixture (is_active defaults to true, so these
+ * previously required a hardcoded frontend symbol allowlist to filter out —
+ * see lib/pairs.ts's now-removed isRealPair) or a pair mid-provisioning.
+ *
+ * `search` uses pg_trgm similarity (migration 071) against `symbol` — ranked
+ * by closeness, not just filtered, so "btc" surfaces BTC/USD first even
+ * among partial matches.
+ */
+export async function listActivePairsForDisplay(options: { limit?: number; search?: string }): Promise<PairRow[]> {
+    const { limit, search } = options;
+    const exchangeBacked = `EXISTS (
+        SELECT 1 FROM exchange_symbol_map esm
+        WHERE esm.pair_id = trading_pairs.id AND esm.is_active = true
+    )`;
+
+    if (search) {
+        const result = await pool.query<PairRow>(
+            `
+            SELECT ${PAIR_COLUMNS}
+            FROM trading_pairs
+            WHERE is_active = true
+              AND symbol % $1
+              AND ${exchangeBacked}
+            ORDER BY similarity(symbol, $1) DESC
+            LIMIT $2
+            `,
+            [search, limit ?? 20]
+        );
+        return result.rows;
+    }
+
+    const result = await pool.query<PairRow>(
+        limit != null
+            ? `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND ${exchangeBacked} ORDER BY symbol ASC LIMIT $1`
+            : `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND ${exchangeBacked} ORDER BY symbol ASC`,
+        limit != null ? [limit] : [],
+    );
+    return result.rows;
+}

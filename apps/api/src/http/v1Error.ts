@@ -40,6 +40,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   pair_not_found: "The requested trading pair was not found.",
   replay_not_found: "The requested replay was not found.",
   trigger_not_found: "The requested trigger order was not found.",
+  stream_not_found: "The SSE stream was not found or does not belong to this user.",
   // 409
   email_taken: "This email address is already registered.",
   wallet_already_exists: "A wallet for this asset already exists.",

@@ -15,6 +15,15 @@ export function listPairs() {
   return client.get<{ ok: true; pairs: TradingPair[] }>("/pairs");
 }
 
+/** Trigram-ranked symbol search (datafeed adapter's searchSymbols) — same
+ *  route as listPairs(), scoped down via the `search` param (pg_trgm
+ *  similarity against trading_pairs.symbol, see pairRepo.ts). */
+export function searchPairs(query: string) {
+  return client.get<{ ok: true; pairs: TradingPair[] }>("/pairs", {
+    params: { search: query },
+  });
+}
+
 export function placeOrder(
   params: {
     pairId: UUID;

@@ -7,7 +7,7 @@ import { requireUser } from "../auth/requireUser";
 import { requireVerified } from "../auth/requireVerified";
 import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
-import { findPairById, listActivePairs } from "../trading/pairRepo";
+import { findPairById, listActivePairsForDisplay } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
@@ -52,8 +52,14 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     schema: {
       tags: ["Pairs"],
       summary: "List active trading pairs",
-      description: "Returns all active trading pairs with base/quote asset info.",
+      description: "Returns all active trading pairs with base/quote asset info. Optional `search` does trigram-ranked symbol search instead of returning the full list.",
       security: [{ bearerAuth: [] }],
+      querystring: {
+        type: "object",
+        properties: {
+          search: { type: "string", description: "Trigram-ranked symbol search (e.g. \"btc\")" },
+        },
+      },
       response: {
         200: {
           type: "object",
@@ -85,7 +91,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     },
     preHandler: requireUser,
   }, async (req, reply) => {
-    const pairs = await listActivePairs();
+    const { search } = req.query as { search?: string };
+    const pairs = await listActivePairsForDisplay({ search });
     return reply.send({ ok: true, pairs });
   });
 

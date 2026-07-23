@@ -65,6 +65,27 @@ let wasConnected = false;
 let lastToken: string | null = null;
 let lastHandlers: SSEHandlers | null = null;
 
+// Per-connection stream identity, handed out as the first frame on connect
+// (see v1Events.ts). Used by lib/datafeedAdapter.ts to address
+// POST /v1/events/subscribe at this specific connection. Not part of the
+// SSEEvent union — like `ping`, it's a raw, non-enveloped backend frame.
+let currentStreamId: string | null = null;
+let streamIdWaiters: Array<(id: string) => void> = [];
+
+/** Current streamId, or null if the connection hasn't handshaked yet. */
+export function getStreamId(): string | null {
+  return currentStreamId;
+}
+
+/** Resolves with the streamId once known — immediately if already handshaked,
+ *  otherwise on the next stream.ready frame (including after a reconnect). */
+export function waitForStreamId(): Promise<string> {
+  if (currentStreamId) return Promise.resolve(currentStreamId);
+  return new Promise((resolve) => {
+    streamIdWaiters.push(resolve);
+  });
+}
+
 function setSseState(state: SseConnectionState): void {
   useAppStore.getState().setSseConnectionState(state);
   useAppStore.getState().setSseConnected(state === "connected");
@@ -171,6 +192,19 @@ export function connectSSE(
         try {
           const data = JSON.parse(msg.data) as { ts: number };
           handlers.onPing?.(data.ts);
+        } catch { /* ignore */ }
+        return;
+      }
+
+      // Handle stream.ready (not in SSEEvent union — raw from backend, sent
+      // once as the very first frame on each connect/reconnect).
+      if (msg.event === "stream.ready") {
+        try {
+          const data = JSON.parse(msg.data) as { streamId: string };
+          currentStreamId = data.streamId;
+          const waiters = streamIdWaiters;
+          streamIdWaiters = [];
+          waiters.forEach((resolve) => resolve(data.streamId));
         } catch { /* ignore */ }
         return;
       }
@@ -317,5 +351,6 @@ export function disconnectSSE(): void {
   wasConnected = false;
   lastToken = null;
   lastHandlers = null;
+  currentStreamId = null;
   setSseState("disconnected");
 }

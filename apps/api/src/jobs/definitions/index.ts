@@ -12,6 +12,7 @@ import { weeklyCompetitionJob } from "./weeklyCompetitionJob";
 import { marketMakerJob } from "./marketMakerJob";
 import { krakenCandleSyncJob } from "./krakenCandleSyncJob";
 import { matchCleanupJob } from "./matchCleanupJob";
+import { symbolRefreshJob } from "./symbolRefreshJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -29,4 +30,5 @@ export const allJobs: JobDefinition[] = [
     marketMakerJob,
     krakenCandleSyncJob,
     matchCleanupJob,
+    symbolRefreshJob,
 ];

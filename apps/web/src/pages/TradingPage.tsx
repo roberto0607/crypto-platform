@@ -11,7 +11,6 @@ import { getPositions } from "@/api/endpoints/analytics";
 import { getCandles } from "@/api/endpoints/candles";
 import { getMsUntilNextUTCMidnight, dayDirection } from "@/lib/priceChange";
 import { usePairChange } from "@/hooks/usePairChange";
-import { isRealPair } from "@/lib/pairs";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
@@ -1191,7 +1190,7 @@ export default function TradingPage() {
   // refetches only pairs not yet in the store, so safe under React
   // StrictMode's double-invocation in dev and robust to pairs added later.
   useEffect(() => {
-    const active = pairs.filter(isRealPair);
+    const active = pairs;
     if (!active.length) return; // pairs not loaded yet; effect re-runs when they arrive
     const cached = useDailyOpenStore.getState().opens;
     const missing = active.filter((p) => !cached[p.id]);
@@ -1210,7 +1209,7 @@ export default function TradingPage() {
     let timer: ReturnType<typeof setTimeout>;
     function schedule() {
       timer = setTimeout(() => {
-        fetchAllOpensInto(useAppStore.getState().pairs.filter(isRealPair), () => false);
+        fetchAllOpensInto(useAppStore.getState().pairs, () => false);
         schedule();
       }, getMsUntilNextUTCMidnight());
     }

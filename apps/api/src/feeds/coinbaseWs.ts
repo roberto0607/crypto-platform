@@ -1,64 +1,79 @@
 import WebSocket from "ws";
-import { listActivePairs } from "../trading/pairRepo";
+import { loadActiveSymbols, type ActiveSymbol } from "../market/symbolRegistry.js";
 import { aggregateTick } from "../market/candleAggregator.js";
 import { logger } from "../observability/logContext.js";
 import { coinbaseTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
-// Coinbase product IDs → our symbols
-const PRODUCT_MAP: Record<string, string> = {
-    "BTC-USD": "BTC/USD",
-    "ETH-USD": "ETH/USD",
-    "SOL-USD": "SOL/USD",
-};
+/**
+ * Coinbase's documented WS limits (live-checked docs.cdp.coinbase.com/
+ * coinbase-app/advanced-trade-apis/websocket/websocket-rate-limits) are
+ * connection-rate (8/sec/IP) and unauthenticated-message-rate (8/sec/IP) —
+ * there is no documented per-connection product_ids ceiling. At the current
+ * curated universe size (~75 pairs) a single connection covers everything
+ * in one subscribe message, well under both limits. This is still
+ * structured around N batched connections (not a bare module-level `ws`)
+ * so growing the universe past one batch is a constant change, not a
+ * rewrite — see docs/designs/2026-07-22-multi-asset-datafeed-gate1.md
+ * section 2.4 for the full rationale.
+ */
+const COINBASE_WS_BATCH_SIZE = 150;
 
-// Our symbol → pair UUID (populated on connect)
-let symbolToPairId: Record<string, string> = {};
-let pairCacheReady = false;
-let pairCacheRetryTimer: ReturnType<typeof setTimeout> | null = null;
-
+const SYMBOL_REFRESH_INTERVAL_MS = 5 * 60_000;
 const PAIR_CACHE_RETRY_MS = 60_000;
+const MAX_RECONNECT_DELAY = 30_000;
 
-async function loadPairCache(): Promise<void> {
+// our symbol → pair UUID, keyed off Coinbase product_id (== wsSymbol here).
+let productIdToPairId: Record<string, string> = {};
+let productIdToOurSymbol: Record<string, string> = {};
+let symbolRefreshInterval: ReturnType<typeof setInterval> | null = null;
+let pairCacheRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let stopped = false;
+let tradeCount = 0;
+
+interface Batch {
+    index: number;
+    productIds: string[];
+    ws: WebSocket | null;
+    reconnectTimer: ReturnType<typeof setTimeout> | null;
+    reconnectDelay: number;
+}
+
+const batches = new Map<number, Batch>();
+
+function chunk<T>(arr: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+}
+
+async function refreshSymbols(): Promise<ActiveSymbol[]> {
     try {
-        const pairs = await listActivePairs();
-        const map: Record<string, string> = {};
-        for (const p of pairs) {
-            map[p.symbol] = p.id;
-        }
-        symbolToPairId = map;
-        pairCacheReady = true;
+        const symbols = await loadActiveSymbols("coinbase");
+        productIdToPairId = Object.fromEntries(symbols.map((s) => [s.wsSymbol, s.pairId]));
+        productIdToOurSymbol = Object.fromEntries(symbols.map((s) => [s.wsSymbol, s.ourSymbol]));
         if (pairCacheRetryTimer) {
             clearTimeout(pairCacheRetryTimer);
             pairCacheRetryTimer = null;
         }
+        return symbols;
     } catch (err) {
-        logger.error({ err }, "coinbase_pair_cache_load_failed");
+        logger.error({ err }, "coinbase_symbol_refresh_failed");
         // Retry every 60s until successful — otherwise a DB outage at boot
-        // leaves the cache empty forever and incoming trades are discarded.
+        // leaves the map empty forever and incoming trades are discarded.
         if (!pairCacheRetryTimer && !stopped) {
             pairCacheRetryTimer = setTimeout(() => {
                 pairCacheRetryTimer = null;
-                loadPairCache();
+                refreshSymbols();
             }, PAIR_CACHE_RETRY_MS);
         }
+        return [];
     }
 }
 
-let ws: WebSocket | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 1000;
-const MAX_RECONNECT_DELAY = 30_000;
-let stopped = false;
-let tradeCount = 0;
-
-function subscribe(socket: WebSocket): void {
-    socket.send(JSON.stringify({
-        type: "subscribe",
-        product_ids: Object.keys(PRODUCT_MAP),
-        channel: "market_trades",
-    }));
+function subscribeMessage(type: "subscribe" | "unsubscribe", productIds: string[]) {
+    return JSON.stringify({ type, product_ids: productIds, channel: "market_trades" });
 }
 
 function handleMessage(raw: WebSocket.Data): void {
@@ -75,10 +90,10 @@ function handleMessage(raw: WebSocket.Data): void {
 
             for (const trade of trades) {
                 const productId: string = trade.product_id;
-                const ourSymbol = PRODUCT_MAP[productId];
+                const ourSymbol = productIdToOurSymbol[productId];
                 if (!ourSymbol) continue;
 
-                const pairId = symbolToPairId[ourSymbol];
+                const pairId = productIdToPairId[productId];
                 if (!pairId) continue;
 
                 const price = String(trade.price);
@@ -116,59 +131,122 @@ function handleMessage(raw: WebSocket.Data): void {
     }
 }
 
-function connect(): void {
+function connectBatch(batch: Batch): void {
     if (stopped) return;
 
-    ws = new WebSocket(COINBASE_WS_URL);
+    batch.ws = new WebSocket(COINBASE_WS_URL);
 
-    ws.on("open", async () => {
-        console.log("[coinbaseWs] connected");
-        reconnectDelay = 1000;
-        if (!pairCacheReady) await loadPairCache();
-        subscribe(ws!);
+    batch.ws.on("open", () => {
+        console.log(`[coinbaseWs] batch ${batch.index} connected (${batch.productIds.length} products)`);
+        batch.reconnectDelay = 1000;
+        batch.ws!.send(subscribeMessage("subscribe", batch.productIds));
     });
 
-    ws.on("message", handleMessage);
+    batch.ws.on("message", handleMessage);
 
-    ws.on("close", () => {
-        scheduleReconnect();
+    batch.ws.on("close", () => {
+        scheduleBatchReconnect(batch);
     });
 
-    ws.on("error", (err) => {
-        console.error("[coinbaseWs] error", err.message);
-        ws?.close();
+    batch.ws.on("error", (err) => {
+        console.error(`[coinbaseWs] batch ${batch.index} error`, err.message);
+        batch.ws?.close();
     });
 }
 
-function scheduleReconnect(): void {
+function scheduleBatchReconnect(batch: Batch): void {
     if (stopped) return;
-    if (reconnectTimer) return;
+    if (batch.reconnectTimer) return;
 
-    console.log(`[coinbaseWs] reconnecting in ${reconnectDelay}ms`);
-    reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
-    }, reconnectDelay);
+    console.log(`[coinbaseWs] batch ${batch.index} reconnecting in ${batch.reconnectDelay}ms`);
+    batch.reconnectTimer = setTimeout(() => {
+        batch.reconnectTimer = null;
+        connectBatch(batch);
+        batch.reconnectDelay = Math.min(batch.reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    }, batch.reconnectDelay);
+}
+
+function teardownBatch(batch: Batch): void {
+    if (batch.reconnectTimer) {
+        clearTimeout(batch.reconnectTimer);
+        batch.reconnectTimer = null;
+    }
+    if (batch.ws) {
+        batch.ws.close();
+        batch.ws = null;
+    }
+}
+
+/**
+ * Reconcile the batch connections against the current active symbol set:
+ * new batches get a fresh connection, batches whose product list changed
+ * get an incremental subscribe/unsubscribe on their existing connection (no
+ * reconnect), and batches that no longer exist (universe shrank below a
+ * prior batch count) get torn down.
+ */
+async function reconcileBatches(): Promise<void> {
+    const symbols = await refreshSymbols();
+    const productIds = symbols.map((s) => s.wsSymbol);
+    const chunks = chunk(productIds, COINBASE_WS_BATCH_SIZE);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const newProductIds = chunks[i]!;
+        const existing = batches.get(i);
+
+        if (!existing) {
+            const batch: Batch = { index: i, productIds: newProductIds, ws: null, reconnectTimer: null, reconnectDelay: 1000 };
+            batches.set(i, batch);
+            connectBatch(batch);
+            continue;
+        }
+
+        const before = new Set(existing.productIds);
+        const after = new Set(newProductIds);
+        const added = newProductIds.filter((p) => !before.has(p));
+        const removed = existing.productIds.filter((p) => !after.has(p));
+        existing.productIds = newProductIds;
+
+        if ((added.length > 0 || removed.length > 0) && existing.ws?.readyState === WebSocket.OPEN) {
+            if (added.length > 0) existing.ws.send(subscribeMessage("subscribe", added));
+            if (removed.length > 0) existing.ws.send(subscribeMessage("unsubscribe", removed));
+            logger.info({ batch: i, added, removed }, "coinbase_ws_subscriptions_reconciled");
+        }
+    }
+
+    // Tear down batches beyond the current chunk count (universe shrank).
+    for (const [index, batch] of batches) {
+        if (index >= chunks.length) {
+            teardownBatch(batch);
+            batches.delete(index);
+        }
+    }
 }
 
 export function startCoinbaseFeed(): void {
     stopped = false;
-    connect();
+    reconcileBatches().catch((err: unknown) => {
+        logger.error({ err }, "coinbase_ws_initial_connect_failed");
+    });
+
+    if (!symbolRefreshInterval) {
+        symbolRefreshInterval = setInterval(() => {
+            reconcileBatches().catch((err: unknown) => {
+                logger.error({ err }, "coinbase_ws_symbol_reconcile_failed");
+            });
+        }, SYMBOL_REFRESH_INTERVAL_MS);
+    }
 }
 
 export function stopCoinbaseFeed(): void {
     stopped = true;
-    if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
+    if (symbolRefreshInterval) {
+        clearInterval(symbolRefreshInterval);
+        symbolRefreshInterval = null;
     }
     if (pairCacheRetryTimer) {
         clearTimeout(pairCacheRetryTimer);
         pairCacheRetryTimer = null;
     }
-    if (ws) {
-        ws.close();
-        ws = null;
-    }
+    for (const batch of batches.values()) teardownBatch(batch);
+    batches.clear();
 }
