@@ -131,12 +131,6 @@ export default function AppLayout() {
 
   const tradingAllowed = riskStatus?.trading_allowed ?? true;
 
-  const initials = user?.displayName
-    ? user.displayName.slice(0, 2).toUpperCase()
-    : user?.email
-      ? user.email.slice(0, 2).toUpperCase()
-      : "??";
-
   return (
     <div className={`min-h-screen flex flex-col bg-tradr-bg text-white/85 ${isTradePage ? "trade-layout h-screen" : ""}`}>
       {/* Background effects */}
@@ -256,30 +250,6 @@ export default function AppLayout() {
               </div>
             )}
           </nav>
-
-          {/* User info at bottom */}
-          <div className={`mt-auto border-t border-tradr-green/[0.18] ${railCollapsed ? "px-0 py-3 justify-center" : "px-5 py-4"} flex items-center gap-2.5`}>
-            <div className="w-8 h-8 rounded-full border border-tradr-green/[0.18] bg-tradr-bg2 flex items-center justify-center text-xs text-tradr-green font-mono flex-shrink-0">
-              {initials}
-            </div>
-            {!railCollapsed && (
-              <>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] text-white/85 tracking-[1px] truncate font-mono">
-                    {user?.displayName || user?.email?.split("@")[0] || "user"}
-                  </div>
-                </div>
-                <button
-                  onClick={handleLogout}
-                  className="text-white/30 hover:text-tradr-red text-xs transition-colors"
-                  aria-label="Logout"
-                  title="Logout"
-                >
-                  ✕
-                </button>
-              </>
-            )}
-          </div>
         </aside>
 
         {/* Mobile sidebar backdrop */}

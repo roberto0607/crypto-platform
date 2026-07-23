@@ -20,7 +20,7 @@ import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/
 import { useTradingStore } from "@/stores/tradingStore";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
-import { IndicatorToolbar } from "./IndicatorToolbar";
+import { usePairPricesStore } from "@/stores/pairPricesStore";
 import {
     prevDayHighLow,
     computeEMA,
@@ -61,8 +61,6 @@ import { OpenInterestPanel } from "./OpenInterestPanel";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
-const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
-
 // VWAP line + legend color. Brightened lavender: VWAP is the key intraday
 // benchmark, so it must read clearly over candle bodies — but it's
 // non-directional, so deliberately NOT green/red, and distinct from the EMA
@@ -90,6 +88,12 @@ function priceLineColorForDay(dir: "up" | "down" | "flat"): string {
 // shows. Keeps the auto-fit price axis on recent price action rather than the
 // full loaded history (see PR #45).
 const LIVE_VIEW_BARS = 120;
+
+// Approximate rendered height of .tr-chart-legend (hero price row + O/H/L/C
+// row, top:8 anchor). The proximity/VWAP/BB/liquidity-zones badges below all
+// stack from a top:12-or-48 base — shift that base down by this much so they
+// land below the legend instead of underneath it.
+const CHART_LEGEND_STACK_OFFSET = 64;
 
 /**
  * Whether the time scale is parked at the live (right) edge.
@@ -153,6 +157,15 @@ function apiCandleToIndicator(c: Candle): IndicatorCandle {
     };
 }
 
+// Unix epoch (1970-01-01T00:00:00Z) was a Thursday. Naive epoch-second
+// flooring by a 7-day interval therefore aligns to Thursdays, not the
+// ISO-8601 Monday-start week the backend's 1w candles use (date_trunc('week',
+// ts) in candleBackfill.ts / scripts/backfillCandles.ts, and the same
+// Monday-offset fix in candleRollupJob.ts). Without this offset the live
+// forming candle for "1w" would sit in a different bucket than the historical
+// weekly candles fetched from the API.
+const MONDAY_EPOCH_OFFSET_SEC = 3 * 24 * 60 * 60;
+
 /** Bucket an epoch-second timestamp to the start of its timeframe period. */
 function bucketTime(epochSec: number, tf: Timeframe): number {
     switch (tf) {
@@ -162,33 +175,31 @@ function bucketTime(epochSec: number, tf: Timeframe): number {
         case "1h":  return Math.floor(epochSec / 3600) * 3600;
         case "4h":  return Math.floor(epochSec / 14400) * 14400;
         case "1d":  return Math.floor(epochSec / 86400) * 86400;
+        case "1w":  return Math.floor((epochSec + MONDAY_EPOCH_OFFSET_SEC) / 604800) * 604800 - MONDAY_EPOCH_OFFSET_SEC;
         default:    return Math.floor(epochSec / 60) * 60;
     }
 }
 
-/* ── Market Context Bar (chart toolbar row) CSS ──
+/* ── Chart legend overlay CSS ──
    Injected once into <head>. Colour vars (--g, --red, …) cascade down
-   from .tr-wrap on the trading page. */
+   from .tr-wrap on the trading page. Floats over the chart canvas's
+   top-left corner (TradingView-style) — replaces the old Market Context
+   Bar toolbar row now that the timeframe/indicators controls live in
+   TradeToolbar and this is display-only info. */
 const CONTEXT_BAR_CSS = `
-  .tr-chart-wrap {
-    /* Query container for the toolbar. The cells are now compact enough that all
-       five fit without a container query, but this is retained as the correct
-       containment context for any future width-responsive toolbar rules.
-       inline-size only (not size) so height stays driven by the flex column. */
-    container-type: inline-size;
-    container-name: chart-toolbar;
-  }
-  .tr-chart-toolbar {
-    display:flex;align-items:center;gap:0;
-    margin-bottom:8px;min-height:30px;
+  .tr-chart-wrap { display:flex; flex-direction:column; }
+  .tr-chart-legend {
+    position:absolute; top:8px; left:12px; z-index:9;
+    display:flex; flex-direction:column; gap:4px;
+    pointer-events:none;
     font-family:'Space Mono',monospace;
   }
+  .tr-chart-legend-row { display:flex; align-items:baseline; gap:0; pointer-events:auto; }
   .tr-cr-divider {
     width:1px;align-self:stretch;flex-shrink:0;
     margin:3px 6px;
     background:rgba(255,255,255,0.08);
   }
-  .tr-cr-tf { display:flex;align-items:center;gap:4px; }
   /* O/H/L/C strip: dim the letter LABELS, brighten the .val numbers, and split
      the four into columns with a hairline divider so it doesn't read as a
      run-on. The C close keeps its inline g/red coloring (set in JSX). */
@@ -203,13 +214,9 @@ const CONTEXT_BAR_CSS = `
     border-left:1px solid rgba(255,255,255,0.08);
   }
   .tr-cr-ohlc > span:first-child { padding-left:0;border-left:none; }
-  /* Specificity must beat the generic .tr-chart-toolbar .val rule below
-     (equal specificity + later source order would otherwise win). */
-  .tr-chart-toolbar .tr-cr-ohlc .val { color:rgba(255,255,255,0.95); } /* brightened values */
-  .tr-chart-toolbar .val {
-    color:rgba(255,255,255,0.85);margin-left:3px;
-  }
-  .tr-chart-toolbar .val.muted { color:rgba(255,255,255,0.3); }
+  .tr-cr-ohlc .val { color:rgba(255,255,255,0.95); } /* brightened values */
+  .tr-chart-legend .val { color:rgba(255,255,255,0.85);margin-left:3px; }
+  .tr-chart-legend .val.muted { color:rgba(255,255,255,0.3); }
   .tr-cr-funding {
     display:flex;align-items:center;gap:4px;
     font-size:11px;white-space:nowrap;
@@ -221,7 +228,27 @@ const CONTEXT_BAR_CSS = `
     display:flex;align-items:center;
     font-size:11px;color:rgba(255,255,255,0.3);
   }
-  .tr-cr-indicators { display:flex;align-items:center;flex-shrink:0; }
+  /* ── Hero price + FILL SPREAD (moved from TradingPage.tsx's old .tr-price-hero) ── */
+  .tr-price-big {
+    font-family:var(--bebas,'Bebas Neue',sans-serif);font-size:28px;color:#fff;
+    letter-spacing:2px;line-height:1;
+    transition:filter 0.15s ease-out, text-shadow 0.15s ease-out;
+  }
+  .tr-price-big.up { color:var(--g,#00ff41);text-shadow:0 0 20px var(--g25,rgba(0,255,65,0.25)); }
+  .tr-price-big.down { color:var(--red,#ff3b3b);text-shadow:0 0 20px var(--red25,rgba(255,59,59,0.25)); }
+  .tr-price-big.flat { color:#fff; }
+  .tr-price-big.tick-up,
+  .tr-price-big.tick-down {
+    filter:brightness(1.6);
+    text-shadow:0 0 26px rgba(255,255,255,0.6);
+  }
+  .tr-price-meta {
+    display:flex;gap:16px;margin-left:20px;padding-left:20px;
+    border-left:1px solid var(--borderW,rgba(255,255,255,0.06));
+  }
+  .tr-pm-item { text-align:right; }
+  .tr-pm-val { font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:1px; }
+  .tr-pm-lbl { font-size:7px;color:rgba(255,255,255,0.2);letter-spacing:2px;margin-top:1px; }
   /* Scroll-to-realtime button — floats bottom-right of the chart pane, just
      above the x-axis labels and left of the price axis. */
   .tr-scroll-live {
@@ -244,16 +271,20 @@ const CONTEXT_BAR_CSS = `
 `;
 
 interface CandlestickChartProps {
-    onTimeframeChange?: (tf: Timeframe) => void;
+    /** Controlled — the timeframe buttons live in TradeToolbar now. */
+    timeframe: Timeframe;
+    /** Controlled — the VPVR mode picker lives in IndicatorToolbar, which is
+     * now rendered by TradeToolbar (a sibling), not this component. */
+    vpvrMode: "visible" | "weekly" | "daily";
     /**
      * Deribit's hourly-applied funding rate (`current_funding`). Paired with
-     * an hourly countdown in the Market Context Bar. null = not yet fetched —
-     * renders as a muted em-dash.
+     * an hourly countdown in the chart's legend overlay. null = not yet
+     * fetched — renders as a muted em-dash.
      */
     fundingRateHourly?: number | null;
 }
 
-export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }: CandlestickChartProps) {
+export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -284,13 +315,11 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     const footprintPrimitiveRef = useRef<FootprintPrimitive | null>(null);
     const liquidationLevelsPrimitiveRef = useRef<LiquidationLevelsPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
     const keyLevelsRef = useRef<{ pdh: number; pdl: number } | null>(null);
     const liquidityZonesRef = useRef<LiquidityZone[]>([]);
-    const [timeframe, setTimeframe] = useState<Timeframe>("1h");
     const [loading, setLoading] = useState(false);
     const [cvdData, setCvdData] = useState<CvdPoint[]>([]);
     const [cvdDivergences, setCvdDivergences] = useState<CvdDivergence[]>([]);
@@ -398,6 +427,37 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
     }
     const dayDir = dayChange === null ? lastDayDirRef.current : dayDirection(dayChange);
     lastDayDirRef.current = dayDir;
+
+    // Hero price + FILL SPREAD for the chart legend overlay — ported verbatim
+    // from TradingPage.tsx's old .tr-price-hero (snapshot-first is load-bearing
+    // for replay mode; see AssetTab.tsx's note on the same pattern).
+    const snapshot = useTradingStore((s) => s.snapshot);
+    const pairPrice = usePairPricesStore((s) => (selectedPairId ? s.prices[selectedPairId] : undefined));
+    const heroPrice = snapshot?.last ? parseFloat(snapshot.last) : pairPrice ?? 0;
+
+    // Tick FLASH — brief pulse on real movement between ticks, layered on top
+    // of the persistent day color. Same pattern as TradingPage.tsx's old hero.
+    const heroPrevPriceRef = useRef<number | null>(null);
+    const [heroTickFlash, setHeroTickFlash] = useState<"" | "tick-up" | "tick-down">("");
+    const heroFlashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+    useEffect(() => {
+        heroPrevPriceRef.current = null;
+        clearTimeout(heroFlashTimerRef.current);
+        setHeroTickFlash("");
+    }, [selectedPairId]);
+
+    useEffect(() => {
+        if (!heroPrice) return;
+        const prev = heroPrevPriceRef.current;
+        heroPrevPriceRef.current = heroPrice;
+        if (prev === null || heroPrice === prev) return;
+        setHeroTickFlash(heroPrice > prev ? "tick-up" : "tick-down");
+        clearTimeout(heroFlashTimerRef.current);
+        heroFlashTimerRef.current = setTimeout(() => setHeroTickFlash(""), 150);
+    }, [heroPrice]);
+
+    useEffect(() => () => clearTimeout(heroFlashTimerRef.current), []);
 
     // Repaint only the price line + its axis label when the DAY direction flips
     // (not per tick). Candle bodies keep their own per-candle up/down coloring.
@@ -803,7 +863,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
             } else if (
                 newestCross &&
                 newestCross.time > lastAlertedCrossTimeRef.current &&
-                (tf === "4h" || tf === "1d")
+                (tf === "4h" || tf === "1d" || tf === "1w")
             ) {
                 lastAlertedCrossTimeRef.current = newestCross.time;
                 if (newestCross.type === "golden") addToast("success", `Golden cross · ${tf}`);
@@ -1530,108 +1590,93 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
         return () => { active = false; };
     }, [indicatorConfig.keyLevels]);
 
-    const handleTimeframeChange = (tf: Timeframe) => {
-        setTimeframe(tf);
-        onTimeframeChange?.(tf);
-    };
-
     return (
         <div className="tr-chart-wrap flex flex-col h-full">
-            {/* ── Market Context Bar — chart toolbar row ── */}
-            <div className="tr-chart-toolbar">
-                {/* Cell 1 — timeframe selector */}
-                <div className="tr-cr-tf">
-                    {TIMEFRAMES.map((tf) => (
-                        <button
-                            key={tf}
-                            onClick={() => handleTimeframeChange(tf)}
-                            style={{
-                                padding: "4px 8px", fontSize: 12, borderRadius: 2,
-                                transition: "all 0.15s",
-                                fontFamily: "'Space Mono', monospace",
-                                letterSpacing: 1,
-                                border: timeframe === tf ? "1px solid #00ff41" : "1px solid rgba(0,255,65,0.16)",
-                                background: timeframe === tf ? "#00ff41" : "transparent",
-                                color: timeframe === tf ? "#000" : "rgba(255,255,255,0.5)",
-                            }}
-                        >
-                            {tf}
-                        </button>
-                    ))}
-                    {loading && (
-                        <span className="text-gray-600 text-xs ml-1">Loading...</span>
-                    )}
-                </div>
-
-                <span className="tr-cr-divider" />
-
-                {/* Cell 2 — live candle O/H/L/C. Defaults to the forming candle;
-                    swaps to the hovered candle while the crosshair is active. */}
-                <div className="tr-cr-ohlc">
-                    {(() => {
-                        const c = crosshairData ?? liveCandleRef.current;
-                        const fmt = (n: number | undefined) =>
-                            n == null
-                                ? "—"
-                                : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                        const up = c != null && c.close >= c.open;
-                        // Compact O/H/L/C only — volume (unwired, "—" off-crosshair) and
-                        // the period-progress bar were dropped so all toolbar cells fit
-                        // without clipping Indicators. Volume stays available on hover via
-                        // the crosshair; see git history for the prior V/progress markup.
-                        return (
-                            <>
-                                <span>O <span className="val">{fmt(c?.open)}</span></span>
-                                <span>H <span className="val">{fmt(c?.high)}</span></span>
-                                <span>L <span className="val">{fmt(c?.low)}</span></span>
-                                <span>C <span className="val" style={{ color: c == null ? undefined : up ? "var(--g)" : "var(--red)" }}>{fmt(c?.close)}</span></span>
-                            </>
-                        );
-                    })()}
-                </div>
-
-                <span className="tr-cr-divider" />
-
-                {/* Cell 3 — hourly funding rate (countdown dropped to fit the toolbar) */}
-                <div className="tr-cr-funding">
-                    <span className="lbl">FUNDING</span>
-                    <span
-                        className="val"
-                        style={{
-                            color:
-                                fundingRateHourly === null
-                                    ? "rgba(255,255,255,0.3)"
-                                    : fundingRateHourly > 0
-                                        ? "var(--g)"
-                                        : fundingRateHourly < 0
-                                            ? "var(--red)"
-                                            : undefined,
-                        }}
-                    >
-                        {fundingRateHourly === null
-                            ? "—"
-                            : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
-                    </span>
-                </div>
-
-                <span className="tr-cr-divider" />
-
-                {/* Cell 4 — live buy/sell pressure (Commit C) */}
-                <PressureCell pair={selectedPairSymbol} />
-
-                {/* Cell 5 — indicators dropdown, pushed to the right edge */}
-                <span className="tr-cr-divider" style={{ marginLeft: "auto" }} />
-                <div className="tr-cr-indicators">
-                    <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={setVpvrMode} />
-                </div>
-            </div>
-
-            {/* Chart container */}
+            {/* Chart container — the toolbar row (timeframe/search/indicators/
+                alerts) now lives in TradeToolbar, rendered by TradingPage above
+                this component. What used to be the Market Context Bar (OHLC,
+                funding, pressure, hero price) is now a floating TradingView-style
+                legend anchored to the top-left of the chart canvas itself. */}
             <div className="relative flex-1 min-h-0">
                 <div ref={containerRef} className="absolute inset-0" />
 
-                {/* Crosshair OHLC readout now lives in the Market Context Bar
-                    (Cell 2), which swaps to the hovered candle on crosshair. */}
+                {/* ── Chart legend overlay — hero price + FILL SPREAD, OHLC,
+                    funding rate, buy/sell pressure. Floats over the chart's
+                    top-left corner; the proximity/VWAP/BB chips below stack
+                    beneath it (see CHART_LEGEND_HEIGHT). */}
+                <div className="tr-chart-legend">
+                    <div className="tr-chart-legend-row">
+                        <span className={`tr-price-big ${dayDir} ${heroTickFlash}`}>
+                            ${heroPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                        <div className="tr-price-meta">
+                            <div className="tr-pm-item">
+                                <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>
+                                    {(() => {
+                                        const ask = snapshot?.ask ? parseFloat(snapshot.ask) : 0;
+                                        const bid = snapshot?.bid ? parseFloat(snapshot.bid) : 0;
+                                        if (!(ask > 0) || !(bid > 0)) return "—";
+                                        const spreadDollars = ask - bid;
+                                        const midPrice = (ask + bid) / 2;
+                                        if (midPrice === 0) return "—";
+                                        const spreadPct = (spreadDollars / midPrice) * 100;
+                                        return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(4)}%)`;
+                                    })()}
+                                </div>
+                                <div className="tr-pm-lbl">FILL SPREAD</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="tr-chart-legend-row">
+                        <div className="tr-cr-ohlc">
+                            {(() => {
+                                const c = crosshairData ?? liveCandleRef.current;
+                                const fmt = (n: number | undefined) =>
+                                    n == null
+                                        ? "—"
+                                        : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                const up = c != null && c.close >= c.open;
+                                return (
+                                    <>
+                                        <span>O <span className="val">{fmt(c?.open)}</span></span>
+                                        <span>H <span className="val">{fmt(c?.high)}</span></span>
+                                        <span>L <span className="val">{fmt(c?.low)}</span></span>
+                                        <span>C <span className="val" style={{ color: c == null ? undefined : up ? "var(--g)" : "var(--red)" }}>{fmt(c?.close)}</span></span>
+                                    </>
+                                );
+                            })()}
+                            {loading && <span className="text-gray-600 text-xs ml-1">Loading...</span>}
+                        </div>
+
+                        <span className="tr-cr-divider" />
+
+                        <div className="tr-cr-funding">
+                            <span className="lbl">FUNDING</span>
+                            <span
+                                className="val"
+                                style={{
+                                    color:
+                                        fundingRateHourly === null
+                                            ? "rgba(255,255,255,0.3)"
+                                            : fundingRateHourly > 0
+                                                ? "var(--g)"
+                                                : fundingRateHourly < 0
+                                                    ? "var(--red)"
+                                                    : undefined,
+                                }}
+                            >
+                                {fundingRateHourly === null
+                                    ? "—"
+                                    : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
+                            </span>
+                        </div>
+
+                        <span className="tr-cr-divider" />
+
+                        <PressureCell pair={selectedPairSymbol} />
+                    </div>
+                </div>
 
                 {/* ── PDH/PDL DOM overlay — sits OVER the chart, outside TradingView's canvas ── */}
                 {indicatorConfig.keyLevels && (
@@ -1757,7 +1802,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                 {/* ── Proximity alert badge ── */}
                 {pdhProximity && (
                     <div style={{
-                        position: "absolute", top: 12, left: 12, zIndex: 10,
+                        position: "absolute", top: 12 + CHART_LEGEND_STACK_OFFSET, left: 12, zIndex: 10,
                         background: "rgba(8,12,18,0.85)",
                         border: `1px solid ${pdhProximity === "pdh" ? "rgba(255,77,77,0.5)" : "rgba(0,230,118,0.5)"}`,
                         borderLeft: `3px solid ${pdhProximity === "pdh" ? "#ff4d4d" : "#00e676"}`,
@@ -1791,7 +1836,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                     const tint = below ? "#ff3b3b" : "#00ff41";
                     return (
                         <div style={{
-                            position: "absolute", top: pdhProximity ? 48 : 12, left: 12, zIndex: 10,
+                            position: "absolute", top: (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET, left: 12, zIndex: 10,
                             background: "rgba(8,12,18,0.85)",
                             border: "1px solid rgba(196,181,253,0.35)",
                             borderLeft: `3px solid ${VWAP_COLOR}`,
@@ -1815,7 +1860,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                     %. SQUEEZE flag tints amber (neutral-bright, NOT green/red which
                     mean direction) when bandwidth sits at/near its lookback low. */}
                 {indicatorConfig.bollingerBands && bbBandwidth != null && (() => {
-                    const base = pdhProximity ? 48 : 12;
+                    const base = (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET;
                     const vwapShown = indicatorConfig.vwap && vwapValue != null;
                     const top = base + (vwapShown ? 36 : 0);
                     return (
@@ -2025,7 +2070,7 @@ export function CandlestickChart({ onTimeframeChange, fundingRateHourly = null }
                             {/* Dominant side badge */}
                             <div style={{
                                 position: "absolute",
-                                top: pdhProximity ? 48 : 12,
+                                top: (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET,
                                 left: 12, zIndex: 10,
                                 background: "rgba(8,12,18,0.85)",
                                 border: `1px solid ${isBalanced ? "rgba(255,255,255,0.25)" : isSellHeavy ? "rgba(255,60,60,0.45)" : "rgba(0,230,118,0.45)"}`,
