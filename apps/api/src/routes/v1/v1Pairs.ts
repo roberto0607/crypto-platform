@@ -69,7 +69,7 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
                 properties: {
                     timeframe: {
                         type: "string",
-                        enum: ["1m", "5m", "15m", "1h", "4h", "1d"],
+                        enum: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"],
                         default: "1h",
                     },
                     limit: { type: "integer", minimum: 1, maximum: 5000, default: 200 },

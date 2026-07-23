@@ -8,6 +8,7 @@
  *   5m  → Coinbase                (30 days)
  *   1m  → Coinbase                (7 days)
  *   4h  → Rolled up from 1h data  (no native source)
+ *   1w  → Rolled up from 1d data  (no native source)
  *
  * Gap-fill: checks what's already in the candles table per (pair, timeframe)
  * and only fetches what's missing.
@@ -392,6 +393,42 @@ async function rollup4hFromHourly(pairId: string, pairSymbol: string): Promise<n
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Phase 4: 1w rollup from 1d data
+// ═══════════════════════════════════════════════════════════════
+
+async function rollup1wFromDaily(pairId: string, pairSymbol: string): Promise<number> {
+    const label = `[${pairSymbol}] 1w (rollup)`;
+
+    const result = await pool.query(
+        `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+         SELECT
+             pair_id,
+             '1w',
+             date_trunc('week', ts) AS bucket,
+             (ARRAY_AGG(open ORDER BY ts ASC))[1],
+             MAX(high),
+             MIN(low),
+             (ARRAY_AGG(close ORDER BY ts DESC))[1],
+             SUM(volume)
+         FROM candles
+         WHERE pair_id = $1
+           AND timeframe = '1d'
+         GROUP BY pair_id, bucket
+         HAVING COUNT(*) >= 5
+         ON CONFLICT (pair_id, timeframe, ts) DO NOTHING`,
+        [pairId],
+    );
+
+    const inserted = result.rowCount ?? 0;
+    if (inserted > 0) {
+        console.log(`${label}: ${inserted} candles rolled up from 1d data`);
+    } else {
+        console.log(`${label}: up to date`);
+    }
+    return inserted;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
 
@@ -399,7 +436,8 @@ async function main(): Promise<void> {
     console.log("=== Historical Candle Backfill ===");
     console.log("    Phase 1: CryptoCompare (1d full history, 1h full history)");
     console.log("    Phase 2: Coinbase (15m 90d, 5m 30d, 1m 7d)");
-    console.log("    Phase 3: 4h rollup from 1h\n");
+    console.log("    Phase 3: 4h rollup from 1h");
+    console.log("    Phase 4: 1w rollup from 1d\n");
 
     const pairs = await loadPairs();
     if (pairs.length === 0) {
@@ -450,6 +488,15 @@ async function main(): Promise<void> {
                 grandTotal += await rollup4hFromHourly(pair.id, pair.symbol);
             } catch (err) {
                 console.error(`[${pair.symbol}] 4h rollup: FAILED — ${(err as Error).message}`);
+            }
+        }
+
+        // Phase 4: 1w rollup
+        if (!stopping) {
+            try {
+                grandTotal += await rollup1wFromDaily(pair.id, pair.symbol);
+            } catch (err) {
+                console.error(`[${pair.symbol}] 1w rollup: FAILED — ${(err as Error).message}`);
             }
         }
     }

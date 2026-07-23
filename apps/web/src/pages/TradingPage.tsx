@@ -3,15 +3,12 @@ import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { useDailyOpenStore } from "@/stores/dailyOpenStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
-import AssetTab from "@/components/trading/AssetTab";
+import { TradeToolbar } from "@/components/trading/TradeToolbar";
 import { getPositions } from "@/api/endpoints/analytics";
-import { getCandles } from "@/api/endpoints/candles";
-import { searchPairs } from "@/api/endpoints/trading";
-import { getMsUntilNextUTCMidnight, dayDirection } from "@/lib/priceChange";
-import { usePairChange } from "@/hooks/usePairChange";
+import { getCandles, type Timeframe } from "@/api/endpoints/candles";
+import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
@@ -79,34 +76,8 @@ const TRADE_CSS = `
   }
 
   /* ── ASSET BAR ── */
-  .tr-abar {
-    display:flex;align-items:center;gap:12px;
-    border-bottom:1px solid var(--border);
-    background:rgba(4,4,4,0.97);flex-shrink:0;
-    height:46px;padding:0 16px;
-    /* .tr-body picks up a transform from its fade-in animation class
-       (tr-fu/tr-d1), which creates its own stacking context regardless of
-       z-index. Since .tr-abar itself was never positioned, that context
-       painted ABOVE it no matter what z-index a descendant (e.g. the search
-       dropdown) declared. Promoting .tr-abar into its own positioned
-       stacking context — same pattern .tr-wrap already uses — fixes it. */
-    position:relative;z-index:5;
-  }
-  /* Non-interactive "what am I looking at" chip — replaces the old
-     all-pairs tab strip now that search is the primary way to switch
-     pairs. Reuses .tr-asset-tab.active's look (green pill) minus the
-     cursor/hover states, since this one is informational only. */
-  .tr-active-pair {
-    display:flex;align-items:center;gap:6px;
-    padding:5px 14px;font-size:13px;letter-spacing:1.5px;
-    font-family:var(--bebas);text-transform:uppercase;
-    color:var(--g);background:rgba(0,255,65,0.1);
-    border:1px solid rgba(0,255,65,0.3);border-radius:6px;
-    text-shadow:0 0 8px var(--g25);
-    flex-shrink:0;white-space:nowrap;
-  }
-
-  /* ── PAIR SEARCH ── */
+  /* ── PAIR SEARCH ── (classes below are used by TradeToolbar.tsx now —
+     the search box + dropdown moved there, styling stayed put) */
   .tr-search { position:relative;flex-shrink:0; }
   .tr-search-input {
     background:rgba(255,255,255,0.04);
@@ -155,35 +126,9 @@ const TRADE_CSS = `
   .tr-asset-tab .up { color:var(--g); }
   .tr-asset-tab .dn { color:var(--red); }
 
-  .tr-price-hero {
-    margin-left:auto;display:flex;align-items:baseline;gap:10px;
-  }
-  .tr-price-big {
-    font-family:var(--bebas);font-size:28px;color:#fff;
-    letter-spacing:2px;line-height:1;
-    transition:filter 0.15s ease-out, text-shadow 0.15s ease-out;
-  }
-  .tr-price-big.up { color:var(--g);text-shadow:0 0 20px var(--g25); }
-  .tr-price-big.dn { color:var(--red); }
-  .tr-price-big.down { color:var(--red);text-shadow:0 0 20px var(--red25); }
-  .tr-price-big.flat { color:#fff; }
-  /* Tick flash — a brief brightness+glow pulse layered ON TOP of the day color
-     (sets filter/text-shadow only, never color). Listed after the day classes
-     so its shadow wins for the ~150ms the class is present, then transitions
-     back. The day color (red/green/white) is preserved throughout. */
-  .tr-price-big.tick-up,
-  .tr-price-big.tick-down {
-    filter:brightness(1.6);
-    text-shadow:0 0 26px rgba(255,255,255,0.6);
-  }
-  .tr-price-chg { font-size:9px;letter-spacing:2px; }
-  .tr-price-meta {
-    display:flex;gap:16px;margin-left:20px;padding-left:20px;
-    border-left:1px solid var(--borderW);
-  }
-  .tr-pm-item { text-align:right; }
-  .tr-pm-val { font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:1px; }
-  .tr-pm-lbl { font-size:7px;color:rgba(255,255,255,0.2);letter-spacing:2px;margin-top:1px; }
+  /* tr-price-hero, tr-price-big, tr-price-meta, tr-pm-* moved to
+     CandlestickChart.tsx's CONTEXT_BAR_CSS — the hero price now lives in
+     the chart's legend overlay, not this page's header. */
 
   /* ── MAIN BODY ── */
   .tr-body {
@@ -1142,26 +1087,18 @@ export default function TradingPage() {
   const wallets = useAppStore((s) => s.wallets);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
-  const snapshot = useTradingStore((s) => s.snapshot);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
-  const selectedPairPrice = usePairPricesStore((s) =>
-    selectedPairId ? s.prices[selectedPairId] : undefined,
-  );
   const [positions, setPositions] = useState<Position[]>([]);
   // Deribit's hourly-applied funding rate (current_funding). null = not yet
   // fetched (renders em-dash). A fetched value of 0 is a genuine, meaningful
   // funding rate and renders as "0.0000%".
   const [fundingRateHourly, setFundingRateHourly] = useState<number | null>(null);
-
-  // Hero-price PERSISTENT color tracks the DAY (open→now, same source as the
-  // chip), derived below from usePairChange. The tick-to-tick movement is now a
-  // brief FLASH layered on top, not a persistent color: prevPriceRef holds the
-  // last seen price; a non-flat tick toggles a transient class for ~150ms.
-  const prevPriceRef = useRef<number | null>(null);
-  const [tickFlash, setTickFlash] = useState<"" | "tick-up" | "tick-down">("");
-  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
+  // Chart timeframe + VPVR mode — controlled here, rendered in TradeToolbar,
+  // passed down to CandlestickChart. Both used to be internal chart state;
+  // lifted so the timeframe buttons and indicators dropdown could move into
+  // the unified toolbar (a sibling of the chart, not a child).
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
 
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
@@ -1172,46 +1109,6 @@ export default function TradingPage() {
       selectPair(pairs[0]!.id);
     }
   }, [selectedPairId, pairs, selectPair]);
-
-  // Pair search — debounced call to the trigram-ranked GET /pairs?search=
-  // endpoint. Empty query means "not searching": the asset bar falls back to
-  // the full `pairs` list untouched.
-  const [pairQuery, setPairQuery] = useState("");
-  const [pairQueryFocused, setPairQueryFocused] = useState(false);
-  const [pairSearchResults, setPairSearchResults] = useState<TradingPair[] | null>(null);
-  const [pairSearching, setPairSearching] = useState(false);
-  const latestPairQueryRef = useRef("");
-
-  useEffect(() => {
-    const trimmed = pairQuery.trim();
-    latestPairQueryRef.current = trimmed;
-
-    if (!trimmed) {
-      setPairSearchResults(null);
-      setPairSearching(false);
-      return;
-    }
-
-    setPairSearching(true);
-    const timer = setTimeout(() => {
-      searchPairs(trimmed)
-        .then((res) => {
-          if (latestPairQueryRef.current !== trimmed) return; // stale response
-          setPairSearchResults(res.data.pairs);
-        })
-        .catch(() => {
-          if (latestPairQueryRef.current !== trimmed) return;
-          setPairSearchResults([]);
-        })
-        .finally(() => {
-          if (latestPairQueryRef.current === trimmed) setPairSearching(false);
-        });
-    }, 250);
-
-    return () => clearTimeout(timer);
-  }, [pairQuery]);
-
-  const isPairSearchActive = pairQuery.trim().length > 0;
 
   // Inject CSS
   useEffect(() => {
@@ -1296,33 +1193,6 @@ export default function TradingPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Current price: prefer SSE snapshot, fall back to the cached pair price.
-  // snapshot-first is load-bearing for replay mode (onReplayTick writes
-  // snapshot but NOT pairPricesStore); do not collapse to selectedPairPrice.
-  const currentPrice = snapshot?.last
-    ? parseFloat(snapshot.last)
-    : selectedPairPrice ?? 0;
-
-  // Persistent hero color = the DAY (open→now), from the same source as the
-  // chip's %: usePairChange (SSE price vs cached daily open). dayChange is null
-  // until the open is cached / a price has ticked.
-  const dayChange = usePairChange(selectedPairId ?? "");
-  // Hold the last known day-direction across transient null windows (the price
-  // store retains the last tick, so disconnect alone won't null this — but a
-  // momentary missing open shouldn't flash neutral). Reset synchronously on
-  // pair switch so no stale color carries to the new asset (React's
-  // derive-state-during-render reset pattern, runs before the first paint of
-  // the new pair).
-  const lastDayDirRef = useRef<"up" | "down" | "flat">("flat");
-  const lastPairForDirRef = useRef<string | null>(selectedPairId);
-  if (lastPairForDirRef.current !== selectedPairId) {
-    lastPairForDirRef.current = selectedPairId;
-    lastDayDirRef.current = "flat";
-  }
-  const dayDir =
-    dayChange === null ? lastDayDirRef.current : dayDirection(dayChange);
-  lastDayDirRef.current = dayDir;
-
   // Quote wallet balance (USD)
   const quoteAssetId = selectedPair?.quote_asset_id;
   const quoteWallet = wallets.find((w) => w.asset_id === quoteAssetId);
@@ -1332,31 +1202,6 @@ export default function TradingPage() {
 
   // Position for selected pair
   const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
-
-  // Reset tick-flash tracking when switching pairs — comparing one asset's
-  // price against another's would produce a bogus flash.
-  useEffect(() => {
-    prevPriceRef.current = null;
-    clearTimeout(flashTimerRef.current);
-    setTickFlash("");
-  }, [selectedPairId]);
-
-  // Tick FLASH: a brief pulse on real movement between ticks, layered on top of
-  // the persistent day color (does not repaint it). Toggles a transient class
-  // for ~150ms, then clears.
-  useEffect(() => {
-    if (!currentPrice) return; // no price / disconnect
-    const prev = prevPriceRef.current;
-    prevPriceRef.current = currentPrice;
-    if (prev === null) return; // first tick for this pair — no flash
-    if (currentPrice === prev) return; // flat tick — nothing to flash
-    setTickFlash(currentPrice > prev ? "tick-up" : "tick-down");
-    clearTimeout(flashTimerRef.current);
-    flashTimerRef.current = setTimeout(() => setTickFlash(""), 150);
-  }, [currentPrice]);
-
-  // Clear any pending flash timer on unmount.
-  useEffect(() => () => clearTimeout(flashTimerRef.current), []);
 
   if (!selectedPair) {
     return (
@@ -1370,86 +1215,21 @@ export default function TradingPage() {
     <div className="tr-wrap">
       {/* background overlays removed — too distracting */}
 
-      {/* ASSET BAR */}
-      <div className="tr-abar tr-fu">
-        <div className="tr-active-pair">
-          <span>{selectedPair.symbol.split("/")[0]}</span>
-        </div>
-
-        <div className="tr-search">
-          <input
-            type="text"
-            value={pairQuery}
-            onChange={(e) => setPairQuery(e.target.value)}
-            onFocus={() => setPairQueryFocused(true)}
-            onBlur={() => setPairQueryFocused(false)}
-            placeholder="Search pairs..."
-            className="tr-search-input"
-          />
-          {isPairSearchActive && pairQueryFocused && (
-            <div className="tr-search-dropdown">
-              {pairSearching && pairSearchResults === null ? (
-                <div className="tr-search-msg">Loading...</div>
-              ) : (pairSearchResults ?? []).length === 0 ? (
-                <div className="tr-search-msg">No pairs found</div>
-              ) : (
-                (pairSearchResults ?? []).map((p) => (
-                  <div
-                    key={p.id}
-                    // Prevents the input's blur (which would hide this
-                    // dropdown) from firing before the click below runs.
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => setPairQuery("")}
-                  >
-                    <AssetTab pairId={p.id} symbol={p.symbol} isActive={p.id === selectedPairId} />
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="tr-price-hero">
-          <span className={`tr-price-big ${dayDir} ${tickFlash}`}>
-            ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>
-          {/* Funding rate relocated to the Market Context Bar (chart row).
-              Spread stays here. */}
-          <div className="tr-price-meta">
-            <div className="tr-pm-item">
-              <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>
-                {(() => {
-                  const ask = snapshot?.ask ? parseFloat(snapshot.ask) : 0;
-                  const bid = snapshot?.bid ? parseFloat(snapshot.bid) : 0;
-                  // Collapse to em-dash only when bid/ask are genuinely absent
-                  // or non-positive. A zero spread (bid === ask) is a real
-                  // market state and still renders "$0.00 (0.0000%)".
-                  if (!(ask > 0) || !(bid > 0)) return "\u2014";
-                  const spreadDollars = ask - bid;
-                  const midPrice = (ask + bid) / 2;
-                  if (midPrice === 0) return "\u2014";
-                  // toFixed(4), matching the order-book ladder divider: a tight
-                  // spread (e.g. $0.10 on $62k = 0.00016%) underflows 3 decimals
-                  // and reads as a broken "0.000". 4 decimals shows "0.0002%".
-                  const spreadPct = (spreadDollars / midPrice) * 100;
-                  return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(4)}%)`;
-                })()}
-              </div>
-              {/* "FILL SPREAD" (not just "SPREAD") distinguishes this internal
-                  order-book spread — the one orders actually fill against — from
-                  the Kraken reference spread shown in the order-book divider
-                  below. Resolves the confusing two-"SPREAD" read (#54). */}
-              <div className="tr-pm-lbl">FILL SPREAD</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* UNIFIED TOP TOOLBAR — profile, symbol search, timeframes, indicators, alerts */}
+      <TradeToolbar
+        timeframe={timeframe}
+        onTimeframeChange={setTimeframe}
+        vpvrMode={vpvrMode}
+        onVpvrModeChange={setVpvrMode}
+      />
 
       {/* BODY */}
       <div className="tr-body tr-fu tr-d1">
         {/* CHART — full height left column */}
         <div className="tr-chart-area">
           <CandlestickChart
+            timeframe={timeframe}
+            vpvrMode={vpvrMode}
             fundingRateHourly={fundingRateHourly}
           />
         </div>

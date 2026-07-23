@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
+import type { Timeframe } from "@/api/endpoints/candles";
 import { getPositions } from "@/api/endpoints/analytics";
 import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
 import { MatchHeaderBar } from "./MatchHeaderBar";
@@ -543,6 +544,12 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const [match, setMatch] = useState(initialMatch);
     const [positions, setPositions] = useState<Position[]>([]);
     const [showEndOverlay, setShowEndOverlay] = useState(false);
+    // This view has no timeframe/indicator toolbar of its own — these just
+    // replicate CandlestickChart's old uncontrolled defaults ("1h" / "visible")
+    // now that timeframe/vpvrMode are controlled props. Not state — nothing
+    // in this view changes them.
+    const timeframe: Timeframe = "1h";
+    const vpvrMode = "visible" as const;
 
     // Tracks whether the component is still mounted, so async SSE handlers
     // and polls don't setState on an unmounted component.
@@ -714,7 +721,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
             <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", flex: 1, minHeight: 0, overflow: "hidden" }}>
                 {/* CHART — full height left column */}
                 <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", height: "100%", minHeight: 0 }}>
-                    <CandlestickChart />
+                    <CandlestickChart timeframe={timeframe} vpvrMode={vpvrMode} />
                 </div>
 
                 {/* RIGHT COLUMN — order panel */}

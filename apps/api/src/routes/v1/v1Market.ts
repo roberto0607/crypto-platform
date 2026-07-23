@@ -446,7 +446,7 @@ const v1Market: FastifyPluginAsync = async (app) => {
             querystring: {
                 type: "object",
                 properties: {
-                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"] },
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"] },
                 },
             },
         },
@@ -455,7 +455,7 @@ const v1Market: FastifyPluginAsync = async (app) => {
         try {
             const { pairId } = req.params as { pairId: string };
             const q = z.object({
-                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).optional().default("1h"),
+                timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d", "1w"]).optional().default("1h"),
             }).parse(req.query);
 
             const result = await computeLiquidityZones(pairId, q.timeframe);

@@ -107,23 +107,29 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
         title="Indicators"
         aria-label="Indicators"
         style={{
-          padding: "4px 8px", fontSize: 12, borderRadius: 2,
+          padding: "5px 9px", fontSize: 12, borderRadius: 2,
           transition: "all 0.15s",
-          color: "rgba(255,255,255,0.5)",
+          color: "rgba(255,255,255,0.92)",
+          fontWeight: 700,
           background: "transparent",
-          border: "1px solid rgba(0,255,65,0.16)",
+          border: "1px solid rgba(0,255,65,0.2)",
           display: "flex", alignItems: "center", gap: 4,
           fontFamily: "'Space Mono', monospace",
           letterSpacing: 1,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(0,255,65,0.1)"; e.currentTarget.style.color = "#fff"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.5)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.92)"; }}
       >
-        {/* Gear glyph with U+FE0E text-presentation selector so it renders
-            monochrome (terminal aesthetic), not as a colour emoji. The
-            "Indicators" label moved to the title/aria-label to save toolbar
-            width; the active-count badge below still shows. */}
-        <span style={{ fontSize: 14, lineHeight: 1 }}>{"⚙︎"}</span>
+        {/* Waveform/bar-chart glyph — hand-drawn inline SVG, same convention as
+            NavIcon.tsx (dependency-free icon set). Replaces the old gear glyph
+            now that this trigger is one of the 5 bold toolbar elements; the
+            "Indicators" label lives in title/aria-label to save toolbar width,
+            the active-count badge below still shows. */}
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <line x1="3" y1="13" x2="3" y2="7" />
+          <line x1="8" y1="13" x2="8" y2="3" />
+          <line x1="13" y1="13" x2="13" y2="9" />
+        </svg>
         {activeCount > 0 && (
           <span style={{
             background: "#00ff41", color: "#000",
