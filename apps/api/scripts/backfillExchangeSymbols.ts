@@ -91,9 +91,11 @@ async function main() {
 
     const newPairs = results.filter((r) => r.isNewPair).length;
     const newAssets = results.filter((r) => r.isNewBaseAsset).length;
+    const reactivatedPairs = results.filter((r) => r.wasReactivated).length;
     console.log(`\n=== summary ===`);
     console.log(`pairs upserted:     ${results.length}`);
     console.log(`new pairs:          ${newPairs}`);
+    console.log(`reactivated pairs:  ${reactivatedPairs} (previously delisted, now relisted on both exchanges)`);
     console.log(`new base assets:    ${newAssets} (wallets provisioned for every existing user on each)`);
 }
 

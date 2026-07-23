@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { pool } from "../../db/pool";
-import { checkDelistings } from "../symbolSync";
+import { checkDelistings, upsertCandidate, type SyncCandidate } from "../symbolSync";
 
 async function createFixturePair(uid: string, baseSymbol: string, quoteAssetId: string) {
     const { rows: baseRows } = await pool.query<{ id: string }>(
@@ -213,5 +213,131 @@ describe("checkDelistings", () => {
             [delistedFromBoth.pairId],
         );
         expect(pairRows[0]!.is_active).toBe(false);
+    });
+});
+
+describe("upsertCandidate reactivation", () => {
+    let uid: string;
+    let quoteAssetId: string;
+    const createdPairIds: string[] = [];
+    const createdAssetIds: string[] = [];
+
+    beforeEach(async () => {
+        uid = Math.random().toString(36).slice(2, 8);
+        const { rows } = await pool.query<{ id: string }>(
+            `INSERT INTO assets (symbol, name, decimals) VALUES ($1, $2, 2) RETURNING id`,
+            [`RAQ${uid.toUpperCase()}`, `USD fixture ${uid}`],
+        );
+        quoteAssetId = rows[0]!.id;
+        createdAssetIds.push(quoteAssetId);
+    });
+
+    afterEach(async () => {
+        if (createdPairIds.length > 0) {
+            await pool.query(`DELETE FROM trading_pairs WHERE id = ANY($1)`, [createdPairIds]);
+            createdPairIds.length = 0;
+        }
+        if (createdAssetIds.length > 0) {
+            await pool.query(`DELETE FROM assets WHERE id = ANY($1)`, [createdAssetIds]);
+            createdAssetIds.length = 0;
+        }
+    });
+
+    /** A pair that already went through a prior delisting: trading_pairs row
+     *  exists but is_active = false, and both exchange_symbol_map rows are
+     *  inactive too (matching real post-checkDelistings state). */
+    async function createDelistedFixturePair(baseSymbol: string) {
+        const { rows: baseRows } = await pool.query<{ id: string }>(
+            `INSERT INTO assets (symbol, name, decimals) VALUES ($1, $2, 8) RETURNING id`,
+            [baseSymbol, `${baseSymbol} fixture`],
+        );
+        const baseAssetId = baseRows[0]!.id;
+
+        const { rows: pairRows } = await pool.query<{ id: string }>(
+            `INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, is_active)
+             VALUES ($1, $2, $3, false) RETURNING id`,
+            [baseAssetId, quoteAssetId, `${baseSymbol}/USD-${uid}`],
+        );
+        const pairId = pairRows[0]!.id;
+
+        await pool.query(
+            `INSERT INTO exchange_symbol_map (pair_id, exchange, ws_symbol, rest_symbol, is_active)
+             VALUES ($1, 'kraken', $2, $2, false), ($1, 'coinbase', $3, $3, false)`,
+            [pairId, `${baseSymbol}/USD`, `${baseSymbol}-USD`],
+        );
+
+        return { pairId, baseAssetId, baseSymbol };
+    }
+
+    it("flips trading_pairs.is_active back to true when a previously-delisted pair is rediscovered online", async () => {
+        const relisted = await createDelistedFixturePair(`RA${uid.toUpperCase()}`);
+        createdPairIds.push(relisted.pairId);
+        createdAssetIds.push(relisted.baseAssetId);
+
+        const candidate: SyncCandidate = {
+            ourSymbol: `${relisted.baseSymbol}/USD-${uid}`,
+            baseSymbol: relisted.baseSymbol,
+            baseName: relisted.baseSymbol,
+            quoteSymbol: `RAQ${uid.toUpperCase()}`,
+            volumeUsd24h: 1000,
+            kraken: { wsSymbol: `${relisted.baseSymbol}/USD`, restSymbol: `${relisted.baseSymbol}USD` },
+            coinbase: { wsSymbol: `${relisted.baseSymbol}-USD`, restSymbol: `${relisted.baseSymbol}-USD` },
+        };
+
+        const client = await pool.connect();
+        let result: Awaited<ReturnType<typeof upsertCandidate>>;
+        try {
+            result = await upsertCandidate(client, candidate);
+        } finally {
+            client.release();
+        }
+
+        // Row already existed — this is a reactivation, not a fresh insert.
+        expect(result.isNewPair).toBe(false);
+        expect(result.wasReactivated).toBe(true);
+
+        const { rows: pairRows } = await pool.query<{ is_active: boolean }>(
+            `SELECT is_active FROM trading_pairs WHERE id = $1`,
+            [relisted.pairId],
+        );
+        expect(pairRows[0]!.is_active).toBe(true);
+
+        const { rows: mapRows } = await pool.query<{ exchange: string; is_active: boolean }>(
+            `SELECT exchange, is_active FROM exchange_symbol_map WHERE pair_id = $1 ORDER BY exchange`,
+            [relisted.pairId],
+        );
+        expect(mapRows).toEqual([
+            { exchange: "coinbase", is_active: true },
+            { exchange: "kraken", is_active: true },
+        ]);
+    });
+
+    it("does not report wasReactivated for a pair that was already active", async () => {
+        const alreadyActive = await createDelistedFixturePair(`RB${uid.toUpperCase()}`);
+        createdPairIds.push(alreadyActive.pairId);
+        createdAssetIds.push(alreadyActive.baseAssetId);
+        // Flip it active first, as if a prior sync run already relisted it.
+        await pool.query(`UPDATE trading_pairs SET is_active = true WHERE id = $1`, [alreadyActive.pairId]);
+
+        const candidate: SyncCandidate = {
+            ourSymbol: `${alreadyActive.baseSymbol}/USD-${uid}`,
+            baseSymbol: alreadyActive.baseSymbol,
+            baseName: alreadyActive.baseSymbol,
+            quoteSymbol: `RAQ${uid.toUpperCase()}`,
+            volumeUsd24h: 1000,
+            kraken: { wsSymbol: `${alreadyActive.baseSymbol}/USD`, restSymbol: `${alreadyActive.baseSymbol}USD` },
+            coinbase: { wsSymbol: `${alreadyActive.baseSymbol}-USD`, restSymbol: `${alreadyActive.baseSymbol}-USD` },
+        };
+
+        const client = await pool.connect();
+        let result: Awaited<ReturnType<typeof upsertCandidate>>;
+        try {
+            result = await upsertCandidate(client, candidate);
+        } finally {
+            client.release();
+        }
+
+        expect(result.isNewPair).toBe(false);
+        expect(result.wasReactivated).toBe(false);
     });
 });

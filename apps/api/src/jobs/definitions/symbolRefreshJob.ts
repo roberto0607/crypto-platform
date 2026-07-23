@@ -18,7 +18,10 @@ import {
  * Two independent passes per run:
  *   1. syncSymbols — new pairs present on BOTH exchanges get upserted,
  *      wallets provisioned for existing users, then activated (same as the
- *      backfill script's --commit path).
+ *      backfill script's --commit path). A pair that already has a
+ *      trading_pairs row but was previously deactivated (delisted, then
+ *      relisted) gets is_active flipped back to true too — row-existence
+ *      alone isn't enough to decide "already active".
  *   2. checkDelistings — pairs no longer listed/online on one exchange get
  *      that exchange's mapping row deactivated; trading_pairs.is_active
  *      only flips off once BOTH exchange rows are inactive (a pair delisted
@@ -35,6 +38,10 @@ export const symbolRefreshJob: JobDefinition = {
         for (const a of added) {
             ctx.logger.info({ symbol: a.ourSymbol, pairId: a.pairId }, "symbol_refresh_pair_added");
         }
+        const reactivated = results.filter((r) => r.wasReactivated);
+        for (const r of reactivated) {
+            ctx.logger.info({ symbol: r.ourSymbol, pairId: r.pairId }, "symbol_refresh_pair_reactivated");
+        }
 
         const client = await pool.connect();
         let delisting: Awaited<ReturnType<typeof checkDelistings>>;
@@ -49,10 +56,11 @@ export const symbolRefreshJob: JobDefinition = {
             client.release();
         }
 
-        if (added.length > 0 || delisting.exchangeRowsDeactivated > 0) {
+        if (added.length > 0 || reactivated.length > 0 || delisting.exchangeRowsDeactivated > 0) {
             ctx.logger.info(
                 {
                     pairsAdded: added.length,
+                    pairsReactivated: reactivated.length,
                     exchangeRowsDeactivated: delisting.exchangeRowsDeactivated,
                     pairsDeactivated: delisting.pairsDeactivated,
                 },

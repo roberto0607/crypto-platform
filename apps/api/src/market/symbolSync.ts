@@ -233,6 +233,7 @@ export interface UpsertResult {
     pairId: string;
     isNewPair: boolean;
     isNewBaseAsset: boolean;
+    wasReactivated: boolean;
 }
 
 async function upsertAsset(client: PoolClient, symbol: string, name: string): Promise<{ id: string; isNew: boolean }> {
@@ -262,17 +263,26 @@ export async function upsertCandidate(client: PoolClient, candidate: SyncCandida
     const base = await upsertAsset(client, candidate.baseSymbol, candidate.baseName);
     const quote = await upsertAsset(client, candidate.quoteSymbol, candidate.quoteSymbol === "USD" ? "US Dollar" : candidate.quoteSymbol);
 
-    const existingPair = await client.query<{ id: string }>(
-        `SELECT id FROM trading_pairs WHERE symbol = $1`,
+    const existingPair = await client.query<{ id: string; is_active: boolean }>(
+        `SELECT id, is_active FROM trading_pairs WHERE symbol = $1`,
         [candidate.ourSymbol],
     );
 
     let pairId: string;
     let isNewPair: boolean;
+    // A pair can already have a trading_pairs row (isNewPair = false) but
+    // still need is_active flipped back to true — a prior checkDelistings()
+    // run may have deactivated it, and it's now back online on both
+    // exchanges. Row-existence alone (the old isNewPair-only check) missed
+    // this: exchange_symbol_map rows got reactivated below but
+    // trading_pairs.is_active silently never did, leaving a relisted pair
+    // permanently untradeable.
+    let wasReactivated = false;
 
     if (existingPair.rows.length > 0) {
         pairId = existingPair.rows[0]!.id;
         isNewPair = false;
+        wasReactivated = existingPair.rows[0]!.is_active === false;
     } else {
         // Wallet provisioning happens BEFORE the pair goes live for trading —
         // insert with is_active = false, provision wallets for the new asset,
@@ -308,11 +318,11 @@ export async function upsertCandidate(client: PoolClient, candidate: SyncCandida
         logger.info({ symbol: candidate.baseSymbol, usersProvisioned: users.length }, "symbol_sync_wallets_provisioned");
     }
 
-    if (isNewPair) {
+    if (isNewPair || wasReactivated) {
         await client.query(`UPDATE trading_pairs SET is_active = true WHERE id = $1`, [pairId]);
     }
 
-    return { ourSymbol: candidate.ourSymbol, pairId, isNewPair, isNewBaseAsset: base.isNew };
+    return { ourSymbol: candidate.ourSymbol, pairId, isNewPair, isNewBaseAsset: base.isNew, wasReactivated };
 }
 
 /** Apply already-discovered candidates inside one transaction. Split from
