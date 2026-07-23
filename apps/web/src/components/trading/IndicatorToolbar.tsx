@@ -37,6 +37,8 @@ interface IndicatorToolbarProps {
 
 export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: IndicatorToolbarProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [queryFocused, setQueryFocused] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const config = useTradingStore((s) => s.indicatorConfig);
   const toggle = useTradingStore((s) => s.toggleIndicator);
@@ -50,7 +52,19 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Reset the filter whenever the panel closes so re-opening it always
+  // starts from the full list rather than a stale search.
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
   const activeCount = ALL_INDICATORS.filter((i) => (config as Record<string, boolean>)[i.key]).length;
+
+  const trimmedQuery = query.trim().toLowerCase();
+  const matches = (label: string) => !trimmedQuery || label.toLowerCase().startsWith(trimmedQuery);
+  const filteredStandard = STANDARD_INDICATORS.filter((i) => matches(i.label));
+  const filteredAdvanced = ADVANCED_INDICATORS.filter((i) => matches(i.label));
+  const noMatches = filteredStandard.length === 0 && filteredAdvanced.length === 0;
 
   function renderRow(ind: { key: string; label: string; color: string }) {
     const active = config[ind.key as keyof typeof config];
@@ -137,41 +151,82 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
           zIndex: 50, minWidth: 220, padding: "4px 0",
           maxHeight: 400, overflowY: "auto",
         }}>
-          <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
-            STANDARD
+          <div style={{ padding: "6px 8px 4px" }}>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setQueryFocused(true)}
+              onBlur={() => setQueryFocused(false)}
+              placeholder="Search indicators..."
+              autoFocus
+              style={{
+                width: "100%", height: 28, boxSizing: "border-box",
+                background: "rgba(255,255,255,0.04)",
+                border: queryFocused ? "1px solid rgba(0,255,65,0.25)" : "1px solid rgba(255,255,255,0.1)",
+                borderRadius: 2, padding: "0 8px",
+                fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: 1,
+                color: "rgba(255,255,255,0.88)", outline: "none",
+              }}
+            />
           </div>
-          {STANDARD_INDICATORS.map(renderRow)}
 
-          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
-
-          <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
-            ADVANCED
-          </div>
-          {ADVANCED_INDICATORS.map((ind) => (
-            <div key={ind.key}>
-              {renderRow(ind)}
-              {ind.key === "vpvr" && config.vpvr && onVpvrModeChange && (
-                <div style={{ display: "flex", gap: 2, padding: "2px 12px 4px 34px" }}>
-                  {(["visible", "daily", "weekly"] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={(e) => { e.stopPropagation(); onVpvrModeChange(m); }}
-                      style={{
-                        padding: "2px 8px", fontSize: 9, letterSpacing: 1,
-                        border: "none", cursor: "pointer",
-                        background: vpvrMode === m ? "rgba(255,107,0,0.25)" : "transparent",
-                        color: vpvrMode === m ? "#FF6B00" : "rgba(255,255,255,0.25)",
-                        fontFamily: "'Space Mono', monospace",
-                        transition: "all 0.1s",
-                      }}
-                    >
-                      {m === "visible" ? "VISIBLE" : m === "daily" ? "DAILY" : "WEEKLY"}
-                    </button>
-                  ))}
-                </div>
-              )}
+          {noMatches ? (
+            <div style={{
+              padding: "10px 12px", fontSize: 9, letterSpacing: 2,
+              color: "rgba(255,255,255,0.3)", textTransform: "uppercase", textAlign: "center",
+            }}>
+              No indicators found
             </div>
-          ))}
+          ) : (
+            <>
+              {filteredStandard.length > 0 && (
+                <>
+                  <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
+                    STANDARD
+                  </div>
+                  {filteredStandard.map(renderRow)}
+                </>
+              )}
+
+              {filteredStandard.length > 0 && filteredAdvanced.length > 0 && (
+                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }} />
+              )}
+
+              {filteredAdvanced.length > 0 && (
+                <>
+                  <div style={{ padding: "4px 12px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
+                    ADVANCED
+                  </div>
+                  {filteredAdvanced.map((ind) => (
+                    <div key={ind.key}>
+                      {renderRow(ind)}
+                      {ind.key === "vpvr" && config.vpvr && onVpvrModeChange && (
+                        <div style={{ display: "flex", gap: 2, padding: "2px 12px 4px 34px" }}>
+                          {(["visible", "daily", "weekly"] as const).map((m) => (
+                            <button
+                              key={m}
+                              onClick={(e) => { e.stopPropagation(); onVpvrModeChange(m); }}
+                              style={{
+                                padding: "2px 8px", fontSize: 9, letterSpacing: 1,
+                                border: "none", cursor: "pointer",
+                                background: vpvrMode === m ? "rgba(255,107,0,0.25)" : "transparent",
+                                color: vpvrMode === m ? "#FF6B00" : "rgba(255,255,255,0.25)",
+                                fontFamily: "'Space Mono', monospace",
+                                transition: "all 0.1s",
+                              }}
+                            >
+                              {m === "visible" ? "VISIBLE" : m === "daily" ? "DAILY" : "WEEKLY"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
