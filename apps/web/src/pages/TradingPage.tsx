@@ -9,6 +9,7 @@ import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import AssetTab from "@/components/trading/AssetTab";
 import { getPositions } from "@/api/endpoints/analytics";
 import { getCandles } from "@/api/endpoints/candles";
+import { searchPairs } from "@/api/endpoints/trading";
 import { getMsUntilNextUTCMidnight, dayDirection } from "@/lib/priceChange";
 import { usePairChange } from "@/hooks/usePairChange";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
@@ -83,12 +84,52 @@ const TRADE_CSS = `
     border-bottom:1px solid var(--border);
     background:rgba(4,4,4,0.97);flex-shrink:0;
     height:46px;padding:0 16px;
+    /* .tr-body picks up a transform from its fade-in animation class
+       (tr-fu/tr-d1), which creates its own stacking context regardless of
+       z-index. Since .tr-abar itself was never positioned, that context
+       painted ABOVE it no matter what z-index a descendant (e.g. the search
+       dropdown) declared. Promoting .tr-abar into its own positioned
+       stacking context — same pattern .tr-wrap already uses — fixes it. */
+    position:relative;z-index:5;
   }
   .tr-asset-tabs {
     display:flex;align-items:center;gap:2px;
     background:rgba(255,255,255,0.04);
     border:1px solid rgba(255,255,255,0.1);
     border-radius:6px;padding:3px;flex-shrink:0;
+    /* Was .slice(0, 6) in JS — only the first 6 of ~75 pairs were ever
+       reachable here, full stop. Now renders every pair; the strip scrolls
+       horizontally within a capped width instead of pushing the price hero
+       off screen. */
+    max-width:420px;overflow-x:auto;
+  }
+  .tr-asset-tabs::-webkit-scrollbar { height:3px; }
+  .tr-asset-tabs::-webkit-scrollbar-thumb { background:var(--border); }
+
+  /* ── PAIR SEARCH ── */
+  .tr-search { position:relative;flex-shrink:0; }
+  .tr-search-input {
+    background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:6px;padding:0 10px;height:32px;width:130px;
+    font-family:var(--mono);font-size:11px;letter-spacing:1px;
+    color:var(--text);transition:border-color 0.15s,width 0.15s;
+  }
+  .tr-search-input::placeholder { color:rgba(255,255,255,0.25); }
+  .tr-search-input:focus { outline:none;border-color:var(--g25);width:170px; }
+  .tr-search-dropdown {
+    position:absolute;top:calc(100% + 6px);left:0;z-index:20;
+    width:230px;max-height:280px;overflow-y:auto;
+    background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+    box-shadow:0 10px 28px rgba(0,0,0,0.55);
+    display:flex;flex-direction:column;padding:4px;gap:1px;
+  }
+  .tr-search-dropdown::-webkit-scrollbar { width:3px; }
+  .tr-search-dropdown::-webkit-scrollbar-thumb { background:var(--border); }
+  .tr-search-dropdown .tr-asset-tab { width:100%;justify-content:space-between; }
+  .tr-search-msg {
+    padding:10px 12px;font-size:9px;letter-spacing:2px;
+    color:rgba(255,255,255,0.3);text-transform:uppercase;text-align:center;
   }
   .tr-asset-tab {
     display:flex;align-items:center;gap:6px;
@@ -1132,6 +1173,46 @@ export default function TradingPage() {
     }
   }, [selectedPairId, pairs, selectPair]);
 
+  // Pair search — debounced call to the trigram-ranked GET /pairs?search=
+  // endpoint. Empty query means "not searching": the asset bar falls back to
+  // the full `pairs` list untouched.
+  const [pairQuery, setPairQuery] = useState("");
+  const [pairQueryFocused, setPairQueryFocused] = useState(false);
+  const [pairSearchResults, setPairSearchResults] = useState<TradingPair[] | null>(null);
+  const [pairSearching, setPairSearching] = useState(false);
+  const latestPairQueryRef = useRef("");
+
+  useEffect(() => {
+    const trimmed = pairQuery.trim();
+    latestPairQueryRef.current = trimmed;
+
+    if (!trimmed) {
+      setPairSearchResults(null);
+      setPairSearching(false);
+      return;
+    }
+
+    setPairSearching(true);
+    const timer = setTimeout(() => {
+      searchPairs(trimmed)
+        .then((res) => {
+          if (latestPairQueryRef.current !== trimmed) return; // stale response
+          setPairSearchResults(res.data.pairs);
+        })
+        .catch(() => {
+          if (latestPairQueryRef.current !== trimmed) return;
+          setPairSearchResults([]);
+        })
+        .finally(() => {
+          if (latestPairQueryRef.current === trimmed) setPairSearching(false);
+        });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [pairQuery]);
+
+  const isPairSearchActive = pairQuery.trim().length > 0;
+
   // Inject CSS
   useEffect(() => {
     const id = "tradr-trade-css";
@@ -1294,7 +1375,7 @@ export default function TradingPage() {
       {/* ASSET BAR */}
       <div className="tr-abar tr-fu">
         <div className="tr-asset-tabs">
-          {activePairs.slice(0, 6).map((p) => (
+          {activePairs.map((p) => (
             <AssetTab
               key={p.id}
               pairId={p.id}
@@ -1302,6 +1383,39 @@ export default function TradingPage() {
               isActive={p.id === selectedPairId}
             />
           ))}
+        </div>
+
+        <div className="tr-search">
+          <input
+            type="text"
+            value={pairQuery}
+            onChange={(e) => setPairQuery(e.target.value)}
+            onFocus={() => setPairQueryFocused(true)}
+            onBlur={() => setPairQueryFocused(false)}
+            placeholder="Search pairs..."
+            className="tr-search-input"
+          />
+          {isPairSearchActive && pairQueryFocused && (
+            <div className="tr-search-dropdown">
+              {pairSearching && pairSearchResults === null ? (
+                <div className="tr-search-msg">Loading...</div>
+              ) : (pairSearchResults ?? []).length === 0 ? (
+                <div className="tr-search-msg">No pairs found</div>
+              ) : (
+                (pairSearchResults ?? []).map((p) => (
+                  <div
+                    key={p.id}
+                    // Prevents the input's blur (which would hide this
+                    // dropdown) from firing before the click below runs.
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setPairQuery("")}
+                  >
+                    <AssetTab pairId={p.id} symbol={p.symbol} isActive={p.id === selectedPairId} />
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         <div className="tr-price-hero">
