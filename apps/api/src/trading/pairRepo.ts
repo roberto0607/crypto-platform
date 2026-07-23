@@ -132,18 +132,38 @@ export async function listActivePairsForDisplay(options: { limit?: number; searc
     )`;
 
     if (search) {
-        const result = await pool.query<PairRow>(
-            `
-            SELECT ${PAIR_COLUMNS}
-            FROM trading_pairs
-            WHERE is_active = true
-              AND symbol % $1
-              AND ${exchangeBacked}
-            ORDER BY similarity(symbol, $1) DESC
-            LIMIT $2
-            `,
-            [search, limit ?? 20]
-        );
+        // pg_trgm's similarity() score is a function of trigram overlap, and a
+        // 1-2 char query barely has any trigrams to overlap with — "l" scores
+        // ~0.1 and "li" ~0.2 against "LINK/USD", both under the default 0.3
+        // threshold the `%` operator requires, so short queries returned zero
+        // rows regardless of how obviously they prefix-match a symbol. Below
+        // 3 chars, use a plain prefix match instead; 3+ chars keeps the
+        // existing fuzzy/typo-tolerant trigram ranking unchanged.
+        const result = search.trim().length < 3
+            ? await pool.query<PairRow>(
+                `
+                SELECT ${PAIR_COLUMNS}
+                FROM trading_pairs
+                WHERE is_active = true
+                  AND symbol ILIKE $1 || '%'
+                  AND ${exchangeBacked}
+                ORDER BY symbol ASC
+                LIMIT $2
+                `,
+                [search, limit ?? 20]
+            )
+            : await pool.query<PairRow>(
+                `
+                SELECT ${PAIR_COLUMNS}
+                FROM trading_pairs
+                WHERE is_active = true
+                  AND symbol % $1
+                  AND ${exchangeBacked}
+                ORDER BY similarity(symbol, $1) DESC
+                LIMIT $2
+                `,
+                [search, limit ?? 20]
+            );
         return result.rows;
     }
 

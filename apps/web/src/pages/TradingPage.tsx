@@ -92,19 +92,19 @@ const TRADE_CSS = `
        stacking context — same pattern .tr-wrap already uses — fixes it. */
     position:relative;z-index:5;
   }
-  .tr-asset-tabs {
-    display:flex;align-items:center;gap:2px;
-    background:rgba(255,255,255,0.04);
-    border:1px solid rgba(255,255,255,0.1);
-    border-radius:6px;padding:3px;flex-shrink:0;
-    /* Was .slice(0, 6) in JS — only the first 6 of ~75 pairs were ever
-       reachable here, full stop. Now renders every pair; the strip scrolls
-       horizontally within a capped width instead of pushing the price hero
-       off screen. */
-    max-width:420px;overflow-x:auto;
+  /* Non-interactive "what am I looking at" chip — replaces the old
+     all-pairs tab strip now that search is the primary way to switch
+     pairs. Reuses .tr-asset-tab.active's look (green pill) minus the
+     cursor/hover states, since this one is informational only. */
+  .tr-active-pair {
+    display:flex;align-items:center;gap:6px;
+    padding:5px 14px;font-size:13px;letter-spacing:1.5px;
+    font-family:var(--bebas);text-transform:uppercase;
+    color:var(--g);background:rgba(0,255,65,0.1);
+    border:1px solid rgba(0,255,65,0.3);border-radius:6px;
+    text-shadow:0 0 8px var(--g25);
+    flex-shrink:0;white-space:nowrap;
   }
-  .tr-asset-tabs::-webkit-scrollbar { height:3px; }
-  .tr-asset-tabs::-webkit-scrollbar-thumb { background:var(--border); }
 
   /* ── PAIR SEARCH ── */
   .tr-search { position:relative;flex-shrink:0; }
@@ -1261,8 +1261,6 @@ export default function TradingPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // API only returns active pairs (WHERE is_active = true), no need to re-filter
-  const activePairs = pairs;
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
 
   // 24h price-change derivation: fetch each pair's daily OPEN once into
@@ -1374,15 +1372,8 @@ export default function TradingPage() {
 
       {/* ASSET BAR */}
       <div className="tr-abar tr-fu">
-        <div className="tr-asset-tabs">
-          {activePairs.map((p) => (
-            <AssetTab
-              key={p.id}
-              pairId={p.id}
-              symbol={p.symbol}
-              isActive={p.id === selectedPairId}
-            />
-          ))}
+        <div className="tr-active-pair">
+          <span>{selectedPair.symbol.split("/")[0]}</span>
         </div>
 
         <div className="tr-search">
