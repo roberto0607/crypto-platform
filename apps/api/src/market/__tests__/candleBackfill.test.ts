@@ -98,8 +98,8 @@ describe("runBackfill recency skip", () => {
         expect(result.totalErrors).toBe(0);
     });
 
-    it("skips every timeframe (including the 4h rollup) once all are recent", async () => {
-        for (const tf of ["1m", "5m", "15m", "1h", "1d", "4h"]) {
+    it("skips every timeframe (including the 4h and 1w rollups) once all are recent", async () => {
+        for (const tf of ["1m", "5m", "15m", "1h", "1d", "4h", "1w"]) {
             await pool.query(
                 `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
                  VALUES ($1, $2, now(), 100, 100, 100, 100, 1)`,
@@ -109,7 +109,7 @@ describe("runBackfill recency skip", () => {
 
         const result = await runBackfill();
 
-        expect(result.totalSkipped).toBe(6); // 5 fetch timeframes + the 4h rollup check
+        expect(result.totalSkipped).toBe(7); // 5 fetch timeframes + the 4h rollup check + the 1w rollup check
         expect(fetchCallCount).toBe(0);
         expect(result.totalErrors).toBe(0);
     });

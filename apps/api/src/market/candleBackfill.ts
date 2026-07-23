@@ -6,6 +6,8 @@
  *
  * Uses ON CONFLICT DO UPDATE — overwrites stale candle data with fresh exchange data.
  * The 4h timeframe is rolled up from 1h data since Coinbase has no native 4h.
+ * The 1w timeframe is rolled up from 1d data the same way — no exchange has a
+ * native weekly candle either.
  */
 import { pool } from "../db/pool.js";
 import {
@@ -27,6 +29,7 @@ interface TimeframePlan {
 }
 
 const SEVEN_DAYS = 7 * 86400;
+const NINETY_DAYS = 90 * 86400;
 
 function buildTimeframePlans(): TimeframePlan[] {
     return [
@@ -203,8 +206,47 @@ async function rollup4hFromHourly(pairId: string): Promise<number> {
 }
 
 /**
+ * Roll up 1w candles from 1d data for the last 90 days. Weekly buckets use
+ * Postgres's native date_trunc('week', ts) — ISO-8601, Monday 00:00 UTC —
+ * matching weeklyUtils.ts's week convention and candleRollupJob.ts's
+ * Monday-aligned 1w bucketing. A wider lookback than the 4h rollup's 7 days
+ * since weekly buckets are much coarser and 1d history typically runs deeper.
+ */
+async function rollup1wFromDaily(pairId: string): Promise<number> {
+    const ninetyDaysAgo = new Date(Date.now() - NINETY_DAYS * 1000).toISOString();
+
+    const result = await pool.query(
+        `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+         SELECT
+             pair_id,
+             '1w',
+             date_trunc('week', ts) AS bucket,
+             (ARRAY_AGG(open ORDER BY ts ASC))[1],
+             MAX(high),
+             MIN(low),
+             (ARRAY_AGG(close ORDER BY ts DESC))[1],
+             SUM(volume)
+         FROM candles
+         WHERE pair_id = $1
+           AND timeframe = '1d'
+           AND ts >= $2
+         GROUP BY pair_id, bucket
+         HAVING COUNT(*) >= 5
+         ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
+             open = EXCLUDED.open,
+             high = EXCLUDED.high,
+             low = EXCLUDED.low,
+             close = EXCLUDED.close,
+             volume = EXCLUDED.volume`,
+        [pairId, ninetyDaysAgo],
+    );
+
+    return result.rowCount ?? 0;
+}
+
+/**
  * Run the candle backfill for all active pairs and timeframes.
- * Fetches the last 7 days from Coinbase, then rolls up 4h from 1h.
+ * Fetches the last 7 days from Coinbase, then rolls up 4h from 1h and 1w from 1d.
  */
 export async function runBackfill(): Promise<BackfillResult> {
     const start = Date.now();
@@ -259,6 +301,23 @@ export async function runBackfill(): Promise<BackfillResult> {
             logger.warn(
                 { pair: pair.ourSymbol, tf: "4h", err: (err as Error).message },
                 "backfill_4h_rollup_failed",
+            );
+        }
+
+        // Roll up 1w from the 1d series — skip if the 1w series is already
+        // current (same recency check pattern as the 4h rollup above).
+        try {
+            if (await hasRecentCandle(pair.pairId, "1w", 7 * 24 * 3600)) {
+                totalSkipped++;
+            } else {
+                const rolled = await rollup1wFromDaily(pair.pairId);
+                totalInserted += rolled;
+            }
+        } catch (err) {
+            totalErrors++;
+            logger.warn(
+                { pair: pair.ourSymbol, tf: "1w", err: (err as Error).message },
+                "backfill_1w_rollup_failed",
             );
         }
     }

@@ -20,12 +20,35 @@ const ROLLUPS: RollupConfig[] = [
     { timeframe: "1h", minutes: 60 },
     { timeframe: "4h", minutes: 240 },
     { timeframe: "1d", minutes: 1440 },
+    // Sourced from raw 1m rows same as every other entry here (not chained
+    // from 1d) — the boot backfill and full-history script derive 1w from 1d
+    // instead (see candleBackfill.ts / scripts/backfillCandles.ts), but this
+    // job's job is just to keep the currently-forming bucket accumulating in
+    // near-real-time regardless of target timeframe.
+    { timeframe: "1w", minutes: 10080 },
 ];
+
+// Unix epoch (1970-01-01T00:00:00Z) was a Thursday. Every other interval
+// above divides evenly into a day (or is exactly one day), so naive epoch-ms
+// flooring always lands on a valid boundary no matter what weekday the epoch
+// falls on. A 7-day (weekly) interval doesn't have that property — naive
+// flooring aligns buckets to Thursdays, not the ISO-8601 Monday-start week
+// that rollup1wFromDaily (candleBackfill.ts) and weeklyUtils.ts already use
+// via `date_trunc('week', ts)`. Shift by the 3-day gap between the epoch and
+// the preceding Monday so this job's weekly buckets land on the same Monday
+// 00:00 UTC boundaries as those, instead of silently drifting to Thursdays.
+const WEEK_MINUTES = 10080;
+const MONDAY_EPOCH_OFFSET_MS = 3 * 24 * 60 * 60_000;
+
+function bucketOffsetMs(intervalMinutes: number): number {
+    return intervalMinutes === WEEK_MINUTES ? MONDAY_EPOCH_OFFSET_MS : 0;
+}
 
 function floorToInterval(ts: Date, intervalMinutes: number): Date {
     const ms = ts.getTime();
     const intervalMs = intervalMinutes * 60_000;
-    return new Date(Math.floor(ms / intervalMs) * intervalMs);
+    const offset = bucketOffsetMs(intervalMinutes);
+    return new Date(Math.floor((ms + offset) / intervalMs) * intervalMs - offset);
 }
 
 async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void> {
@@ -54,6 +77,7 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
 
     // Aggregate 1m candles into the target timeframe
     const intervalSeconds = rollup.minutes * 60;
+    const offsetSeconds = bucketOffsetMs(rollup.minutes) / 1000;
 
     const { rows } = await pool.query<{
         bucket: string;
@@ -68,7 +92,7 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
         `WITH bucketed AS (
             SELECT
                 to_timestamp(
-                    floor(extract(epoch FROM ts) / $3) * $3
+                    floor((extract(epoch FROM ts) + $4) / $3) * $3 - $4
                 ) AS bucket,
                 ts,
                 open, high, low, close, volume, buy_volume, sell_volume
@@ -90,7 +114,7 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
         GROUP BY bucket
         HAVING COUNT(*) > 0
         ORDER BY bucket`,
-        [pairId, since.toISOString(), intervalSeconds],
+        [pairId, since.toISOString(), intervalSeconds, offsetSeconds],
     );
 
     // Skip the last bucket (may still be in progress)
