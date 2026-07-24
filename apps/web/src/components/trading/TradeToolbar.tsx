@@ -319,7 +319,7 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
         </div>
       </div>
 
-      <span className="tr-toolbar-divider" style={{ marginLeft: "auto" }} />
+      <span className="tr-toolbar-divider" />
 
       {/* 4 — Indicators */}
       <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={onVpvrModeChange} />
