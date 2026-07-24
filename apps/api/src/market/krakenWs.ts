@@ -15,6 +15,7 @@ import {
     type BookLevel,
 } from "./orderFlowFeatures.js";
 import { krakenTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
+import { eventsPublishedTotal } from "../metrics.js";
 
 // Debounce: track last DB write time per pair to avoid write storms
 const lastSyncTime = new Map<string, number>();
@@ -150,6 +151,7 @@ async function handleTickerMessage(data: any[]): Promise<void> {
                     ask,
                     last,
                 }));
+                eventsPublishedTotal.inc({ type: "price.tick" });
             } catch {
                 // Events must never break the feed
             }
