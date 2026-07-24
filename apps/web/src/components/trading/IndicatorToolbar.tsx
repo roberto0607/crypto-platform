@@ -61,10 +61,10 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
   const activeCount = ALL_INDICATORS.filter((i) => (config as Record<string, boolean>)[i.key]).length;
 
   const trimmedQuery = query.trim().toLowerCase();
-  const matches = (label: string) => !trimmedQuery || label.toLowerCase().startsWith(trimmedQuery);
-  const filteredStandard = STANDARD_INDICATORS.filter((i) => matches(i.label));
-  const filteredAdvanced = ADVANCED_INDICATORS.filter((i) => matches(i.label));
-  const noMatches = filteredStandard.length === 0 && filteredAdvanced.length === 0;
+  const matches = (label: string) => label.toLowerCase().startsWith(trimmedQuery);
+  const filteredStandard = trimmedQuery ? STANDARD_INDICATORS.filter((i) => matches(i.label)) : [];
+  const filteredAdvanced = trimmedQuery ? ADVANCED_INDICATORS.filter((i) => matches(i.label)) : [];
+  const noMatches = trimmedQuery.length > 0 && filteredStandard.length === 0 && filteredAdvanced.length === 0;
 
   function renderRow(ind: { key: string; label: string; color: string }) {
     const active = config[ind.key as keyof typeof config];
@@ -177,7 +177,7 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
             />
           </div>
 
-          {noMatches ? (
+          {trimmedQuery.length === 0 ? null : noMatches ? (
             <div style={{
               padding: "10px 12px", fontSize: 9, letterSpacing: 2,
               color: "rgba(255,255,255,0.3)", textTransform: "uppercase", textAlign: "center",
