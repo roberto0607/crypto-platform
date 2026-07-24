@@ -286,7 +286,9 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
             aria-haspopup="menu"
             aria-expanded={pickerOpen}
           >
-            +
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
           </button>
           {pickerOpen && (
             <div className="tr-tb-tf-picker" role="menu">

@@ -80,14 +80,14 @@ const TRADE_CSS = `
      the search box + dropdown moved there, styling stayed put) */
   .tr-search { position:relative;flex-shrink:0; }
   .tr-search-input {
-    background:rgba(255,255,255,0.04);
-    border:1px solid rgba(255,255,255,0.1);
-    border-radius:6px;padding:0 10px;height:32px;width:130px;
+    background:transparent;
+    border:none;
+    border-radius:6px;padding:0 4px;height:32px;width:130px;
     font-family:var(--mono);font-size:11px;letter-spacing:1px;
-    color:var(--text);transition:border-color 0.15s,width 0.15s;
+    color:var(--text);transition:width 0.15s;
   }
   .tr-search-input::placeholder { color:rgba(255,255,255,0.25); }
-  .tr-search-input:focus { outline:none;border-color:var(--g25);width:170px; }
+  .tr-search-input:focus { outline:none;width:170px; }
   .tr-search-dropdown {
     position:absolute;top:calc(100% + 6px);left:0;z-index:20;
     width:230px;max-height:280px;overflow-y:auto;
