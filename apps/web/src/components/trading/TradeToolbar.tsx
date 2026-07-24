@@ -67,7 +67,7 @@ const TOOLBAR_CSS = `
   .tr-tb-tf-picker-btn {
     display:flex;align-items:center;justify-content:center;
     width:24px;height:24px;border-radius:2px;flex-shrink:0;
-    border:1px solid rgba(0,255,65,0.2);background:transparent;
+    border:none;background:transparent;
     color:rgba(255,255,255,0.85);font-weight:700;cursor:pointer;transition:all 0.15s;
   }
   .tr-tb-tf-picker-btn:hover { background:rgba(0,255,65,0.1);color:#fff; }
@@ -310,7 +310,7 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
                         </svg>
                       )}
                     </span>
-                    <span className="tr-tb-tf-picker-label">{tf} — {TIMEFRAME_LABELS[tf]}</span>
+                    <span className="tr-tb-tf-picker-label">{tf}</span>
                   </button>
                 );
               })}
