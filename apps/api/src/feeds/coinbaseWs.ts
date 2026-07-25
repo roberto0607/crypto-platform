@@ -3,6 +3,9 @@ import { loadActiveSymbols, type ActiveSymbol } from "../market/symbolRegistry.j
 import { aggregateTick } from "../market/candleAggregator.js";
 import { logger } from "../observability/logContext.js";
 import { coinbaseTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
+import { publish } from "../events/eventBus.js";
+import { createEvent } from "../events/eventTypes.js";
+import { eventsPublishedTotal } from "../metrics.js";
 
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
@@ -31,6 +34,18 @@ let symbolRefreshInterval: ReturnType<typeof setInterval> | null = null;
 let pairCacheRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
 let tradeCount = 0;
+
+// Global (not per-pair) liveness signal — mirrors krakenWs.ts's own
+// lastTickAt watchdog pattern. krakenWs.ts's ticker handler reads this via
+// getCoinbaseLastTradeAt() to decide whether to fall back to publishing
+// price.tick itself, since this feed (unlike Kraken's) has no app-level
+// staleness watchdog of its own — see docs/designs/2026-07-25-price-tick-
+// coinbase-source-gate1.md section 2.
+let lastTradeAt = 0;
+
+export function getCoinbaseLastTradeAt(): number {
+    return lastTradeAt;
+}
 
 interface Batch {
     index: number;
@@ -118,6 +133,27 @@ function handleMessage(raw: WebSocket.Data): void {
                     } catch {
                         // Pressure ingestion must never disrupt the trade feed.
                     }
+                }
+
+                lastTradeAt = Date.now();
+
+                // Primary price.tick source (Gate 1, 2026-07-25) — Coinbase's
+                // trade prints carry far more volume than Kraken's ticker
+                // channel across this pair set. bid/ask are null: market_trades
+                // is a trade print, not a quote, and this feed isn't
+                // subscribed to a Coinbase order-book/ticker channel. See
+                // docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md.
+                try {
+                    publish(createEvent("price.tick", {
+                        pairId,
+                        symbol: ourSymbol,
+                        bid: null,
+                        ask: null,
+                        last: price,
+                    }));
+                    eventsPublishedTotal.inc({ type: "price.tick" });
+                } catch {
+                    // Events must never break the trade feed.
                 }
 
                 tradeCount++;

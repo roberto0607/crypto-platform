@@ -563,3 +563,217 @@ user, the reads above misbehave.
 **Priority:** MEDIUM — latent correctness bug, no current user impact (gated by
 the ROOKIE-only state above), but it will surface as soon as cross-system
 promotions occur. Not blocking the forfeit-500 fix.
+
+---
+
+## 🔵 EXPLORATORY — Hero price / chart feels "stale" vs TradingView's continuous tick feel (Gate 0 recon, 2026-07-25)
+
+**Discovered:** 2026-07-25, dedicated Gate 0 recon requested ahead of Gate 2
+(multi-asset datafeed) work — checking whether the trade page's hero price and
+active candle genuinely lag TradingView's feel because of a bug, or because of
+a real data-source ceiling.
+
+**Findings — data source confirmed correct, no bug found:**
+
+- Hero price (`CandlestickChart.tsx:434-436`) reads `useTradingStore(s =>
+  s.snapshot)`, written only by `onPriceTick` in `useSSE.ts:61-70`, gated to
+  `d.pairId === selectedPairId`. Server-side, `GET /v1/events`'s per-connection
+  interest set (`v1Events.ts`) only delivers `price.tick`/`candle.closed` for
+  the pairId `datafeedAdapter.ts`'s `subscribeBars()` explicitly registered via
+  `POST /v1/events/subscribe` — replaced wholesale to exactly `[pairId]` on
+  every pair switch. The 7s `GET /pairs` poll (`App.tsx:183-193`) is scoped to
+  the *non-active* selector-row pairs only, by design (Gate 1's interest-set
+  split). **The hero price is genuinely on the real-time path, not the poll.**
+- No render-path throttle: `snapshot` gets a brand-new object on every single
+  tick (no batching), so every SSE tick triggers a hero-price re-render. The
+  only 1s heartbeat in the file drives the O/H/L/C toolbar readout only, not
+  the hero price. The live candle series (`seriesRef.current.update()`)
+  updates on every tick, unthrottled. Formatting is cent-precision
+  (`minimumFractionDigits: 2`), not whole-dollar rounding.
+- **Live-measured tick rate for BTC/USD** (throwaway account, `/trade`, 60-66s
+  windows against the running dev server + live Kraken feed):
+  - Client-received SSE `price.tick` events: 16 over 66.15s ≈ **0.24/sec**
+    (~1 update every 4.1s).
+  - Cross-checked via temporary instrumentation of `krakenWs.ts`'s
+    `handleTickerMessage`/`handleTradeMessage` (added, measured, reverted —
+    clean `git diff`): ticker channel 27 msgs/163s ≈ 0.17/sec; raw
+    trade-execution channel (Kraken's fastest available channel) 42 msgs/163s
+    ≈ 0.26/sec. Trades arrive in **tight bursts** (multiple fills within the
+    same ms — one order sweeping several book levels) separated by **silent
+    gaps up to ~18s**.
+  - System-wide cross-check via `events_published_total{type="price.tick"}`:
+    ~1.3/sec across all ~75 tracked pairs — same ballpark as the ~1.7/sec
+    figure from the price-alerts investigation; BTC/USD is ~18% of that,
+    consistent with being the most liquid single pair tracked.
+  - `krakenWs.ts:85-90` already subscribes to all three of Kraken's real-time
+    channels (`ticker`, `trade`, `book`) — there is no unsubscribed faster
+    channel to switch to for last-trade data. `price.tick` is currently
+    published only from `handleTickerMessage`; the `trade` channel's data
+    feeds candle aggregation and the CVD/pressure aggregator but not
+    `price.tick`.
+
+**Conclusion:** not a wiring bug, not a render throttle. The sparse, bursty
+feel is Kraken's actual BTC/USD trade cadence on this single venue — a real
+ceiling, not a defect.
+
+**Update 2026-07-25 — book channel measured:** followed up same-day. Kraken's
+`book` channel (25-depth, `handleBookMessage` in `krakenWs.ts`) was
+temporarily instrumented (same pattern — added, measured, reverted; clean
+`git diff` confirmed after) to log a timestamp + computed top-of-book mid-price
+`(bestBid + bestAsk) / 2` on every snapshot/update message for BTC/USD, over a
+92.9s window against the live feed:
+
+- **Raw message frequency: 1,215 messages / 92.9s ≈ 13.1/sec** — roughly
+  50-75× the ticker (0.17/sec) or trade (0.26/sec) rate. The book channel is
+  genuinely far chattier, as expected (order adds/cancels vastly outnumber
+  fills).
+- **But 94.0% of those messages (1,141/1,215) don't move the top-of-book mid**
+  — they're depth-level noise further down the 25-level book that never
+  touches best bid/ask. Only **73 messages (6.0%) actually changed the mid**.
+- **Mid-price-change rate: 73 changes / 92.9s ≈ 0.79/sec** (~1 change every
+  1.27s on average) — a real **~3-4× improvement** over the current
+  ticker-driven `price.tick` rate (0.17-0.26/sec), but nowhere near
+  "continuous." The changes are **also bursty**: median gap between mid
+  changes is 2ms (rapid-fire clusters, e.g. bid/ask flipping during active
+  churn) but the max gap was still **16.9s** — the book goes quiet during the
+  same low-liquidity lulls the trade channel does, just recovers with more
+  resolution once it moves.
+
+**Conclusion / recommendation:** deriving `price.tick` (or a separate
+live-mid-price signal) from book mid-price is a **real but modest** lead —
+~3-4× more update frequency, not the order-of-magnitude jump that would
+actually deliver a TradingView-like continuous feel, and it would still show
+multi-second silent gaps during quiet periods since those are a genuine
+liquidity property of Kraken-solo BTC/USD, not an artifact of which channel is
+read. It would also change semantics from "last traded price" to "best-quote
+midpoint" (not an executed price — a real design tradeoff to reason through,
+not just a plumbing change), and implementing it cleanly requires filtering
+the 94%-of-messages noise down to mid-change events only (the naive "recompute
+on every book message" approach would be ~50-75× more compute for a price
+value that's unchanged 94% of the time). **Worth a small, scoped prototype if
+chart-feel polish is prioritized, but not worth interrupting Gate 2 datafeed
+work for** — the gain is real but incremental, not transformative.
+
+**Priority:** EXPLORATORY — flagged, reasoned lead with real numbers behind
+it now, but still no commitment to build. Revisit whenever chart-feel polish
+or Gate 2 datafeed work is next picked up.
+
+**Update 2026-07-25 (later) — Kraken+Coinbase combined-venue lead measured,
+and a bigger finding fell out of it:**
+
+**1. Confirmed current state:** read `coinbaseWs.ts:79-132` — its
+`market_trades` handler calls `aggregateTick()` (candles) and
+`addPressureSample()` (CVD/pressure) only. No `publish()`/`createEvent()`
+call, no eventBus import at all. Coinbase's trade stream still does not
+feed `price.tick` — unchanged since the original multi-asset Gate 0 recon.
+
+**2. Coinbase BTC/USD trade frequency measured** (same discipline — temporary
+`console.log` tags in both `krakenWs.ts` and `coinbaseWs.ts` trade handlers,
+89s live window, reverted after, clean `git diff` confirmed on both files):
+
+- **Coinbase: 376 raw trade msgs/88.8s ≈ 4.24/sec** — Kraken over the same
+  window: **28 msgs/88.8s ≈ 0.32/sec**. Coinbase is carrying **~13× Kraken's
+  raw BTC/USD trade volume** on this platform right now.
+- This alone is the headline finding: **Coinbase is already connected
+  (`coinbaseWs.ts`, subscribed to `market_trades`) and already receiving far
+  more BTC/USD trade data than Kraken — it just isn't wired to `price.tick`.**
+
+**3. Combined-rate math, correcting for overlap (not naive addition):**
+
+- Naive sum (Kraken + Coinbase raw): 404 msgs/88.8s ≈ 4.55/sec — but merging
+  the two timelines and collapsing near-duplicate timestamps (<100ms apart,
+  a reasonable "would a human perceive these as separate updates" cutoff)
+  drops it to **173 distinct events/88.8s ≈ 1.95/sec** — most of the "loss"
+  is same-venue burst redundancy (Coinbase's own cascading fills), not
+  cross-venue overlap: only a handful of Kraken ticks landed within 100ms of
+  a Coinbase tick at all.
+- More importantly, raw message count overstates *visible* movement the same
+  way it did for the book channel: filtering to messages where the price
+  actually changed from the immediately-preceding tick (any venue) gives the
+  real comparison:
+  - **Coinbase-alone price-change rate: 114/376 msgs ≈ 1.28 changes/sec**
+  - **Kraken+Coinbase combined price-change rate: 145/404 msgs ≈ 1.63
+    changes/sec**
+  - Combining only adds **~27% over Coinbase alone** (1.28 → 1.63/sec) for
+    BTC/USD, because Kraken simply doesn't carry enough of this platform's
+    BTC volume to move the needle much once Coinbase is already in the mix.
+  - Burstiness is genuinely better than either single-venue trade feed or the
+    book channel, though: combined price-change gaps were median 312ms, mean
+    612ms, **max 4.6s** — versus ~17-18s max gaps for Kraken-trade-alone or
+    the book channel. Combining does measurably tame the worst-case silence,
+    even though the average-rate gain over Coinbase-alone is modest.
+
+**4. Open design questions (flagged, not resolved):**
+
+- **Cross-venue price divergence is real, not hypothetical** — directly
+  observed in this sample: Kraken's BTC/USD trades printed consistently
+  **$1.68-$4.36 (0.003-0.007%) *above*** the concurrent Coinbase price
+  throughout the whole window (a persistent small spread, not noise bouncing
+  both directions). A naive "whichever venue ticked most recently wins"
+  `price.tick` source would visibly micro-flicker the hero price by that
+  amount on every venue-switch event. This needs either a smoothing/
+  volume-weighted approach, or — more simply — just not naively
+  round-robin-ing between venues (see recommendation below).
+- **Does not generalize evenly across pairs**, confirmed by the XLM/USD
+  spot-check (below): the liquidity skew toward Coinbase is *even more*
+  lopsided on a thinner pair, so a combination strategy tuned for BTC/USD
+  would need to be liquidity-aware per pair, not a flat rule. All 75 active
+  pairs *are* listed on both venues (`exchange_symbol_map` has
+  `coinbase,kraken` for all 75 checked), so venue coverage isn't the
+  problem — relative liquidity balance per pair is.
+- **No architectural conflict with the eventBus/interest-set design**: the
+  interest-set filter in `v1Events.ts` gates purely on `pairId`, not on which
+  upstream feed produced the event — swapping or dual-sourcing `price.tick`'s
+  publisher (`krakenWs.ts` → `coinbaseWs.ts`, or both) is a backend
+  publisher-side change only; `v1Events.ts`, `datafeedAdapter.ts`, and all
+  client code are unaffected.
+
+**5. XLM/USD spot-check** (thinner pair, same instrumentation, ~85s window
+captured alongside the BTC/USD run):
+
+- Coinbase: 131 msgs/84.9s ≈ 1.54/sec. Kraken: **3 msgs/84.9s ≈ 0.035/sec**
+  — Kraken carried essentially none of this pair's trade volume in the
+  sample window (0 of those 3 landed within 100ms of a Coinbase tick).
+- Price-change rate: Coinbase-alone 75/131 ≈ 0.88 changes/sec; combined
+  79/134 ≈ 0.93 changes/sec — combining added **~5%** over Coinbase alone,
+  even less benefit than BTC/USD saw. Gaps were also more uneven (mean
+  1075ms, max 14.9s) than BTC's combined numbers — thinner liquidity means
+  even the dominant venue (Coinbase here) can't fully close the gap.
+- **Takeaway: the thinner the pair, the less combining Kraken adds** —
+  Kraken's contribution shrinks faster than Coinbase's as liquidity drops,
+  so a per-pair "is combining worth it" calculation would mostly come back
+  "no" outside of a few venue-balanced pairs.
+
+**Recommendation — comparing all three measured leads on real numbers:**
+
+| Lead | Rate vs. current baseline (~0.17-0.26/sec) | Worst-case gap | Semantics change | Complexity |
+|---|---|---|---|---|
+| Book-channel mid-price (prior update) | ~0.79/sec (~3-4×) | ~17s | last-trade → quote-mid (real tradeoff) | needs mid-change filtering (94% noise) |
+| **Coinbase-primary trade feed** | **~1.28/sec (~5-7×)** | not separately isolated, bounded by Coinbase-alone gaps | **none — still last-trade** | **low — repoint one publisher, source already connected** |
+| Kraken+Coinbase combined | ~1.63/sec (~6-9×) | ~4.6s (best of the three) | none — still last-trade | medium-high — venue divergence smoothing, per-pair liquidity weighting |
+
+**Coinbase-primary is the strongest lead of the three** — the biggest rate
+improvement relative to its complexity, because Coinbase is *already
+connected and already receiving the data*; this is a "repoint one publish
+call" change, not a new subsystem. **Full two-venue combination is a real
+but secondary refinement** — it only adds ~5-27% over Coinbase-alone
+(shrinking further on thinner pairs) while introducing genuine complexity
+(cross-venue divergence smoothing, per-pair venue weighting) — worth
+revisiting only if Coinbase-alone proves insufficient in practice, not worth
+building first. **Book-channel mid-price is the weakest of the three** —
+smallest rate gain *and* the only one requiring a last-trade → mid-price
+semantics change — park it unless the trade-side options are tried first and
+still fall short.
+
+**Priority:** EXPLORATORY — still no commitment to build any of the three.
+If Gate 1 picks this thread up, the suggested order is Coinbase-primary
+first (cheap, biggest win), combined-venue second (only if needed), book
+channel last (only if still needed after both trade-side options).
+
+**Update 2026-07-25 (later still) — promoted to Gate 1, implementing:** the
+Coinbase-primary option above is being designed + implemented on branch
+`gate1-coinbase-price-tick`. Full design lock (event shape, fallback
+decision, downstream-consumer check, all-75-pairs confirmation) is in
+`docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md` — this entry
+stays as the historical recon trail; see that doc for the current state of
+this specific lead.
