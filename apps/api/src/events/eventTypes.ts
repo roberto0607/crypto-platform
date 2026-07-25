@@ -76,6 +76,12 @@ export interface TriggerCanceledData {
   reason: string;
 }
 
+export interface AlertUpdatedData {
+  alertId: string;
+  pairId: string;
+  action: "created" | "fired" | "cancelled" | "expired";
+}
+
 export interface CompetitionStartedData {
   competitionId: string;
   name: string;
@@ -168,6 +174,7 @@ export type AppEvent =
   | EventEnvelope<"price.tick", PriceTickData>
   | EventEnvelope<"trigger.fired", TriggerFiredData>
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
+  | EventEnvelope<"alert.updated", AlertUpdatedData>
   | EventEnvelope<"competition.started", CompetitionStartedData>
   | EventEnvelope<"competition.ended", CompetitionEndedData>
   | EventEnvelope<"candle.closed", CandleClosedData>
