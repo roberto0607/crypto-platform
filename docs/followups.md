@@ -616,21 +616,44 @@ a real data-source ceiling.
 feel is Kraken's actual BTC/USD trade cadence on this single venue — a real
 ceiling, not a defect.
 
-**Open lead for a future gate (not yet measured, not yet decided):** Kraken's
-`book` channel (25-depth, already subscribed for order-flow features —
-`handleBookMessage` in `krakenWs.ts`) was **not instrumented in this pass**.
-Order-book quote churn (adds/cancels) typically fires far more often than
-executed trades, so it's plausible the book's mid-price moves continuously
-even during the multi-second gaps between fills — which is closer to how
-TradingView's feel is likely achieved (quote/mid-price movement, or
-multi-venue aggregation neither of which Kraken-solo trade prints can match).
-**Next step if picked up:** measure the book channel's actual BTC/USD update
-frequency the same way this recon measured ticker/trade, and if it churns
-meaningfully faster, evaluate deriving `price.tick` (or a new, separate
-"live mid-price" signal, kept distinct from the last-traded-price semantics
-`price.tick` currently has) from book mid-price movement instead of/alongside
-last-trade prints.
+**Update 2026-07-25 — book channel measured:** followed up same-day. Kraken's
+`book` channel (25-depth, `handleBookMessage` in `krakenWs.ts`) was
+temporarily instrumented (same pattern — added, measured, reverted; clean
+`git diff` confirmed after) to log a timestamp + computed top-of-book mid-price
+`(bestBid + bestAsk) / 2` on every snapshot/update message for BTC/USD, over a
+92.9s window against the live feed:
 
-**Priority:** EXPLORATORY — this is a flagged, reasoned lead, not a committed
-fix or a scoped design. No commitment to build anything yet; revisit whenever
-chart-feel polish or Gate 2 datafeed work is next picked up.
+- **Raw message frequency: 1,215 messages / 92.9s ≈ 13.1/sec** — roughly
+  50-75× the ticker (0.17/sec) or trade (0.26/sec) rate. The book channel is
+  genuinely far chattier, as expected (order adds/cancels vastly outnumber
+  fills).
+- **But 94.0% of those messages (1,141/1,215) don't move the top-of-book mid**
+  — they're depth-level noise further down the 25-level book that never
+  touches best bid/ask. Only **73 messages (6.0%) actually changed the mid**.
+- **Mid-price-change rate: 73 changes / 92.9s ≈ 0.79/sec** (~1 change every
+  1.27s on average) — a real **~3-4× improvement** over the current
+  ticker-driven `price.tick` rate (0.17-0.26/sec), but nowhere near
+  "continuous." The changes are **also bursty**: median gap between mid
+  changes is 2ms (rapid-fire clusters, e.g. bid/ask flipping during active
+  churn) but the max gap was still **16.9s** — the book goes quiet during the
+  same low-liquidity lulls the trade channel does, just recovers with more
+  resolution once it moves.
+
+**Conclusion / recommendation:** deriving `price.tick` (or a separate
+live-mid-price signal) from book mid-price is a **real but modest** lead —
+~3-4× more update frequency, not the order-of-magnitude jump that would
+actually deliver a TradingView-like continuous feel, and it would still show
+multi-second silent gaps during quiet periods since those are a genuine
+liquidity property of Kraken-solo BTC/USD, not an artifact of which channel is
+read. It would also change semantics from "last traded price" to "best-quote
+midpoint" (not an executed price — a real design tradeoff to reason through,
+not just a plumbing change), and implementing it cleanly requires filtering
+the 94%-of-messages noise down to mid-change events only (the naive "recompute
+on every book message" approach would be ~50-75× more compute for a price
+value that's unchanged 94% of the time). **Worth a small, scoped prototype if
+chart-feel polish is prioritized, but not worth interrupting Gate 2 datafeed
+work for** — the gain is real but incremental, not transformative.
+
+**Priority:** EXPLORATORY — flagged, reasoned lead with real numbers behind
+it now, but still no commitment to build. Revisit whenever chart-feel polish
+or Gate 2 datafeed work is next picked up.
