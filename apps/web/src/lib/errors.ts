@@ -42,6 +42,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   trigger_not_cancelable: "This trigger order can no longer be cancelled",
   invite_required: "An invite code is required to register",
   invite_invalid: "This invite code is invalid or expired",
+  invalid_or_expired_token: "This verification link is invalid or has expired — request a new one",
 
   // 401
   invalid_credentials: "Invalid email or password",

@@ -37,3 +37,7 @@ export function logout() {
 export function resendVerification() {
   return client.post<{ ok: true }>("/auth/resend-verification");
 }
+
+export function verifyEmail(token: string) {
+  return client.post<{ ok: true }>("/auth/verify-email", { token });
+}
