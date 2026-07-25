@@ -113,11 +113,7 @@ export const config = {
   suspiciousOrderWindowMs: numberEnv("SUSPICIOUS_ORDER_WINDOW_MS", 10000),
 
   // ── Phase 13 PR3: Email ──
-  smtpHost: process.env.SMTP_HOST || "",
-  smtpPort: numberEnv("SMTP_PORT", 587),
-  smtpSecure: booleanEnv("SMTP_SECURE", false),
-  smtpUser: process.env.SMTP_USER || "",
-  smtpPass: process.env.SMTP_PASS || "",
+  sendgridApiKey: process.env.SENDGRID_API_KEY || "",
   emailFrom: process.env.EMAIL_FROM || "noreply@crypto-platform.local",
   appUrl: process.env.APP_URL || "http://localhost:5173",
   requireEmailVerification: booleanEnv("REQUIRE_EMAIL_VERIFICATION", false),

@@ -1,52 +1,33 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import { config } from "../config.js";
 import { logger } from "../observability/logContext.js";
 
-let transporter: nodemailer.Transporter;
+let sendGridReady = false;
 
 export function initEmailTransport() {
-  if (config.smtpHost) {
-    transporter = nodemailer.createTransport({
-      host: config.smtpHost,
-      port: config.smtpPort,
-      secure: config.smtpSecure,
-      auth: config.smtpUser ? {
-        user: config.smtpUser,
-        pass: config.smtpPass,
-      } : undefined,
-      // Without these, a network-level hang (e.g. an SMTP port silently
-      // dropped, not actively refused) leaves sendMail()'s promise pending
-      // forever — no error, no log, indistinguishable from "still working".
-      // Bound all three so a real failure surfaces within seconds instead.
-      // greetingTimeout specifically covers the wait for the server's 220
-      // banner after the TCP connection succeeds — nodemailer defaults it
-      // to 30s if unset, a real gap connectionTimeout/socketTimeout alone
-      // don't close.
-      connectionTimeout: 15_000,
-      socketTimeout: 15_000,
-      greetingTimeout: 15_000,
-    });
+  if (config.sendgridApiKey) {
+    sgMail.setApiKey(config.sendgridApiKey);
+    sendGridReady = true;
   } else {
     // Development: log emails to console instead of sending
-    logger.warn("No SMTP config — emails will be logged to console");
-    transporter = nodemailer.createTransport({
-      jsonTransport: true,  // Returns JSON instead of sending
-    });
+    logger.warn("No SendGrid API key configured — emails will be logged to console");
+    sendGridReady = false;
   }
 }
 
 export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
-  const info = await transporter.sendMail({
-    from: config.emailFrom,
+  if (!sendGridReady) {
+    // Development mode: log the email content instead of sending
+    logger.info({ to, subject, html }, "Email (dev mode, not sent)");
+    return;
+  }
+
+  const [response] = await sgMail.send({
     to,
+    from: config.emailFrom,
     subject,
     html,
   });
 
-  if (!config.smtpHost) {
-    // Development mode: log the email content
-    logger.info({ to, subject, message: JSON.parse(info.message) }, "Email (dev mode, not sent)");
-  } else {
-    logger.info({ to, subject, messageId: info.messageId }, "Email sent");
-  }
+  logger.info({ to, subject, messageId: response.headers["x-message-id"] }, "Email sent");
 }

@@ -5,10 +5,13 @@ import { logger } from "../../observability/logContext";
 
 // Verifies the resend-verification handler's fire-and-forget .catch() path
 // actually fires and logs — not assumed, exercised. sendEmail() is mocked
-// to reject with an error shaped like nodemailer's connectionTimeout/
-// socketTimeout failure (Error + code: "ETIMEDOUT"), the real behavior now
-// that both are configured in emailTransport.ts, in place of a hang that
-// previously left the promise pending forever with zero trace.
+// to reject with a generic network-shaped error (Error + code: "ETIMEDOUT")
+// standing in for any async sendEmail() failure — the exact error type
+// doesn't matter here, only that the handler's catch actually fires and
+// logs whatever it rejects with. (Originally written to reproduce a real
+// nodemailer/SMTP hang; emailTransport.ts has since moved to SendGrid's
+// HTTP API — see git history for that investigation — but the wiring this
+// test covers is transport-agnostic.)
 vi.mock("../../email/emailTransport", () => ({
   sendEmail: vi.fn(),
 }));
