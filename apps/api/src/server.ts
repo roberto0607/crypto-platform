@@ -20,6 +20,7 @@ import { stopCoinbaseFeed } from "./feeds/coinbaseWs";
 import { stopFootprintAggregator } from "./services/footprintAggregator";
 import { stopPressureAggregator } from "./services/pressureAggregator";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
+import { stopAlertEngine } from "./alerts/alertEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
 import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
@@ -100,6 +101,7 @@ async function start() {
     await stopOrchestrator();
     await stopEventBus();
     stopTriggerEngine();
+    stopAlertEngine();
     stopKrakenFeed();
     stopCoinbaseFeed();
     stopFootprintAggregator();
