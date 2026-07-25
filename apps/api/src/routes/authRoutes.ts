@@ -641,6 +641,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
     preHandler: [requireUser],
   }, async (req, reply) => {
+    logger.info({ userId: req.user!.id }, "resend_verification_entered");
+
     const user = await findUserById(req.user!.id);
     if (!user) return reply.code(404).send({ ok: false, error: "user_not_found" });
 
@@ -649,13 +651,28 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       "SELECT email_verified_at FROM users WHERE id = $1",
       [user.id]
     );
-    if (rows[0]?.email_verified_at) return reply.send({ ok: true, message: "already_verified" });
+    const emailVerifiedAt = rows[0]?.email_verified_at ?? null;
+
+    logger.info(
+      { userId: user.id, email: user.email, emailVerifiedAt },
+      "resend_verification_user_resolved"
+    );
+
+    if (emailVerifiedAt) {
+      logger.info({ userId: user.id }, "resend_verification_skipped_already_verified");
+      return reply.send({ ok: true, message: "already_verified" });
+    }
 
     const rawToken = await createEmailToken(user.id, "EMAIL_VERIFY", 1440);
     const { subject, html } = verificationEmail(rawToken);
+
+    logger.info({ userId: user.id, to: user.email }, "resend_verification_calling_sendEmail");
     sendEmail(user.email, subject, html)
-      .then(() => emailsSentTotal.inc({ kind: "verification" }))
-      .catch((err) => logger.error({ err, userId: user.id }, "Failed to resend verification email"));
+      .then(() => {
+        emailsSentTotal.inc({ kind: "verification" });
+        logger.info({ userId: user.id, to: user.email }, "resend_verification_sendEmail_resolved");
+      })
+      .catch((err) => logger.error({ err, userId: user.id, to: user.email }, "Failed to resend verification email"));
 
     return reply.send({ ok: true });
   });
