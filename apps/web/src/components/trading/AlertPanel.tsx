@@ -1,8 +1,25 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { useNotificationStore } from "@/stores/notificationStore";
 import { resendVerification } from "@/api/endpoints/auth";
 import { createAlert, listAlerts, cancelAlert } from "@/api/endpoints/alerts";
 import type { Alert, AlertConditionType } from "@/types/api";
+
+// Gate 1 — this bell icon now hosts two tabs: PRICE ALERTS (this file's
+// original content, unchanged) and NOTIFICATIONS (ported from
+// NotificationBell.tsx, which stays as the header's own bell on every
+// non-/trade route). NotificationBell's fetch/SSE-push data flow (App.tsx
+// init + useSSE's onNotificationCreated) is untouched — this only relocates
+// the UI container on /trade; unreadCount keeps updating in the background
+// regardless of which tab/route is active.
+const NOTIF_KIND_ICONS: Record<string, string> = {
+  COMPETITION_STARTED: "!",
+  COMPETITION_ENDED: "*",
+  RANK_CHANGED: "#",
+  TRIGGER_FIRED: "T",
+  ORDER_FILLED: "$",
+  SYSTEM: "i",
+};
 
 const CONDITION_OPTIONS: { value: AlertConditionType; label: string }[] = [
   { value: "CROSSING", label: "Crossing" },
@@ -23,8 +40,17 @@ interface AlertPanelProps {
 
 export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"alerts" | "notifications">("alerts");
   const ref = useRef<HTMLDivElement>(null);
   const user = useAuthStore((s) => s.user);
+
+  const {
+    notifications,
+    unreadCount,
+    markRead: markNotificationRead,
+    markAllRead: markAllNotificationsRead,
+    fetch: fetchNotifications,
+  } = useNotificationStore();
 
   useEffect(() => {
     if (!open) return;
@@ -34,6 +60,15 @@ export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  // Fetch-on-open, same pattern as loadAlerts() below — keeps the list
+  // fresh without a background poll. unreadCount itself stays live
+  // regardless (pushed via SSE into the store), this is just the list body.
+  useEffect(() => {
+    if (open) fetchNotifications();
+  }, [open, fetchNotifications]);
+
+  const recentNotifications = notifications.slice(0, 20);
 
   // ── Create form state ──
   const [conditionType, setConditionType] = useState<AlertConditionType>("CROSSING");
@@ -119,11 +154,23 @@ export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
         aria-label="Alerts"
         aria-haspopup="menu"
         aria-expanded={open}
+        style={{ position: "relative" }}
       >
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="8" cy="8" r="6" />
           <path d="M8 4.5V8l2.5 1.5" />
         </svg>
+        {unreadCount > 0 && (
+          <span style={{
+            position: "absolute", top: -3, right: -3,
+            background: "#ff3b3b", color: "#fff", fontSize: 9, fontWeight: 700,
+            borderRadius: "50%", width: 14, height: 14,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: "'Space Mono', monospace", lineHeight: 1,
+          }}>
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
       </button>
 
       {open && (
@@ -133,10 +180,87 @@ export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
           border: "1px solid rgba(0,255,65,0.16)",
           borderRadius: 2,
           boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
-          zIndex: 50, width: 280, padding: "4px 0",
-          maxHeight: 480, overflowY: "auto",
+          zIndex: 50, width: 320, padding: 0,
+          maxHeight: 480, overflow: "hidden",
+          display: "flex", flexDirection: "column",
           fontFamily: "'Space Mono', monospace",
         }}>
+          {/* Tabs */}
+          <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab("alerts")}
+              style={tabButtonStyle(activeTab === "alerts")}
+            >
+              Price Alerts
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("notifications")}
+              style={tabButtonStyle(activeTab === "notifications")}
+            >
+              Notifications{unreadCount > 0 ? ` (${unreadCount})` : ""}
+            </button>
+          </div>
+
+          <div style={{ overflowY: "auto" }}>
+          {activeTab === "notifications" ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px 4px" }}>
+                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>NOTIFICATIONS</span>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => markAllNotificationsRead()}
+                    style={{ background: "transparent", border: "none", color: "#00ff41", fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              {recentNotifications.length === 0 ? (
+                <div style={{ padding: "16px 12px", fontSize: 10.5, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
+                  No notifications
+                </div>
+              ) : (
+                recentNotifications.map((n) => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    onClick={() => { if (!n.read_at) markNotificationRead(n.id); }}
+                    style={{
+                      display: "flex", alignItems: "flex-start", gap: 8, width: "100%",
+                      textAlign: "left", padding: "8px 12px",
+                      background: n.read_at ? "transparent" : "rgba(0,255,65,0.04)",
+                      border: "none", borderBottom: "1px solid rgba(255,255,255,0.05)",
+                      cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 1, width: 12, textAlign: "center", flexShrink: 0 }}>
+                      {NOTIF_KIND_ICONS[n.kind] ?? "i"}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 11, color: n.read_at ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.9)" }}>
+                        {n.title}
+                      </span>
+                      {n.body && (
+                        <span style={{ display: "block", fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {n.body}
+                        </span>
+                      )}
+                      <span style={{ display: "block", fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 3 }}>
+                        {new Date(n.created_at).toLocaleString()}
+                      </span>
+                    </span>
+                    {!n.read_at && (
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#00ff41", marginTop: 4, flexShrink: 0 }} />
+                    )}
+                  </button>
+                ))
+              )}
+            </>
+          ) : (
+          <>
           <div style={{ padding: "6px 12px 4px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 3 }}>
             NEW ALERT — {pairSymbol ?? "—"}
           </div>
@@ -286,10 +410,23 @@ export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
               </div>
             ))
           )}
+          </>
+          )}
+          </div>
         </div>
       )}
     </div>
   );
+}
+
+function tabButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    flex: 1, padding: "8px 0", fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase",
+    fontFamily: "'Space Mono', monospace", fontWeight: 700, cursor: "pointer",
+    background: active ? "rgba(0,255,65,0.06)" : "transparent",
+    color: active ? "#00ff41" : "rgba(255,255,255,0.4)",
+    border: "none", borderBottom: active ? "2px solid #00ff41" : "2px solid transparent",
+  };
 }
 
 const inputStyle: React.CSSProperties = {
