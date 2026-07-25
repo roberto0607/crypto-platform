@@ -17,9 +17,14 @@ export function initEmailTransport() {
       // Without these, a network-level hang (e.g. an SMTP port silently
       // dropped, not actively refused) leaves sendMail()'s promise pending
       // forever — no error, no log, indistinguishable from "still working".
-      // Bound both so a real failure surfaces within seconds instead.
+      // Bound all three so a real failure surfaces within seconds instead.
+      // greetingTimeout specifically covers the wait for the server's 220
+      // banner after the TCP connection succeeds — nodemailer defaults it
+      // to 30s if unset, a real gap connectionTimeout/socketTimeout alone
+      // don't close.
       connectionTimeout: 15_000,
       socketTimeout: 15_000,
+      greetingTimeout: 15_000,
     });
   } else {
     // Development: log emails to console instead of sending
