@@ -13,6 +13,7 @@ import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
+import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
 import type { Position, OrderBook as OrderBookType, TradingPair } from "@/types/api";
 
 /* ─────────────────────────────────────────
@@ -133,9 +134,12 @@ const TRADE_CSS = `
   /* ── MAIN BODY ── */
   .tr-body {
     display:grid;
-    grid-template-columns:1fr 360px;
+    /* --order-panel-w is set inline from React state (Gate 1 resize) —
+       defaults to the original fixed 360px until HorizontalDragHandle
+       changes it. Widen-only, clamped in HorizontalDragHandle.tsx. */
+    grid-template-columns:1fr 6px var(--order-panel-w, 360px);
     grid-template-rows:1fr;
-    grid-template-areas: "chart order";
+    grid-template-areas: "chart drag order";
     overflow:hidden;min-height:0;
     /* Flex-fill the height left in .tr-wrap (asset bar + body + order dock).
        Was a hardcoded calc(100vh - 126px); the bottom OrderDock needs the body
@@ -1100,6 +1104,17 @@ export default function TradingPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
   const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
 
+  // Order panel resize (Gate 1) — same load-lazily/save-on-drag-end pattern
+  // as CandlestickChart's panelHeights, adapted for a single width value.
+  const [orderPanelWidth, setOrderPanelWidth] = useState(() => loadOrderPanelWidth());
+  const handleOrderPanelWidthChange = useCallback((w: number) => {
+    setOrderPanelWidth(w);
+  }, []);
+  const handleOrderPanelWidthDragEnd = useCallback((w: number) => {
+    setOrderPanelWidth(w);
+    saveOrderPanelWidth(w);
+  }, []);
+
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
 
@@ -1224,7 +1239,10 @@ export default function TradingPage() {
       />
 
       {/* BODY */}
-      <div className="tr-body tr-fu tr-d1">
+      <div
+        className="tr-body tr-fu tr-d1"
+        style={{ "--order-panel-w": `${orderPanelWidth}px` } as React.CSSProperties}
+      >
         {/* CHART — full height left column */}
         <div className="tr-chart-area">
           <CandlestickChart
@@ -1233,6 +1251,13 @@ export default function TradingPage() {
             fundingRateHourly={fundingRateHourly}
           />
         </div>
+
+        {/* Order panel resize handle (Gate 1) */}
+        <HorizontalDragHandle
+          currentWidth={orderPanelWidth}
+          onWidthChange={handleOrderPanelWidthChange}
+          onDragEnd={handleOrderPanelWidthDragEnd}
+        />
 
         {/* RIGHT COLUMN — order panel + tabs */}
         <div className="tr-order-panel">
