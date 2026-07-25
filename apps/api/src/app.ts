@@ -351,7 +351,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     app.addHook("onReady", () => { startKrakenFeed(); });
   }
 
-  // -- Coinbase live feed (buy/sell trade flow for CVD) --
+  // -- Coinbase live feed (primary price.tick source as of Gate 1, + CVD) --
   if (!opts.disableKrakenFeed) {
     app.addHook("onReady", () => {
       try { startCoinbaseFeed(); } catch (err) { console.error("[coinbaseWs] failed to start", err); }
