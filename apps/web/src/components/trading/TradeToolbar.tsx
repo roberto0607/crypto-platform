@@ -5,6 +5,7 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { useAppStore } from "@/stores/appStore";
 import { searchPairs } from "@/api/endpoints/trading";
 import { IndicatorToolbar } from "./IndicatorToolbar";
+import { AlertPanel } from "./AlertPanel";
 import AssetTab from "./AssetTab";
 import type { Timeframe } from "@/api/endpoints/candles";
 import type { TradingPair } from "@/types/api";
@@ -324,13 +325,8 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
       {/* 4 — Indicators */}
       <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={onVpvrModeChange} />
 
-      {/* 5 — Alerts (placeholder, no functionality yet) */}
-      <button type="button" className="tr-tb-icon-btn" title="Alerts" aria-label="Alerts">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="8" cy="8" r="6" />
-          <path d="M8 4.5V8l2.5 1.5" />
-        </svg>
-      </button>
+      {/* 5 — Alerts */}
+      <AlertPanel pairId={selectedPairId} pairSymbol={selectedPair?.symbol} />
     </div>
   );
 }
