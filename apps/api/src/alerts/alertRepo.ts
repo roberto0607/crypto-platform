@@ -37,6 +37,15 @@ export async function createAlert(params: {
     return result.rows[0];
 }
 
+export async function getAlertById(alertId: string): Promise<AlertRow | null> {
+    const result = await pool.query<AlertRow>(
+        `SELECT ${ALERT_COLUMNS} FROM alerts WHERE id = $1`,
+        [alertId]
+    );
+
+    return result.rows[0] ?? null;
+}
+
 // Full-table bootstrap load for alertEngine's in-memory index — unlike
 // listActiveTriggersForPair, there's no per-pair filter since the engine
 // buckets every active alert by pair itself.

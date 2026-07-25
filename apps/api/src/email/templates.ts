@@ -15,6 +15,31 @@ export function verificationEmail(token: string): { subject: string; html: strin
   };
 }
 
+const CONDITION_LABELS: Record<string, string> = {
+  CROSSING: "crossed",
+  CROSSING_UP: "crossed above",
+  CROSSING_DOWN: "crossed below",
+};
+
+export function alertFiredEmail(
+  pairSymbol: string,
+  conditionType: string,
+  targetValue: string,
+  currentPrice: string,
+  messageTemplate?: string | null,
+): { subject: string; html: string } {
+  const conditionLabel = CONDITION_LABELS[conditionType] ?? conditionType;
+  return {
+    subject: `Price alert — ${pairSymbol} ${conditionLabel} ${targetValue}`,
+    html: `
+      <h2>Price Alert Triggered</h2>
+      <p><strong>${pairSymbol}</strong> ${conditionLabel} your target of <strong>${targetValue}</strong>.</p>
+      <p>Current price: <strong>${currentPrice}</strong></p>
+      ${messageTemplate ? `<p>${messageTemplate}</p>` : ""}
+    `,
+  };
+}
+
 export function passwordResetEmail(token: string): { subject: string; html: string } {
   const url = `${config.appUrl}/reset-password?token=${token}`;
   return {
