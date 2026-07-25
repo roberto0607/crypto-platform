@@ -33,3 +33,7 @@ export function me() {
 export function logout() {
   return client.post<{ ok: true }>("/auth/logout");
 }
+
+export function resendVerification() {
+  return client.post<{ ok: true }>("/auth/resend-verification");
+}

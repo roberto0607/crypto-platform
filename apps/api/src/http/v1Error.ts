@@ -20,6 +20,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   order_not_cancelable: "This order cannot be canceled.",
   insufficient_liquidity: "Market liquidity insufficient for requested size.",
   trigger_not_cancelable: "This trigger order cannot be canceled.",
+  alert_not_cancelable: "This alert cannot be canceled.",
+  alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
   // 401
   invalid_credentials: "Invalid email or password.",
   unauthorized: "Authentication is required.",
@@ -40,6 +42,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   pair_not_found: "The requested trading pair was not found.",
   replay_not_found: "The requested replay was not found.",
   trigger_not_found: "The requested trigger order was not found.",
+  alert_not_found: "The requested alert was not found.",
   stream_not_found: "The SSE stream was not found or does not belong to this user.",
   // 409
   email_taken: "This email address is already registered.",

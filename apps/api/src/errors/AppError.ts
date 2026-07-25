@@ -15,6 +15,8 @@ const ERROR_STATUS: Record<string, number> = {
   order_not_cancelable: 400,
   insufficient_liquidity: 400,
   trigger_not_cancelable: 400,
+  alert_not_cancelable: 400,
+  alert_limit_exceeded: 400,
   invite_required: 400,
   invite_invalid: 400,
   // 401
@@ -34,6 +36,7 @@ const ERROR_STATUS: Record<string, number> = {
   pair_not_found: 404,
   replay_not_found: 404,
   trigger_not_found: 404,
+  alert_not_found: 404,
   run_not_found: 404,
   api_key_not_found: 404,
   stream_not_found: 404,

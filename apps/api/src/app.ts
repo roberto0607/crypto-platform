@@ -42,6 +42,7 @@ import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
 import { startPressureAggregator } from "./services/pressureAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
+import { startAlertEngine } from "./alerts/alertEngine";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
@@ -56,6 +57,8 @@ export interface BuildAppOptions {
   disableKrakenFeed?: boolean;
   /** Skip starting trigger engine (useful for tests). */
   disableTriggerEngine?: boolean;
+  /** Skip starting alert engine (useful for tests). */
+  disableAlertEngine?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
@@ -360,6 +363,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Trigger engine --
   if (!opts.disableTriggerEngine) {
     app.addHook("onReady", async () => { await startTriggerEngine(); });
+  }
+
+  // -- Alert engine --
+  if (!opts.disableAlertEngine) {
+    app.addHook("onReady", async () => { await startAlertEngine(); });
   }
 
   // -- Job runner --

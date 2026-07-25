@@ -235,6 +235,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 id: { type: "string", format: "uuid" },
                 email: { type: "string" },
                 role: { type: "string", enum: ["USER", "ADMIN"] },
+                emailVerified: { type: "boolean" },
               },
             },
           },
@@ -340,7 +341,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({
       ok: true,
       accessToken,
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, role: user.role, emailVerified: !!user.email_verified_at },
     });
   });
 

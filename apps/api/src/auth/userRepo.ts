@@ -29,10 +29,10 @@ export async function createUser(params: {
     return result.rows[0];
 }
 
-export async function findUserByEmailNormalized(emailNormalized: string): Promise<(UserRow & {password_hash: string }) | null> {
+export async function findUserByEmailNormalized(emailNormalized: string): Promise<(UserRow & { password_hash: string; email_verified_at: string | null }) | null> {
     const result = await pool.query(
         `
-        SELECT id, email, email_normalized, password_hash, role, created_at, updated_at
+        SELECT id, email, email_normalized, password_hash, role, created_at, updated_at, email_verified_at
         FROM users
         WHERE email_normalized = $1
         LIMIT 1
