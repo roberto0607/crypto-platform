@@ -37,6 +37,7 @@ import orderBookSignalRoutes from "./routes/orderBookSignalRoutes";
 import macroRoutes from "./routes/macroRoutes";
 import gammaRoutes from "./routes/gammaRoutes";
 import onChainRoutes from "./routes/onChainRoutes";
+import tmpSmtpTcpDiag from "./routes/tmpSmtpTcpDiag"; // TEMPORARY — see file header, remove after use
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
@@ -294,6 +295,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(macroRoutes);
   await app.register(gammaRoutes);
   await app.register(onChainRoutes);
+  await app.register(tmpSmtpTcpDiag); // TEMPORARY — see file header, remove after use
 
   // ── Error code reference (documentation endpoint) ──
   app.get("/api/errors", {
