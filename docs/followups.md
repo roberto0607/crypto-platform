@@ -563,3 +563,74 @@ user, the reads above misbehave.
 **Priority:** MEDIUM — latent correctness bug, no current user impact (gated by
 the ROOKIE-only state above), but it will surface as soon as cross-system
 promotions occur. Not blocking the forfeit-500 fix.
+
+---
+
+## 🔵 EXPLORATORY — Hero price / chart feels "stale" vs TradingView's continuous tick feel (Gate 0 recon, 2026-07-25)
+
+**Discovered:** 2026-07-25, dedicated Gate 0 recon requested ahead of Gate 2
+(multi-asset datafeed) work — checking whether the trade page's hero price and
+active candle genuinely lag TradingView's feel because of a bug, or because of
+a real data-source ceiling.
+
+**Findings — data source confirmed correct, no bug found:**
+
+- Hero price (`CandlestickChart.tsx:434-436`) reads `useTradingStore(s =>
+  s.snapshot)`, written only by `onPriceTick` in `useSSE.ts:61-70`, gated to
+  `d.pairId === selectedPairId`. Server-side, `GET /v1/events`'s per-connection
+  interest set (`v1Events.ts`) only delivers `price.tick`/`candle.closed` for
+  the pairId `datafeedAdapter.ts`'s `subscribeBars()` explicitly registered via
+  `POST /v1/events/subscribe` — replaced wholesale to exactly `[pairId]` on
+  every pair switch. The 7s `GET /pairs` poll (`App.tsx:183-193`) is scoped to
+  the *non-active* selector-row pairs only, by design (Gate 1's interest-set
+  split). **The hero price is genuinely on the real-time path, not the poll.**
+- No render-path throttle: `snapshot` gets a brand-new object on every single
+  tick (no batching), so every SSE tick triggers a hero-price re-render. The
+  only 1s heartbeat in the file drives the O/H/L/C toolbar readout only, not
+  the hero price. The live candle series (`seriesRef.current.update()`)
+  updates on every tick, unthrottled. Formatting is cent-precision
+  (`minimumFractionDigits: 2`), not whole-dollar rounding.
+- **Live-measured tick rate for BTC/USD** (throwaway account, `/trade`, 60-66s
+  windows against the running dev server + live Kraken feed):
+  - Client-received SSE `price.tick` events: 16 over 66.15s ≈ **0.24/sec**
+    (~1 update every 4.1s).
+  - Cross-checked via temporary instrumentation of `krakenWs.ts`'s
+    `handleTickerMessage`/`handleTradeMessage` (added, measured, reverted —
+    clean `git diff`): ticker channel 27 msgs/163s ≈ 0.17/sec; raw
+    trade-execution channel (Kraken's fastest available channel) 42 msgs/163s
+    ≈ 0.26/sec. Trades arrive in **tight bursts** (multiple fills within the
+    same ms — one order sweeping several book levels) separated by **silent
+    gaps up to ~18s**.
+  - System-wide cross-check via `events_published_total{type="price.tick"}`:
+    ~1.3/sec across all ~75 tracked pairs — same ballpark as the ~1.7/sec
+    figure from the price-alerts investigation; BTC/USD is ~18% of that,
+    consistent with being the most liquid single pair tracked.
+  - `krakenWs.ts:85-90` already subscribes to all three of Kraken's real-time
+    channels (`ticker`, `trade`, `book`) — there is no unsubscribed faster
+    channel to switch to for last-trade data. `price.tick` is currently
+    published only from `handleTickerMessage`; the `trade` channel's data
+    feeds candle aggregation and the CVD/pressure aggregator but not
+    `price.tick`.
+
+**Conclusion:** not a wiring bug, not a render throttle. The sparse, bursty
+feel is Kraken's actual BTC/USD trade cadence on this single venue — a real
+ceiling, not a defect.
+
+**Open lead for a future gate (not yet measured, not yet decided):** Kraken's
+`book` channel (25-depth, already subscribed for order-flow features —
+`handleBookMessage` in `krakenWs.ts`) was **not instrumented in this pass**.
+Order-book quote churn (adds/cancels) typically fires far more often than
+executed trades, so it's plausible the book's mid-price moves continuously
+even during the multi-second gaps between fills — which is closer to how
+TradingView's feel is likely achieved (quote/mid-price movement, or
+multi-venue aggregation neither of which Kraken-solo trade prints can match).
+**Next step if picked up:** measure the book channel's actual BTC/USD update
+frequency the same way this recon measured ticker/trade, and if it churns
+meaningfully faster, evaluate deriving `price.tick` (or a new, separate
+"live mid-price" signal, kept distinct from the last-traded-price semantics
+`price.tick` currently has) from book mid-price movement instead of/alongside
+last-trade prints.
+
+**Priority:** EXPLORATORY — this is a flagged, reasoned lead, not a committed
+fix or a scoped design. No commitment to build anything yet; revisit whenever
+chart-feel polish or Gate 2 datafeed work is next picked up.
