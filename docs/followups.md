@@ -769,3 +769,11 @@ still fall short.
 If Gate 1 picks this thread up, the suggested order is Coinbase-primary
 first (cheap, biggest win), combined-venue second (only if needed), book
 channel last (only if still needed after both trade-side options).
+
+**Update 2026-07-25 (later still) — promoted to Gate 1, implementing:** the
+Coinbase-primary option above is being designed + implemented on branch
+`gate1-coinbase-price-tick`. Full design lock (event shape, fallback
+decision, downstream-consumer check, all-75-pairs confirmation) is in
+`docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md` — this entry
+stays as the historical recon trail; see that doc for the current state of
+this specific lead.
