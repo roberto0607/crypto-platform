@@ -14,6 +14,12 @@ export function initEmailTransport() {
         user: config.smtpUser,
         pass: config.smtpPass,
       } : undefined,
+      // Without these, a network-level hang (e.g. an SMTP port silently
+      // dropped, not actively refused) leaves sendMail()'s promise pending
+      // forever — no error, no log, indistinguishable from "still working".
+      // Bound both so a real failure surfaces within seconds instead.
+      connectionTimeout: 15_000,
+      socketTimeout: 15_000,
     });
   } else {
     // Development: log emails to console instead of sending
