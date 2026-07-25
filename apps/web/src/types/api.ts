@@ -10,6 +10,7 @@ export interface User {
   email: string;
   role: "USER" | "ADMIN";
   displayName?: string | null;
+  emailVerified?: boolean;
 }
 
 export interface LoginResponse {
@@ -236,6 +237,30 @@ export interface TriggerOrder {
   fail_reason: string | null;
   trailing_offset: DecimalString | null;
   trailing_high_water_mark: DecimalString | null;
+  created_at: ISODateString;
+  updated_at: ISODateString;
+}
+
+// ── Alerts ──────────────────────────────────────────────────
+export type AlertConditionType = "CROSSING" | "CROSSING_UP" | "CROSSING_DOWN";
+
+export type AlertFrequency = "ONCE" | "EVERY_N_MINUTES";
+
+export type AlertStatus = "ACTIVE" | "FIRED" | "EXPIRED" | "CANCELLED";
+
+export interface Alert {
+  id: UUID;
+  user_id: UUID;
+  pair_id: UUID;
+  condition_type: AlertConditionType;
+  target_value: DecimalString;
+  frequency: AlertFrequency;
+  frequency_minutes: number | null;
+  last_fired_at: ISODateString | null;
+  status: AlertStatus;
+  expiration: ISODateString | null;
+  message_template: string | null;
+  channels: string[];
   created_at: ISODateString;
   updated_at: ISODateString;
 }
