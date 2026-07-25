@@ -3,10 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useAppStore } from "@/stores/appStore";
+import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { searchPairs } from "@/api/endpoints/trading";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import { AlertPanel } from "./AlertPanel";
 import AssetTab from "./AssetTab";
+import { NavIcon } from "@/components/NavIcon";
+import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import type { Timeframe } from "@/api/endpoints/candles";
 import type { TradingPair } from "@/types/api";
 
@@ -52,6 +55,24 @@ const TOOLBAR_CSS = `
     cursor:pointer;transition:all 0.15s;
   }
   .tr-tb-profile:hover { background:rgba(0,255,65,0.16);color:#fff;border-color:var(--g,#00ff41); }
+  /* Profile dropdown menu (Gate 1 — replaces the direct /profile link) */
+  .tr-tb-profile-menu {
+    position:absolute;top:calc(100% + 6px);left:0;z-index:20;
+    min-width:150px;background:#080808;border:1px solid rgba(0,255,65,0.16);
+    border-radius:2px;box-shadow:0 4px 20px rgba(0,0,0,0.6);padding:4px 0;
+  }
+  .tr-tb-profile-menu-item {
+    display:block;width:100%;text-align:left;padding:7px 14px;
+    font-size:10px;letter-spacing:2px;text-transform:uppercase;
+    font-family:'Space Mono',monospace;color:rgba(255,255,255,0.85);
+    background:transparent;border:none;cursor:pointer;
+  }
+  .tr-tb-profile-menu-item:hover { background:rgba(0,255,65,0.1);color:#fff; }
+  .tr-tb-profile-menu-item.danger { color:#ff6b6b; }
+  .tr-tb-profile-menu-item.danger:hover { background:rgba(255,59,59,0.1);color:#ff8a8a; }
+  .tr-tb-profile-menu-divider { height:1px;background:rgba(255,255,255,0.08);margin:4px 0; }
+  /* Relocated nav icons (Replay/Cycles/History) */
+  .tr-tb-nav-group { display:flex;align-items:center;gap:6px; }
   /* Symbol search */
   .tr-tb-search-icon { color:rgba(255,255,255,0.85);flex-shrink:0;display:flex; }
   .tr-tb-search-wrap { display:flex;align-items:center;gap:6px;flex-shrink:0; }
@@ -112,16 +133,43 @@ interface TradeToolbarProps {
 export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrModeChange }: TradeToolbarProps) {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
   const pairs = useAppStore((s) => s.pairs);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
+  const { sseConnectionState, priceStale, isHardOffline } = useConnectionStatus();
 
   const initials = user?.displayName
     ? user.displayName.slice(0, 2).toUpperCase()
     : user?.email
       ? user.email.slice(0, 2).toUpperCase()
       : "??";
+
+  /* ── Profile dropdown (Gate 1) — replaces the old direct /profile link.
+     Same outside-click-close pattern as the timeframe picker below and
+     AppLayout's user menu. Hosts Settings/Logout since the top header
+     (and its user menu) is hidden on /trade. ── */
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [profileMenuOpen]);
+
+  function handleLogout() {
+    // Mirrors AppLayout.handleLogout — this is the only logout entry point
+    // while on /trade, since the top header's user menu is hidden here.
+    try { sessionStorage.clear(); } catch { /* ignore */ }
+    clearAuth();
+    setProfileMenuOpen(false);
+    navigate("/login", { replace: true });
+  }
 
   // Inject toolbar CSS once.
   useEffect(() => {
@@ -207,16 +255,49 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
 
   return (
     <div className="tr-toolbar tr-fu">
-      {/* 1 — Profile */}
-      <button
-        type="button"
-        className="tr-tb-profile"
-        onClick={() => navigate("/profile")}
-        title="Profile"
-        aria-label="Profile"
-      >
-        {initials}
-      </button>
+      {/* 1 — Profile (dropdown: Profile / Settings / Logout) */}
+      <div ref={profileMenuRef} style={{ position: "relative" }}>
+        <button
+          type="button"
+          className="tr-tb-profile"
+          onClick={() => setProfileMenuOpen((v) => !v)}
+          title="Profile"
+          aria-label="Profile"
+          aria-haspopup="menu"
+          aria-expanded={profileMenuOpen}
+        >
+          {initials}
+        </button>
+        {profileMenuOpen && (
+          <div className="tr-tb-profile-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              className="tr-tb-profile-menu-item"
+              onClick={() => { setProfileMenuOpen(false); navigate("/profile"); }}
+            >
+              Profile
+            </button>
+            <div className="tr-tb-profile-menu-divider" />
+            <button
+              type="button"
+              role="menuitem"
+              className="tr-tb-profile-menu-item"
+              onClick={() => { setProfileMenuOpen(false); navigate("/settings"); }}
+            >
+              Settings
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="tr-tb-profile-menu-item danger"
+              onClick={handleLogout}
+            >
+              Logout
+            </button>
+          </div>
+        )}
+      </div>
 
       <span className="tr-toolbar-divider" />
 
@@ -325,8 +406,34 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
       {/* 4 — Indicators */}
       <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={onVpvrModeChange} />
 
-      {/* 5 — Alerts */}
+      {/* 5 — Alerts / Notifications */}
       <AlertPanel pairId={selectedPairId} pairSymbol={selectedPair?.symbol} />
+
+      <span className="tr-toolbar-divider" />
+
+      {/* 6 — Relocated nav (Replay/Cycles/History) — same routes the left
+          rail linked to; rail is hidden on /trade (Gate 1). */}
+      <div className="tr-tb-nav-group">
+        <button type="button" className="tr-tb-icon-btn" onClick={() => navigate("/replay")} title="Replay" aria-label="Replay">
+          <NavIcon name="replay" />
+        </button>
+        <button type="button" className="tr-tb-icon-btn" onClick={() => navigate("/cycle")} title="Cycles" aria-label="Cycles">
+          <NavIcon name="cycle" />
+        </button>
+        <button type="button" className="tr-tb-icon-btn" onClick={() => navigate("/history")} title="History" aria-label="History">
+          <NavIcon name="history" />
+        </button>
+      </div>
+
+      <span className="tr-toolbar-divider" />
+
+      {/* 7 — Connection status — relocated from the top header, hidden on /trade (Gate 1) */}
+      <MarketStatusBadge
+        status={sseConnectionState}
+        priceStale={priceStale}
+        isHardOffline={isHardOffline}
+        onRefresh={() => window.location.reload()}
+      />
     </div>
   );
 }
