@@ -451,7 +451,6 @@ canvas, .tv-lightweight-charts, [data-no-theme-transition] {
   display: flex;
   align-items: center;
 }
-.trade-layout .ticker-bar-wrap { left: 52px; }
 @media (max-width: 1023px) {
   .ticker-bar-wrap { left: 0; }
 }

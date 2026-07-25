@@ -6,6 +6,7 @@ import { useCompetitionStore } from "@/stores/competitionStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
+import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import SystemBanner from "@/components/SystemBanner";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NavIcon } from "@/components/NavIcon";
@@ -82,31 +83,11 @@ export default function AppLayout() {
 
   useSystemStatusPolling();
   useRefreshTokenKeepAlive();
-  const { sseConnected, sseConnectionState } = useSSE();
-  const lastPriceTickAt = useAppStore((s) => s.lastPriceTickAt);
-  const [priceStale, setPriceStale] = useState(false);
-
-  useEffect(() => {
-    if (!sseConnected) { setPriceStale(false); return; }
-    const id = setInterval(() => {
-      const stale = lastPriceTickAt > 0 && Date.now() - lastPriceTickAt > 10_000;
-      setPriceStale(stale);
-    }, 3_000);
-    return () => clearInterval(id);
-  }, [sseConnected, lastPriceTickAt]);
-
-  // ── Hard-offline fallback ──
-  // If "reconnecting" persists > 60s, surface OFFLINE + a refresh CTA so the
-  // user isn't stuck staring at a spinner.
-  const [isHardOffline, setIsHardOffline] = useState(false);
-  useEffect(() => {
-    if (sseConnectionState !== "reconnecting") {
-      setIsHardOffline(false);
-      return;
-    }
-    const id = setTimeout(() => setIsHardOffline(true), 60_000);
-    return () => clearTimeout(id);
-  }, [sseConnectionState]);
+  // useSSE() owns the connection lifecycle — must stay mounted here
+  // regardless of route (see useConnectionStatus.ts for why it isn't
+  // called a second time from TradeToolbar).
+  useSSE();
+  const { sseConnectionState, priceStale, isHardOffline } = useConnectionStatus();
 
   // ── Session expired (SSE 401) ──
   // SSE 401 means the access token is no longer valid. Surface a visible
@@ -132,7 +113,7 @@ export default function AppLayout() {
   const tradingAllowed = riskStatus?.trading_allowed ?? true;
 
   return (
-    <div className={`min-h-screen flex flex-col bg-tradr-bg text-white/85 ${isTradePage ? "trade-layout h-screen" : ""}`}>
+    <div className={`min-h-screen flex flex-col bg-tradr-bg text-white/85 ${isTradePage ? "h-screen" : ""}`}>
       {/* Background effects */}
       <div className="fixed inset-0 pointer-events-none z-0 grid-bg" />
       <div className="fixed inset-0 pointer-events-none z-0 radial-glow-bg" style={{ background: isWarTheme ? "radial-gradient(ellipse 70% 60% at 50% 40%, rgba(255,107,0,0.04) 0%, transparent 65%)" : "radial-gradient(ellipse 70% 60% at 50% 40%, rgba(0,255,65,0.04) 0%, transparent 65%)" }} />
@@ -161,7 +142,10 @@ export default function AppLayout() {
       )}
 
       <div className="flex flex-1 overflow-hidden relative z-10">
-        {/* ── SIDEBAR ── */}
+        {/* ── SIDEBAR ── — route-conditional (Gate 1): hidden on /trade,
+            where these links relocate into TradeToolbar. Unchanged on
+            every other route. */}
+        {!isTradePage && (
         <aside className={`
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
           lg:translate-x-0 fixed lg:static inset-y-0 left-0 z-50
@@ -175,7 +159,6 @@ export default function AppLayout() {
                 {isWarTheme ? <>TR<span>A</span>DE W<span>A</span>RS</> : <>TR<span>A</span>DR</>}
               </span>
             )}
-            <div className="t-logo-dot" />
           </div>
 
           {/* Nav sections */}
@@ -251,9 +234,10 @@ export default function AppLayout() {
             )}
           </nav>
         </aside>
+        )}
 
         {/* Mobile sidebar backdrop */}
-        {sidebarOpen && (
+        {!isTradePage && sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-black/50 lg:hidden"
             onClick={() => setSidebarOpen(false)}
@@ -261,31 +245,26 @@ export default function AppLayout() {
         )}
 
         {/* ── MAIN CONTENT ── */}
-        <div className={`flex-1 min-w-0 flex flex-col ${isTradePage ? "h-screen overflow-hidden" : "min-h-screen"} lg:pb-9`}>
-          {/* Topbar */}
-          <header className={`flex items-center justify-between ${isTradePage ? "px-3 py-2" : "px-8 py-4"} border-b border-tradr-green/[0.18] bg-tradr-bg/60 backdrop-blur-sm sticky top-0 z-40`}>
+        <div className={`flex-1 min-w-0 flex flex-col ${isTradePage ? "h-screen overflow-hidden" : "min-h-screen lg:pb-9"}`}>
+          {/* Topbar — route-conditional (Gate 1): hidden on /trade, where
+              logout/notifications/connection-status relocate into
+              TradeToolbar. Unchanged on every other route. */}
+          {!isTradePage && (
+          <header className="flex items-center justify-between px-8 py-4 border-b border-tradr-green/[0.18] bg-tradr-bg/60 backdrop-blur-sm sticky top-0 z-40">
             <div className="flex items-center gap-4">
               <button
                 className="lg:hidden text-white/30 hover:text-tradr-green text-lg"
                 onClick={() => setSidebarOpen(!sidebarOpen)}
               >
-                {sidebarOpen ? "\u2715" : "\u2630"}
+                {sidebarOpen ? "✕" : "☰"}
               </button>
 
-              {isTradePage && (
-                <span className="t-logo-text t-logo-text-sm">
-                  {isWarTheme ? <>TR<span>A</span>DE W<span>A</span>RS</> : <>TR<span>A</span>DR</>}
-                </span>
-              )}
-
-              {!isTradePage && (
-                <div className="text-[10px] text-white/30 tracking-[2px] flex items-center gap-2 font-mono">
-                  <span className="text-white/10">//</span>
-                  <span>HOME</span>
-                  <span className="text-white/10">/</span>
-                  <span className="text-tradr-green">{breadcrumbLabel(location.pathname)}</span>
-                </div>
-              )}
+              <div className="text-[10px] text-white/30 tracking-[2px] flex items-center gap-2 font-mono">
+                <span className="text-white/10">//</span>
+                <span>HOME</span>
+                <span className="text-white/10">/</span>
+                <span className="text-tradr-green">{breadcrumbLabel(location.pathname)}</span>
+              </div>
             </div>
 
             <div className="flex items-center gap-5">
@@ -342,6 +321,7 @@ export default function AppLayout() {
               )}
             </div>
           </header>
+          )}
 
           <main className={`flex-1 ${isTradePage ? "overflow-hidden p-1.5" : "overflow-y-auto p-8"}`}>
             <Outlet />
@@ -349,8 +329,9 @@ export default function AppLayout() {
         </div>
       </div>
 
-      {/* Ticker bar — fixed bottom */}
-      <TickerBar />
+      {/* Ticker bar — route-conditional (Gate 1): hidden on /trade.
+          Unchanged on every other route. */}
+      {!isTradePage && <TickerBar />}
     </div>
   );
 }
