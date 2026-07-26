@@ -7,6 +7,7 @@ import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { searchPairs } from "@/api/endpoints/trading";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import { AlertPanel } from "./AlertPanel";
+import { TierBadge } from "./TierBadge";
 import AssetTab from "./AssetTab";
 import { NavIcon } from "@/components/NavIcon";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
@@ -121,6 +122,25 @@ const TOOLBAR_CSS = `
     color:rgba(255,255,255,0.92);font-weight:700;cursor:pointer;transition:all 0.15s;
   }
   .tr-tb-icon-btn:hover { background:rgba(0,255,65,0.1);color:#fff;border-color:var(--g,#00ff41); }
+  /* Rank/tier badge (Gate 1) */
+  .tr-tb-tier { display:flex;align-items:center;gap:6px;flex-shrink:0; }
+  .tr-tb-tier-label {
+    font-family:'Space Mono',monospace;font-size:9px;font-weight:700;
+    letter-spacing:1.5px;
+  }
+  .tr-tb-tier-ROOKIE { color:#00ff41; }
+  .tr-tb-tier-PRO    { color:#3b82f6; }
+  .tr-tb-tier-ELITE  { color:#a855f7; }
+  .tr-tb-tier-LEGEND { color:#FFD700; }
+  .tr-tb-tier-bar-track {
+    display:inline-flex;width:46px;height:5px;border-radius:2px;
+    overflow:hidden;background:rgba(255,255,255,0.07);
+  }
+  .tr-tb-tier-bar-fill { height:100%;transition:width 0.3s; }
+  .tr-tb-tier-fill-ROOKIE { background:#00ff41; }
+  .tr-tb-tier-fill-PRO    { background:#3b82f6; }
+  .tr-tb-tier-fill-ELITE  { background:#a855f7; }
+  .tr-tb-tier-fill-LEGEND { background:#FFD700; }
 `;
 
 interface TradeToolbarProps {
@@ -298,6 +318,9 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
           </div>
         )}
       </div>
+
+      {/* 1.5 — Rank/tier badge, grouped with Profile (identity, not status) */}
+      <TierBadge />
 
       <span className="tr-toolbar-divider" />
 
