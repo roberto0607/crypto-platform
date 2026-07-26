@@ -1,6 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
-import { getActiveMatch, type Match } from "@/api/endpoints/matches";
+import { useEffect } from "react";
+import type { Match } from "@/api/endpoints/matches";
 import { useAuthStore } from "@/stores/authStore";
+import {
+    useActiveMatchStore,
+    acquireActiveMatchPolling,
+    releaseActiveMatchPolling,
+} from "@/stores/activeMatchStore";
 
 interface CompetitionMode {
     isInCompetition: boolean;
@@ -9,8 +14,13 @@ interface CompetitionMode {
 }
 
 /**
- * Hook that checks if the user has an active 1v1 match.
- * Theme switching is now handled by useThemeDetector via data-theme attribute.
+ * Hook that checks if the user has an active 1v1 match. Thin wrapper around
+ * activeMatchStore — state lives in the shared store, this hook just owns
+ * the poll lifecycle (refcounted across every call site via
+ * acquire/releaseActiveMatchPolling, so multiple simultaneous callers
+ * — useThemeDetector, TradingPage — share a single 30s timer instead of
+ * each running their own). Theme switching is handled by useThemeDetector
+ * via data-theme attribute.
  *
  * Gated on isAuthenticated — this hook is mounted at the App root via
  * useThemeDetector, so without the gate it would poll /v1/matches/active
@@ -20,27 +30,18 @@ interface CompetitionMode {
  */
 export function useCompetitionMode(): CompetitionMode {
     const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-    const [activeMatch, setActiveMatch] = useState<Match | null>(null);
-
-    const refreshMatch = useCallback(async () => {
-        if (!isAuthenticated) { setActiveMatch(null); return; }
-        try {
-            const { data } = await getActiveMatch();
-            setActiveMatch(data.match);
-        } catch {
-            setActiveMatch(null);
-        }
-    }, [isAuthenticated]);
+    const activeMatch = useActiveMatchStore((s) => s.activeMatch);
+    const isInCompetition = useActiveMatchStore((s) => s.isInCompetition);
+    const refreshMatch = useActiveMatchStore((s) => s.refreshMatch);
+    const setActiveMatch = useActiveMatchStore((s) => s.setActiveMatch);
 
     useEffect(() => {
         if (!isAuthenticated) { setActiveMatch(null); return; }
-        refreshMatch();
-        // Poll every 30s for match status changes
-        const interval = setInterval(refreshMatch, 30_000);
-        return () => clearInterval(interval);
-    }, [refreshMatch, isAuthenticated]);
 
-    const isInCompetition = activeMatch?.status === "ACTIVE";
+        void refreshMatch();
+        acquireActiveMatchPolling();
+        return () => releaseActiveMatchPolling();
+    }, [isAuthenticated, refreshMatch, setActiveMatch]);
 
     return { isInCompetition, activeMatch, refreshMatch };
 }
