@@ -58,6 +58,9 @@ import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
+import { useDrawingStore, type StoredDrawing } from "@/stores/drawingStore";
+import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
+import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
@@ -314,6 +317,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
     const footprintPrimitiveRef = useRef<FootprintPrimitive | null>(null);
     const liquidationLevelsPrimitiveRef = useRef<LiquidationLevelsPrimitive | null>(null);
+    // Drawing tools (Gate 1) — one primitive instance per placed drawing,
+    // keyed by drawing id. Unlike the indicator primitives above (attached
+    // once, toggled via setData), this set grows/shrinks as the user adds/
+    // deletes drawings, so it's synced in its own effect below rather than
+    // the once-only chart-creation effect.
+    const drawingPrimitivesRef = useRef<Map<string, BaseDrawingPrimitive<StoredDrawing>>>(new Map());
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
@@ -666,8 +675,49 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // The markers plugin lives on the (now-removed) series; drop the ref
             // so the next mount recreates it cleanly.
             emaCrossMarkersRef.current = null;
+            // Detach any drawing primitives too — the next mount's sync effect
+            // starts from an empty map and re-attaches from the store's array.
+            drawingPrimitivesRef.current.clear();
         };
     }, []);
+
+    // Load this pair's persisted drawings whenever the selected pair changes
+    // (loadForPair no-ops if already loaded for this pair, e.g. re-renders).
+    useEffect(() => {
+        if (selectedPairId) useDrawingStore.getState().loadForPair(selectedPairId);
+    }, [selectedPairId]);
+
+    // Keep attached drawing primitives in sync with the store's `drawings`
+    // array — attach new ones, detach removed ones. Unlike the always-on
+    // indicator primitives (attached once, toggled via setData), drawings are
+    // added/removed at arbitrary times as the user places/deletes them.
+    const drawings = useDrawingStore((s) => s.drawings);
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series) return;
+        const attached = drawingPrimitivesRef.current;
+        const currentIds = new Set(drawings.map((d) => d.id));
+
+        for (const [id, primitive] of attached) {
+            if (!currentIds.has(id)) {
+                series.detachPrimitive(primitive);
+                attached.delete(id);
+            }
+        }
+
+        for (const drawing of drawings) {
+            const existing = attached.get(drawing.id);
+            if (existing) {
+                existing.setData(drawing);
+                continue;
+            }
+            const primitive = createDrawingPrimitive(drawing);
+            if (!primitive) continue; // "text" — rendered as a DOM chip, not a primitive
+            if (chartRef.current) primitive.setChart(chartRef.current);
+            series.attachPrimitive(primitive);
+            attached.set(drawing.id, primitive);
+        }
+    }, [drawings]);
 
     // Snap the viewport back to the live edge — the recent-bar window, matching
     // the default (first-load) view exactly so the at-edge detection reliably
