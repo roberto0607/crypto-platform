@@ -270,6 +270,22 @@ loaded dataset with `candle.time <= resolvedTime`, and use that candle's exact
 horizontal lines at prices between the candle's O/H/L/C, e.g. a round number
 like 50000) — only the time axis snaps.
 
+**UPDATE (found during commit 2's Playwright verification): this snapping is
+not just a UX nicety — it's load-bearing for rendering at all.** Empirically
+confirmed `timeScale().timeToCoordinate()` returns `null` for a time that
+doesn't exactly match one of the series' actual bar times — it does **not**
+interpolate between bars the way `priceToCoordinate` tolerates arbitrary
+prices. Every existing primitive in this codebase (VPVR, Bollinger fill,
+liquidation levels, footprint) happened to only ever call it with a real
+candle's own `time` value, so this constraint never surfaced before now.
+Practical consequence: the placement flow (commit 3) must snap `time` to an
+exact loaded-candle boundary **before** committing a point to the store, not
+just as a display nicety — an unsnapped point silently fails to render
+(verified: Horizontal Line, whose main line only needs `priceToCoordinate`,
+rendered fine with an unsnapped time; Horizontal Ray/Vertical Line/
+Trendline/Rectangle, which all need `timeToCoordinate`, silently rendered
+nothing until times were corrected to exact candle boundaries).
+
 ---
 
 ## 6. localStorage schema
