@@ -508,6 +508,7 @@ export type SSEEvent =
   | EventEnvelope<"signal.new", SignalNewEvent>
   | EventEnvelope<"match.started", MatchStartedEvent>
   | EventEnvelope<"match.ended", MatchEndedEvent>
+  | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
   | EventEnvelope<"challenge.received", ChallengeReceivedEvent>;
 
 export interface ChallengeReceivedEvent {
@@ -535,4 +536,10 @@ export interface MatchEndedEvent {
   challengerPnlPct: string | null;
   opponentPnlPct: string | null;
   eloDeltas: { winner: number; loser: number } | null;
+}
+
+export interface MatchPnlUpdateEvent {
+  matchId: string;
+  challengerPnlPct: string;
+  opponentPnlPct: string;
 }

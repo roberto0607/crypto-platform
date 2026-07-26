@@ -150,6 +150,19 @@ export interface MatchEndedData {
   eloDeltas: { winner: number; loser: number } | null;
 }
 
+/**
+ * Live in-match PnL push — published to BOTH participants whenever either
+ * side's unrealized P&L moves meaningfully (see matchPnlEngine.ts's publish
+ * gate). Carries only the two PnL numbers; both consumers already know
+ * which side is "you" vs. "opponent" from the match row's challenger_id/
+ * opponent_id they already hold.
+ */
+export interface MatchPnlUpdateData {
+  matchId: string;
+  challengerPnlPct: string;
+  opponentPnlPct: string;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -182,6 +195,7 @@ export type AppEvent =
   | EventEnvelope<"signal.new", SignalNewData>
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
+  | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
   | EventEnvelope<"challenge.received", ChallengeReceivedData>;
 
 // ── Helper to create events ──

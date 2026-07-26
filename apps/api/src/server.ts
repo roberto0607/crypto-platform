@@ -21,6 +21,7 @@ import { stopFootprintAggregator } from "./services/footprintAggregator";
 import { stopPressureAggregator } from "./services/pressureAggregator";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { stopAlertEngine } from "./alerts/alertEngine";
+import { stopMatchPnlEngine } from "./competitions/matchPnlEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
 import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
@@ -102,6 +103,7 @@ async function start() {
     await stopEventBus();
     stopTriggerEngine();
     stopAlertEngine();
+    stopMatchPnlEngine();
     stopKrakenFeed();
     stopCoinbaseFeed();
     stopFootprintAggregator();
