@@ -14,7 +14,7 @@ import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
-import type { Position, OrderBook as OrderBookType, TradingPair } from "@/types/api";
+import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateEvent } from "@/types/api";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -1118,6 +1118,26 @@ export default function TradingPage() {
   const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
 
+  // Live in-match PnL — patched from the match.pnl.update SSE push so the
+  // Competition bottom bar below tracks price in real time instead of the
+  // frozen matches.challenger_pnl_pct/opponent_pnl_pct row snapshot (only
+  // written at match end). Falls back to the row snapshot (via `?? ` at the
+  // read site below) until the first qualifying push arrives. Reset to null
+  // on any match change so a stale number from a prior match can't leak.
+  const [livePnl, setLivePnl] = useState<{ challengerPnlPct: string; opponentPnlPct: string } | null>(null);
+  useEffect(() => {
+    setLivePnl(null);
+  }, [activeMatch?.id]);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<MatchPnlUpdateEvent>).detail;
+      if (!d || !activeMatch || d.matchId !== activeMatch.id) return;
+      setLivePnl({ challengerPnlPct: d.challengerPnlPct, opponentPnlPct: d.opponentPnlPct });
+    };
+    window.addEventListener("sse:match.pnl.update", handler);
+    return () => window.removeEventListener("sse:match.pnl.update", handler);
+  }, [activeMatch]);
+
   // Default to first pair on mount
   useEffect(() => {
     if (!selectedPairId && pairs.length > 0) {
@@ -1286,8 +1306,10 @@ export default function TradingPage() {
       {/* ── Competition bottom bar ── */}
       {isInCompetition && activeMatch && (() => {
         const isChallenger = activeMatch.challenger_id === userId;
-        const yourPnl = isChallenger ? activeMatch.challenger_pnl_pct : activeMatch.opponent_pnl_pct;
-        const oppPnl = isChallenger ? activeMatch.opponent_pnl_pct : activeMatch.challenger_pnl_pct;
+        const challengerPnlPct = livePnl?.challengerPnlPct ?? activeMatch.challenger_pnl_pct;
+        const opponentPnlPct = livePnl?.opponentPnlPct ?? activeMatch.opponent_pnl_pct;
+        const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
+        const oppPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
         const oppName = isChallenger ? (activeMatch.opponent_name ?? "OPPONENT") : (activeMatch.challenger_name ?? "OPPONENT");
         const endsAt = activeMatch.ends_at ? new Date(activeMatch.ends_at) : null;
         const now = new Date();
