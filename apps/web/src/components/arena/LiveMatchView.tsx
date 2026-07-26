@@ -11,7 +11,7 @@ import { MatchHeaderBar } from "./MatchHeaderBar";
 import { MatchEndOverlay } from "./MatchEndOverlay";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
-import type { Position, MatchEndedEvent } from "@/types/api";
+import type { Position, MatchEndedEvent, MatchPnlUpdateEvent } from "@/types/api";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -629,6 +629,25 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         };
         window.addEventListener("sse:match.ended", handler);
         return () => window.removeEventListener("sse:match.ended", handler);
+    }, [match.id]);
+
+    // Live in-match PnL — patches challenger/opponent PnL% from the
+    // match.pnl.update SSE push instead of the frozen row snapshot, so
+    // yourPnl/opponentPnl (derived below from this same match state) track
+    // price in real time. Same contained data-source swap as match.ended
+    // above; downstream derivation is unchanged.
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const d = (e as CustomEvent<MatchPnlUpdateEvent>).detail;
+            if (!d || d.matchId !== match.id || !isMounted.current) return;
+            setMatch((prev) => ({
+                ...prev,
+                challenger_pnl_pct: d.challengerPnlPct,
+                opponent_pnl_pct: d.opponentPnlPct,
+            }));
+        };
+        window.addEventListener("sse:match.pnl.update", handler);
+        return () => window.removeEventListener("sse:match.pnl.update", handler);
     }, [match.id]);
 
     // Safety net: poll every 30s in case a push was missed (slowed from 15s now
