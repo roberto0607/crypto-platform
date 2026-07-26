@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { getMatchHistory, type Match } from "@/api/endpoints/matches";
+import { getTierForElo, TIER_COLORS } from "@/lib/tiers";
 
 const PROFILE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
@@ -30,10 +31,10 @@ const PROFILE_CSS = `
     font-family:var(--pf-bebas);font-size:14px;letter-spacing:3px;
     padding:3px 12px;display:inline-block;
   }
-  .pf-tier-ROOKIE { color:var(--pf-g);border:1px solid rgba(0,255,65,0.3);background:rgba(0,255,65,0.06); }
-  .pf-tier-PRO { color:#3b82f6;border:1px solid rgba(59,130,246,0.3);background:rgba(59,130,246,0.06); }
-  .pf-tier-ELITE { color:#a855f7;border:1px solid rgba(168,85,247,0.3);background:rgba(168,85,247,0.06); }
-  .pf-tier-LEGEND { color:var(--pf-gold);border:1px solid rgba(255,215,0,0.3);background:rgba(255,215,0,0.06); }
+  .pf-tier-ROOKIE { color:${TIER_COLORS.ROOKIE};border:1px solid rgba(0,255,65,0.3);background:rgba(0,255,65,0.06); }
+  .pf-tier-PRO { color:${TIER_COLORS.PRO};border:1px solid rgba(59,130,246,0.3);background:rgba(59,130,246,0.06); }
+  .pf-tier-ELITE { color:${TIER_COLORS.ELITE};border:1px solid rgba(168,85,247,0.3);background:rgba(168,85,247,0.06); }
+  .pf-tier-LEGEND { color:${TIER_COLORS.LEGEND};border:1px solid rgba(255,215,0,0.3);background:rgba(255,215,0,0.06); }
   .pf-elo { font-family:var(--pf-bebas);font-size:18px;color:var(--pf-orange);letter-spacing:2px; }
 
   /* ELO progress bar */
@@ -78,38 +79,20 @@ const PROFILE_CSS = `
   .pf-empty { text-align:center;padding:24px;color:var(--pf-muted);font-size:11px;letter-spacing:2px; }
 `;
 
-// ELO tier thresholds
-const TIER_THRESHOLDS = [
-    { tier: "ROOKIE", min: 0, max: 999 },
-    { tier: "PRO", min: 1000, max: 1499 },
-    { tier: "ELITE", min: 1500, max: 1999 },
-    { tier: "LEGEND", min: 2000, max: 3000 },
-];
-
-function getTierForElo(elo: number): { tier: string; min: number; max: number; progress: number } {
-    for (const t of TIER_THRESHOLDS) {
-        if (elo >= t.min && elo <= t.max) {
-            const range = t.max - t.min;
-            const progress = range > 0 ? ((elo - t.min) / range) * 100 : 100;
-            return { ...t, progress };
-        }
-    }
-    const last = TIER_THRESHOLDS[TIER_THRESHOLDS.length - 1]!;
-    return { ...last, progress: 100 };
-}
-
 export default function ProfilePage() {
     const user = useAuthStore((s) => s.user);
     const userTier = useCompetitionStore((s) => s.userTier);
+    const eloRating = useCompetitionStore((s) => s.eloRating);
     const userBadges = useCompetitionStore((s) => s.userBadges);
     const fetchUserBadges = useCompetitionStore((s) => s.fetchUserBadges);
+    const fetchUserTier = useCompetitionStore((s) => s.fetchUserTier);
 
     const [matchHistory, setMatchHistory] = useState<Match[]>([]);
     const [stats, setStats] = useState({ total: 0, wins: 0, losses: 0, bestStreak: 0, currentStreak: 0 });
-    const [elo, setElo] = useState(800);
 
     useEffect(() => {
         fetchUserBadges();
+        fetchUserTier();
         loadMatchStats();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -133,21 +116,14 @@ export default function ProfilePage() {
             }
             if (!currentStreak) currentStreak = streak;
             setStats({ total: data.total, wins, losses, bestStreak, currentStreak });
-
-            // Get ELO from the most recent match's player info
-            if (data.matches.length > 0) {
-                const latest = data.matches[0]!;
-                const isChallenger = latest.challenger_id === userId;
-                setElo(isChallenger ? latest.challenger_elo : latest.opponent_elo);
-            }
         } catch { /* ignore */ }
     }
 
     const displayName = user?.displayName || user?.email?.split("@")[0] || "trader";
     const initials = displayName.slice(0, 2).toUpperCase();
-    const tier = getTierForElo(elo);
+    const tier = getTierForElo(eloRating);
     const winRate = stats.total > 0 ? ((stats.wins / stats.total) * 100).toFixed(1) : "0.0";
-    const nextTierName = TIER_THRESHOLDS.find((t) => t.min > elo)?.tier ?? "MAX";
+    const nextTierName = tier.nextTier ?? "MAX";
 
     return (
         <>
@@ -160,7 +136,7 @@ export default function ProfilePage() {
                         <div className="pf-name">{displayName.toUpperCase()}</div>
                         <div className="pf-tier-row">
                             <span className={`pf-tier-badge pf-tier-${userTier}`}>{userTier}</span>
-                            <span className="pf-elo">{elo} ELO</span>
+                            <span className="pf-elo">{eloRating} ELO</span>
                         </div>
                     </div>
                 </div>
@@ -169,7 +145,7 @@ export default function ProfilePage() {
                 <div className="pf-elo-bar-wrap">
                     <div className="pf-elo-bar-labels">
                         <span>{tier.tier} ({tier.min})</span>
-                        <span>{nextTierName} ({tier.max + 1})</span>
+                        <span>{nextTierName}{tier.nextMin !== null ? ` (${tier.nextMin})` : ""}</span>
                     </div>
                     <div className="pf-elo-bar-bg">
                         <div className="pf-elo-bar-fill" style={{ width: `${tier.progress}%` }} />
