@@ -43,6 +43,7 @@ import { startFootprintAggregator } from "./services/footprintAggregator"
 import { startPressureAggregator } from "./services/pressureAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { startAlertEngine } from "./alerts/alertEngine";
+import { startMatchPnlEngine } from "./competitions/matchPnlEngine";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
@@ -59,6 +60,8 @@ export interface BuildAppOptions {
   disableTriggerEngine?: boolean;
   /** Skip starting alert engine (useful for tests). */
   disableAlertEngine?: boolean;
+  /** Skip starting match PnL engine (useful for tests). */
+  disableMatchPnlEngine?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
@@ -368,6 +371,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Alert engine --
   if (!opts.disableAlertEngine) {
     app.addHook("onReady", async () => { await startAlertEngine(); });
+  }
+
+  // -- Match PnL engine --
+  if (!opts.disableMatchPnlEngine) {
+    app.addHook("onReady", async () => { await startMatchPnlEngine(); });
   }
 
   // -- Job runner --
