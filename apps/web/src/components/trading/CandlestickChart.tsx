@@ -58,9 +58,10 @@ import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
-import { useDrawingStore, type StoredDrawing } from "@/stores/drawingStore";
+import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing } from "@/stores/drawingStore";
 import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
 import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
+import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
@@ -323,6 +324,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // deletes drawings, so it's synced in its own effect below rather than
     // the once-only chart-creation effect.
     const drawingPrimitivesRef = useRef<Map<string, BaseDrawingPrimitive<StoredDrawing>>>(new Map());
+    // Dashed ghost preview shown while a 2-point tool (Trendline/Rectangle) is
+    // mid-placement (anchor clicked, second point pending).
+    const pendingPreviewPrimitiveRef = useRef<PendingDrawingPreviewPrimitive | null>(null);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
@@ -623,6 +627,56 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         liquidationLevelsPrimitiveRef.current = liquidationLevelsPrimitive;
         console.log("[liq] primitive attached:", !!liquidationLevelsPrimitiveRef.current);
 
+        // Drawing tools — dashed 2-point placement preview (always attached,
+        // toggled via setPreview(null)).
+        const pendingPreviewPrimitive = new PendingDrawingPreviewPrimitive();
+        series.attachPrimitive(pendingPreviewPrimitive);
+        pendingPreviewPrimitive.setChart(chart);
+        pendingPreviewPrimitiveRef.current = pendingPreviewPrimitive;
+
+        // Drawing tools — click-to-place. A no-op when no tool is active;
+        // real hitTest-driven selection is wired in a later commit, so an
+        // idle click currently does nothing (not even deselect).
+        chart.subscribeClick((param) => {
+            const { activeTool, addPoint } = useDrawingStore.getState();
+            if (!activeTool) return;
+            if (param.time == null || !param.point) return;
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) return;
+            addPoint({ time: param.time as number, price });
+        });
+
+        // Drawing tools — dashed preview between the placed anchor and the
+        // live cursor for 2-point tools (Trendline/Rectangle), mid-placement
+        // only. Piggybacks on a SEPARATE subscribeCrosshairMove subscription
+        // (coexists with the OHLCV readout's below — same dual-subscription
+        // pattern usePanelCrosshairHover.ts already relies on) rather than a
+        // new mousemove listener, since the crosshair already fires on every
+        // pointer move regardless of button state.
+        chart.subscribeCrosshairMove((param) => {
+            const { activeTool, pendingPoints } = useDrawingStore.getState();
+            if (!activeTool || pendingPoints.length === 0 || !param.time || !param.point) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            const spec = DRAWING_TOOL_SPECS[activeTool];
+            if (spec.requiredPoints < 2) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            pendingPreviewPrimitive.setPreview({
+                mode: activeTool === "rect" ? "rect" : "line",
+                anchor: pendingPoints[0]!,
+                cursor: { time: param.time as number, price },
+                color: spec.defaultColor,
+            });
+        });
+
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
             if (!param.time || !param.seriesData) {
@@ -678,6 +732,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // Detach any drawing primitives too — the next mount's sync effect
             // starts from an empty map and re-attaches from the store's array.
             drawingPrimitivesRef.current.clear();
+            pendingPreviewPrimitiveRef.current = null;
         };
     }, []);
 
@@ -686,6 +741,35 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     useEffect(() => {
         if (selectedPairId) useDrawingStore.getState().loadForPair(selectedPairId);
     }, [selectedPairId]);
+
+    // Esc cancels an in-progress placement (standard charting-tool convention).
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") useDrawingStore.getState().cancelPlacement();
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, []);
+
+    // Pan/zoom is locked while a drawing tool is selected/mid-placement —
+    // matches TradingView's own convention (a stray drag shouldn't scroll the
+    // chart out from under a half-placed drawing). NOT locked merely because
+    // a drawing is selected (a user should be able to pan/zoom to inspect a
+    // selected drawing elsewhere on the chart without losing the selection).
+    const activeTool = useDrawingStore((s) => s.activeTool);
+    useEffect(() => {
+        chartRef.current?.applyOptions({
+            handleScroll: !activeTool,
+            handleScale: !activeTool,
+        });
+    }, [activeTool]);
+
+    // Clear the placement preview immediately on commit/cancel (not just on
+    // the next mousemove, which may not fire right after a click).
+    const pendingPoints = useDrawingStore((s) => s.pendingPoints);
+    useEffect(() => {
+        if (pendingPoints.length === 0) pendingPreviewPrimitiveRef.current?.setPreview(null);
+    }, [pendingPoints]);
 
     // Keep attached drawing primitives in sync with the store's `drawings`
     // array — attach new ones, detach removed ones. Unlike the always-on
