@@ -58,6 +58,12 @@ import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
+import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing } from "@/stores/drawingStore";
+import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
+import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
+import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
+import { parseAnchorExternalId } from "@/lib/drawings/drawingPrimitiveShared";
+import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
@@ -284,6 +290,79 @@ interface CandlestickChartProps {
     fundingRateHourly?: number | null;
 }
 
+/**
+ * Text Annotation — the one drawing type that's a DOM chip rather than a
+ * canvas primitive (editable text needs a real input, not canvas text).
+ * Selected (just placed, or reopened via double-click) → an autofocused
+ * input; otherwise a static label matching the VWAP/BB legend-chip style.
+ * Uncontrolled input (defaultValue, not value) — this file's own re-renders
+ * (price ticks, etc.) fire far more often than the user types, and a
+ * controlled input synced through drawingStore's `text` field would need to
+ * commit on every keystroke.
+ */
+function TextAnnotationChip({
+    drawing,
+    x,
+    y,
+    editing,
+}: {
+    drawing: StoredDrawing;
+    x: number;
+    y: number;
+    editing: boolean;
+}) {
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const commit = () => {
+        const value = inputRef.current?.value ?? "";
+        useDrawingStore.getState().setDrawingText(drawing.id, value);
+        useDrawingStore.getState().selectDrawing(null);
+    };
+
+    if (editing) {
+        return (
+            <input
+                ref={inputRef}
+                autoFocus
+                defaultValue={drawing.text ?? ""}
+                placeholder="Text…"
+                onBlur={commit}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") { useDrawingStore.getState().selectDrawing(null); }
+                }}
+                style={{
+                    position: "absolute", left: x + 6, top: y - 10,
+                    zIndex: 8, pointerEvents: "auto",
+                    background: "rgba(8,12,18,0.92)",
+                    border: `1px solid ${drawing.color}`,
+                    borderRadius: 3, padding: "3px 6px",
+                    color: drawing.color, fontFamily: "monospace", fontSize: 11,
+                    minWidth: 80,
+                }}
+            />
+        );
+    }
+
+    return (
+        <div
+            onDoubleClick={() => useDrawingStore.getState().selectDrawing(drawing.id)}
+            style={{
+                position: "absolute", left: x + 6, top: y - 10,
+                zIndex: 8, pointerEvents: "auto", cursor: "text",
+                background: "rgba(8,12,18,0.85)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderLeft: `3px solid ${drawing.color}`,
+                borderRadius: 3, padding: "3px 7px",
+                color: drawing.color, fontFamily: "monospace", fontSize: 11,
+                whiteSpace: "nowrap",
+            }}
+        >
+            {drawing.text || <span style={{ opacity: 0.4 }}>(empty — double-click to edit)</span>}
+        </div>
+    );
+}
+
 export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -314,6 +393,66 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const heatmapPrimitiveRef = useRef<OrderbookHeatmapPrimitive | null>(null);
     const footprintPrimitiveRef = useRef<FootprintPrimitive | null>(null);
     const liquidationLevelsPrimitiveRef = useRef<LiquidationLevelsPrimitive | null>(null);
+    // Drawing tools (Gate 1) — one primitive instance per placed drawing,
+    // keyed by drawing id. Unlike the indicator primitives above (attached
+    // once, toggled via setData), this set grows/shrinks as the user adds/
+    // deletes drawings, so it's synced in its own effect below rather than
+    // the once-only chart-creation effect.
+    const drawingPrimitivesRef = useRef<Map<string, BaseDrawingPrimitive<StoredDrawing>>>(new Map());
+    // Dashed ghost preview shown while a 2-point tool (Trendline/Rectangle) is
+    // mid-placement (anchor clicked, second point pending).
+    const pendingPreviewPrimitiveRef = useRef<PendingDrawingPreviewPrimitive | null>(null);
+    // Text Annotation — DOM chip positions (screen coords), one per "text"
+    // drawing. Recomputed on pan/zoom/resize/drawings-change; NOT a canvas
+    // primitive (see createDrawingPrimitive's "text" case), since editable
+    // text needs a real DOM input rather than canvas text rendering.
+    const [textChipPositions, setTextChipPositions] = useState<Record<string, { x: number; y: number } | null>>({});
+    const recomputeTextChipPositions = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) return;
+        const textDrawings = useDrawingStore.getState().drawings.filter((d) => d.type === "text");
+        if (textDrawings.length === 0) {
+            setTextChipPositions((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+            return;
+        }
+        const timeScale = chart.timeScale();
+        const next: Record<string, { x: number; y: number } | null> = {};
+        for (const d of textDrawings) {
+            const p = d.points[0];
+            if (!p) {
+                next[d.id] = null;
+                continue;
+            }
+            const x = timeScale.timeToCoordinate(p.time as Time);
+            const y = series.priceToCoordinate(p.price);
+            next[d.id] = x != null && y != null ? { x, y } : null;
+        }
+        setTextChipPositions(next);
+    }, []);
+    // Delete-icon position — tracks the CURRENTLY SELECTED drawing's first
+    // anchor (any type, canvas or text), same recompute triggers as the text
+    // chips (pan/zoom, resize, drawings/selection change).
+    const [deleteIconPos, setDeleteIconPos] = useState<{ x: number; y: number } | null>(null);
+    const recomputeDeleteIconPosition = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) return;
+        const { selectedDrawingId, drawings: currentDrawings } = useDrawingStore.getState();
+        if (!selectedDrawingId) {
+            setDeleteIconPos(null);
+            return;
+        }
+        const drawing = currentDrawings.find((d) => d.id === selectedDrawingId);
+        const p = drawing?.points[0];
+        if (!p) {
+            setDeleteIconPos(null);
+            return;
+        }
+        const x = chart.timeScale().timeToCoordinate(p.time as Time);
+        const y = series.priceToCoordinate(p.price);
+        setDeleteIconPos(x != null && y != null ? { x, y } : null);
+    }, []);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
@@ -614,6 +753,106 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         liquidationLevelsPrimitiveRef.current = liquidationLevelsPrimitive;
         console.log("[liq] primitive attached:", !!liquidationLevelsPrimitiveRef.current);
 
+        // Drawing tools — dashed 2-point placement preview (always attached,
+        // toggled via setPreview(null)).
+        const pendingPreviewPrimitive = new PendingDrawingPreviewPrimitive();
+        series.attachPrimitive(pendingPreviewPrimitive);
+        pendingPreviewPrimitive.setChart(chart);
+        pendingPreviewPrimitiveRef.current = pendingPreviewPrimitive;
+
+        // Drawing tools — click-to-place when a tool is active, click-to-
+        // select/deselect otherwise.
+        chart.subscribeClick((param) => {
+            const { activeTool, addPoint, selectDrawing } = useDrawingStore.getState();
+            if (!activeTool) {
+                // Idle click — select/deselect. The library resolves
+                // hoveredObjectId from each attached primitive's hitTest
+                // itself; we never iterate hitTest manually. An anchor-handle
+                // hit (only possible while already selected) still just
+                // (re-)selects the same drawing — dragging is a separate,
+                // mousedown-driven path below, not a click.
+                const hitId = typeof param.hoveredObjectId === "string" ? param.hoveredObjectId : null;
+                const parsed = hitId ? parseAnchorExternalId(hitId) : null;
+                selectDrawing(parsed ? parsed.drawingId : hitId);
+                return;
+            }
+            if (param.time == null || !param.point) return;
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) return;
+            addPoint({ time: param.time as number, price });
+        });
+
+        // Drawing tools — dashed preview between the placed anchor and the
+        // live cursor for 2-point tools (Trendline/Rectangle), mid-placement
+        // only. Piggybacks on a SEPARATE subscribeCrosshairMove subscription
+        // (coexists with the OHLCV readout's below — same dual-subscription
+        // pattern usePanelCrosshairHover.ts already relies on) rather than a
+        // new mousemove listener, since the crosshair already fires on every
+        // pointer move regardless of button state.
+        chart.subscribeCrosshairMove((param) => {
+            const { activeTool, pendingPoints } = useDrawingStore.getState();
+            if (!activeTool || pendingPoints.length === 0 || !param.time || !param.point) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            const spec = DRAWING_TOOL_SPECS[activeTool];
+            if (spec.requiredPoints < 2) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) {
+                pendingPreviewPrimitive.setPreview(null);
+                return;
+            }
+            pendingPreviewPrimitive.setPreview({
+                mode: activeTool === "rect" ? "rect" : "line",
+                anchor: pendingPoints[0]!,
+                cursor: { time: param.time as number, price },
+                color: spec.defaultColor,
+            });
+        });
+
+        // Drawing tools — anchor drag-to-edit. Live position updates while
+        // draggingAnchor is set, via the same crosshair-fires-on-every-move
+        // mechanism as the placement preview above (separate subscription,
+        // same dual-subscription precedent).
+        chart.subscribeCrosshairMove((param) => {
+            const { draggingAnchor, updateDraggingAnchor } = useDrawingStore.getState();
+            if (!draggingAnchor || param.time == null || !param.point) return;
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) return;
+            updateDraggingAnchor({ time: param.time as number, price });
+        });
+
+        // Drawing tools — anchor drag START/END. Dragging is a mousedown-
+        // then-move-then-mouseup gesture, which the library's subscribeClick
+        // (fires on mouseup-with-minimal-movement) can't detect — click and
+        // drag are mutually exclusive interactions here, so this uses raw
+        // DOM events on the container instead. Only starts a drag when
+        // idle (no activeTool) AND something is already selected AND the
+        // mousedown lands on THAT selected drawing's own anchor handle
+        // (hitTest only returns anchor hits while primitive.selected).
+        const handleMouseDown = (e: MouseEvent) => {
+            const { activeTool, selectedDrawingId, startDraggingAnchor } = useDrawingStore.getState();
+            if (activeTool || !selectedDrawingId || !containerRef.current) return;
+            const primitive = drawingPrimitivesRef.current.get(selectedDrawingId);
+            if (!primitive) return; // e.g. a Text Annotation — not a canvas primitive, not draggable this pass
+            const rect = containerRef.current.getBoundingClientRect();
+            const hit = primitive.hitTest(e.clientX - rect.left, e.clientY - rect.top);
+            if (!hit) return;
+            const parsed = parseAnchorExternalId(hit.externalId);
+            if (!parsed || parsed.drawingId !== selectedDrawingId) return;
+            startDraggingAnchor(selectedDrawingId, parsed.anchorIndex);
+        };
+        const handleMouseUp = () => {
+            if (useDrawingStore.getState().draggingAnchor) useDrawingStore.getState().commitDraggingAnchor();
+        };
+        containerRef.current.addEventListener("mousedown", handleMouseDown);
+        // On window, not the container — a drag released outside the chart
+        // (fast mouse movement) must still commit, not leave a stuck drag.
+        window.addEventListener("mouseup", handleMouseUp);
+
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
             if (!param.time || !param.seriesData) {
@@ -648,17 +887,30 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             });
         });
 
+        // Text Annotation chips are DOM elements tracking a (time, price)
+        // coordinate, not canvas primitives — they don't get a free repaint
+        // from the chart's own render loop, so reposition explicitly on the
+        // two things that move a coordinate on screen: panning/zooming...
+        chart.timeScale().subscribeVisibleLogicalRangeChange(recomputeTextChipPositions);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(recomputeDeleteIconPosition);
+
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
                 chart.applyOptions({ width, height });
             }
+            // ...and resizing (container width/height change shifts every
+            // coordinate even at a fixed pan/zoom position).
+            recomputeTextChipPositions();
+            recomputeDeleteIconPosition();
         });
         observer.observe(containerRef.current);
 
         return () => {
             observer.disconnect();
+            containerRef.current?.removeEventListener("mousedown", handleMouseDown);
+            window.removeEventListener("mouseup", handleMouseUp);
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -666,8 +918,106 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // The markers plugin lives on the (now-removed) series; drop the ref
             // so the next mount recreates it cleanly.
             emaCrossMarkersRef.current = null;
+            // Detach any drawing primitives too — the next mount's sync effect
+            // starts from an empty map and re-attaches from the store's array.
+            drawingPrimitivesRef.current.clear();
+            pendingPreviewPrimitiveRef.current = null;
         };
     }, []);
+
+    // Load this pair's persisted drawings whenever the selected pair changes
+    // (loadForPair no-ops if already loaded for this pair, e.g. re-renders).
+    useEffect(() => {
+        if (selectedPairId) useDrawingStore.getState().loadForPair(selectedPairId);
+    }, [selectedPairId]);
+
+
+    // Esc cancels an in-progress placement; Delete/Backspace removes the
+    // selected drawing (standard charting-tool convention for both).
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                useDrawingStore.getState().cancelPlacement();
+                return;
+            }
+            if (e.key === "Delete" || e.key === "Backspace") {
+                // Don't hijack Backspace while the user is typing anywhere
+                // else in the app (order amount field, symbol search, a Text
+                // Annotation's own edit box, etc.) — only act when focus
+                // isn't inside a text-editing control.
+                const target = e.target as HTMLElement | null;
+                const isTyping = !!target && (
+                    target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
+                );
+                if (isTyping) return;
+                useDrawingStore.getState().deleteSelected();
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, []);
+
+    // Pan/zoom is locked while a drawing tool is selected/mid-placement OR an
+    // anchor is being dragged — matches TradingView's own convention (a
+    // stray drag shouldn't scroll the chart out from under a half-placed
+    // drawing, or yank a dragged anchor sideways as the viewport pans under
+    // it). NOT locked merely because a drawing is selected (a user should be
+    // able to pan/zoom to inspect a selected drawing elsewhere on the chart
+    // without losing the selection).
+    const activeTool = useDrawingStore((s) => s.activeTool);
+    const draggingAnchor = useDrawingStore((s) => s.draggingAnchor);
+    useEffect(() => {
+        const locked = !!activeTool || !!draggingAnchor;
+        chartRef.current?.applyOptions({
+            handleScroll: !locked,
+            handleScale: !locked,
+        });
+    }, [activeTool, draggingAnchor]);
+
+    // Clear the placement preview immediately on commit/cancel (not just on
+    // the next mousemove, which may not fire right after a click).
+    const pendingPoints = useDrawingStore((s) => s.pendingPoints);
+    useEffect(() => {
+        if (pendingPoints.length === 0) pendingPreviewPrimitiveRef.current?.setPreview(null);
+    }, [pendingPoints]);
+
+    // Keep attached drawing primitives in sync with the store's `drawings`
+    // array — attach new ones, detach removed ones. Unlike the always-on
+    // indicator primitives (attached once, toggled via setData), drawings are
+    // added/removed at arbitrary times as the user places/deletes them.
+    const drawings = useDrawingStore((s) => s.drawings);
+    const selectedDrawingId = useDrawingStore((s) => s.selectedDrawingId);
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series) return;
+        const attached = drawingPrimitivesRef.current;
+        const currentIds = new Set(drawings.map((d) => d.id));
+
+        for (const [id, primitive] of attached) {
+            if (!currentIds.has(id)) {
+                series.detachPrimitive(primitive);
+                attached.delete(id);
+            }
+        }
+
+        for (const drawing of drawings) {
+            const existing = attached.get(drawing.id);
+            if (existing) {
+                existing.setData(drawing);
+                existing.setSelected(drawing.id === selectedDrawingId);
+                continue;
+            }
+            const primitive = createDrawingPrimitive(drawing);
+            if (!primitive) continue; // "text" — rendered as a DOM chip, not a primitive
+            if (chartRef.current) primitive.setChart(chartRef.current);
+            primitive.setSelected(drawing.id === selectedDrawingId);
+            series.attachPrimitive(primitive);
+            attached.set(drawing.id, primitive);
+        }
+
+        recomputeTextChipPositions();
+        recomputeDeleteIconPosition();
+    }, [drawings, selectedDrawingId, recomputeTextChipPositions, recomputeDeleteIconPosition]);
 
     // Snap the viewport back to the live edge — the recent-bar window, matching
     // the default (first-load) view exactly so the at-edge detection reliably
@@ -1597,8 +1947,51 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 this component. What used to be the Market Context Bar (OHLC,
                 funding, pressure, hero price) is now a floating TradingView-style
                 legend anchored to the top-left of the chart canvas itself. */}
-            <div className="relative flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0 flex">
+                <DrawingToolStrip />
+                <div className="relative flex-1 min-w-0">
                 <div ref={containerRef} className="absolute inset-0" />
+
+                {/* ── Text Annotation chips ── DOM overlay (not canvas — see
+                    TextAnnotationChip's comment). One per "text" drawing with
+                    a resolved on-screen position; off-screen anchors (panned
+                    out of view) simply render nothing until scrolled back. */}
+                {drawings
+                    .filter((d) => d.type === "text")
+                    .map((d) => {
+                        const pos = textChipPositions[d.id];
+                        if (!pos) return null;
+                        return (
+                            <TextAnnotationChip
+                                key={d.id}
+                                drawing={d}
+                                x={pos.x}
+                                y={pos.y}
+                                editing={selectedDrawingId === d.id}
+                            />
+                        );
+                    })}
+
+                {/* ── Delete-icon affordance ── small × near the selected
+                    drawing's first anchor (any type). Delete key does the
+                    same thing — this covers no-keyboard-focus/touch cases. */}
+                {selectedDrawingId && deleteIconPos && (
+                    <button
+                        onClick={() => useDrawingStore.getState().deleteSelected()}
+                        title="Delete drawing"
+                        style={{
+                            position: "absolute", left: deleteIconPos.x + 14, top: deleteIconPos.y - 24,
+                            zIndex: 9, pointerEvents: "auto",
+                            width: 18, height: 18, borderRadius: "50%",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(255,59,59,0.9)", border: "1px solid #fff",
+                            color: "#fff", fontSize: 12, lineHeight: 1, fontWeight: 700,
+                            cursor: "pointer", padding: 0,
+                        }}
+                    >
+                        ×
+                    </button>
+                )}
 
                 {/* ── Chart legend overlay — hero price + FILL SPREAD, OHLC,
                     funding rate, buy/sell pressure. Floats over the chart's
@@ -2105,6 +2498,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         <span aria-hidden="true">»</span>
                     </button>
                 )}
+                </div>
             </div>
 
             {/* Order Blocks — DOM overlay */}
