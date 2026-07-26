@@ -491,3 +491,43 @@ pair-switch-persistence, timeframe-switch-anchoring). **Stop before merge** —
 this is the highest bug-risk code written tonight (genuinely new interaction
 layer, first-ever mouse-drag state machine in this codebase), needs explicit
 review before landing on `main`.
+
+## 11. KNOWN LIMITATION — time-anchored drawings can disappear on a
+timeframe switch (found during the final verification pass, 2026-07-26)
+
+Confirmed empirically (not a bug in this pass's code — a direct, expected
+consequence of the exact-match `timeToCoordinate` behavior documented in
+§5's update note): a drawing's anchor `time` is stored as the exact candle
+boundary it was clicked on, in whichever timeframe was active at placement.
+Switching to a **coarser** timeframe whose bar grid doesn't happen to
+include that exact timestamp makes `timeToCoordinate` return `null` for
+that anchor — the primitive's `if (x == null) return;` guard then makes it
+silently not render (no error, no crash, just gone) until the user switches
+back to a timeframe whose grid does include that time.
+
+Verified directly against `chart.timeScale().timeToCoordinate()`: a full
+set of 6 drawings placed on 1h all resolved fine after switching to **15m**
+(every 1h boundary is also a valid 15m boundary — both are calendar-aligned
+to `:00`, and 15m divides 60m evenly), but switching to **4h** broke 4 of
+6 (`hline`, `hray`, both `trendline` anchors, one `rect` anchor) — only
+anchors that happened to fall on an hour divisible by 4 survived. This is
+directional: fine → coarse is the risky direction; coarse → fine is safe
+(coarser grids are always a subset of finer ones, given calendar-aligned
+bucketing).
+
+**Not fixed in this pass** — flagging for a future pass rather than
+expanding scope now, matching this repo's existing convention for
+documented-not-blocking gaps (see the Stage 6 replay limitation in
+`CLAUDE.md`). Two directions worth considering when picked up:
+- Store anchors "loosely" and have each primitive's renderer fall back to
+  interpolating/clamping to the nearest visible bar instead of requiring
+  an exact match (bigger change — touches every primitive's render path).
+- Leave storage as-is, but resolve anchor time through a STEP-lookup
+  (nearest bar ≤ the stored time) at render time instead of passing the
+  raw stored time straight to `timeToCoordinate` — smaller change, and the
+  STEP-lookup pattern already exists in `usePanelCrosshairHover.ts`.
+
+Text Annotation is unaffected in kind (same `timeToCoordinate`-based
+positioning as the canvas tools) but wasn't separately stress-tested beyond
+the 1h→15m→4h sequence above — assume it has the same limitation, not a
+different one.
