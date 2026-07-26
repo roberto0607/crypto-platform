@@ -552,9 +552,16 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const vpvrMode = "visible" as const;
 
     // Tracks whether the component is still mounted, so async SSE handlers
-    // and polls don't setState on an unmounted component.
+    // and polls don't setState on an unmounted component. Must set true on
+    // mount, not just false in cleanup -- React StrictMode's dev-only
+    // mount/unmount/remount double-invoke runs this effect's cleanup once
+    // before the "real" mount, which without the explicit reset left
+    // isMounted.current permanently false for the rest of the session
+    // (silently no-oping every isMounted-gated handler below, including
+    // match.ended's fast path). Dev-only; production doesn't double-invoke.
     const isMounted = useRef(true);
     useEffect(() => {
+        isMounted.current = true;
         return () => {
             isMounted.current = false;
         };
@@ -563,8 +570,23 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const isChallenger = match.challenger_id === userId;
     const yourName = isChallenger ? (match.challenger_name ?? "YOU") : (match.opponent_name ?? "YOU");
     const opponentName = isChallenger ? (match.opponent_name ?? "OPPONENT") : (match.challenger_name ?? "OPPONENT");
-    const yourPnl = isChallenger ? match.challenger_pnl_pct : match.opponent_pnl_pct;
-    const opponentPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
+
+    // Live in-match PnL — kept as separate state from `match`, NOT patched
+    // into it, because syncMatchState's 30s safety-net poll (and the
+    // reconnect refetch) call setMatch(data.match) wholesale from the
+    // stale DB row snapshot every cycle; patching pnl fields directly into
+    // `match` would get clobbered back to 0.00% on the very next poll.
+    // Falls back to the row snapshot until the first qualifying push
+    // arrives; reset on match change so a stale number can't leak.
+    const [livePnl, setLivePnl] = useState<{ challengerPnlPct: string; opponentPnlPct: string } | null>(null);
+    useEffect(() => {
+        setLivePnl(null);
+    }, [match.id]);
+
+    const challengerPnlPct = livePnl?.challengerPnlPct ?? match.challenger_pnl_pct;
+    const opponentPnlPct = livePnl?.opponentPnlPct ?? match.opponent_pnl_pct;
+    const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
+    const opponentPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
 
     // Default to first active pair on mount
     useEffect(() => {
@@ -594,6 +616,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
             if (data.match) {
                 setMatch(data.match);
                 if (data.match.status === "COMPLETED" || data.match.status === "FORFEITED") {
+                    setLivePnl(null);
                     setShowEndOverlay(true);
                 }
             } else {
@@ -602,7 +625,10 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                     const { data: full } = await getMatch(match.id);
                     if (isMounted.current) setMatch(full.match);
                 } catch { /* ignore — overlay will use existing match state */ }
-                if (isMounted.current) setShowEndOverlay(true);
+                if (isMounted.current) {
+                    setLivePnl(null);
+                    setShowEndOverlay(true);
+                }
             }
         } catch { /* ignore */ }
     }, [match.id]);
@@ -625,26 +651,24 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                 opponent_pnl_pct: d.opponentPnlPct,
                 elo_delta: d.eloDeltas?.winner ?? prev.elo_delta,
             }));
+            // Clear the live push so these authoritative terminal values (not
+            // a slightly-earlier live number) win via the livePnl ?? match.*
+            // fallback above.
+            setLivePnl(null);
             setShowEndOverlay(true);
         };
         window.addEventListener("sse:match.ended", handler);
         return () => window.removeEventListener("sse:match.ended", handler);
     }, [match.id]);
 
-    // Live in-match PnL — patches challenger/opponent PnL% from the
-    // match.pnl.update SSE push instead of the frozen row snapshot, so
-    // yourPnl/opponentPnl (derived below from this same match state) track
-    // price in real time. Same contained data-source swap as match.ended
-    // above; downstream derivation is unchanged.
+    // Live in-match PnL — patches the separate livePnl state (see above)
+    // from the match.pnl.update SSE push instead of the frozen row
+    // snapshot, so yourPnl/opponentPnl track price in real time.
     useEffect(() => {
         const handler = (e: Event) => {
             const d = (e as CustomEvent<MatchPnlUpdateEvent>).detail;
             if (!d || d.matchId !== match.id || !isMounted.current) return;
-            setMatch((prev) => ({
-                ...prev,
-                challenger_pnl_pct: d.challengerPnlPct,
-                opponent_pnl_pct: d.opponentPnlPct,
-            }));
+            setLivePnl({ challengerPnlPct: d.challengerPnlPct, opponentPnlPct: d.opponentPnlPct });
         };
         window.addEventListener("sse:match.pnl.update", handler);
         return () => window.removeEventListener("sse:match.pnl.update", handler);
