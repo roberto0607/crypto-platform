@@ -288,6 +288,79 @@ interface CandlestickChartProps {
     fundingRateHourly?: number | null;
 }
 
+/**
+ * Text Annotation — the one drawing type that's a DOM chip rather than a
+ * canvas primitive (editable text needs a real input, not canvas text).
+ * Selected (just placed, or reopened via double-click) → an autofocused
+ * input; otherwise a static label matching the VWAP/BB legend-chip style.
+ * Uncontrolled input (defaultValue, not value) — this file's own re-renders
+ * (price ticks, etc.) fire far more often than the user types, and a
+ * controlled input synced through drawingStore's `text` field would need to
+ * commit on every keystroke.
+ */
+function TextAnnotationChip({
+    drawing,
+    x,
+    y,
+    editing,
+}: {
+    drawing: StoredDrawing;
+    x: number;
+    y: number;
+    editing: boolean;
+}) {
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    const commit = () => {
+        const value = inputRef.current?.value ?? "";
+        useDrawingStore.getState().setDrawingText(drawing.id, value);
+        useDrawingStore.getState().selectDrawing(null);
+    };
+
+    if (editing) {
+        return (
+            <input
+                ref={inputRef}
+                autoFocus
+                defaultValue={drawing.text ?? ""}
+                placeholder="Text…"
+                onBlur={commit}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    if (e.key === "Escape") { useDrawingStore.getState().selectDrawing(null); }
+                }}
+                style={{
+                    position: "absolute", left: x + 6, top: y - 10,
+                    zIndex: 8, pointerEvents: "auto",
+                    background: "rgba(8,12,18,0.92)",
+                    border: `1px solid ${drawing.color}`,
+                    borderRadius: 3, padding: "3px 6px",
+                    color: drawing.color, fontFamily: "monospace", fontSize: 11,
+                    minWidth: 80,
+                }}
+            />
+        );
+    }
+
+    return (
+        <div
+            onDoubleClick={() => useDrawingStore.getState().selectDrawing(drawing.id)}
+            style={{
+                position: "absolute", left: x + 6, top: y - 10,
+                zIndex: 8, pointerEvents: "auto", cursor: "text",
+                background: "rgba(8,12,18,0.85)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderLeft: `3px solid ${drawing.color}`,
+                borderRadius: 3, padding: "3px 7px",
+                color: drawing.color, fontFamily: "monospace", fontSize: 11,
+                whiteSpace: "nowrap",
+            }}
+        >
+            {drawing.text || <span style={{ opacity: 0.4 }}>(empty — double-click to edit)</span>}
+        </div>
+    );
+}
+
 export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -327,6 +400,34 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // Dashed ghost preview shown while a 2-point tool (Trendline/Rectangle) is
     // mid-placement (anchor clicked, second point pending).
     const pendingPreviewPrimitiveRef = useRef<PendingDrawingPreviewPrimitive | null>(null);
+    // Text Annotation — DOM chip positions (screen coords), one per "text"
+    // drawing. Recomputed on pan/zoom/resize/drawings-change; NOT a canvas
+    // primitive (see createDrawingPrimitive's "text" case), since editable
+    // text needs a real DOM input rather than canvas text rendering.
+    const [textChipPositions, setTextChipPositions] = useState<Record<string, { x: number; y: number } | null>>({});
+    const recomputeTextChipPositions = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) return;
+        const textDrawings = useDrawingStore.getState().drawings.filter((d) => d.type === "text");
+        if (textDrawings.length === 0) {
+            setTextChipPositions((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+            return;
+        }
+        const timeScale = chart.timeScale();
+        const next: Record<string, { x: number; y: number } | null> = {};
+        for (const d of textDrawings) {
+            const p = d.points[0];
+            if (!p) {
+                next[d.id] = null;
+                continue;
+            }
+            const x = timeScale.timeToCoordinate(p.time as Time);
+            const y = series.priceToCoordinate(p.price);
+            next[d.id] = x != null && y != null ? { x, y } : null;
+        }
+        setTextChipPositions(next);
+    }, []);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
@@ -711,12 +812,21 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             });
         });
 
+        // Text Annotation chips are DOM elements tracking a (time, price)
+        // coordinate, not canvas primitives — they don't get a free repaint
+        // from the chart's own render loop, so reposition explicitly on the
+        // two things that move a coordinate on screen: panning/zooming...
+        chart.timeScale().subscribeVisibleLogicalRangeChange(recomputeTextChipPositions);
+
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
                 chart.applyOptions({ width, height });
             }
+            // ...and resizing (container width/height change shifts every
+            // coordinate even at a fixed pan/zoom position).
+            recomputeTextChipPositions();
         });
         observer.observe(containerRef.current);
 
@@ -776,6 +886,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // indicator primitives (attached once, toggled via setData), drawings are
     // added/removed at arbitrary times as the user places/deletes them.
     const drawings = useDrawingStore((s) => s.drawings);
+    const selectedDrawingId = useDrawingStore((s) => s.selectedDrawingId);
     useEffect(() => {
         const series = seriesRef.current;
         if (!series) return;
@@ -801,7 +912,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             series.attachPrimitive(primitive);
             attached.set(drawing.id, primitive);
         }
-    }, [drawings]);
+
+        recomputeTextChipPositions();
+    }, [drawings, recomputeTextChipPositions]);
 
     // Snap the viewport back to the live edge — the recent-bar window, matching
     // the default (first-load) view exactly so the at-edge detection reliably
@@ -1733,6 +1846,26 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 legend anchored to the top-left of the chart canvas itself. */}
             <div className="relative flex-1 min-h-0">
                 <div ref={containerRef} className="absolute inset-0" />
+
+                {/* ── Text Annotation chips ── DOM overlay (not canvas — see
+                    TextAnnotationChip's comment). One per "text" drawing with
+                    a resolved on-screen position; off-screen anchors (panned
+                    out of view) simply render nothing until scrolled back. */}
+                {drawings
+                    .filter((d) => d.type === "text")
+                    .map((d) => {
+                        const pos = textChipPositions[d.id];
+                        if (!pos) return null;
+                        return (
+                            <TextAnnotationChip
+                                key={d.id}
+                                drawing={d}
+                                x={pos.x}
+                                y={pos.y}
+                                editing={selectedDrawingId === d.id}
+                            />
+                        );
+                    })}
 
                 {/* ── Chart legend overlay — hero price + FILL SPREAD, OHLC,
                     funding rate, buy/sell pressure. Floats over the chart's
