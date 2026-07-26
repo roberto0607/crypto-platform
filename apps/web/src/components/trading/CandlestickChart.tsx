@@ -428,6 +428,29 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         }
         setTextChipPositions(next);
     }, []);
+    // Delete-icon position — tracks the CURRENTLY SELECTED drawing's first
+    // anchor (any type, canvas or text), same recompute triggers as the text
+    // chips (pan/zoom, resize, drawings/selection change).
+    const [deleteIconPos, setDeleteIconPos] = useState<{ x: number; y: number } | null>(null);
+    const recomputeDeleteIconPosition = useCallback(() => {
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!chart || !series) return;
+        const { selectedDrawingId, drawings: currentDrawings } = useDrawingStore.getState();
+        if (!selectedDrawingId) {
+            setDeleteIconPos(null);
+            return;
+        }
+        const drawing = currentDrawings.find((d) => d.id === selectedDrawingId);
+        const p = drawing?.points[0];
+        if (!p) {
+            setDeleteIconPos(null);
+            return;
+        }
+        const x = chart.timeScale().timeToCoordinate(p.time as Time);
+        const y = series.priceToCoordinate(p.price);
+        setDeleteIconPos(x != null && y != null ? { x, y } : null);
+    }, []);
     const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const vpvrWeeklyLenRef = useRef(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
@@ -735,12 +758,18 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         pendingPreviewPrimitive.setChart(chart);
         pendingPreviewPrimitiveRef.current = pendingPreviewPrimitive;
 
-        // Drawing tools — click-to-place. A no-op when no tool is active;
-        // real hitTest-driven selection is wired in a later commit, so an
-        // idle click currently does nothing (not even deselect).
+        // Drawing tools — click-to-place when a tool is active, click-to-
+        // select/deselect otherwise.
         chart.subscribeClick((param) => {
-            const { activeTool, addPoint } = useDrawingStore.getState();
-            if (!activeTool) return;
+            const { activeTool, addPoint, selectDrawing } = useDrawingStore.getState();
+            if (!activeTool) {
+                // Idle click — select/deselect. The library resolves
+                // hoveredObjectId from each attached primitive's hitTest
+                // itself; we never iterate hitTest manually.
+                const hitId = typeof param.hoveredObjectId === "string" ? param.hoveredObjectId : null;
+                selectDrawing(hitId);
+                return;
+            }
             if (param.time == null || !param.point) return;
             const price = series.coordinateToPrice(param.point.y);
             if (price == null) return;
@@ -817,6 +846,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         // from the chart's own render loop, so reposition explicitly on the
         // two things that move a coordinate on screen: panning/zooming...
         chart.timeScale().subscribeVisibleLogicalRangeChange(recomputeTextChipPositions);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(recomputeDeleteIconPosition);
 
         // Responsive resize
         const observer = new ResizeObserver((entries) => {
@@ -827,6 +857,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // ...and resizing (container width/height change shifts every
             // coordinate even at a fixed pan/zoom position).
             recomputeTextChipPositions();
+            recomputeDeleteIconPosition();
         });
         observer.observe(containerRef.current);
 
@@ -852,10 +883,26 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         if (selectedPairId) useDrawingStore.getState().loadForPair(selectedPairId);
     }, [selectedPairId]);
 
-    // Esc cancels an in-progress placement (standard charting-tool convention).
+    // Esc cancels an in-progress placement; Delete/Backspace removes the
+    // selected drawing (standard charting-tool convention for both).
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key === "Escape") useDrawingStore.getState().cancelPlacement();
+            if (e.key === "Escape") {
+                useDrawingStore.getState().cancelPlacement();
+                return;
+            }
+            if (e.key === "Delete" || e.key === "Backspace") {
+                // Don't hijack Backspace while the user is typing anywhere
+                // else in the app (order amount field, symbol search, a Text
+                // Annotation's own edit box, etc.) — only act when focus
+                // isn't inside a text-editing control.
+                const target = e.target as HTMLElement | null;
+                const isTyping = !!target && (
+                    target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
+                );
+                if (isTyping) return;
+                useDrawingStore.getState().deleteSelected();
+            }
         };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
@@ -904,17 +951,20 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             const existing = attached.get(drawing.id);
             if (existing) {
                 existing.setData(drawing);
+                existing.setSelected(drawing.id === selectedDrawingId);
                 continue;
             }
             const primitive = createDrawingPrimitive(drawing);
             if (!primitive) continue; // "text" — rendered as a DOM chip, not a primitive
             if (chartRef.current) primitive.setChart(chartRef.current);
+            primitive.setSelected(drawing.id === selectedDrawingId);
             series.attachPrimitive(primitive);
             attached.set(drawing.id, primitive);
         }
 
         recomputeTextChipPositions();
-    }, [drawings, recomputeTextChipPositions]);
+        recomputeDeleteIconPosition();
+    }, [drawings, selectedDrawingId, recomputeTextChipPositions, recomputeDeleteIconPosition]);
 
     // Snap the viewport back to the live edge — the recent-bar window, matching
     // the default (first-load) view exactly so the at-edge detection reliably
@@ -1866,6 +1916,27 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             />
                         );
                     })}
+
+                {/* ── Delete-icon affordance ── small × near the selected
+                    drawing's first anchor (any type). Delete key does the
+                    same thing — this covers no-keyboard-focus/touch cases. */}
+                {selectedDrawingId && deleteIconPos && (
+                    <button
+                        onClick={() => useDrawingStore.getState().deleteSelected()}
+                        title="Delete drawing"
+                        style={{
+                            position: "absolute", left: deleteIconPos.x + 14, top: deleteIconPos.y - 24,
+                            zIndex: 9, pointerEvents: "auto",
+                            width: 18, height: 18, borderRadius: "50%",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(255,59,59,0.9)", border: "1px solid #fff",
+                            color: "#fff", fontSize: 12, lineHeight: 1, fontWeight: 700,
+                            cursor: "pointer", padding: 0,
+                        }}
+                    >
+                        ×
+                    </button>
+                )}
 
                 {/* ── Chart legend overlay — hero price + FILL SPREAD, OHLC,
                     funding rate, buy/sell pressure. Floats over the chart's
