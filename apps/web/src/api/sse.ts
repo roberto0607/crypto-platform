@@ -44,6 +44,7 @@ export interface SSEHandlers {
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
   onMatchStarted?: (event: Extract<SSEEvent, { type: "match.started" }>) => void;
   onMatchEnded?: (event: Extract<SSEEvent, { type: "match.ended" }>) => void;
+  onMatchPnlUpdate?: (event: Extract<SSEEvent, { type: "match.pnl.update" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
   onPing?: (ts: number) => void;
   onReconnected?: () => void;
@@ -252,6 +253,9 @@ export function connectSSE(
           break;
         case "match.ended":
           handlers.onMatchEnded?.(event);
+          break;
+        case "match.pnl.update":
+          handlers.onMatchPnlUpdate?.(event);
           break;
         case "challenge.received":
           handlers.onChallengeReceived?.(event);

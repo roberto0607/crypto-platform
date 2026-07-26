@@ -144,6 +144,12 @@ export function useSSE() {
         );
       },
 
+      onMatchPnlUpdate: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:match.pnl.update", { detail: event.data }),
+        );
+      },
+
       onChallengeReceived: (event) => {
         window.dispatchEvent(
           new CustomEvent("sse:challenge.received", { detail: event.data }),
