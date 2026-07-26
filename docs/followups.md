@@ -777,3 +777,37 @@ decision, downstream-consumer check, all-75-pairs confirmation) is in
 `docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md` — this entry
 stays as the historical recon trail; see that doc for the current state of
 this specific lead.
+
+---
+
+## 🔵 LOW — Tier/ELO badge (toolbar + Profile) doesn't refresh when a match ends mid-session
+
+**Discovered:** 2026-07-25, Gate 1 tier-badge design lock
+(`docs/GATE_1_TIER_BADGE_DESIGN.md`). Deliberately scoped OUT of that work at
+Roberto's direction — tracked here as a separate future fix, not bundled.
+
+**Context:** the new toolbar `TierBadge` and `ProfilePage`'s ELO bar both read
+`userTier`/`eloRating` from `competitionStore`, populated by `fetchUserTier()`
+— called once on app init (`App.tsx`) and once on `ProfilePage` mount. Neither
+call site re-fires when a 1v1 match completes.
+
+**Gap:** `resolveMatchElo` (`eloService.ts`) updates a player's `elo_rating`
+and `user_tiers.tier` server-side the moment a match ends, and `useSSE.ts:141-144`
+already dispatches a global `sse:match.ended` window `CustomEvent` on every
+match end (mounted unconditionally in `AppLayout`, fires on every route). But
+nothing subscribes to that event to refresh tier/ELO — so the toolbar badge
+and Profile's ELO bar stay stale (showing the pre-match rating/tier) until the
+next full page load or `ProfilePage` remount.
+
+**Fix (small, own PR):** add a `window.addEventListener("sse:match.ended", ...)`
+that calls `useCompetitionStore.getState().fetchUserTier()` — mirrors the
+existing SSE-listener pattern already used in `ArenaPage.tsx`/`LiveMatchView.tsx`,
+reuses an event that's already global. Should ideally only fire when the
+current user was a participant in the ended match (payload already carries
+`challenger_id`/`opponent_id`), to avoid an unnecessary fetch on every
+stranger's match completing.
+
+**Priority:** LOW — badge is accurate immediately after login/reload and after
+navigating to/from Profile; the staleness window is specifically "stayed on
+one page through an entire match's end," not a correctness bug in the data
+itself.

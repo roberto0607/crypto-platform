@@ -152,7 +152,11 @@ const v1Profile: FastifyPluginAsync = async (app) => {
         const userId = req.user!.id;
         const tier = await getUserTier(userId);
         const history = await getUserTierHistory(userId, 20);
-        return reply.send({ ok: true, tier, history });
+        const { rows } = await pool.query<{ elo_rating: number }>(
+            `SELECT elo_rating FROM users WHERE id = $1`,
+            [userId],
+        );
+        return reply.send({ ok: true, tier, eloRating: rows[0]?.elo_rating ?? 800, history });
     });
 
     // GET /v1/profile/badges — Get user's badges

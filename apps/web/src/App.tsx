@@ -127,9 +127,10 @@ export default function App() {
         }
       }
 
-      // Fetch user's competitions and notifications if authenticated
+      // Fetch user's competitions, tier/ELO, and notifications if authenticated
       if (useAuthStore.getState().isAuthenticated) {
         useCompetitionStore.getState().fetchMyCompetitions().catch(() => {});
+        useCompetitionStore.getState().fetchUserTier().catch(() => {});
         useNotificationStore.getState().fetch().catch(() => {});
       }
 

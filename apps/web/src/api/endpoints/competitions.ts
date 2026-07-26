@@ -154,7 +154,7 @@ export function getCurrentWeeklyCompetition() {
 
 // Tier & badges
 export function getUserTier() {
-    return client.get<{ ok: true; tier: string; history: TierHistoryEntry[] }>(
+    return client.get<{ ok: true; tier: string; eloRating: number; history: TierHistoryEntry[] }>(
         "/v1/profile/tier",
     );
 }

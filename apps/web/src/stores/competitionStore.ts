@@ -37,6 +37,7 @@ interface CompetitionState {
     currentWeekly: Competition | null;
     currentWeeklyJoined: boolean;
     userTier: string;
+    eloRating: number;
     userBadges: Badge[];
     weeklyLoading: boolean;
 
@@ -65,6 +66,7 @@ export const useCompetitionStore = create<CompetitionState>((set) => ({
     currentWeekly: null,
     currentWeeklyJoined: false,
     userTier: "ROOKIE",
+    eloRating: 800,
     userBadges: [],
     weeklyLoading: false,
 
@@ -137,7 +139,7 @@ export const useCompetitionStore = create<CompetitionState>((set) => ({
     async fetchUserTier() {
         try {
             const { data } = await getUserTier();
-            set({ userTier: data.tier });
+            set({ userTier: data.tier, eloRating: data.eloRating });
         } catch {}
     },
 
