@@ -769,6 +769,72 @@ async function calculatePlayerStats(
 }
 
 /**
+ * Signed mark-to-market PnL for a single position row, given a current
+ * price. Works for both long (base_qty > 0) and short (base_qty < 0):
+ * pnl = base_qty * (currentPrice - avg_entry_price). Extracted from
+ * closeMatchScopedPositions's force-close formula so the live in-match
+ * PnL push (matchPnlEngine.ts) can reuse the exact same math read-only,
+ * instead of re-deriving it.
+ */
+export function computeUnrealizedRowPnl(
+    baseQty: string,
+    avgEntryPrice: string,
+    currentPrice: string | number,
+): string {
+    const qty = D(baseQty);
+    const entry = D(avgEntryPrice);
+    const price = D(typeof currentPrice === "number" ? currentPrice.toString() : currentPrice);
+    return toFixed8(qty.mul(price.minus(entry)));
+}
+
+export interface LivePositionRow {
+    pairId: string;
+    baseQty: string;
+    avgEntryPrice: string;
+    realizedPnlQuote: string;
+    feesPaidQuote: string;
+}
+
+/**
+ * Aggregate one user's live match PnL% across every position row they hold
+ * in the match: already-booked realized P&L (net of fees) on every row,
+ * plus unrealized mark-to-market on any row still open (base_qty != 0).
+ * Shared by the force-close write path (closeMatchScopedPositions, which
+ * additionally books the result and zeroes the row) and the live in-match
+ * push (matchPnlEngine.ts, read-only) -- same aggregation
+ * calculatePlayerStats already does for realized-only, extended with the
+ * unrealized term calculatePlayerStats never needed (it only ever runs
+ * after closeMatchScopedPositions has already zeroed every row).
+ *
+ * currentPriceByPair only needs entries for pairs with an open row -- a
+ * missing/non-finite price for one pair falls back to realized-only for
+ * that row (best-effort) rather than throwing, so one pair's momentarily
+ *-stale snapshot doesn't blank the whole match's PnL.
+ */
+export function computeLiveMatchPnl(
+    positions: LivePositionRow[],
+    currentPriceByPair: Map<string, number>,
+    startingCapital: number,
+): number {
+    if (startingCapital <= 0) return 0;
+
+    let total = D("0");
+    for (const pos of positions) {
+        total = total.plus(D(pos.realizedPnlQuote || "0")).minus(D(pos.feesPaidQuote || "0"));
+
+        const baseQty = D(pos.baseQty || "0");
+        if (!baseQty.isZero()) {
+            const price = currentPriceByPair.get(pos.pairId);
+            if (price !== undefined && Number.isFinite(price)) {
+                total = total.plus(D(computeUnrealizedRowPnl(pos.baseQty, pos.avgEntryPrice, price)));
+            }
+        }
+    }
+
+    return total.div(startingCapital).mul(100).toNumber();
+}
+
+/**
  * Weighted scoring formula:
  *   P&L 50% + win rate 20% + trades 15% + consistency 15%
  *
@@ -879,11 +945,11 @@ async function closeMatchScopedPositions(
         }
 
         // Signed PnL formula works for both long (base_qty > 0) and short
-        // (base_qty < 0): pnl = base_qty * (exit - entry).
+        // (base_qty < 0): pnl = base_qty * (exit - entry). Shared with the
+        // live in-match PnL push via computeUnrealizedRowPnl.
         const baseQty = D(pos.base_qty);
-        const avgEntry = D(pos.avg_entry_price);
         const exitD = D(exitPrice);
-        const pnl = baseQty.mul(exitD.minus(avgEntry));
+        const pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitPrice));
 
         await client.query(
             `UPDATE positions
