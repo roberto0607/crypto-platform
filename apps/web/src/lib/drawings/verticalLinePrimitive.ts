@@ -7,6 +7,8 @@ import {
     HIT_TOLERANCE_PX,
     drawAnchorHandle,
     applySelectedGlow,
+    hitTestAnchorIndex,
+    anchorExternalId,
 } from "./drawingPrimitiveShared";
 
 /** Vertical Line — price-independent, spans the full pane height at a fixed
@@ -59,12 +61,22 @@ export class VerticalLinePrimitive extends BaseDrawingPrimitive<StoredDrawing> {
         return this._paneViews;
     }
 
-    hitTest(x: number, _y: number): PrimitiveHoveredItem | null {
+    hitTest(x: number, y: number): PrimitiveHoveredItem | null {
         const chart = this.chart;
+        const series = this.series;
         const point = this.data.points[0];
-        if (!chart || !point) return null;
+        if (!chart || !series || !point) return null;
         const lineX = chart.timeScale().timeToCoordinate(point.time as never);
         if (lineX == null) return null;
+
+        if (this.selected) {
+            const handleY = series.priceToCoordinate(point.price);
+            const anchorIdx = hitTestAnchorIndex([handleY != null ? { x: lineX, y: handleY } : null], x, y);
+            if (anchorIdx != null) {
+                return { externalId: anchorExternalId(this.data.id, anchorIdx), zOrder: "top", cursorStyle: "move" };
+            }
+        }
+
         if (Math.abs(x - lineX) > HIT_TOLERANCE_PX) return null;
         return { externalId: this.data.id, zOrder: "top", cursorStyle: "pointer" };
     }

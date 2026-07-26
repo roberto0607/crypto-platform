@@ -6,6 +6,8 @@ import {
     type RenderTarget,
     drawAnchorHandle,
     applySelectedGlow,
+    hitTestAnchorIndex,
+    anchorExternalId,
 } from "./drawingPrimitiveShared";
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -88,6 +90,13 @@ export class RectanglePrimitive extends BaseDrawingPrimitive<StoredDrawing> {
         const x1 = timeScale.timeToCoordinate(p1.time as never);
         const y1 = series.priceToCoordinate(p1.price);
         if (x0 == null || y0 == null || x1 == null || y1 == null) return null;
+
+        if (this.selected) {
+            const anchorIdx = hitTestAnchorIndex([{ x: x0, y: y0 }, { x: x1, y: y1 }], x, y);
+            if (anchorIdx != null) {
+                return { externalId: anchorExternalId(this.data.id, anchorIdx), zOrder: "top", cursorStyle: "move" };
+            }
+        }
 
         const left = Math.min(x0, x1);
         const right = Math.max(x0, x1);

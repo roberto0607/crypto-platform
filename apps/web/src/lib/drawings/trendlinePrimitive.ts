@@ -8,6 +8,8 @@ import {
     drawAnchorHandle,
     applySelectedGlow,
     distanceToSegment,
+    hitTestAnchorIndex,
+    anchorExternalId,
 } from "./drawingPrimitiveShared";
 
 /** Trend Line — a straight segment between two (time, price) anchors. */
@@ -74,6 +76,14 @@ export class TrendlinePrimitive extends BaseDrawingPrimitive<StoredDrawing> {
         const x1 = timeScale.timeToCoordinate(p1.time as never);
         const y1 = series.priceToCoordinate(p1.price);
         if (x0 == null || y0 == null || x1 == null || y1 == null) return null;
+
+        if (this.selected) {
+            const anchorIdx = hitTestAnchorIndex([{ x: x0, y: y0 }, { x: x1, y: y1 }], x, y);
+            if (anchorIdx != null) {
+                return { externalId: anchorExternalId(this.data.id, anchorIdx), zOrder: "top", cursorStyle: "move" };
+            }
+        }
+
         if (distanceToSegment(x, y, x0, y0, x1, y1) > HIT_TOLERANCE_PX) return null;
         return { externalId: this.data.id, zOrder: "top", cursorStyle: "pointer" };
     }

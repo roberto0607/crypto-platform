@@ -62,6 +62,7 @@ import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing } from "@/store
 import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
 import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
 import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
+import { parseAnchorExternalId } from "@/lib/drawings/drawingPrimitiveShared";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
@@ -765,9 +766,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             if (!activeTool) {
                 // Idle click — select/deselect. The library resolves
                 // hoveredObjectId from each attached primitive's hitTest
-                // itself; we never iterate hitTest manually.
+                // itself; we never iterate hitTest manually. An anchor-handle
+                // hit (only possible while already selected) still just
+                // (re-)selects the same drawing — dragging is a separate,
+                // mousedown-driven path below, not a click.
                 const hitId = typeof param.hoveredObjectId === "string" ? param.hoveredObjectId : null;
-                selectDrawing(hitId);
+                const parsed = hitId ? parseAnchorExternalId(hitId) : null;
+                selectDrawing(parsed ? parsed.drawingId : hitId);
                 return;
             }
             if (param.time == null || !param.point) return;
@@ -806,6 +811,46 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 color: spec.defaultColor,
             });
         });
+
+        // Drawing tools — anchor drag-to-edit. Live position updates while
+        // draggingAnchor is set, via the same crosshair-fires-on-every-move
+        // mechanism as the placement preview above (separate subscription,
+        // same dual-subscription precedent).
+        chart.subscribeCrosshairMove((param) => {
+            const { draggingAnchor, updateDraggingAnchor } = useDrawingStore.getState();
+            if (!draggingAnchor || param.time == null || !param.point) return;
+            const price = series.coordinateToPrice(param.point.y);
+            if (price == null) return;
+            updateDraggingAnchor({ time: param.time as number, price });
+        });
+
+        // Drawing tools — anchor drag START/END. Dragging is a mousedown-
+        // then-move-then-mouseup gesture, which the library's subscribeClick
+        // (fires on mouseup-with-minimal-movement) can't detect — click and
+        // drag are mutually exclusive interactions here, so this uses raw
+        // DOM events on the container instead. Only starts a drag when
+        // idle (no activeTool) AND something is already selected AND the
+        // mousedown lands on THAT selected drawing's own anchor handle
+        // (hitTest only returns anchor hits while primitive.selected).
+        const handleMouseDown = (e: MouseEvent) => {
+            const { activeTool, selectedDrawingId, startDraggingAnchor } = useDrawingStore.getState();
+            if (activeTool || !selectedDrawingId || !containerRef.current) return;
+            const primitive = drawingPrimitivesRef.current.get(selectedDrawingId);
+            if (!primitive) return; // e.g. a Text Annotation — not a canvas primitive, not draggable this pass
+            const rect = containerRef.current.getBoundingClientRect();
+            const hit = primitive.hitTest(e.clientX - rect.left, e.clientY - rect.top);
+            if (!hit) return;
+            const parsed = parseAnchorExternalId(hit.externalId);
+            if (!parsed || parsed.drawingId !== selectedDrawingId) return;
+            startDraggingAnchor(selectedDrawingId, parsed.anchorIndex);
+        };
+        const handleMouseUp = () => {
+            if (useDrawingStore.getState().draggingAnchor) useDrawingStore.getState().commitDraggingAnchor();
+        };
+        containerRef.current.addEventListener("mousedown", handleMouseDown);
+        // On window, not the container — a drag released outside the chart
+        // (fast mouse movement) must still commit, not leave a stuck drag.
+        window.addEventListener("mouseup", handleMouseUp);
 
         // Crosshair OHLCV readout
         chart.subscribeCrosshairMove((param) => {
@@ -863,6 +908,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
         return () => {
             observer.disconnect();
+            containerRef.current?.removeEventListener("mousedown", handleMouseDown);
+            window.removeEventListener("mouseup", handleMouseUp);
             chart.remove();
             chartRef.current = null;
             seriesRef.current = null;
@@ -882,6 +929,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     useEffect(() => {
         if (selectedPairId) useDrawingStore.getState().loadForPair(selectedPairId);
     }, [selectedPairId]);
+
 
     // Esc cancels an in-progress placement; Delete/Backspace removes the
     // selected drawing (standard charting-tool convention for both).
@@ -908,18 +956,22 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         return () => window.removeEventListener("keydown", handler);
     }, []);
 
-    // Pan/zoom is locked while a drawing tool is selected/mid-placement —
-    // matches TradingView's own convention (a stray drag shouldn't scroll the
-    // chart out from under a half-placed drawing). NOT locked merely because
-    // a drawing is selected (a user should be able to pan/zoom to inspect a
-    // selected drawing elsewhere on the chart without losing the selection).
+    // Pan/zoom is locked while a drawing tool is selected/mid-placement OR an
+    // anchor is being dragged — matches TradingView's own convention (a
+    // stray drag shouldn't scroll the chart out from under a half-placed
+    // drawing, or yank a dragged anchor sideways as the viewport pans under
+    // it). NOT locked merely because a drawing is selected (a user should be
+    // able to pan/zoom to inspect a selected drawing elsewhere on the chart
+    // without losing the selection).
     const activeTool = useDrawingStore((s) => s.activeTool);
+    const draggingAnchor = useDrawingStore((s) => s.draggingAnchor);
     useEffect(() => {
+        const locked = !!activeTool || !!draggingAnchor;
         chartRef.current?.applyOptions({
-            handleScroll: !activeTool,
-            handleScale: !activeTool,
+            handleScroll: !locked,
+            handleScale: !locked,
         });
-    }, [activeTool]);
+    }, [activeTool, draggingAnchor]);
 
     // Clear the placement preview immediately on commit/cancel (not just on
     // the next mousemove, which may not fire right after a click).

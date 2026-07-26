@@ -51,3 +51,34 @@ export function distanceToSegment(
     const projY = y1 + t * dy;
     return Math.hypot(px - projX, py - projY);
 }
+
+/** Returns the index of the first anchor within grab tolerance, or null.
+ * Only meaningful when the primitive is selected (anchor handles aren't
+ * drawn, or grabbable, otherwise). */
+export function hitTestAnchorIndex(
+    anchorCoords: ({ x: number; y: number } | null)[],
+    x: number,
+    y: number,
+): number | null {
+    for (let i = 0; i < anchorCoords.length; i++) {
+        const a = anchorCoords[i];
+        if (a && Math.hypot(x - a.x, y - a.y) <= ANCHOR_HANDLE_SIZE) return i;
+    }
+    return null;
+}
+
+const ANCHOR_ID_SEP = "::anchor::";
+
+/** externalId format for an anchor-handle hit, distinguishing "grab this
+ * point to drag it" from a plain shape-body hit (select only). */
+export function anchorExternalId(drawingId: string, anchorIndex: number): string {
+    return `${drawingId}${ANCHOR_ID_SEP}${anchorIndex}`;
+}
+
+export function parseAnchorExternalId(externalId: string): { drawingId: string; anchorIndex: number } | null {
+    const idx = externalId.indexOf(ANCHOR_ID_SEP);
+    if (idx === -1) return null;
+    const drawingId = externalId.slice(0, idx);
+    const anchorIndex = parseInt(externalId.slice(idx + ANCHOR_ID_SEP.length), 10);
+    return Number.isNaN(anchorIndex) ? null : { drawingId, anchorIndex };
+}

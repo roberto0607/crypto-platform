@@ -7,6 +7,8 @@ import {
     HIT_TOLERANCE_PX,
     drawAnchorHandle,
     applySelectedGlow,
+    hitTestAnchorIndex,
+    anchorExternalId,
 } from "./drawingPrimitiveShared";
 
 /** Horizontal Ray — bounded on the left by its anchor time, extends right to
@@ -65,6 +67,14 @@ export class HorizontalRayPrimitive extends BaseDrawingPrimitive<StoredDrawing> 
         const lineY = series.priceToCoordinate(point.price);
         const startX = chart.timeScale().timeToCoordinate(point.time as never);
         if (lineY == null || startX == null) return null;
+
+        if (this.selected) {
+            const anchorIdx = hitTestAnchorIndex([{ x: startX, y: lineY }], x, y);
+            if (anchorIdx != null) {
+                return { externalId: anchorExternalId(this.data.id, anchorIdx), zOrder: "top", cursorStyle: "move" };
+            }
+        }
+
         if (x < startX) return null;
         if (Math.abs(y - lineY) > HIT_TOLERANCE_PX) return null;
         return { externalId: this.data.id, zOrder: "top", cursorStyle: "pointer" };

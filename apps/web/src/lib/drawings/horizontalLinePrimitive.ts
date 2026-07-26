@@ -7,6 +7,8 @@ import {
     HIT_TOLERANCE_PX,
     drawAnchorHandle,
     applySelectedGlow,
+    hitTestAnchorIndex,
+    anchorExternalId,
 } from "./drawingPrimitiveShared";
 
 /** Horizontal Line — time-independent, spans the full pane width at a fixed
@@ -60,12 +62,22 @@ export class HorizontalLinePrimitive extends BaseDrawingPrimitive<StoredDrawing>
         return this._paneViews;
     }
 
-    hitTest(_x: number, y: number): PrimitiveHoveredItem | null {
+    hitTest(x: number, y: number): PrimitiveHoveredItem | null {
         const series = this.series;
+        const chart = this.chart;
         const point = this.data.points[0];
-        if (!series || !point) return null;
+        if (!series || !chart || !point) return null;
         const lineY = series.priceToCoordinate(point.price);
         if (lineY == null) return null;
+
+        if (this.selected) {
+            const handleX = chart.timeScale().timeToCoordinate(point.time as never);
+            const anchorIdx = hitTestAnchorIndex([handleX != null ? { x: handleX, y: lineY } : null], x, y);
+            if (anchorIdx != null) {
+                return { externalId: anchorExternalId(this.data.id, anchorIdx), zOrder: "top", cursorStyle: "move" };
+            }
+        }
+
         if (Math.abs(y - lineY) > HIT_TOLERANCE_PX) return null;
         return { externalId: this.data.id, zOrder: "top", cursorStyle: "pointer" };
     }
