@@ -63,6 +63,7 @@ import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
 import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
 import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
 import { parseAnchorExternalId } from "@/lib/drawings/drawingPrimitiveShared";
+import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 
@@ -1946,7 +1947,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 this component. What used to be the Market Context Bar (OHLC,
                 funding, pressure, hero price) is now a floating TradingView-style
                 legend anchored to the top-left of the chart canvas itself. */}
-            <div className="relative flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0 flex">
+                <DrawingToolStrip />
+                <div className="relative flex-1 min-w-0">
                 <div ref={containerRef} className="absolute inset-0" />
 
                 {/* ── Text Annotation chips ── DOM overlay (not canvas — see
@@ -2495,6 +2498,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         <span aria-hidden="true">»</span>
                     </button>
                 )}
+                </div>
             </div>
 
             {/* Order Blocks — DOM overlay */}

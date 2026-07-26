@@ -1,0 +1,44 @@
+// Dependency-free inline-SVG icon set for the drawing-tool strip. Same
+// pattern as NavIcon.tsx / IndicatorToolbar.tsx — no icon library exists
+// anywhere in this codebase.
+
+import type { DrawingToolType } from "@/stores/drawingStore";
+
+const ICONS: Record<DrawingToolType, JSX.Element> = {
+    trendline: (
+        <>
+            <line x1="2" y1="13" x2="14" y2="3" />
+            <circle cx="2" cy="13" r="1.4" fill="currentColor" stroke="none" />
+            <circle cx="14" cy="3" r="1.4" fill="currentColor" stroke="none" />
+        </>
+    ),
+    hline: <line x1="2" y1="8" x2="14" y2="8" />,
+    hray: <line x1="6" y1="8" x2="14" y2="8" />,
+    vline: <line x1="8" y1="2" x2="8" y2="14" />,
+    rect: <rect x="2.5" y="4.5" width="11" height="7" />,
+    text: (
+        <>
+            <line x1="3" y1="3.5" x2="13" y2="3.5" />
+            <line x1="8" y1="3.5" x2="8" y2="12.5" />
+        </>
+    ),
+};
+
+export function DrawingToolIcon({ type }: { type: DrawingToolType }) {
+    return (
+        <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="inline-block"
+        >
+            {ICONS[type]}
+        </svg>
+    );
+}
