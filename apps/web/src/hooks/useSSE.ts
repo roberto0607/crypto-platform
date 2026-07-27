@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useChatStore } from "@/stores/chatStore";
 import { connectSSE, disconnectSSE, forceReconnectSSE, type SSEHandlers } from "@/api/sse";
 
 const STALE_THRESHOLD_MS = 15_000; // force reconnect if no ping/tick for 15s
@@ -154,6 +155,19 @@ export function useSSE() {
         window.dispatchEvent(
           new CustomEvent("sse:challenge.received", { detail: event.data }),
         );
+      },
+
+      // Friend requests go straight to the global chat store (badge must be
+      // correct regardless of what page is open) — same pattern as
+      // onNotificationCreated above, not the window-CustomEvent pattern used
+      // for match/trade events which are only ever consumed by a page/component
+      // that's already mounted.
+      onFriendRequestReceived: (event) => {
+        useChatStore.getState().onFriendRequestReceived(event.data);
+      },
+
+      onFriendRequestAccepted: (event) => {
+        useChatStore.getState().onFriendRequestAccepted(event.data);
       },
 
       // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing

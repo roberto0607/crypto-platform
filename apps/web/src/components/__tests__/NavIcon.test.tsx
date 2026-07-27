@@ -11,6 +11,7 @@ const KNOWN_KEYS = [
   "profile",
   "settings",
   "admin",
+  "messages",
 ];
 
 describe("NavIcon", () => {

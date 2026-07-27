@@ -65,6 +65,12 @@ const ICONS: Record<string, JSX.Element> = {
       <path d="M8 1.5l5 2v4c0 3-2.2 5.2-5 6.5C5.2 12.7 3 10.5 3 7.5v-4l5-2z" />
     </>
   ),
+  // Messages — chat bubble
+  messages: (
+    <>
+      <path d="M2 3.5h12v7H8.5L5 13v-2.5H2v-7z" />
+    </>
+  ),
 };
 
 export function NavIcon({ name }: { name: string }) {

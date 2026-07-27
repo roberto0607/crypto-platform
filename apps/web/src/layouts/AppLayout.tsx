@@ -13,6 +13,7 @@ import { NavIcon } from "@/components/NavIcon";
 import TickerBar from "@/components/TickerBar";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import { useSSE } from "@/hooks/useSSE";
+import { useChatStore } from "@/stores/chatStore";
 
 // ── Sidebar nav — Trade Wars ──
 const NAV_SECTIONS = [
@@ -21,6 +22,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/trade", label: "Trade", icon: "trade" },
       { to: "/arena", label: "Arena", icon: "arena" },
+      { to: "/messages", label: "Messages", icon: "messages" },
       { to: "/replay", label: "Replay", icon: "replay" },
       { to: "/cycle", label: "Cycles", icon: "cycle" },
       { to: "/history", label: "History", icon: "history" },
@@ -39,6 +41,7 @@ function breadcrumbLabel(pathname: string): string {
   if (pathname.startsWith("/admin")) return "ADMIN";
   if (pathname.startsWith("/trade")) return "TRADE";
   if (pathname.startsWith("/arena")) return "ARENA";
+  if (pathname.startsWith("/messages")) return "MESSAGES";
   if (pathname.startsWith("/replay")) return "REPLAY";
   if (pathname.startsWith("/cycle")) return "CYCLES";
   if (pathname.startsWith("/history")) return "HISTORY";
@@ -55,6 +58,9 @@ export default function AppLayout() {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const riskStatus = useAppStore((s) => s.riskStatus);
   const userTier = useCompetitionStore((s) => s.userTier);
+  // Session-only badge (Phase 1 scope, see chatStore.ts) — pending incoming
+  // friend requests. Extended with DM unread count in Phase 2.
+  const incomingRequestCount = useChatStore((s) => s.incomingRequests.length);
   const currentTheme = useThemeStore((s) => s.currentTheme);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -186,7 +192,14 @@ export default function AppLayout() {
                           }`
                         }
                       >
-                        <span className="text-sm w-5 text-center"><NavIcon name={item.icon} /></span>
+                        <span className="relative text-sm w-5 text-center">
+                          <NavIcon name={item.icon} />
+                          {item.to === "/messages" && incomingRequestCount > 0 && (
+                            <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">
+                              {incomingRequestCount > 9 ? "9+" : incomingRequestCount}
+                            </span>
+                          )}
+                        </span>
                         {!railCollapsed && item.label}
                       </NavLink>
                       {railCollapsed && (

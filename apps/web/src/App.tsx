@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useChatStore } from "@/stores/chatStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useThemeDetector } from "@/hooks/useThemeDetector";
 import { getSystemStatus, getUserStatus } from "@/api/endpoints/status";
@@ -23,6 +24,7 @@ import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import TradingPage from "@/pages/TradingPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ArenaPage from "@/pages/ArenaPage";
+import MessagesPage from "@/pages/MessagesPage";
 import CyclesPage from "@/pages/CyclesPage";
 import ReplayPage from "@/pages/ReplayPage";
 import MatchReplayPage from "@/pages/MatchReplayPage";
@@ -132,6 +134,7 @@ export default function App() {
         useCompetitionStore.getState().fetchMyCompetitions().catch(() => {});
         useCompetitionStore.getState().fetchUserTier().catch(() => {});
         useNotificationStore.getState().fetch().catch(() => {});
+        useChatStore.getState().fetchFriends().catch(() => {});
       }
 
       if (!cancelled) setInitialized(true);
@@ -170,6 +173,7 @@ export default function App() {
 
     loadUserData();
     useNotificationStore.getState().fetch().catch(() => {});
+    useChatStore.getState().fetchFriends().catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -235,6 +239,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/trade" element={<TradingPage />} />
           <Route path="/arena" element={<ArenaPage />} />
+          <Route path="/messages" element={<MessagesPage />} />
           <Route path="/matches/:id/replay" element={<MatchReplayPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/cycle" element={<CyclesPage />} />
