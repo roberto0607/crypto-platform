@@ -72,7 +72,7 @@ jobs:
         run: pnpm build
 
   web:
-    name: Web — Typecheck + Build
+    name: Web — Typecheck + Test + Build
     runs-on: ubuntu-latest
 
     defaults:
@@ -96,6 +96,12 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      # apps/web's `test` script is `vitest run` (not `--watch`), so this
+      # exits on its own — no DB/service dependency needed, every web test
+      # mocks the API layer (vi.mock("@/api/endpoints/...")).
+      - name: Test
+        run: pnpm test
 
       - name: Build
         run: pnpm build
