@@ -12,6 +12,14 @@ export interface MessageRow {
 
 const COLUMNS = `id, conversation_id, sender_id, body, image_url, created_at, read_at`;
 
+export async function getMessageById(id: string): Promise<MessageRow | null> {
+    const { rows } = await pool.query<MessageRow>(
+        `SELECT ${COLUMNS} FROM messages WHERE id = $1`,
+        [id],
+    );
+    return rows[0] ?? null;
+}
+
 export async function insertMessage(
     conversationId: string,
     senderId: string,

@@ -23,12 +23,14 @@ const ERROR_STATUS: Record<string, number> = {
   friendship_not_pending: 400,
   message_contains_profanity: 400,
   message_empty: 400,
+  cannot_report_own_message: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,
   // 403
   forbidden: 403,
   friendship_required: 403,
+  conversation_blocked: 403,
   governance_check_failed: 403,
   account_quarantined: 403,
   user_trading_disabled: 403,
@@ -47,6 +49,7 @@ const ERROR_STATUS: Record<string, number> = {
   stream_not_found: 404,
   friendship_not_found: 404,
   conversation_not_found: 404,
+  message_not_found: 404,
   // 400 (state errors)
   replay_not_active: 400,
   replay_already_stopped: 400,
