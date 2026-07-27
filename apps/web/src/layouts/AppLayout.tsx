@@ -58,9 +58,9 @@ export default function AppLayout() {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const riskStatus = useAppStore((s) => s.riskStatus);
   const userTier = useCompetitionStore((s) => s.userTier);
-  // Session-only badge (Phase 1 scope, see chatStore.ts) — pending incoming
-  // friend requests. Extended with DM unread count in Phase 2.
-  const incomingRequestCount = useChatStore((s) => s.incomingRequests.length);
+  // Session-only badge (see chatStore.ts) — pending incoming friend requests
+  // + unread DM count (Phase 2).
+  const incomingRequestCount = useChatStore((s) => s.incomingRequests.length + s.unreadTotal());
   const currentTheme = useThemeStore((s) => s.currentTheme);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);

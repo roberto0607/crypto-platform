@@ -170,6 +170,22 @@ export function useSSE() {
         useChatStore.getState().onFriendRequestAccepted(event.data);
       },
 
+      // message.received serves two different consumers depending on
+      // conversationType: DM messages go straight to the global chatStore
+      // (badge must be correct regardless of open page, same as friend
+      // requests above). Match Chat messages never touch chatStore — they're
+      // ephemeral and component-local — so this ALSO always dispatches the
+      // window-CustomEvent pattern every other match/trade event already
+      // uses, for a future MatchChatPanel to pick up on its own.
+      onMessageReceived: (event) => {
+        if (event.data.conversationType === "dm") {
+          useChatStore.getState().onMessageReceived(event.data);
+        }
+        window.dispatchEvent(
+          new CustomEvent("sse:message.received", { detail: event.data }),
+        );
+      },
+
       // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing
       onPing: () => {
         useAppStore.getState().setLastPriceTickAt(Date.now());

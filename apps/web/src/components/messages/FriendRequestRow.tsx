@@ -6,9 +6,10 @@ interface FriendRequestRowProps {
     onAccept?: () => void;
     onReject?: () => void;
     onBlock?: () => void;
+    onMessage?: () => void;
 }
 
-export function FriendRequestRow({ friendship, variant, onAccept, onReject, onBlock }: FriendRequestRowProps) {
+export function FriendRequestRow({ friendship, variant, onAccept, onReject, onBlock, onMessage }: FriendRequestRowProps) {
     const name = friendship.other_display_name || "Unknown";
 
     return (
@@ -52,13 +53,22 @@ export function FriendRequestRow({ friendship, variant, onAccept, onReject, onBl
             )}
 
             {variant === "friend" && (
-                <button
-                    type="button"
-                    onClick={onBlock}
-                    className="text-xs px-2.5 py-1 rounded bg-gray-800/50 text-gray-500 hover:bg-red-600/20 hover:text-red-400 transition-colors flex-shrink-0"
-                >
-                    Block
-                </button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                        type="button"
+                        onClick={onMessage}
+                        className="text-xs px-2.5 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
+                    >
+                        Message
+                    </button>
+                    <button
+                        type="button"
+                        onClick={onBlock}
+                        className="text-xs px-2.5 py-1 rounded bg-gray-800/50 text-gray-500 hover:bg-red-600/20 hover:text-red-400 transition-colors"
+                    >
+                        Block
+                    </button>
+                </div>
             )}
         </div>
     );

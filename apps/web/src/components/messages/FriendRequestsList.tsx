@@ -8,7 +8,12 @@ function errMessage(err: unknown, fallback: string): string {
     return anyErr?.response?.data?.message ?? fallback;
 }
 
-export function FriendRequestsList() {
+interface FriendRequestsListProps {
+    /** Called with (friendId, friendDisplayName) when "Message" is clicked on a friend row. */
+    onMessageFriend?: (friendId: string, friendDisplayName: string | null) => void;
+}
+
+export function FriendRequestsList({ onMessageFriend }: FriendRequestsListProps = {}) {
     const {
         friends,
         incomingRequests,
@@ -99,6 +104,7 @@ export function FriendRequestsList() {
                             friendship={f}
                             variant="friend"
                             onBlock={() => f.other_user_id && handleBlock(f.other_user_id)}
+                            onMessage={() => f.other_user_id && onMessageFriend?.(f.other_user_id, f.other_display_name ?? null)}
                         />
                     ))
                 )}
