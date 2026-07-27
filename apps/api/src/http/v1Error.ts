@@ -22,6 +22,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   trigger_not_cancelable: "This trigger order cannot be canceled.",
   alert_not_cancelable: "This alert cannot be canceled.",
   alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
+  cannot_friend_self: "You can't send a friend request to yourself.",
+  friendship_not_pending: "This friend request is not pending.",
   // 401
   invalid_credentials: "Invalid email or password.",
   unauthorized: "Authentication is required.",
@@ -44,6 +46,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   trigger_not_found: "The requested trigger order was not found.",
   alert_not_found: "The requested alert was not found.",
   stream_not_found: "The SSE stream was not found or does not belong to this user.",
+  friendship_not_found: "The requested friend request was not found.",
   // 409
   email_taken: "This email address is already registered.",
   wallet_already_exists: "A wallet for this asset already exists.",
@@ -51,6 +54,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   pair_already_exists: "This trading pair already exists.",
   role_unchanged: "The user already has the requested role.",
   risk_check_failed: "The order was rejected by risk controls.",
+  friendship_already_exists: "A friend request or friendship already exists with this user.",
   governance_check_failed: "The order was rejected by account governance controls.",
   // matches
   match_already_active: "You already have an active or pending match.",
