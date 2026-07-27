@@ -1,17 +1,22 @@
 import { useDrawingStore, DRAWING_TOOL_ORDER, DRAWING_TOOL_SPECS } from "@/stores/drawingStore";
-import { DrawingToolIcon } from "./DrawingToolIcons";
+import { DrawingToolIcon, MagnetIcon } from "./DrawingToolIcons";
 
 /**
- * Left-edge vertical icon strip for the 6 in-scope drawing tools — mirrors
+ * Left-edge vertical icon strip for the in-scope drawing tools — mirrors
  * TradingView's own layout convention (a dedicated rail along the chart
  * canvas's left edge, not the top toolbar). Rendered as a flex sibling of
  * the chart container (see CandlestickChart.tsx's wrapping div), so it
  * takes real layout width and the chart's plot area shrinks to fit — not
  * an absolute overlay competing with the top-left legend-chip stack.
+ *
+ * Below a divider: non-tool toggles/actions (Magnet snap, and later Clear-all)
+ * that affect drawings globally rather than selecting a placement tool.
  */
 export function DrawingToolStrip() {
     const activeTool = useDrawingStore((s) => s.activeTool);
     const setActiveTool = useDrawingStore((s) => s.setActiveTool);
+    const snapEnabled = useDrawingStore((s) => s.snapEnabled);
+    const toggleSnap = useDrawingStore((s) => s.toggleSnap);
 
     return (
         <div
@@ -45,6 +50,25 @@ export function DrawingToolStrip() {
                     </button>
                 );
             })}
+
+            <div style={{ width: 20, height: 1, background: "rgba(255,255,255,0.12)", margin: "4px 0" }} />
+
+            <button
+                type="button"
+                title={`Magnet (snap to candle) — ${snapEnabled ? "on" : "off"}`}
+                aria-pressed={snapEnabled}
+                onClick={toggleSnap}
+                style={{
+                    width: 28, height: 28, borderRadius: 2,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: snapEnabled ? "#00ff41" : "transparent",
+                    border: snapEnabled ? "1px solid #00ff41" : "1px solid transparent",
+                    color: snapEnabled ? "#000" : "rgba(255,255,255,0.85)",
+                    cursor: "pointer", transition: "all 0.15s",
+                }}
+            >
+                <MagnetIcon />
+            </button>
         </div>
     );
 }

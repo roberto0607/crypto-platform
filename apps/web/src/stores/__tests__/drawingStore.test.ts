@@ -17,6 +17,7 @@ describe("drawingStore", () => {
             pendingPoints: [],
             selectedDrawingId: null,
             draggingAnchor: null,
+            snapEnabled: false,
         });
     });
 
@@ -164,5 +165,26 @@ describe("drawingStore", () => {
         expect(localStorage.getItem("tradr_drawings_eth-pair")).toBeNull();
         expect(localStorage.getItem("tradr_panel_heights")).toBe("unrelated");
         expect(localStorage.getItem("tradr_drawings_version")).toBe("1");
+    });
+
+    it("snapEnabled defaults to false and toggleSnap persists the flag under its own key", () => {
+        expect(useDrawingStore.getState().snapEnabled).toBe(false);
+
+        useDrawingStore.getState().toggleSnap();
+        expect(useDrawingStore.getState().snapEnabled).toBe(true);
+        expect(localStorage.getItem("tradr_snap_enabled")).toBe("1");
+
+        useDrawingStore.getState().toggleSnap();
+        expect(useDrawingStore.getState().snapEnabled).toBe(false);
+        expect(localStorage.getItem("tradr_snap_enabled")).toBe("0");
+    });
+
+    it("snapEnabled is not affected by a stale-version wipe (separate key from tradr_drawings_*)", () => {
+        localStorage.setItem("tradr_snap_enabled", "1");
+        localStorage.setItem("tradr_drawings_version", "0");
+
+        useDrawingStore.getState().loadForPair("btc-pair");
+
+        expect(localStorage.getItem("tradr_snap_enabled")).toBe("1");
     });
 });

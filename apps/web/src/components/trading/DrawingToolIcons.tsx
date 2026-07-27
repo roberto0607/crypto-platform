@@ -42,3 +42,28 @@ export function DrawingToolIcon({ type }: { type: DrawingToolType }) {
         </svg>
     );
 }
+
+/** Magnet toggle icon — a horseshoe magnet, distinct silhouette from the tool
+ * icons above so it reads as "a different kind of control" at a glance. */
+export function MagnetIcon() {
+    return (
+        <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="inline-block"
+        >
+            <path d="M4 2v6a4 4 0 0 0 8 0V2" />
+            <path d="M4 2H2v4h2" />
+            <path d="M12 2h2v4h-2" />
+            <path d="M4 8h2" />
+            <path d="M10 8h2" />
+        </svg>
+    );
+}

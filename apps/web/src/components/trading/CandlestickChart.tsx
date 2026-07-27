@@ -760,6 +760,26 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         pendingPreviewPrimitive.setChart(chart);
         pendingPreviewPrimitiveRef.current = pendingPreviewPrimitive;
 
+        // Drawing tools — Magnet: when snapEnabled, replace a raw
+        // coordinate-derived price with whichever of that candle's
+        // open/high/low/close is numerically closest. Reuses the same
+        // ts-bucket lookup the OHLCV crosshair readout already does against
+        // rawCandlesRef (below) rather than a new data source. Time is left
+        // alone — it's already an exact candle boundary regardless of Magnet
+        // (lightweight-charts quantizes click/crosshair time to the nearest
+        // bar internally), so there's nothing to snap there.
+        const resolveDrawingPrice = (time: number, rawPrice: number): number => {
+            if (!useDrawingStore.getState().snapEnabled) return rawPrice;
+            const candle = rawCandlesRef.current.find(
+                (c) => new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC === time,
+            );
+            if (!candle) return rawPrice;
+            const candidates = [candle.open, candle.high, candle.low, candle.close].map(parseFloat);
+            return candidates.reduce((closest, v) =>
+                Math.abs(v - rawPrice) < Math.abs(closest - rawPrice) ? v : closest,
+            );
+        };
+
         // Drawing tools — click-to-place when a tool is active, click-to-
         // select/deselect otherwise.
         chart.subscribeClick((param) => {
@@ -779,7 +799,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             if (param.time == null || !param.point) return;
             const price = series.coordinateToPrice(param.point.y);
             if (price == null) return;
-            addPoint({ time: param.time as number, price });
+            const time = param.time as number;
+            addPoint({ time, price: resolveDrawingPrice(time, price) });
         });
 
         // Drawing tools — dashed preview between the placed anchor and the
@@ -805,10 +826,11 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 pendingPreviewPrimitive.setPreview(null);
                 return;
             }
+            const time = param.time as number;
             pendingPreviewPrimitive.setPreview({
                 mode: activeTool === "rect" ? "rect" : "line",
                 anchor: pendingPoints[0]!,
-                cursor: { time: param.time as number, price },
+                cursor: { time, price: resolveDrawingPrice(time, price) },
                 color: spec.defaultColor,
             });
         });
@@ -822,7 +844,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             if (!draggingAnchor || param.time == null || !param.point) return;
             const price = series.coordinateToPrice(param.point.y);
             if (price == null) return;
-            updateDraggingAnchor({ time: param.time as number, price });
+            const time = param.time as number;
+            updateDraggingAnchor({ time, price: resolveDrawingPrice(time, price) });
         });
 
         // Drawing tools — anchor drag START/END. Dragging is a mousedown-

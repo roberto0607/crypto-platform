@@ -88,6 +88,28 @@ function genId(): string {
     return `dr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Magnet/snap-to-candle — a standalone session preference (not per-pair, not
+// versioned with the drawings schema), so it gets its own key rather than
+// living inside the per-pair blob. Deliberately does NOT start with
+// DRAWINGS_KEY_PREFIX ("tradr_drawings_") — that prefix is also what
+// ensureDrawingsVersion's stale-version wipe loop matches against, so a key
+// starting with it would get silently deleted on every schema bump.
+const SNAP_STORAGE_KEY = "tradr_snap_enabled";
+
+function loadSnapPreference(): boolean {
+    try {
+        return localStorage.getItem(SNAP_STORAGE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function saveSnapPreference(enabled: boolean): void {
+    try {
+        localStorage.setItem(SNAP_STORAGE_KEY, enabled ? "1" : "0");
+    } catch { /* ignore */ }
+}
+
 interface DraggingAnchor {
     drawingId: string;
     anchorIndex: number;
@@ -100,9 +122,11 @@ interface DrawingState {
     pendingPoints: DrawingPoint[];
     selectedDrawingId: string | null;
     draggingAnchor: DraggingAnchor | null;
+    snapEnabled: boolean;
 
     loadForPair: (pairId: string) => void;
     setActiveTool: (tool: DrawingToolType | null) => void;
+    toggleSnap: () => void;
     addPoint: (point: DrawingPoint) => void;
     cancelPlacement: () => void;
     selectDrawing: (id: string | null) => void;
@@ -121,6 +145,13 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
     pendingPoints: [],
     selectedDrawingId: null,
     draggingAnchor: null,
+    snapEnabled: loadSnapPreference(),
+
+    toggleSnap: () => {
+        const next = !get().snapEnabled;
+        saveSnapPreference(next);
+        set({ snapEnabled: next });
+    },
 
     // No-ops if already loaded for this pair — keeps a redundant call (e.g.
     // from a re-render) from clobbering in-progress tool/selection state.
