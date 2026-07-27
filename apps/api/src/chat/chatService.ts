@@ -2,7 +2,7 @@ import { pool } from "../db/pool.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { AppError } from "../errors/AppError.js";
-import { findFriendshipBetween } from "../friends/friendshipRepo.js";
+import { findFriendshipBetween, isBlockedBetween } from "../friends/friendshipRepo.js";
 import { containsProfanity } from "./profanityFilter.js";
 import {
     getConversationById,
@@ -16,7 +16,8 @@ import {
     type ConversationRow,
     type ConversationListRow,
 } from "./conversationRepo.js";
-import { insertMessage, listMessagesPaginated, type MessageRow } from "./messageRepo.js";
+import { insertMessage, listMessagesPaginated, getMessageById, type MessageRow } from "./messageRepo.js";
+import { insertFlaggedMessage, type FlaggedMessageRow } from "./moderationRepo.js";
 
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -87,12 +88,28 @@ async function requireParticipant(conversationId: string, userId: string): Promi
     return conversation;
 }
 
+/**
+ * Blocking applies to BOTH DM and Match Chat (locked design decision — Match
+ * Chat is friendship-independent, but a block still overrides it). Checked
+ * against every other participant, though every conversation today is
+ * exactly 2 people.
+ */
+async function assertNotBlocked(conversationId: string, userId: string): Promise<void> {
+    const others = await getOtherParticipants(conversationId, userId);
+    for (const otherId of others) {
+        if (await isBlockedBetween(userId, otherId)) {
+            throw new AppError("conversation_blocked");
+        }
+    }
+}
+
 export async function sendMessage(
     conversationId: string,
     senderId: string,
     body: string,
 ): Promise<MessageRow> {
     const conversation = await requireParticipant(conversationId, senderId);
+    await assertNotBlocked(conversationId, senderId);
 
     const trimmed = body.trim();
     if (trimmed.length === 0) {
@@ -132,5 +149,37 @@ export async function listMessages(
     cursor: { ca: string; id: string } | null,
 ): Promise<MessageRow[]> {
     await requireParticipant(conversationId, userId);
+    await assertNotBlocked(conversationId, userId);
     return listMessagesPaginated(conversationId, limit, cursor);
+}
+
+/**
+ * Report a message. Snapshots the body/sender/conversation-type onto the
+ * flagged_messages row (not just a message_id FK) specifically so a report
+ * filed on an active match's chat survives that match ending and hard-
+ * deleting the source message — see 076_flagged_messages.sql.
+ */
+export async function reportMessage(
+    reporterId: string,
+    messageId: string,
+    reason: string | undefined,
+): Promise<FlaggedMessageRow> {
+    const message = await getMessageById(messageId);
+    if (!message) throw new AppError("message_not_found");
+    if (message.sender_id === reporterId) throw new AppError("cannot_report_own_message");
+    if (!(await isParticipant(message.conversation_id, reporterId))) {
+        throw new AppError("forbidden");
+    }
+
+    const conversation = await getConversationById(message.conversation_id);
+    if (!conversation) throw new AppError("conversation_not_found");
+
+    return insertFlaggedMessage({
+        messageId: message.id,
+        bodySnapshot: message.body,
+        senderId: message.sender_id,
+        reporterId,
+        conversationType: conversation.type,
+        reason: reason ?? null,
+    });
 }

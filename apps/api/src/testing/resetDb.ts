@@ -46,6 +46,7 @@ export async function resetTestData(): Promise<void> {
       api_keys,
       audit_log,
       friendships,
+      flagged_messages,
       messages,
       conversation_participants,
       conversations,
