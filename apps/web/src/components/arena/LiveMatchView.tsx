@@ -9,9 +9,10 @@ import { getPositions } from "@/api/endpoints/analytics";
 import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { MatchEndOverlay } from "./MatchEndOverlay";
+import { MatchChatPanel } from "./MatchChatPanel";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
-import type { Position, MatchEndedEvent, MatchPnlUpdateEvent } from "@/types/api";
+import type { Position, MatchEndedEvent, MatchPnlUpdateEvent, MessageReceivedEvent } from "@/types/api";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -36,6 +37,7 @@ const LMV_CSS = `
     height: 100%;
     min-height: 0;
     overflow: hidden;
+    position: relative;
   }
 
   /* ── HEADER BAR ── */
@@ -118,6 +120,43 @@ const LMV_CSS = `
   }
   .lmv-forfeit-btn:hover {
     background: rgba(255,59,59,0.1);
+  }
+  .lmv-chat-toggle {
+    position: relative;
+    font-family: var(--ar-mono);
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.6);
+    border: 1px solid var(--ar-borderW);
+    background: transparent;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .lmv-chat-toggle:hover {
+    border-color: var(--ar-orange);
+    color: var(--ar-orange);
+  }
+  .lmv-chat-toggle.active {
+    border-color: var(--ar-orange);
+    color: var(--ar-orange);
+    background: rgba(255,107,0,0.06);
+  }
+  .lmv-chat-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: var(--ar-red);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 50%;
+    min-width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
   }
 
   /* ── MODAL ── */
@@ -521,6 +560,135 @@ const LMV_CSS = `
     justify-content: center;
     gap: 12px;
   }
+
+  /* ── MATCH CHAT PANEL ── */
+  /* Floating over .lmv-wrap (position:relative below), kept mounted after
+     first open so the log survives toggling closed/open — only visibility
+     animates, not mount state. */
+  .lmv-chat-panel {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    width: 300px;
+    height: 380px;
+    max-height: calc(100% - 32px);
+    background: var(--ar-bg2);
+    border: 1px solid var(--ar-orange);
+    display: flex;
+    flex-direction: column;
+    z-index: 500;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(12px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+    pointer-events: none;
+  }
+  .lmv-chat-panel.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .lmv-chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--ar-borderW);
+    flex-shrink: 0;
+  }
+  .lmv-chat-title {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--ar-orange);
+  }
+  .lmv-chat-close {
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .lmv-chat-close:hover { color: #fff; }
+  .lmv-chat-log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    padding: 10px 12px;
+  }
+  .lmv-chat-empty {
+    margin: auto;
+    font-size: 10px;
+    color: rgba(255,255,255,0.2);
+    text-align: center;
+  }
+  .lmv-chat-msg {
+    display: flex;
+    flex-direction: column;
+    max-width: 85%;
+  }
+  .lmv-chat-msg.mine { align-self: flex-end; align-items: flex-end; }
+  .lmv-chat-msg:not(.mine) { align-self: flex-start; align-items: flex-start; }
+  .lmv-chat-bubble {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.05);
+    color: rgba(255,255,255,0.85);
+    word-break: break-word;
+  }
+  .lmv-chat-msg.mine .lmv-chat-bubble {
+    background: rgba(255,107,0,0.12);
+    color: #fff;
+  }
+  .lmv-chat-ts {
+    font-size: 8px;
+    color: var(--ar-muted);
+    margin-top: 2px;
+  }
+  .lmv-chat-error {
+    font-size: 9px;
+    color: var(--ar-red);
+    padding: 0 12px 4px;
+  }
+  .lmv-chat-input-row {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--ar-borderW);
+    flex-shrink: 0;
+  }
+  .lmv-chat-input {
+    flex: 1;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--ar-borderW);
+    color: #fff;
+    font-family: var(--ar-mono);
+    font-size: 11px;
+    padding: 6px 8px;
+    outline: none;
+    min-width: 0;
+  }
+  .lmv-chat-input:focus { border-color: var(--ar-orange); }
+  .lmv-chat-send {
+    font-family: var(--ar-mono);
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: var(--ar-orange);
+    border: 1px solid var(--ar-orange);
+    background: transparent;
+    padding: 0 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .lmv-chat-send:hover:not(:disabled) { background: rgba(255,107,0,0.1); }
+  .lmv-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
 `;
 
 /* ── MatchOrderPanel removed — see UnifiedOrderPanel.tsx ── */
@@ -544,6 +712,35 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const [match, setMatch] = useState(initialMatch);
     const [positions, setPositions] = useState<Position[]>([]);
     const [showEndOverlay, setShowEndOverlay] = useState(false);
+
+    // Match Chat — ephemeral, component-local (no store). The panel itself
+    // owns the message log; this view only tracks open/closed + the unread
+    // badge shown on MatchHeaderBar's toggle. Mounted lazily on first open
+    // (chatEverOpened) and then kept mounted so the log survives further
+    // toggles instead of refetching every time.
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatEverOpened, setChatEverOpened] = useState(false);
+    const [chatUnread, setChatUnread] = useState(0);
+    const handleToggleChat = useCallback(() => {
+        setChatOpen((open) => {
+            const next = !open;
+            if (next) {
+                setChatUnread(0);
+                setChatEverOpened(true);
+            }
+            return next;
+        });
+    }, []);
+    // LiveMatchView isn't remounted between matches (ArenaPage renders it
+    // keyless), so a new match.id must explicitly reset chat state — same
+    // reason livePnl resets on match.id below. Without this, a leftover
+    // chatEverOpened would mount a fresh match's panel straight onto whatever
+    // open/unread state the previous match's chat left behind.
+    useEffect(() => {
+        setChatOpen(false);
+        setChatEverOpened(false);
+        setChatUnread(0);
+    }, [match.id]);
     // This view has no timeframe/indicator toolbar of its own — these just
     // replicate CandlestickChart's old uncontrolled defaults ("1h" / "visible")
     // now that timeframe/vpvrMode are controlled props. Not state — nothing
@@ -674,6 +871,21 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         return () => window.removeEventListener("sse:match.pnl.update", handler);
     }, [match.id]);
 
+    // Match Chat unread badge — MessageReceivedEvent never carries matchId,
+    // so (per the approved Gate 0 constraint) a "match" conversationType push
+    // arriving while this view is mounted is attributed to the current match
+    // via the one-active-match invariant. Only bumps while the panel is
+    // closed; MatchChatPanel handles its own log while open.
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const d = (e as CustomEvent<MessageReceivedEvent>).detail;
+            if (!d || d.conversationType !== "match" || !isMounted.current) return;
+            if (!chatOpen) setChatUnread((n) => n + 1);
+        };
+        window.addEventListener("sse:message.received", handler);
+        return () => window.removeEventListener("sse:message.received", handler);
+    }, [chatOpen]);
+
     // Safety net: poll every 30s in case a push was missed (slowed from 15s now
     // that the SSE push is the primary signal).
     useEffect(() => {
@@ -758,6 +970,9 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                 yourName={yourName}
                 opponentName={opponentName}
                 onForfeit={handleForfeit}
+                chatOpen={chatOpen}
+                chatUnread={chatUnread}
+                onToggleChat={handleToggleChat}
             />
 
             {/* FULL WIDTH TRADING VIEW */}
@@ -780,6 +995,17 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                     </div>
                 </div>
             </div>
+
+            {/* MATCH CHAT — floating panel, lazily mounted on first open then
+                kept mounted (visibility toggled via CSS) so the log persists */}
+            {chatEverOpened && (
+                <MatchChatPanel
+                    matchId={match.id}
+                    opponentName={opponentName}
+                    isOpen={chatOpen}
+                    onClose={() => setChatOpen(false)}
+                />
+            )}
 
             {/* MATCH END OVERLAY */}
             {showEndOverlay && (

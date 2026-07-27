@@ -28,6 +28,9 @@ interface MatchHeaderBarProps {
     yourName: string;
     opponentName: string;
     onForfeit: () => void;
+    chatOpen: boolean;
+    chatUnread: number;
+    onToggleChat: () => void;
 }
 
 export function MatchHeaderBar({
@@ -37,6 +40,9 @@ export function MatchHeaderBar({
     yourName,
     opponentName,
     onForfeit,
+    chatOpen,
+    chatUnread,
+    onToggleChat,
 }: MatchHeaderBarProps) {
     const [timeLeft, setTimeLeft] = useState(match.ends_at ? formatCountdown(match.ends_at) : "--");
     const [showForfeitConfirm, setShowForfeitConfirm] = useState(false);
@@ -105,6 +111,16 @@ export function MatchHeaderBar({
                     >
                         {formatPnl(opponentPnl)}
                     </span>
+                    <button
+                        type="button"
+                        className={`lmv-chat-toggle${chatOpen ? " active" : ""}`}
+                        onClick={onToggleChat}
+                    >
+                        CHAT
+                        {chatUnread > 0 && (
+                            <span className="lmv-chat-badge">{chatUnread > 9 ? "9+" : chatUnread}</span>
+                        )}
+                    </button>
                     <button className="lmv-forfeit-btn" onClick={() => setShowForfeitConfirm(true)}>
                         FORFEIT
                     </button>
