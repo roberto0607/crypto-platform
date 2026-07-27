@@ -46,6 +46,8 @@ export interface SSEHandlers {
   onMatchEnded?: (event: Extract<SSEEvent, { type: "match.ended" }>) => void;
   onMatchPnlUpdate?: (event: Extract<SSEEvent, { type: "match.pnl.update" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
+  onFriendRequestReceived?: (event: Extract<SSEEvent, { type: "friend_request.received" }>) => void;
+  onFriendRequestAccepted?: (event: Extract<SSEEvent, { type: "friend_request.accepted" }>) => void;
   onPing?: (ts: number) => void;
   onReconnected?: () => void;
 }
@@ -259,6 +261,12 @@ export function connectSSE(
           break;
         case "challenge.received":
           handlers.onChallengeReceived?.(event);
+          break;
+        case "friend_request.received":
+          handlers.onFriendRequestReceived?.(event);
+          break;
+        case "friend_request.accepted":
+          handlers.onFriendRequestAccepted?.(event);
           break;
       }
     },

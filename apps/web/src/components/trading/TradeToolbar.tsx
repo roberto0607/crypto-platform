@@ -7,6 +7,7 @@ import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { searchPairs } from "@/api/endpoints/trading";
 import { IndicatorToolbar } from "./IndicatorToolbar";
 import { AlertPanel } from "./AlertPanel";
+import { MessagesPanel } from "./MessagesPanel";
 import { TierBadge } from "./TierBadge";
 import AssetTab from "./AssetTab";
 import { NavIcon } from "@/components/NavIcon";
@@ -431,6 +432,10 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
 
       {/* 5 — Alerts / Notifications */}
       <AlertPanel pairId={selectedPairId} pairSymbol={selectedPair?.symbol} />
+
+      {/* 5.5 — Messages (Gate 1, social chat) — standalone, not a tab inside
+          AlertPanel; see MessagesPanel.tsx for why. */}
+      <MessagesPanel />
 
       <span className="tr-toolbar-divider" />
 

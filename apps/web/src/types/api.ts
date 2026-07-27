@@ -509,7 +509,9 @@ export type SSEEvent =
   | EventEnvelope<"match.started", MatchStartedEvent>
   | EventEnvelope<"match.ended", MatchEndedEvent>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
-  | EventEnvelope<"challenge.received", ChallengeReceivedEvent>;
+  | EventEnvelope<"challenge.received", ChallengeReceivedEvent>
+  | EventEnvelope<"friend_request.received", FriendRequestReceivedEvent>
+  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedEvent>;
 
 export interface ChallengeReceivedEvent {
   matchId: string;
@@ -542,4 +544,31 @@ export interface MatchPnlUpdateEvent {
   matchId: string;
   challengerPnlPct: string;
   opponentPnlPct: string;
+}
+
+// ── Social Chat: Friendships (Phase 1) ─────────────────────
+export interface Friendship {
+  id: UUID;
+  user_id: UUID;
+  friend_id: UUID;
+  status: "pending" | "accepted" | "blocked";
+  created_at: ISODateString;
+  updated_at: ISODateString;
+  // Present on rows from GET /v1/friends (joined) — the OTHER party's info,
+  // not necessarily user_id/friend_id (whichever side isn't the caller).
+  other_user_id?: UUID;
+  other_display_name?: string | null;
+}
+
+export interface FriendRequestReceivedEvent {
+  friendshipId: UUID;
+  requesterId: UUID;
+  requesterName: string;
+  createdAt: ISODateString;
+}
+
+export interface FriendRequestAcceptedEvent {
+  friendshipId: UUID;
+  accepterId: UUID;
+  accepterName: string;
 }
