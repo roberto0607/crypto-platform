@@ -13,6 +13,13 @@ vi.mock("@/api/endpoints/friends", () => ({
     }),
 }));
 
+vi.mock("@/api/endpoints/conversations", () => ({
+    getOrCreateDmConversation: vi.fn(),
+    listConversations: vi.fn().mockResolvedValue({ data: { ok: true, conversations: [] } }),
+    listMessages: vi.fn(),
+    sendMessage: vi.fn(),
+}));
+
 import { useChatStore } from "@/stores/chatStore";
 import { MessagesPanel } from "@/components/trading/MessagesPanel";
 import type { Friendship } from "@/types/api";
@@ -32,7 +39,15 @@ function friendship(overrides: Partial<Friendship> = {}): Friendship {
 }
 
 beforeEach(() => {
-    useChatStore.setState({ friends: [], incomingRequests: [], outgoingRequests: [], friendsLoaded: false });
+    useChatStore.setState({
+        friends: [],
+        incomingRequests: [],
+        outgoingRequests: [],
+        friendsLoaded: false,
+        conversations: [],
+        conversationsLoaded: false,
+        unreadByConversation: {},
+    });
 });
 
 function renderPanel() {
@@ -74,9 +89,35 @@ describe("MessagesPanel", () => {
         expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
     });
 
-    it("shows an empty state when open with no pending requests", async () => {
+    it("shows an empty state when open with nothing pending", async () => {
         renderPanel();
         await userEvent.click(screen.getByRole("button", { name: "Messages" }));
-        expect(screen.getByText("No pending requests")).toBeInTheDocument();
+        expect(screen.getByText("Nothing new")).toBeInTheDocument();
+    });
+
+    it("shows the combined badge (requests + unread DM count)", () => {
+        useChatStore.setState({
+            incomingRequests: [friendship({ id: "a" })],
+            unreadByConversation: { "conv-1": 3 },
+        });
+        renderPanel();
+        expect(screen.getByText("4")).toBeInTheDocument();
+    });
+
+    it("lists unread conversations in the preview, above requests", async () => {
+        useChatStore.setState({
+            conversations: [
+                { id: "conv-1", type: "dm", context_id: null, created_at: "2026-07-01T00:00:00Z", other_user_id: "u1", other_display_name: "Carol" },
+            ],
+            conversationsLoaded: true,
+            unreadByConversation: { "conv-1": 2 },
+        });
+        renderPanel();
+
+        await userEvent.click(screen.getByRole("button", { name: "Messages" }));
+
+        expect(screen.getByText("Carol")).toBeInTheDocument();
+        // "2" appears twice: the closed-button badge and the row's own unread count.
+        expect(screen.getAllByText("2")).toHaveLength(2);
     });
 });

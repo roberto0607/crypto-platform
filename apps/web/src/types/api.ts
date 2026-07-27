@@ -511,7 +511,8 @@ export type SSEEvent =
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
   | EventEnvelope<"challenge.received", ChallengeReceivedEvent>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedEvent>
-  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedEvent>;
+  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedEvent>
+  | EventEnvelope<"message.received", MessageReceivedEvent>;
 
 export interface ChallengeReceivedEvent {
   matchId: string;
@@ -571,4 +572,35 @@ export interface FriendRequestAcceptedEvent {
   friendshipId: UUID;
   accepterId: UUID;
   accepterName: string;
+}
+
+// ── Social Chat: Friends DM (Phase 2) ──────────────────────
+export interface Conversation {
+  id: UUID;
+  type: "dm" | "match";
+  context_id: UUID | null;
+  created_at: ISODateString;
+  other_user_id?: UUID;
+  other_display_name?: string | null;
+}
+
+export interface Message {
+  id: UUID;
+  conversation_id: UUID;
+  sender_id: UUID;
+  body: string | null;
+  image_url: string | null;
+  created_at: ISODateString;
+  read_at: ISODateString | null;
+}
+
+export interface MessageReceivedEvent {
+  conversationId: UUID;
+  conversationType: "dm" | "match";
+  messageId: UUID;
+  senderId: UUID;
+  senderName: string;
+  body: string | null;
+  imageUrl: string | null;
+  createdAt: ISODateString;
 }

@@ -5,15 +5,25 @@ import { useChatStore } from "@/stores/chatStore";
 // Trade-page entry point for Messages — standalone, modeled on AlertPanel.tsx's
 // icon+badge+dropdown shape (same .tr-tb-icon-btn, same absolute panel, same
 // outside-click-close pattern) but its own component, not a tab inside
-// AlertPanel. Phase 1 scope: preview shows pending friend requests only —
-// Phase 2 adds a conversations section above this once DM ships.
+// AlertPanel. Preview shows conversations with unread messages first, then
+// pending friend requests below.
 export function MessagesPanel() {
     const navigate = useNavigate();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
 
-    const { incomingRequests, friendsLoaded, fetchFriends, acceptFriendRequest, rejectFriendRequest } =
-        useChatStore();
+    const {
+        incomingRequests,
+        friendsLoaded,
+        fetchFriends,
+        acceptFriendRequest,
+        rejectFriendRequest,
+        conversations,
+        conversationsLoaded,
+        fetchConversations,
+        unreadByConversation,
+        unreadTotal,
+    } = useChatStore();
 
     useEffect(() => {
         if (!open) return;
@@ -25,10 +35,13 @@ export function MessagesPanel() {
     }, [open]);
 
     useEffect(() => {
-        if (open && !friendsLoaded) fetchFriends();
-    }, [open, friendsLoaded, fetchFriends]);
+        if (!open) return;
+        if (!friendsLoaded) fetchFriends();
+        if (!conversationsLoaded) fetchConversations();
+    }, [open, friendsLoaded, fetchFriends, conversationsLoaded, fetchConversations]);
 
-    const badgeCount = incomingRequests.length;
+    const badgeCount = incomingRequests.length + unreadTotal();
+    const unreadConversations = conversations.filter((c) => (unreadByConversation[c.id] ?? 0) > 0).slice(0, 5);
     const preview = incomingRequests.slice(0, 5);
 
     return (
@@ -83,10 +96,44 @@ export function MessagesPanel() {
                     </div>
 
                     <div style={{ overflowY: "auto" }}>
+                        {unreadConversations.length > 0 && (
+                            <>
+                                <div style={{ padding: "8px 12px 4px", fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 2 }}>
+                                    CONVERSATIONS
+                                </div>
+                                {unreadConversations.map((c) => (
+                                    <button
+                                        key={c.id}
+                                        type="button"
+                                        onClick={() => { setOpen(false); navigate(`/messages/${c.id}`); }}
+                                        style={{
+                                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                                            width: "100%", gap: 8, padding: "8px 12px",
+                                            borderBottom: "1px solid rgba(255,255,255,0.05)",
+                                            background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {c.other_display_name || "Unknown"}
+                                        </span>
+                                        <span style={{
+                                            flexShrink: 0, background: "#ff3b3b", color: "#fff", fontSize: 9, fontWeight: 700,
+                                            borderRadius: "50%", width: 14, height: 14,
+                                            display: "flex", alignItems: "center", justifyContent: "center",
+                                        }}>
+                                            {(unreadByConversation[c.id] ?? 0) > 9 ? "9+" : unreadByConversation[c.id]}
+                                        </span>
+                                    </button>
+                                ))}
+                            </>
+                        )}
+
                         {preview.length === 0 ? (
-                            <div style={{ padding: "16px 12px", fontSize: 10.5, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
-                                No pending requests
-                            </div>
+                            unreadConversations.length === 0 && (
+                                <div style={{ padding: "16px 12px", fontSize: 10.5, color: "rgba(255,255,255,0.3)", textAlign: "center" }}>
+                                    Nothing new
+                                </div>
+                            )
                         ) : (
                             preview.map((f) => (
                                 <div

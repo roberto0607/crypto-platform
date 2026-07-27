@@ -240,6 +240,7 @@ export default function App() {
           <Route path="/trade" element={<TradingPage />} />
           <Route path="/arena" element={<ArenaPage />} />
           <Route path="/messages" element={<MessagesPage />} />
+          <Route path="/messages/:conversationId" element={<MessagesPage />} />
           <Route path="/matches/:id/replay" element={<MatchReplayPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/cycle" element={<CyclesPage />} />
