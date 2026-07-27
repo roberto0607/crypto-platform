@@ -24,11 +24,14 @@ const ERROR_MESSAGES: Record<string, string> = {
   alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
   cannot_friend_self: "You can't send a friend request to yourself.",
   friendship_not_pending: "This friend request is not pending.",
+  message_contains_profanity: "Message contains inappropriate language.",
+  message_empty: "Message can't be empty.",
   // 401
   invalid_credentials: "Invalid email or password.",
   unauthorized: "Authentication is required.",
   // 403
   forbidden: "You do not have permission to access this resource.",
+  friendship_required: "You must be accepted friends before starting a conversation.",
   // 404 (repair)
   no_recon_data: "No reconciliation data found for this user.",
   // 409 (repair)
@@ -47,6 +50,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   alert_not_found: "The requested alert was not found.",
   stream_not_found: "The SSE stream was not found or does not belong to this user.",
   friendship_not_found: "The requested friend request was not found.",
+  conversation_not_found: "The requested conversation was not found.",
   // 409
   email_taken: "This email address is already registered.",
   wallet_already_exists: "A wallet for this asset already exists.",

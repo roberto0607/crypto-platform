@@ -133,6 +133,17 @@ export interface FriendRequestAcceptedData {
   accepterName: string;
 }
 
+export interface MessageReceivedData {
+  conversationId: string;
+  conversationType: "dm" | "match";
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  body: string | null;
+  imageUrl: string | null;
+  createdAt: string;
+}
+
 export interface MatchStartedData {
   matchId: string;
   challengerId: string;
@@ -211,7 +222,8 @@ export type AppEvent =
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
   | EventEnvelope<"challenge.received", ChallengeReceivedData>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedData>
-  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>;
+  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>
+  | EventEnvelope<"message.received", MessageReceivedData>;
 
 // ── Helper to create events ──
 
