@@ -22,6 +22,7 @@ import v1Journal from "./v1Journal";
 import v1Matches from "./v1Matches";
 import v1Market from "./v1Market";
 import v1Friends from "./v1Friends";
+import v1Conversations from "./v1Conversations";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -46,6 +47,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Matches);
     await app.register(v1Market);
     await app.register(v1Friends);
+    await app.register(v1Conversations);
 };
 
 export default v1Routes;
