@@ -120,6 +120,19 @@ export interface ChallengeReceivedData {
   createdAt: string;
 }
 
+export interface FriendRequestReceivedData {
+  friendshipId: string;
+  requesterId: string;
+  requesterName: string;
+  createdAt: string;
+}
+
+export interface FriendRequestAcceptedData {
+  friendshipId: string;
+  accepterId: string;
+  accepterName: string;
+}
+
 export interface MatchStartedData {
   matchId: string;
   challengerId: string;
@@ -196,7 +209,9 @@ export type AppEvent =
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
-  | EventEnvelope<"challenge.received", ChallengeReceivedData>;
+  | EventEnvelope<"challenge.received", ChallengeReceivedData>
+  | EventEnvelope<"friend_request.received", FriendRequestReceivedData>
+  | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>;
 
 // ── Helper to create events ──
 

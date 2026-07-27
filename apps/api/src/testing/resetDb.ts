@@ -45,6 +45,7 @@ export async function resetTestData(): Promise<void> {
       login_attempts,
       api_keys,
       audit_log,
+      friendships,
       users,
       trading_pairs,
       assets,

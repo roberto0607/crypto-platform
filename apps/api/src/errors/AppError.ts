@@ -19,6 +19,8 @@ const ERROR_STATUS: Record<string, number> = {
   alert_limit_exceeded: 400,
   invite_required: 400,
   invite_invalid: 400,
+  cannot_friend_self: 400,
+  friendship_not_pending: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,
@@ -40,6 +42,7 @@ const ERROR_STATUS: Record<string, number> = {
   run_not_found: 404,
   api_key_not_found: 404,
   stream_not_found: 404,
+  friendship_not_found: 404,
   // 400 (state errors)
   replay_not_active: 400,
   replay_already_stopped: 400,
@@ -54,6 +57,7 @@ const ERROR_STATUS: Record<string, number> = {
   pair_already_exists: 409,
   role_unchanged: 409,
   risk_check_failed: 409,
+  friendship_already_exists: 409,
   // 409 (repair)
   repair_has_high_findings: 409,
   // 404 (repair)
