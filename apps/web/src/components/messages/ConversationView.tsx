@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useChatStore } from "@/stores/chatStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useToast } from "@/components/ToastProvider";
+import { reportMessage } from "@/api/endpoints/moderation";
 
 function errMessage(err: unknown, fallback: string): string {
     const anyErr = err as { response?: { data?: { message?: string } } };
@@ -24,6 +25,21 @@ export function ConversationView() {
     const [draft, setDraft] = useState("");
     const [sending, setSending] = useState(false);
     const [loadingOlder, setLoadingOlder] = useState(false);
+    // Session-local — no need to persist across reload; a stale "not yet
+    // reported" state after reload just means a re-report fails loudly with
+    // a toast instead of showing "Reported", which is harmless.
+    const [reportedIds, setReportedIds] = useState<Set<string>>(new Set());
+
+    async function handleReport(messageId: string) {
+        if (!window.confirm("Report this message?")) return;
+        try {
+            await reportMessage(messageId);
+            setReportedIds((prev) => new Set(prev).add(messageId));
+            addToast("success", "Message reported");
+        } catch (err) {
+            addToast("error", errMessage(err, "Failed to report message"));
+        }
+    }
 
     const conversation = conversations.find((c) => c.id === activeConversationId);
     const messages = activeConversationId ? messagesByConversation[activeConversationId] ?? [] : [];
@@ -81,7 +97,22 @@ export function ConversationView() {
                             >
                                 {m.body}
                             </div>
-                            <div className="text-[10px] text-gray-500 mt-0.5">{formatTime(m.created_at)}</div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <div className="text-[10px] text-gray-500">{formatTime(m.created_at)}</div>
+                                {!mine && (
+                                    reportedIds.has(m.id) ? (
+                                        <span className="text-[10px] text-gray-600">Reported</span>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleReport(m.id)}
+                                            className="text-[10px] text-gray-500 hover:text-red-400 hover:underline"
+                                        >
+                                            Report
+                                        </button>
+                                    )
+                                )}
+                            </div>
                         </div>
                     );
                 })}

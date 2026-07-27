@@ -647,10 +647,34 @@ const LMV_CSS = `
     background: rgba(255,107,0,0.12);
     color: #fff;
   }
+  .lmv-chat-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
   .lmv-chat-ts {
     font-size: 8px;
     color: var(--ar-muted);
-    margin-top: 2px;
+  }
+  .lmv-chat-report {
+    font-family: var(--ar-mono);
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: var(--ar-muted);
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .lmv-chat-report:hover {
+    color: var(--ar-red);
+    text-decoration: underline;
+  }
+  .lmv-chat-reported {
+    font-size: 8px;
+    letter-spacing: 1px;
+    color: rgba(255,255,255,0.15);
   }
   .lmv-chat-error {
     font-size: 9px;
