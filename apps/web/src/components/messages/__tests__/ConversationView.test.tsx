@@ -1,15 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const sendMessageApi = vi.fn();
 const listMessagesApi = vi.fn();
+const reportMessageApi = vi.fn();
 
 vi.mock("@/api/endpoints/conversations", () => ({
     getOrCreateDmConversation: vi.fn(),
     listConversations: vi.fn(),
     listMessages: (id: string, params: unknown) => listMessagesApi(id, params),
     sendMessage: (id: string, body: string) => sendMessageApi(id, body),
+}));
+
+vi.mock("@/api/endpoints/moderation", () => ({
+    reportMessage: (messageId: string, reason?: string) => reportMessageApi(messageId, reason),
 }));
 
 import { useChatStore } from "@/stores/chatStore";
@@ -54,6 +59,8 @@ function message(overrides: Partial<Message> = {}): Message {
 beforeEach(() => {
     sendMessageApi.mockReset();
     listMessagesApi.mockReset();
+    reportMessageApi.mockReset();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     useChatStore.setState({
         conversations: [],
         activeConversationId: null,
@@ -119,5 +126,49 @@ describe("ConversationView", () => {
         useChatStore.setState({ conversations: [conversation()], activeConversationId: "c1" });
         renderView();
         expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    });
+
+    describe("report", () => {
+        it("never shows a Report affordance on my own messages", () => {
+            useChatStore.setState({
+                conversations: [conversation()],
+                activeConversationId: "c1",
+                messagesByConversation: { c1: [message({ id: "mine", body: "mine", sender_id: "me" })] },
+            });
+            renderView();
+            expect(screen.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+        });
+
+        it("shows Report on the other participant's messages, confirms, calls the API, and flips to Reported", async () => {
+            useChatStore.setState({
+                conversations: [conversation()],
+                activeConversationId: "c1",
+                messagesByConversation: { c1: [message({ id: "theirs", body: "hey there", sender_id: "them" })] },
+            });
+            reportMessageApi.mockResolvedValue({ data: { ok: true, flagged: {} } });
+            renderView();
+
+            await userEvent.click(screen.getByRole("button", { name: "Report" }));
+
+            expect(window.confirm).toHaveBeenCalledWith("Report this message?");
+            expect(reportMessageApi).toHaveBeenCalledWith("theirs", undefined);
+            await waitFor(() => expect(screen.getByText("Reported")).toBeInTheDocument());
+            expect(screen.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+        });
+
+        it("does not call the API when the confirm dialog is dismissed", async () => {
+            useChatStore.setState({
+                conversations: [conversation()],
+                activeConversationId: "c1",
+                messagesByConversation: { c1: [message({ id: "theirs", body: "hey there", sender_id: "them" })] },
+            });
+            vi.spyOn(window, "confirm").mockReturnValue(false);
+            renderView();
+
+            await userEvent.click(screen.getByRole("button", { name: "Report" }));
+
+            expect(reportMessageApi).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "Report" })).toBeInTheDocument();
+        });
     });
 });

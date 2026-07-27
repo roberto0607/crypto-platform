@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { useToast } from "@/components/ToastProvider";
 import { listMatchChatMessages, sendMatchChatMessage } from "@/api/endpoints/matchChat";
+import { reportMessage } from "@/api/endpoints/moderation";
 import type { Message, MessageReceivedEvent } from "@/types/api";
 
 function formatTime(iso: string): string {
@@ -21,10 +23,14 @@ interface MatchChatPanelProps {
 // trick as ConversationView.tsx.
 export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: MatchChatPanelProps) {
     const myId = useAuthStore((s) => s.user?.id);
+    const { addToast } = useToast();
     const [messages, setMessages] = useState<Message[]>([]);
     const [draft, setDraft] = useState("");
     const [sending, setSending] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Session-local, mirrors ConversationView's report tracking — no need
+    // to persist past this ephemeral panel's lifetime.
+    const [reportedIds, setReportedIds] = useState<Set<string>>(new Set());
 
     const isMounted = useRef(true);
     useEffect(() => {
@@ -91,6 +97,17 @@ export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: Match
         }
     }, [draft, sending, matchId]);
 
+    async function handleReport(messageId: string) {
+        if (!window.confirm("Report this message?")) return;
+        try {
+            await reportMessage(messageId);
+            if (isMounted.current) setReportedIds((prev) => new Set(prev).add(messageId));
+            addToast("success", "Message reported");
+        } catch {
+            addToast("error", "Failed to report message");
+        }
+    }
+
     return (
         <div className={`lmv-chat-panel${isOpen ? " open" : ""}`} aria-hidden={!isOpen}>
             <div className="lmv-chat-header">
@@ -109,7 +126,22 @@ export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: Match
                         return (
                             <div key={m.id} className={`lmv-chat-msg${mine ? " mine" : ""}`}>
                                 <div className="lmv-chat-bubble">{m.body}</div>
-                                <div className="lmv-chat-ts">{formatTime(m.created_at)}</div>
+                                <div className="lmv-chat-meta">
+                                    <span className="lmv-chat-ts">{formatTime(m.created_at)}</span>
+                                    {!mine && (
+                                        reportedIds.has(m.id) ? (
+                                            <span className="lmv-chat-reported">Reported</span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                className="lmv-chat-report"
+                                                onClick={() => handleReport(m.id)}
+                                            >
+                                                Report
+                                            </button>
+                                        )
+                                    )}
+                                </div>
                             </div>
                         );
                     })

@@ -4,13 +4,19 @@ import userEvent from "@testing-library/user-event";
 
 const listMatchChatMessagesApi = vi.fn();
 const sendMatchChatMessageApi = vi.fn();
+const reportMessageApi = vi.fn();
 
 vi.mock("@/api/endpoints/matchChat", () => ({
     listMatchChatMessages: (matchId: string, params: unknown) => listMatchChatMessagesApi(matchId, params),
     sendMatchChatMessage: (matchId: string, body: string) => sendMatchChatMessageApi(matchId, body),
 }));
 
+vi.mock("@/api/endpoints/moderation", () => ({
+    reportMessage: (messageId: string, reason?: string) => reportMessageApi(messageId, reason),
+}));
+
 import { useAuthStore } from "@/stores/authStore";
+import ToastProvider from "@/components/ToastProvider";
 import { MatchChatPanel } from "@/components/arena/MatchChatPanel";
 import type { Message, MessageReceivedEvent } from "@/types/api";
 
@@ -45,19 +51,23 @@ function dispatchMessageReceived(overrides: Partial<MessageReceivedEvent> = {}) 
 beforeEach(() => {
     listMatchChatMessagesApi.mockReset();
     sendMatchChatMessageApi.mockReset();
+    reportMessageApi.mockReset();
     listMatchChatMessagesApi.mockResolvedValue({ data: { ok: true, data: [], nextCursor: null } });
     useAuthStore.setState({ user: { id: "me", email: "me@test.com", role: "USER" } as any });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 function renderPanel(props: Partial<React.ComponentProps<typeof MatchChatPanel>> = {}) {
     return render(
-        <MatchChatPanel
-            matchId="match-1"
-            opponentName="Opponent"
-            isOpen={true}
-            onClose={vi.fn()}
-            {...props}
-        />,
+        <ToastProvider>
+            <MatchChatPanel
+                matchId="match-1"
+                opponentName="Opponent"
+                isOpen={true}
+                onClose={vi.fn()}
+                {...props}
+            />
+        </ToastProvider>,
     );
 }
 
@@ -148,7 +158,11 @@ describe("MatchChatPanel", () => {
         await waitFor(() => expect(screen.getByText("old match msg")).toBeInTheDocument());
 
         listMatchChatMessagesApi.mockResolvedValueOnce({ data: { ok: true, data: [], nextCursor: null } });
-        rerender(<MatchChatPanel matchId="match-2" opponentName="Opponent" isOpen={true} onClose={vi.fn()} />);
+        rerender(
+            <ToastProvider>
+                <MatchChatPanel matchId="match-2" opponentName="Opponent" isOpen={true} onClose={vi.fn()} />
+            </ToastProvider>,
+        );
 
         expect(listMatchChatMessagesApi).toHaveBeenCalledWith("match-2", undefined);
         await waitFor(() => expect(screen.queryByText("old match msg")).not.toBeInTheDocument());
@@ -160,7 +174,11 @@ describe("MatchChatPanel", () => {
         await waitFor(() => expect(listMatchChatMessagesApi).toHaveBeenCalled());
         expect(container.querySelector(".lmv-chat-panel")).not.toHaveClass("open");
 
-        rerender(<MatchChatPanel matchId="match-1" opponentName="Opponent" isOpen={true} onClose={vi.fn()} />);
+        rerender(
+            <ToastProvider>
+                <MatchChatPanel matchId="match-1" opponentName="Opponent" isOpen={true} onClose={vi.fn()} />
+            </ToastProvider>,
+        );
         expect(container.querySelector(".lmv-chat-panel")).toHaveClass("open");
     });
 
@@ -170,5 +188,60 @@ describe("MatchChatPanel", () => {
         await waitFor(() => expect(listMatchChatMessagesApi).toHaveBeenCalled());
         await userEvent.click(screen.getByRole("button", { name: "Close chat" }));
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    describe("report", () => {
+        function withOneOpponentMessage() {
+            listMatchChatMessagesApi.mockResolvedValue({
+                data: { ok: true, data: [message({ id: "theirs", body: "trash talk", sender_id: "opponent" })], nextCursor: null },
+            });
+        }
+
+        it("never shows a Report affordance on my own messages", async () => {
+            listMatchChatMessagesApi.mockResolvedValue({
+                data: { ok: true, data: [message({ id: "mine", body: "mine", sender_id: "me" })], nextCursor: null },
+            });
+            renderPanel();
+            await waitFor(() => expect(screen.getByText("mine")).toBeInTheDocument());
+            expect(screen.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+        });
+
+        it("shows Report on the opponent's messages, confirms, calls the API, and flips to Reported", async () => {
+            withOneOpponentMessage();
+            reportMessageApi.mockResolvedValue({ data: { ok: true, flagged: {} } });
+            renderPanel();
+            await waitFor(() => expect(screen.getByText("trash talk")).toBeInTheDocument());
+
+            await userEvent.click(screen.getByRole("button", { name: "Report" }));
+
+            expect(window.confirm).toHaveBeenCalledWith("Report this message?");
+            expect(reportMessageApi).toHaveBeenCalledWith("theirs", undefined);
+            await waitFor(() => expect(screen.getByText("Reported")).toBeInTheDocument());
+            expect(screen.queryByRole("button", { name: "Report" })).not.toBeInTheDocument();
+        });
+
+        it("does not call the API when the confirm dialog is dismissed", async () => {
+            withOneOpponentMessage();
+            vi.spyOn(window, "confirm").mockReturnValue(false);
+            renderPanel();
+            await waitFor(() => expect(screen.getByText("trash talk")).toBeInTheDocument());
+
+            await userEvent.click(screen.getByRole("button", { name: "Report" }));
+
+            expect(reportMessageApi).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "Report" })).toBeInTheDocument();
+        });
+
+        it("shows an error toast and keeps the Report button when the API call fails", async () => {
+            withOneOpponentMessage();
+            reportMessageApi.mockRejectedValue(new Error("nope"));
+            renderPanel();
+            await waitFor(() => expect(screen.getByText("trash talk")).toBeInTheDocument());
+
+            await userEvent.click(screen.getByRole("button", { name: "Report" }));
+
+            await waitFor(() => expect(screen.getByText("Failed to report message")).toBeInTheDocument());
+            expect(screen.getByRole("button", { name: "Report" })).toBeInTheDocument();
+        });
     });
 });
