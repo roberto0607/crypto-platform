@@ -17,6 +17,8 @@ import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { createTrade } from "../trading/tradeRepo.js";
 import { D, toFixed8 } from "../utils/decimal.js";
+import { createMatchConversationTx } from "../chat/conversationRepo.js";
+import { deleteMatchConversation } from "../chat/chatService.js";
 
 const logger = rootLogger.child({ module: "matchService" });
 
@@ -65,21 +67,27 @@ const TIER_CAPITAL: Record<TWTier, number> = {
 };
 
 /**
- * Publish a terminal `match.ended` event to BOTH participants. Called after
- * COMMIT in every terminal transition (forfeit, timer-expiry complete, mutual
- * forfeit) so the opponent's browser renders the verdict instantly instead of
- * waiting for its next poll tick. Per-user delivery over the existing SSE
- * eventBus — same transport createMatch/acceptMatch already use.
+ * Publish a terminal `match.ended` event to BOTH participants, and purge the
+ * match's ephemeral chat conversation. Called after COMMIT in every terminal
+ * transition (forfeit, timer-expiry complete, mutual forfeit) so the
+ * opponent's browser renders the verdict instantly instead of waiting for its
+ * next poll tick. Per-user delivery over the existing SSE eventBus — same
+ * transport createMatch/acceptMatch already use.
  *
  * `loserUserId` is derived from the winner (the non-winner participant);
  * `null` for a draw / mutual forfeit (winner_id is null). `eloDeltas` is null
  * when no winner was resolved (draw / mutual forfeit).
+ *
+ * Chat purge runs here (not inside the terminal transition's own txn) because
+ * it's best-effort like the SSE push, not required state: worst case a stale
+ * conversation lingers an extra tick, whereas failing the whole forfeit/
+ * complete over a chat-table error would be a much worse outcome.
  */
-function publishMatchEnded(
+async function publishMatchEnded(
     match: MatchRow,
     reason: "forfeit" | "timeout" | "mutual_forfeit",
     eloResult: MatchEloResult | null,
-): void {
+): Promise<void> {
     // Best-effort notification. The transaction already COMMITted before this
     // runs, so a publish failure must NEVER propagate — the forfeit/complete
     // succeeded and the user's request must return 200 regardless of whether
@@ -105,6 +113,12 @@ function publishMatchEnded(
         publish(createEvent("match.ended", data, { userId: match.opponent_id }));
     } catch (err) {
         logger.error({ err, matchId: match.id, reason }, "match_ended_publish_failed");
+    }
+
+    try {
+        await deleteMatchConversation(match.id);
+    } catch (err) {
+        logger.error({ err, matchId: match.id, reason }, "match_chat_purge_failed");
     }
 }
 
@@ -217,6 +231,12 @@ export async function acceptMatch(matchId: string, acceptingUserId: string): Pro
             throw new Error("match_update_failed");
         }
 
+        // Match Chat: created atomically with the match going ACTIVE (not
+        // best-effort like the SSE push below) — a failure here rolls back
+        // the whole accept rather than leaving a match with no chat and no
+        // retry path.
+        await createMatchConversationTx(client, matchId, [match.challenger_id, match.opponent_id]);
+
         await client.query("COMMIT");
 
         const accepted = updated[0];
@@ -314,7 +334,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
 
         // Push the verdict to both players so the opponent's screen flips
         // instantly (forfeiter already has it from this request's response).
-        publishMatchEnded(updated[0], "forfeit", eloResult);
+        await publishMatchEnded(updated[0], "forfeit", eloResult);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
@@ -400,7 +420,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         await client.query("COMMIT");
 
         // Timer-expiry completion — push the verdict to both players.
-        publishMatchEnded(updated[0], "timeout", eloResult);
+        await publishMatchEnded(updated[0], "timeout", eloResult);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
@@ -526,7 +546,7 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
         logger.info({ matchId }, "match_mutual_forfeited");
 
         // No winner — both players see DRAW. Push so both screens flip instantly.
-        publishMatchEnded(updated[0], "mutual_forfeit", null);
+        await publishMatchEnded(updated[0], "mutual_forfeit", null);
         return updated[0];
     } catch (err) {
         await client.query("ROLLBACK");
