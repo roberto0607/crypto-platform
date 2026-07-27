@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { pool } from "../db/pool.js";
 
 export interface ConversationRow {
@@ -81,6 +82,45 @@ export async function getOtherParticipants(
         [conversationId, userId],
     );
     return rows.map((r) => r.user_id);
+}
+
+/**
+ * Create a match-scoped conversation as part of the CALLER's transaction
+ * (matchService.acceptMatch's BEGIN/COMMIT) — unlike DM conversations, this
+ * must succeed atomically with the match becoming ACTIVE. If it fails, the
+ * whole accept rolls back rather than leaving a match with no chat and no
+ * retry path. context_id = matchId; idx_conversations_match_context enforces
+ * at most one match conversation per match.
+ */
+export async function createMatchConversationTx(
+    client: PoolClient,
+    matchId: string,
+    participantIds: string[],
+): Promise<ConversationRow> {
+    const { rows } = await client.query<ConversationRow>(
+        `INSERT INTO conversations (type, context_id) VALUES ('match', $1) RETURNING ${COLUMNS}`,
+        [matchId],
+    );
+    const conversation = rows[0];
+    const values = participantIds.map((_, i) => `($1, $${i + 2})`).join(", ");
+    await client.query(
+        `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ${values}`,
+        [conversation.id, ...participantIds],
+    );
+    return conversation;
+}
+
+export async function getMatchConversation(matchId: string): Promise<ConversationRow | null> {
+    const { rows } = await pool.query<ConversationRow>(
+        `SELECT ${COLUMNS} FROM conversations WHERE type = 'match' AND context_id = $1`,
+        [matchId],
+    );
+    return rows[0] ?? null;
+}
+
+/** Hard delete — cascades to conversation_participants and messages via FK. */
+export async function deleteConversation(conversationId: string): Promise<void> {
+    await pool.query(`DELETE FROM conversations WHERE id = $1`, [conversationId]);
 }
 
 /** DM conversations for `userId`, with the other participant's id + display name. */

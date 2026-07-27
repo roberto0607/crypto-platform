@@ -8,6 +8,8 @@ import {
     getConversationById,
     findDmConversationBetween,
     createDmConversation,
+    getMatchConversation,
+    deleteConversation,
     isParticipant,
     getOtherParticipants,
     listDmConversationsForUser,
@@ -47,6 +49,34 @@ export async function getOrCreateDmConversation(
 
 export async function listMyConversations(userId: string): Promise<ConversationListRow[]> {
     return listDmConversationsForUser(userId);
+}
+
+/**
+ * Resolve a matchId to its chat conversation id. The conversation is created
+ * transactionally in matchService.acceptMatch, so a missing conversation here
+ * means either the match never went ACTIVE (still PENDING) or — expected,
+ * not an error condition callers should treat specially — the match already
+ * ended and its ephemeral chat was already purged by deleteMatchConversation.
+ */
+export async function resolveMatchConversationId(matchId: string): Promise<string> {
+    const conversation = await getMatchConversation(matchId);
+    if (!conversation) throw new AppError("conversation_not_found");
+    return conversation.id;
+}
+
+/**
+ * Ephemeral cleanup — hard-deletes a match's chat conversation (cascades to
+ * participants + messages). Called from matchService.publishMatchEnded's
+ * best-effort block on every terminal transition (forfeit/timeout/mutual
+ * forfeit) so match chat never survives past the match itself, regardless of
+ * how it ended. A failure here must not propagate — same "must NEVER
+ * propagate" contract as the SSE push it runs alongside.
+ */
+export async function deleteMatchConversation(matchId: string): Promise<void> {
+    const conversation = await getMatchConversation(matchId);
+    if (conversation) {
+        await deleteConversation(conversation.id);
+    }
 }
 
 /** Throws conversation_not_found or forbidden; returns the row otherwise. */
