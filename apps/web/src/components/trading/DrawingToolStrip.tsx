@@ -1,5 +1,5 @@
 import { useDrawingStore, DRAWING_TOOL_ORDER, DRAWING_TOOL_SPECS } from "@/stores/drawingStore";
-import { DrawingToolIcon, MagnetIcon } from "./DrawingToolIcons";
+import { DrawingToolIcon, MeasureIcon, MagnetIcon } from "./DrawingToolIcons";
 
 /**
  * Left-edge vertical icon strip for the in-scope drawing tools — mirrors
@@ -50,6 +50,22 @@ export function DrawingToolStrip() {
                     </button>
                 );
             })}
+
+            <button
+                type="button"
+                title="Measure"
+                onClick={() => setActiveTool(activeTool === "measure" ? null : "measure")}
+                style={{
+                    width: 28, height: 28, borderRadius: 2,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: activeTool === "measure" ? "#00ff41" : "transparent",
+                    border: activeTool === "measure" ? "1px solid #00ff41" : "1px solid transparent",
+                    color: activeTool === "measure" ? "#000" : "rgba(255,255,255,0.85)",
+                    cursor: "pointer", transition: "all 0.15s",
+                }}
+            >
+                <MeasureIcon />
+            </button>
 
             <div style={{ width: 20, height: 1, background: "rgba(255,255,255,0.12)", margin: "4px 0" }} />
 

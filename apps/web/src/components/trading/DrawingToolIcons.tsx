@@ -51,6 +51,30 @@ export function DrawingToolIcon({ type }: { type: DrawingToolType }) {
     );
 }
 
+/** Measure/ruler icon — a diagonal edge with perpendicular tick marks, distinct
+ * from Trendline's circle-endpoint diagonal and Fib's horizontal-rung ladder. */
+export function MeasureIcon() {
+    return (
+        <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="inline-block"
+        >
+            <line x1="2" y1="14" x2="14" y2="2" />
+            <line x1="4" y1="12" x2="5.5" y2="10.5" />
+            <line x1="7" y1="9" x2="8.5" y2="7.5" />
+            <line x1="10" y1="6" x2="11.5" y2="4.5" />
+        </svg>
+    );
+}
+
 /** Magnet toggle icon — a horseshoe magnet, distinct silhouette from the tool
  * icons above so it reads as "a different kind of control" at a glance. */
 export function MagnetIcon() {
