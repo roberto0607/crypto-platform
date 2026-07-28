@@ -2,11 +2,12 @@ import { create } from "zustand";
 
 // Chart drawing tools (Gate 1, first pass — 6 tools). See
 // docs/designs/2026-07-26-chart-drawing-tools-gate1.md for the full design.
-// Fibonacci Retracement / Parallel Channel are a deliberate fast-follow —
-// DRAWING_TOOL_SPECS' requiredPoints field is what makes Channel's 3-point
-// arity a one-line addition later instead of a state-machine rewrite.
+// Fibonacci Retracement was picked up as a fast-follow (Gate 1 addendum,
+// 2026-07-27) — DRAWING_TOOL_SPECS' requiredPoints field is what made this a
+// one-line addition instead of a state-machine rewrite, exactly as planned.
+// Parallel Channel remains deferred.
 
-export type DrawingToolType = "hline" | "hray" | "vline" | "text" | "trendline" | "rect";
+export type DrawingToolType = "hline" | "hray" | "vline" | "text" | "trendline" | "rect" | "fib";
 
 export interface DrawingPoint {
     time: number;
@@ -36,9 +37,10 @@ export const DRAWING_TOOL_SPECS: Record<DrawingToolType, DrawingToolSpec> = {
     text: { type: "text", label: "Text Annotation", requiredPoints: 1, defaultColor: "#e5e7eb" },
     trendline: { type: "trendline", label: "Trend Line", requiredPoints: 2, defaultColor: "#00ff41" },
     rect: { type: "rect", label: "Rectangle", requiredPoints: 2, defaultColor: "#06b6d4" },
+    fib: { type: "fib", label: "Fibonacci Retracement", requiredPoints: 2, defaultColor: "#c084fc" },
 };
 
-export const DRAWING_TOOL_ORDER: DrawingToolType[] = ["trendline", "hline", "hray", "vline", "rect", "text"];
+export const DRAWING_TOOL_ORDER: DrawingToolType[] = ["trendline", "fib", "hline", "hray", "vline", "rect", "text"];
 
 // Global version bump, matching INDICATOR_CONFIG_VERSION's convention exactly
 // (resolved decision, 2026-07-26 design-lock addendum): a bump wipes every

@@ -16,6 +16,14 @@ const ICONS: Record<DrawingToolType, JSX.Element> = {
     hray: <line x1="6" y1="8" x2="14" y2="8" />,
     vline: <line x1="8" y1="2" x2="8" y2="14" />,
     rect: <rect x="2.5" y="4.5" width="11" height="7" />,
+    fib: (
+        <>
+            <line x1="2" y1="13" x2="14" y2="3" />
+            <line x1="3" y1="11.5" x2="7" y2="11.5" />
+            <line x1="5.5" y1="8" x2="9.5" y2="8" />
+            <line x1="8" y1="4.5" x2="12" y2="4.5" />
+        </>
+    ),
     text: (
         <>
             <line x1="3" y1="3.5" x2="13" y2="3.5" />
