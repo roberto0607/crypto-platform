@@ -5,6 +5,7 @@ import { HorizontalRayPrimitive } from "./horizontalRayPrimitive";
 import { VerticalLinePrimitive } from "./verticalLinePrimitive";
 import { TrendlinePrimitive } from "./trendlinePrimitive";
 import { RectanglePrimitive } from "./rectanglePrimitive";
+import { FibonacciPrimitive } from "./fibonacciPrimitive";
 
 /**
  * One primitive instance per drawing. `text` drawings are intentionally
@@ -23,6 +24,8 @@ export function createDrawingPrimitive(drawing: StoredDrawing): BaseDrawingPrimi
             return new TrendlinePrimitive(drawing);
         case "rect":
             return new RectanglePrimitive(drawing);
+        case "fib":
+            return new FibonacciPrimitive(drawing);
         case "text":
             return null;
     }

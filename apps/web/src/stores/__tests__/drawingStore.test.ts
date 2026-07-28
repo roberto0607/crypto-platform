@@ -69,6 +69,24 @@ describe("drawingStore", () => {
         ]);
     });
 
+    it("a 2-point tool (fib) commits with its own type and default color, same arity contract as trendline", () => {
+        useDrawingStore.getState().loadForPair("btc-pair");
+        useDrawingStore.getState().setActiveTool("fib");
+        useDrawingStore.getState().addPoint({ time: 1000, price: 50000 });
+        expect(useDrawingStore.getState().drawings).toHaveLength(0);
+
+        useDrawingStore.getState().addPoint({ time: 2000, price: 60000 });
+        const state = useDrawingStore.getState();
+        expect(state.activeTool).toBeNull();
+        expect(state.drawings).toHaveLength(1);
+        expect(state.drawings[0]!.type).toBe("fib");
+        expect(state.drawings[0]!.color).toBe("#c084fc");
+        expect(state.drawings[0]!.points).toEqual([
+            { time: 1000, price: 50000 },
+            { time: 2000, price: 60000 },
+        ]);
+    });
+
     it("cancelPlacement clears an in-progress drawing without committing it", () => {
         useDrawingStore.getState().loadForPair("btc-pair");
         useDrawingStore.getState().setActiveTool("rect");
