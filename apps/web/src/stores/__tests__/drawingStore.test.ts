@@ -18,6 +18,7 @@ describe("drawingStore", () => {
             selectedDrawingId: null,
             draggingAnchor: null,
             snapEnabled: false,
+            nextColor: null,
         });
     });
 
@@ -204,5 +205,65 @@ describe("drawingStore", () => {
         useDrawingStore.getState().loadForPair("btc-pair");
 
         expect(localStorage.getItem("tradr_snap_enabled")).toBe("1");
+    });
+
+    it("nextColor overrides a drawing's color for exactly one commit, then resets", () => {
+        useDrawingStore.getState().loadForPair("btc-pair");
+        useDrawingStore.getState().setActiveTool("hline");
+        useDrawingStore.getState().setNextColor("#ef4444");
+        useDrawingStore.getState().addPoint({ time: 1000, price: 50000 });
+
+        let state = useDrawingStore.getState();
+        expect(state.drawings[0]!.color).toBe("#ef4444");
+        expect(state.nextColor).toBeNull();
+
+        // Second placement with no swatch picked falls back to the tool's default.
+        useDrawingStore.getState().setActiveTool("hline");
+        useDrawingStore.getState().addPoint({ time: 2000, price: 51000 });
+        state = useDrawingStore.getState();
+        expect(state.drawings[1]!.color).toBe("#f5b942");
+    });
+
+    it("setActiveTool clears a picked nextColor so it doesn't leak into a different tool", () => {
+        useDrawingStore.getState().loadForPair("btc-pair");
+        useDrawingStore.getState().setActiveTool("hline");
+        useDrawingStore.getState().setNextColor("#ef4444");
+
+        useDrawingStore.getState().setActiveTool("vline");
+        expect(useDrawingStore.getState().nextColor).toBeNull();
+    });
+
+    it("setDrawingColor recolors an existing drawing immediately and persists it", () => {
+        useDrawingStore.getState().loadForPair("btc-pair");
+        useDrawingStore.getState().setActiveTool("hline");
+        useDrawingStore.getState().addPoint({ time: 1000, price: 50000 });
+        const id = useDrawingStore.getState().drawings[0]!.id;
+
+        useDrawingStore.getState().setDrawingColor(id, "#ffffff");
+
+        expect(useDrawingStore.getState().drawings[0]!.color).toBe("#ffffff");
+        const persisted = JSON.parse(localStorage.getItem("tradr_drawings_btc-pair")!);
+        expect(persisted[0].color).toBe("#ffffff");
+    });
+
+    it("clearAllForPair wipes only the current pair's drawings and resets in-progress placement state", () => {
+        useDrawingStore.getState().loadForPair("btc-pair");
+        useDrawingStore.getState().setActiveTool("hline");
+        useDrawingStore.getState().addPoint({ time: 1000, price: 50000 });
+
+        useDrawingStore.setState({ currentPairId: null, drawings: [] });
+        useDrawingStore.getState().loadForPair("eth-pair");
+        useDrawingStore.getState().setActiveTool("vline");
+        useDrawingStore.getState().addPoint({ time: 2000, price: 3000 });
+
+        useDrawingStore.getState().clearAllForPair();
+
+        const state = useDrawingStore.getState();
+        expect(state.drawings).toEqual([]);
+        expect(state.selectedDrawingId).toBeNull();
+        expect(state.activeTool).toBeNull();
+        expect(JSON.parse(localStorage.getItem("tradr_drawings_eth-pair")!)).toEqual([]);
+        // The OTHER pair's persisted drawings are untouched.
+        expect(JSON.parse(localStorage.getItem("tradr_drawings_btc-pair")!)).toHaveLength(1);
     });
 });

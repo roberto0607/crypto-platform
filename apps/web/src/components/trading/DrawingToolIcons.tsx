@@ -75,6 +75,31 @@ export function MeasureIcon() {
     );
 }
 
+/** Clear-all icon — a simple trash can, standard convention for a bulk
+ * destructive action (matches ×'s convention for a single delete). */
+export function ClearAllIcon() {
+    return (
+        <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className="inline-block"
+        >
+            <path d="M3 4.5h10" />
+            <path d="M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5" />
+            <path d="M4.5 4.5 5 13a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l.5-8.5" />
+            <path d="M7 7v4" />
+            <path d="M9 7v4" />
+        </svg>
+    );
+}
+
 /** Magnet toggle icon — a horseshoe magnet, distinct silhouette from the tool
  * icons above so it reads as "a different kind of control" at a glance. */
 export function MagnetIcon() {

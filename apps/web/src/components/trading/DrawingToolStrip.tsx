@@ -1,5 +1,42 @@
-import { useDrawingStore, DRAWING_TOOL_ORDER, DRAWING_TOOL_SPECS } from "@/stores/drawingStore";
-import { DrawingToolIcon, MeasureIcon, MagnetIcon } from "./DrawingToolIcons";
+import { useDrawingStore, DRAWING_TOOL_ORDER, DRAWING_TOOL_SPECS, DRAWING_COLOR_PALETTE } from "@/stores/drawingStore";
+import { DrawingToolIcon, MeasureIcon, MagnetIcon, ClearAllIcon } from "./DrawingToolIcons";
+
+/**
+ * Small fixed-palette swatch grid — shown in TWO contexts (never both at
+ * once, since setActiveTool clears selectedDrawingId and vice versa, so the
+ * two states are mutually exclusive by construction):
+ *   - a persistable tool is active (not Measure, which never has a color) →
+ *     picking a swatch sets `nextColor`, applied to the NEXT commit only
+ *   - a drawing is selected → picking a swatch recolors it immediately
+ * `activeColor` highlights the current choice (nextColor, or the selected
+ * drawing's own color) so the picker shows what's already in effect.
+ */
+function ColorSwatchGrid({
+    activeColor,
+    onSelect,
+}: {
+    activeColor: string | null;
+    onSelect: (color: string) => void;
+}) {
+    return (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 3, padding: "4px 0" }}>
+            {DRAWING_COLOR_PALETTE.map((color) => (
+                <button
+                    key={color}
+                    type="button"
+                    title={color}
+                    onClick={() => onSelect(color)}
+                    style={{
+                        width: 13, height: 13, borderRadius: "50%", padding: 0,
+                        background: color,
+                        border: activeColor === color ? "2px solid #fff" : "1px solid rgba(255,255,255,0.25)",
+                        cursor: "pointer",
+                    }}
+                />
+            ))}
+        </div>
+    );
+}
 
 /**
  * Left-edge vertical icon strip for the in-scope drawing tools — mirrors
@@ -9,14 +46,23 @@ import { DrawingToolIcon, MeasureIcon, MagnetIcon } from "./DrawingToolIcons";
  * takes real layout width and the chart's plot area shrinks to fit — not
  * an absolute overlay competing with the top-left legend-chip stack.
  *
- * Below a divider: non-tool toggles/actions (Magnet snap, and later Clear-all)
- * that affect drawings globally rather than selecting a placement tool.
+ * Below a divider: non-tool toggles/actions (Magnet snap, Clear-all) that
+ * affect drawings globally rather than selecting a placement tool.
  */
 export function DrawingToolStrip() {
     const activeTool = useDrawingStore((s) => s.activeTool);
     const setActiveTool = useDrawingStore((s) => s.setActiveTool);
     const snapEnabled = useDrawingStore((s) => s.snapEnabled);
     const toggleSnap = useDrawingStore((s) => s.toggleSnap);
+    const nextColor = useDrawingStore((s) => s.nextColor);
+    const setNextColor = useDrawingStore((s) => s.setNextColor);
+    const selectedDrawingId = useDrawingStore((s) => s.selectedDrawingId);
+    const drawings = useDrawingStore((s) => s.drawings);
+    const setDrawingColor = useDrawingStore((s) => s.setDrawingColor);
+    const clearAllForPair = useDrawingStore((s) => s.clearAllForPair);
+
+    const selectedDrawing = selectedDrawingId ? drawings.find((d) => d.id === selectedDrawingId) : null;
+    const showColorPicker = (!!activeTool && activeTool !== "measure") || !!selectedDrawing;
 
     return (
         <div
@@ -67,6 +113,16 @@ export function DrawingToolStrip() {
                 <MeasureIcon />
             </button>
 
+            {showColorPicker && (
+                <ColorSwatchGrid
+                    activeColor={selectedDrawing ? selectedDrawing.color : nextColor}
+                    onSelect={(color) => {
+                        if (selectedDrawing) setDrawingColor(selectedDrawing.id, color);
+                        else setNextColor(color);
+                    }}
+                />
+            )}
+
             <div style={{ width: 20, height: 1, background: "rgba(255,255,255,0.12)", margin: "4px 0" }} />
 
             <button
@@ -84,6 +140,23 @@ export function DrawingToolStrip() {
                 }}
             >
                 <MagnetIcon />
+            </button>
+
+            <button
+                type="button"
+                title="Clear all drawings"
+                onClick={() => {
+                    if (window.confirm("Clear all drawings on this chart?")) clearAllForPair();
+                }}
+                style={{
+                    width: 28, height: 28, borderRadius: 2,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    background: "transparent", border: "1px solid transparent",
+                    color: "rgba(255,255,255,0.85)",
+                    cursor: "pointer", transition: "all 0.15s",
+                }}
+            >
+                <ClearAllIcon />
             </button>
         </div>
     );
