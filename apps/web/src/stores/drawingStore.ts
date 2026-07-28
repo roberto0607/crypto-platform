@@ -9,6 +9,14 @@ import { create } from "zustand";
 
 export type DrawingToolType = "hline" | "hray" | "vline" | "text" | "trendline" | "rect" | "fib";
 
+// Measure is deliberately NOT a DrawingToolType — it never persists a
+// StoredDrawing (Gate 1 addendum: "transient, purely a measuring aid"), so
+// it's excluded from DRAWING_TOOL_SPECS/DRAWING_TOOL_ORDER and from
+// StoredDrawing["type"]'s exhaustiveness. It still needs to occupy
+// `activeTool` (so it gets the same toolbar-button/pan-lock treatment as
+// every other tool), hence this separate, wider union just for that field.
+export type ActiveDrawingTool = DrawingToolType | "measure";
+
 export interface DrawingPoint {
     time: number;
     price: number;
@@ -120,14 +128,14 @@ interface DraggingAnchor {
 interface DrawingState {
     currentPairId: string | null;
     drawings: StoredDrawing[];
-    activeTool: DrawingToolType | null;
+    activeTool: ActiveDrawingTool | null;
     pendingPoints: DrawingPoint[];
     selectedDrawingId: string | null;
     draggingAnchor: DraggingAnchor | null;
     snapEnabled: boolean;
 
     loadForPair: (pairId: string) => void;
-    setActiveTool: (tool: DrawingToolType | null) => void;
+    setActiveTool: (tool: ActiveDrawingTool | null) => void;
     toggleSnap: () => void;
     addPoint: (point: DrawingPoint) => void;
     cancelPlacement: () => void;
@@ -175,7 +183,12 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
 
     addPoint: (point) => {
         const { activeTool, pendingPoints, currentPairId, drawings } = get();
-        if (!activeTool || !currentPairId) return;
+        // Measure never commits a StoredDrawing — CandlestickChart.tsx routes
+        // its whole gesture through a separate raw mousedown/move/up path and
+        // should never call addPoint while activeTool is "measure", but this
+        // guard is what narrows ActiveDrawingTool back to DrawingToolType for
+        // the DRAWING_TOOL_SPECS lookup below either way.
+        if (!activeTool || activeTool === "measure" || !currentPairId) return;
         const spec = DRAWING_TOOL_SPECS[activeTool];
         const nextPoints = [...pendingPoints, point];
 

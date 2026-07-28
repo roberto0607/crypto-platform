@@ -58,11 +58,12 @@ import { dayDirection } from "@/lib/priceChange";
 import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
-import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing } from "@/stores/drawingStore";
+import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing, type DrawingPoint } from "@/stores/drawingStore";
 import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
 import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
 import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
 import { parseAnchorExternalId } from "@/lib/drawings/drawingPrimitiveShared";
+import { computeMeasureStats, formatDuration, TIMEFRAME_SECONDS } from "@/lib/drawings/measureFormat";
 import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
@@ -124,6 +125,12 @@ export function isAtLiveEdge(
 
 // Lightweight Charts treats timestamps as UTC — offset to local timezone
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
+
+// Measure tool's dashed line/label color — deliberately not reused from any
+// persisted tool's default (hline/hray amber, vline indigo, trendline green,
+// rect cyan, fib violet) so a transient measurement never looks like it might
+// be one of those persisted drawings.
+const MEASURE_COLOR = "#ffffff";
 
 // Min interval between live price-derived indicator recomputes (RSI/MACD/ATR)
 // on price ticks. Ticks fire many times/sec and each compute runs over ~750
@@ -402,6 +409,26 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // Dashed ghost preview shown while a 2-point tool (Trendline/Rectangle) is
     // mid-placement (anchor clicked, second point pending).
     const pendingPreviewPrimitiveRef = useRef<PendingDrawingPreviewPrimitive | null>(null);
+    // Measure tool — a SEPARATE PendingDrawingPreviewPrimitive instance (same
+    // class, reused rather than duplicated) so its line doesn't fight with the
+    // 2-point placement preview's own setPreview(null) calls on every
+    // crosshair move. Transient: never touches drawingStore, lives entirely
+    // as component-local state (measureState drives the DOM label + effects;
+    // measureStateRef mirrors it for the mount effect's closures, which only
+    // ever capture the ref, not the state, since that effect runs once).
+    const measurePreviewPrimitiveRef = useRef<PendingDrawingPreviewPrimitive | null>(null);
+    const [measureState, setMeasureState] = useState<{ start: DrawingPoint; end: DrawingPoint } | null>(null);
+    const measureStateRef = useRef<{ start: DrawingPoint; end: DrawingPoint } | null>(null);
+    // Component-scoped (not inside the mount effect) so both that effect's
+    // mousedown/crosshair-move handlers AND the separate Esc-key effect below
+    // can clear it without duplicating the ref/state/primitive triple-write.
+    const updateMeasureState = useCallback((next: { start: DrawingPoint; end: DrawingPoint } | null) => {
+        measureStateRef.current = next;
+        setMeasureState(next);
+        measurePreviewPrimitiveRef.current?.setPreview(
+            next ? { mode: "line", anchor: next.start, cursor: next.end, color: MEASURE_COLOR } : null,
+        );
+    }, []);
     // Text Annotation — DOM chip positions (screen coords), one per "text"
     // drawing. Recomputed on pan/zoom/resize/drawings-change; NOT a canvas
     // primitive (see createDrawingPrimitive's "text" case), since editable
@@ -760,6 +787,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         pendingPreviewPrimitive.setChart(chart);
         pendingPreviewPrimitiveRef.current = pendingPreviewPrimitive;
 
+        // Measure tool's own dashed line — separate instance of the same
+        // primitive class, always attached.
+        const measurePreviewPrimitive = new PendingDrawingPreviewPrimitive();
+        series.attachPrimitive(measurePreviewPrimitive);
+        measurePreviewPrimitive.setChart(chart);
+        measurePreviewPrimitiveRef.current = measurePreviewPrimitive;
+
         // Drawing tools — Magnet: when snapEnabled, replace a raw
         // coordinate-derived price with whichever of that candle's
         // open/high/low/close is numerically closest. Reuses the same
@@ -781,9 +815,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         };
 
         // Drawing tools — click-to-place when a tool is active, click-to-
-        // select/deselect otherwise.
+        // select/deselect otherwise. Measure never reaches this — it's a
+        // click-DRAG gesture (see the mousedown/crosshair-move/mouseup
+        // handlers below), not click-click, so a plain click while it's
+        // active is a no-op rather than treated as a placement attempt.
         chart.subscribeClick((param) => {
             const { activeTool, addPoint, selectDrawing } = useDrawingStore.getState();
+            if (activeTool === "measure") return;
             if (!activeTool) {
                 // Idle click — select/deselect. The library resolves
                 // hoveredObjectId from each attached primitive's hitTest
@@ -812,7 +850,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         // pointer move regardless of button state.
         chart.subscribeCrosshairMove((param) => {
             const { activeTool, pendingPoints } = useDrawingStore.getState();
-            if (!activeTool || pendingPoints.length === 0 || !param.time || !param.point) {
+            if (!activeTool || activeTool === "measure" || pendingPoints.length === 0 || !param.time || !param.point) {
                 pendingPreviewPrimitive.setPreview(null);
                 return;
             }
@@ -848,6 +886,21 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             updateDraggingAnchor({ time, price: resolveDrawingPrice(time, price) });
         });
 
+        // Measure — live end-point updates while measureStateRef is set, same
+        // crosshair-fires-on-every-move mechanism as anchor drag above
+        // (measuring is itself a raw mousedown-then-move-then-mouseup drag,
+        // not a click-click placement).
+        chart.subscribeCrosshairMove((param) => {
+            if (!measureStateRef.current || param.time == null || !param.point) return;
+            const rawPrice = series.coordinateToPrice(param.point.y);
+            if (rawPrice == null) return;
+            const time = param.time as number;
+            updateMeasureState({
+                start: measureStateRef.current.start,
+                end: { time, price: resolveDrawingPrice(time, rawPrice) },
+            });
+        });
+
         // Drawing tools — anchor drag START/END. Dragging is a mousedown-
         // then-move-then-mouseup gesture, which the library's subscribeClick
         // (fires on mouseup-with-minimal-movement) can't detect — click and
@@ -858,6 +911,18 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         // (hitTest only returns anchor hits while primitive.selected).
         const handleMouseDown = (e: MouseEvent) => {
             const { activeTool, selectedDrawingId, startDraggingAnchor } = useDrawingStore.getState();
+            if (activeTool === "measure") {
+                if (!containerRef.current) return;
+                const rect = containerRef.current.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const time = chart.timeScale().coordinateToTime(x) as number | null;
+                const rawPrice = series.coordinateToPrice(y);
+                if (time == null || rawPrice == null) return;
+                const point = { time, price: resolveDrawingPrice(time, rawPrice) };
+                updateMeasureState({ start: point, end: point });
+                return;
+            }
             if (activeTool || !selectedDrawingId || !containerRef.current) return;
             const primitive = drawingPrimitivesRef.current.get(selectedDrawingId);
             if (!primitive) return; // e.g. a Text Annotation — not a canvas primitive, not draggable this pass
@@ -870,6 +935,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         };
         const handleMouseUp = () => {
             if (useDrawingStore.getState().draggingAnchor) useDrawingStore.getState().commitDraggingAnchor();
+            // Transient — mouseup just clears it, never commits a drawing.
+            if (measureStateRef.current) updateMeasureState(null);
         };
         containerRef.current.addEventListener("mousedown", handleMouseDown);
         // On window, not the container — a drag released outside the chart
@@ -945,6 +1012,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // starts from an empty map and re-attaches from the store's array.
             drawingPrimitivesRef.current.clear();
             pendingPreviewPrimitiveRef.current = null;
+            measurePreviewPrimitiveRef.current = null;
         };
     }, []);
 
@@ -961,6 +1029,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         const handler = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 useDrawingStore.getState().cancelPlacement();
+                if (measureStateRef.current) updateMeasureState(null);
                 return;
             }
             if (e.key === "Delete" || e.key === "Backspace") {
@@ -990,12 +1059,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const activeTool = useDrawingStore((s) => s.activeTool);
     const draggingAnchor = useDrawingStore((s) => s.draggingAnchor);
     useEffect(() => {
-        const locked = !!activeTool || !!draggingAnchor;
+        const locked = !!activeTool || !!draggingAnchor || !!measureState;
         chartRef.current?.applyOptions({
             handleScroll: !locked,
             handleScale: !locked,
         });
-    }, [activeTool, draggingAnchor]);
+    }, [activeTool, draggingAnchor, measureState]);
 
     // Clear the placement preview immediately on commit/cancel (not just on
     // the next mousemove, which may not fire right after a click).
@@ -2015,6 +2084,33 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         ×
                     </button>
                 )}
+
+                {/* ── Measure tool — transient dashed line (canvas primitive,
+                    see measurePreviewPrimitiveRef) + this floating stats
+                    label. Never persisted; disappears on mouseup/Escape. */}
+                {measureState && chartRef.current && seriesRef.current && (() => {
+                    const x = chartRef.current.timeScale().timeToCoordinate(measureState.end.time as Time);
+                    const y = seriesRef.current.priceToCoordinate(measureState.end.price);
+                    if (x == null || y == null) return null;
+                    const stats = computeMeasureStats(measureState.start, measureState.end, TIMEFRAME_SECONDS[timeframe]);
+                    const sign = stats.priceDelta >= 0 ? "+" : "";
+                    return (
+                        <div
+                            style={{
+                                position: "absolute", left: x + 14, top: y - 14,
+                                zIndex: 9, pointerEvents: "none",
+                                background: "rgba(8,12,18,0.92)",
+                                border: `1px solid ${MEASURE_COLOR}`,
+                                borderRadius: 3, padding: "4px 8px",
+                                color: MEASURE_COLOR, fontFamily: "monospace", fontSize: 11,
+                                whiteSpace: "nowrap", lineHeight: 1.5,
+                            }}
+                        >
+                            <div>{sign}{stats.priceDelta.toFixed(2)} ({sign}{stats.pctDelta.toFixed(2)}%)</div>
+                            <div>{formatDuration(stats.timeDeltaSec)} · {stats.candleCount} candles</div>
+                        </div>
+                    );
+                })()}
 
                 {/* ── Chart legend overlay — hero price + FILL SPREAD, OHLC,
                     funding rate, buy/sell pressure. Floats over the chart's
