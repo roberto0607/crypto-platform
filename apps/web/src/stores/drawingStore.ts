@@ -50,6 +50,20 @@ export const DRAWING_TOOL_SPECS: Record<DrawingToolType, DrawingToolSpec> = {
 
 export const DRAWING_TOOL_ORDER: DrawingToolType[] = ["trendline", "fib", "hline", "hray", "vline", "rect", "text"];
 
+// Small fixed palette (deliberately not a full color wheel) — the 5 existing
+// per-tool defaults plus 3 more to round it out, all already dark-background-
+// tuned by the precedent those 5 set.
+export const DRAWING_COLOR_PALETTE: readonly string[] = [
+    "#f5b942", // amber (hline/hray default)
+    "#818cff", // indigo (vline default)
+    "#00ff41", // green (trendline default)
+    "#06b6d4", // cyan (rect default)
+    "#c084fc", // violet (fib default)
+    "#e5e7eb", // light gray (text default)
+    "#ef4444", // red
+    "#ffffff", // white
+];
+
 // Global version bump, matching INDICATOR_CONFIG_VERSION's convention exactly
 // (resolved decision, 2026-07-26 design-lock addendum): a bump wipes every
 // pair's stored drawings, not just one.
@@ -133,19 +147,27 @@ interface DrawingState {
     selectedDrawingId: string | null;
     draggingAnchor: DraggingAnchor | null;
     snapEnabled: boolean;
+    // Color swatch picked for the NEXT commit while a tool is active — null
+    // means "use that tool's spec.defaultColor". Single-shot: cleared on
+    // commit and on every setActiveTool call (a color picked for one tool
+    // shouldn't silently carry over to a different tool picked afterward).
+    nextColor: string | null;
 
     loadForPair: (pairId: string) => void;
     setActiveTool: (tool: ActiveDrawingTool | null) => void;
+    setNextColor: (color: string | null) => void;
     toggleSnap: () => void;
     addPoint: (point: DrawingPoint) => void;
     cancelPlacement: () => void;
     selectDrawing: (id: string | null) => void;
     setDrawingText: (id: string, text: string) => void;
+    setDrawingColor: (id: string, color: string) => void;
     startDraggingAnchor: (drawingId: string, anchorIndex: number) => void;
     updateDraggingAnchor: (point: DrawingPoint) => void;
     commitDraggingAnchor: () => void;
     deleteDrawing: (id: string) => void;
     deleteSelected: () => void;
+    clearAllForPair: () => void;
 }
 
 export const useDrawingStore = create<DrawingState>((set, get) => ({
@@ -156,6 +178,9 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
     selectedDrawingId: null,
     draggingAnchor: null,
     snapEnabled: loadSnapPreference(),
+    nextColor: null,
+
+    setNextColor: (color) => set({ nextColor: color }),
 
     toggleSnap: () => {
         const next = !get().snapEnabled;
@@ -178,11 +203,11 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
     },
 
     setActiveTool: (tool) => {
-        set({ activeTool: tool, pendingPoints: [], selectedDrawingId: null });
+        set({ activeTool: tool, pendingPoints: [], selectedDrawingId: null, nextColor: null });
     },
 
     addPoint: (point) => {
-        const { activeTool, pendingPoints, currentPairId, drawings } = get();
+        const { activeTool, pendingPoints, currentPairId, drawings, nextColor } = get();
         // Measure never commits a StoredDrawing — CandlestickChart.tsx routes
         // its whole gesture through a separate raw mousedown/move/up path and
         // should never call addPoint while activeTool is "measure", but this
@@ -201,18 +226,21 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
             id: genId(),
             type: activeTool,
             points: nextPoints,
-            color: spec.defaultColor,
+            color: nextColor ?? spec.defaultColor,
             createdAt: Date.now(),
             ...(activeTool === "text" ? { text: "" } : {}),
         };
         const next = [...drawings, drawing];
         saveDrawingsForPair(currentPairId, next);
         // Tool auto-deselects on commit; the new drawing enters selected state.
+        // nextColor is single-shot — consumed here, not carried into whatever
+        // tool gets activated next.
         set({
             drawings: next,
             activeTool: null,
             pendingPoints: [],
             selectedDrawingId: drawing.id,
+            nextColor: null,
         });
     },
 
@@ -226,6 +254,14 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
         const { currentPairId, drawings } = get();
         if (!currentPairId) return;
         const next = drawings.map((d) => (d.id === id ? { ...d, text } : d));
+        saveDrawingsForPair(currentPairId, next);
+        set({ drawings: next });
+    },
+
+    setDrawingColor: (id, color) => {
+        const { currentPairId, drawings } = get();
+        if (!currentPairId) return;
+        const next = drawings.map((d) => (d.id === id ? { ...d, color } : d));
         saveDrawingsForPair(currentPairId, next);
         set({ drawings: next });
     },
@@ -269,5 +305,24 @@ export const useDrawingStore = create<DrawingState>((set, get) => ({
     deleteSelected: () => {
         const { selectedDrawingId, deleteDrawing } = get();
         if (selectedDrawingId) deleteDrawing(selectedDrawingId);
+    },
+
+    // Current-pair-only, matching the per-pair persistence key — clearing
+    // BTC's drawings never touches ETH's. Confirm() gate lives in the UI
+    // layer (DrawingToolStrip), not here, matching how other destructive
+    // confirms in this codebase (ConversationView.tsx's report-message) are
+    // UI-layer concerns, not store concerns.
+    clearAllForPair: () => {
+        const { currentPairId } = get();
+        if (!currentPairId) return;
+        saveDrawingsForPair(currentPairId, []);
+        set({
+            drawings: [],
+            selectedDrawingId: null,
+            pendingPoints: [],
+            activeTool: null,
+            draggingAnchor: null,
+            nextColor: null,
+        });
     },
 }));
