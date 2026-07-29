@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Match } from "@/api/endpoints/matches";
 import client from "@/api/client";
 
@@ -36,6 +37,7 @@ interface MatchEndOverlayProps {
 }
 
 export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverlayProps) {
+    const navigate = useNavigate();
     const [eloResult, setEloResult] = useState<EloResult | null>(null);
 
     useEffect(() => {
@@ -239,6 +241,9 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                 )}
 
                 <div className="lmv-end-actions">
+                    <button className="ar-btn ar-btn-outline" onClick={() => navigate(`/matches/${match.id}/breakdown`)}>
+                        VIEW TRADE BREAKDOWN
+                    </button>
                     <button className="ar-btn ar-btn-orange" onClick={onBackToArena}>
                         BACK TO ARENA
                     </button>
