@@ -45,6 +45,7 @@ export interface SSEHandlers {
   onMatchStarted?: (event: Extract<SSEEvent, { type: "match.started" }>) => void;
   onMatchEnded?: (event: Extract<SSEEvent, { type: "match.ended" }>) => void;
   onMatchPnlUpdate?: (event: Extract<SSEEvent, { type: "match.pnl.update" }>) => void;
+  onMatchSpectatorCount?: (event: Extract<SSEEvent, { type: "match.spectator_count" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
   onFriendRequestReceived?: (event: Extract<SSEEvent, { type: "friend_request.received" }>) => void;
   onFriendRequestAccepted?: (event: Extract<SSEEvent, { type: "friend_request.accepted" }>) => void;
