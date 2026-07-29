@@ -28,6 +28,7 @@ import MessagesPage from "@/pages/MessagesPage";
 import CyclesPage from "@/pages/CyclesPage";
 import ReplayPage from "@/pages/ReplayPage";
 import MatchReplayPage from "@/pages/MatchReplayPage";
+import MatchBreakdownPage from "@/pages/MatchBreakdownPage";
 import JournalPage from "@/pages/JournalPage";
 import ProfilePage from "@/pages/ProfilePage";
 import NotFoundPage from "@/pages/NotFoundPage";
@@ -242,6 +243,7 @@ export default function App() {
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/messages/:conversationId" element={<MessagesPage />} />
           <Route path="/matches/:id/replay" element={<MatchReplayPage />} />
+          <Route path="/matches/:id/breakdown" element={<MatchBreakdownPage />} />
           <Route path="/replay" element={<ReplayPage />} />
           <Route path="/cycle" element={<CyclesPage />} />
           <Route path="/history" element={<JournalPage />} />
