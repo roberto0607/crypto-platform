@@ -12,10 +12,14 @@ import { subscribe, unsubscribe, type EventHandler } from "../../events/eventBus
 import type { AppEvent } from "../../events/eventTypes";
 import { v1HandleError } from "../../http/v1Error";
 import { AppError } from "../../errors/AppError";
+import { leaveMatchSpectatorRoom } from "../../competitions/matchSpectatorSession";
+import { logger as rootLogger } from "../../observability/logContext";
 import {
   eventConnectionsActive,
   eventsDeliveryFailuresTotal,
 } from "../../metrics";
+
+const logger = rootLogger.child({ module: "v1Events" });
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const PING_INTERVAL_MS = 15_000;
@@ -34,6 +38,15 @@ const PAIR_SCOPED_EVENT_TYPES = new Set(["price.tick", "candle.closed"]);
 interface StreamEntry {
   userId: string;
   interestSet: Set<string>;
+  /** This stream's own EventHandler closure — needed so match-spectate
+   * routes (in v1Matches.ts) can register/deregister it for match-room
+   * delivery via eventBus's subscribeToMatch/unsubscribeFromMatch, without
+   * duplicating the SSE connection machinery. */
+  handler: EventHandler;
+  /** matchId this stream is currently spectating, if any — tracked here so
+   * disconnect cleanup can leave the spectator room without the client
+   * having to call POST /unspectate first. */
+  spectatingMatchId: string | null;
 }
 
 const streamInterestSets = new Map<string, StreamEntry>();
@@ -69,6 +82,28 @@ export function __getStreamForTest(streamId: string): StreamEntry | undefined {
 /** TEST-ONLY — see __setStreamForTest. Resets all stream state between tests. */
 export function __clearStreamsForTest(): void {
   streamInterestSets.clear();
+}
+
+/**
+ * Look up a stream's own EventHandler, scoped to the requesting userId so a
+ * spectate request can't address a connection it doesn't own. Returns null
+ * for an unknown streamId or a streamId owned by a different user.
+ */
+export function getStreamHandler(streamId: string, userId: string): EventHandler | null {
+  const entry = streamInterestSets.get(streamId);
+  if (!entry || entry.userId !== userId) return null;
+  return entry.handler;
+}
+
+/** Record which match (if any) a stream is currently spectating. */
+export function setStreamSpectatingMatch(streamId: string, matchId: string | null): void {
+  const entry = streamInterestSets.get(streamId);
+  if (entry) entry.spectatingMatchId = matchId;
+}
+
+/** The matchId a stream is currently spectating, or null. */
+export function getStreamSpectatingMatch(streamId: string): string | null {
+  return streamInterestSets.get(streamId)?.spectatingMatchId ?? null;
 }
 
 const v1Events: FastifyPluginAsync = async (app) => {
@@ -110,7 +145,6 @@ const v1Events: FastifyPluginAsync = async (app) => {
     // POST /v1/events/subscribe. streamId is handed to the client as the
     // very first frame so it can address this specific connection.
     const streamId = randomUUID();
-    streamInterestSets.set(streamId, { userId, interestSet: new Set() });
     reply.raw.write(`event: stream.ready\ndata: ${JSON.stringify({ streamId })}\n\n`);
 
     // Event handler — writes SSE frames to the response. price.tick/
@@ -127,6 +161,8 @@ const v1Events: FastifyPluginAsync = async (app) => {
         eventsDeliveryFailuresTotal.inc();
       }
     };
+
+    streamInterestSets.set(streamId, { userId, interestSet: new Set(), handler, spectatingMatchId: null });
 
     // Subscribe for this user's events
     subscribe(userId, handler);
@@ -159,6 +195,17 @@ const v1Events: FastifyPluginAsync = async (app) => {
       clearInterval(heartbeat);
       clearInterval(ping);
       unsubscribe(handler);
+      // A spectator who just closes the tab/navigates away never calls POST
+      // /unspectate — this is the only place that's guaranteed to run, so it
+      // must independently leave the match room (unsubscribe already dropped
+      // the eventBus registration; this also decrements the Redis/in-memory
+      // spectator count and notifies the room + players of the new count).
+      const spectatingMatchId = streamInterestSets.get(streamId)?.spectatingMatchId;
+      if (spectatingMatchId) {
+        leaveMatchSpectatorRoom(spectatingMatchId, userId, handler).catch((err) => {
+          logger.warn({ err, matchId: spectatingMatchId, userId }, "spectator_disconnect_cleanup_failed");
+        });
+      }
       streamInterestSets.delete(streamId);
       eventConnectionsActive.dec();
     };

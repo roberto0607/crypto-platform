@@ -12,6 +12,13 @@ export interface EventEnvelope<T extends string = string, D = unknown> {
   ts: number;
   requestId?: string;
   userId?: string;
+  /**
+   * Match-room target — an independent, additive delivery dimension
+   * alongside `userId` (see eventBus.ts's deliverLocally). Set on
+   * match-scoped events so spectators registered for this matchId receive
+   * them, in addition to whichever userId(s) the event is also targeted at.
+   */
+  matchId?: string;
   data: D;
 }
 
@@ -187,6 +194,16 @@ export interface MatchPnlUpdateData {
   opponentPnlPct: string;
 }
 
+/**
+ * Live spectator-count push — published whenever a match's spectator room
+ * gains or loses a watcher, to BOTH participants (so players can see "N
+ * watching") and to everyone currently in the match's spectator room.
+ */
+export interface MatchSpectatorCountData {
+  matchId: string;
+  count: number;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -220,6 +237,7 @@ export type AppEvent =
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
+  | EventEnvelope<"match.spectator_count", MatchSpectatorCountData>
   | EventEnvelope<"challenge.received", ChallengeReceivedData>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedData>
   | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>
@@ -230,13 +248,14 @@ export type AppEvent =
 export function createEvent<T extends AppEvent["type"]>(
   type: T,
   data: Extract<AppEvent, { type: T }>["data"],
-  opts?: { requestId?: string; userId?: string }
+  opts?: { requestId?: string; userId?: string; matchId?: string }
 ): Extract<AppEvent, { type: T }> {
   return {
     type,
     ts: Date.now(),
     requestId: opts?.requestId,
     userId: opts?.userId,
+    matchId: opts?.matchId,
     data,
   } as Extract<AppEvent, { type: T }>;
 }

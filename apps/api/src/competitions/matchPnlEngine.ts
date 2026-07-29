@@ -1,7 +1,7 @@
 import { pool } from "../db/pool";
-import { subscribeGlobal, unsubscribe, publish } from "../events/eventBus";
+import { subscribeGlobal, unsubscribe } from "../events/eventBus";
 import type { EventHandler } from "../events/eventBus";
-import { createEvent } from "../events/eventTypes";
+import { publishMatchEvent } from "../events/matchEvents";
 import { getSnapshot } from "../market/snapshotStore";
 import { computeLiveMatchPnl, type LivePositionRow } from "./matchService";
 import { logger as rootLogger } from "../observability/logContext";
@@ -134,8 +134,7 @@ async function recomputeAndPublish(match: ActiveMatchRef): Promise<void> {
         opponentPnlPct: opponentPnlPct.toFixed(8),
     };
 
-    publish(createEvent("match.pnl.update", data, { userId: match.challenger_id }));
-    publish(createEvent("match.pnl.update", data, { userId: match.opponent_id }));
+    publishMatchEvent("match.pnl.update", data, match);
 }
 
 /**

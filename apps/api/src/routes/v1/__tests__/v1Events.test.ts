@@ -103,7 +103,7 @@ describe("POST /v1/events/subscribe", () => {
 
   it("404s when the streamId belongs to a different user", async () => {
     const streamId = "55555555-5555-5555-5555-555555555555";
-    __setStreamForTest(streamId, { userId: otherUserId, interestSet: new Set() });
+    __setStreamForTest(streamId, { userId: otherUserId, interestSet: new Set(), handler: () => {}, spectatingMatchId: null });
 
     const res = await app.inject({
       method: "POST",
@@ -116,7 +116,7 @@ describe("POST /v1/events/subscribe", () => {
 
   it("replaces (not merges) the interest set for the owning user's stream", async () => {
     const streamId = "66666666-6666-6666-6666-666666666666";
-    __setStreamForTest(streamId, { userId, interestSet: new Set([PAIR_B]) });
+    __setStreamForTest(streamId, { userId, interestSet: new Set([PAIR_B]), handler: () => {}, spectatingMatchId: null });
 
     const res = await app.inject({
       method: "POST",
