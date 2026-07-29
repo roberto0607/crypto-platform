@@ -55,10 +55,17 @@ describe("MarketStatusBadge", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it("shows 'RECONNECTING...' when connected but the price feed is stale", () => {
+  it("shows 'PRICE DELAYED...' (not RECONNECTING) when connected but the price feed is stale", () => {
     renderBadge({ status: "connected", priceStale: true });
-    expect(screen.getByText("RECONNECTING...")).toBeInTheDocument();
+    expect(screen.getByText("PRICE DELAYED...")).toBeInTheDocument();
+    expect(screen.queryByText("RECONNECTING...")).not.toBeInTheDocument();
     expect(screen.queryByText("MARKETS LIVE")).not.toBeInTheDocument();
+  });
+
+  it("renders 'RECONNECTING...' (not PRICE DELAYED) for a genuine dropped connection, even if priceStale is also true", () => {
+    renderBadge({ status: "reconnecting", priceStale: true });
+    expect(screen.getByText("RECONNECTING...")).toBeInTheDocument();
+    expect(screen.queryByText("PRICE DELAYED...")).not.toBeInTheDocument();
   });
 
   it("shows OFFLINE plus a REFRESH button when hard-offline, and fires onRefresh", async () => {
