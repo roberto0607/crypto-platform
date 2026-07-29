@@ -44,12 +44,25 @@ const POLL_INTERVAL_MS = 30_000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let subscriberCount = 0;
 
+// Fast-path refresh on match.started/match.ended so isInCompetition/activeMatch
+// (and anything reading them, e.g. the global competition bottom bar) update
+// immediately instead of waiting up to POLL_INTERVAL_MS. Registered/torn down
+// alongside the poll timer so they're only live while something's subscribed.
+function handleMatchStarted(): void {
+    void useActiveMatchStore.getState().refreshMatch();
+}
+function handleMatchEnded(): void {
+    void useActiveMatchStore.getState().refreshMatch();
+}
+
 export function acquireActiveMatchPolling(): void {
     subscriberCount++;
     if (subscriberCount === 1 && !pollTimer) {
         pollTimer = setInterval(() => {
             void useActiveMatchStore.getState().refreshMatch();
         }, POLL_INTERVAL_MS);
+        window.addEventListener("sse:match.started", handleMatchStarted);
+        window.addEventListener("sse:match.ended", handleMatchEnded);
     }
 }
 
@@ -58,5 +71,7 @@ export function releaseActiveMatchPolling(): void {
     if (subscriberCount === 0 && pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
+        window.removeEventListener("sse:match.started", handleMatchStarted);
+        window.removeEventListener("sse:match.ended", handleMatchEnded);
     }
 }

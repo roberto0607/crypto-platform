@@ -11,6 +11,7 @@ import SystemBanner from "@/components/SystemBanner";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NavIcon } from "@/components/NavIcon";
 import TickerBar from "@/components/TickerBar";
+import { CompetitionBottomBar } from "@/components/CompetitionBottomBar";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import { useSSE } from "@/hooks/useSSE";
 import { useChatStore } from "@/stores/chatStore";
@@ -345,6 +346,12 @@ export default function AppLayout() {
       {/* Ticker bar — route-conditional (Gate 1): hidden on /trade.
           Unchanged on every other route. */}
       {!isTradePage && <TickerBar />}
+
+      {/* Competition bottom bar — persistent "you have an active 1v1" reminder,
+          shown on every route except /trade and /arena, where the match is
+          already visible via TradingPage's own bar / MatchHeaderBar. Renders
+          null itself when there's no active match. */}
+      <CompetitionBottomBar />
     </div>
   );
 }
