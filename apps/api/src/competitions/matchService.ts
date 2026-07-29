@@ -15,6 +15,7 @@ import { getSnapshot } from "../market/snapshotStore.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
+import { publishMatchEvent } from "../events/matchEvents.js";
 import { createTrade } from "../trading/tradeRepo.js";
 import { D, toFixed8 } from "../utils/decimal.js";
 import { createMatchConversationTx } from "../chat/conversationRepo.js";
@@ -109,8 +110,7 @@ async function publishMatchEnded(
                 ? { winner: eloResult.eloChanges.winner.delta, loser: eloResult.eloChanges.loser.delta }
                 : null,
         };
-        publish(createEvent("match.ended", data, { userId: match.challenger_id }));
-        publish(createEvent("match.ended", data, { userId: match.opponent_id }));
+        publishMatchEvent("match.ended", data, match);
     } catch (err) {
         logger.error({ err, matchId: match.id, reason }, "match_ended_publish_failed");
     }
@@ -575,6 +575,25 @@ export async function getMatchById(matchId: string): Promise<MatchWithPlayers | 
     return rows[0] ?? null;
 }
 
+export type MatchViewRole = "participant" | "spectator" | "none";
+
+/**
+ * Resolve what a requester is allowed to see for a match — a shared
+ * decision point for GET /matches/:id and match chat reads, replacing the
+ * previously-duplicated inline challenger_id/opponent_id checks. Spectating
+ * is fully public (per the locked product decision) but scoped to ACTIVE
+ * matches only — once a match ends, only its two participants can still
+ * view it (post-match detail is a separate, participant-only feature).
+ */
+export function canViewMatch(
+    match: Pick<MatchRow, "challenger_id" | "opponent_id" | "status">,
+    userId: string,
+): MatchViewRole {
+    if (match.challenger_id === userId || match.opponent_id === userId) return "participant";
+    if (match.status === "ACTIVE") return "spectator";
+    return "none";
+}
+
 /**
  * Returns the user's currently-running match id, or null if they're in
  * free-play. Uses the `one_active_match_per_*` partial unique indexes, so
@@ -715,6 +734,32 @@ export async function getMatchHistory(
         [userId, limit, offset],
     );
     return { matches: rows, total };
+}
+
+/**
+ * All currently-ACTIVE matches platform-wide, for the spectate-browse list —
+ * unlike every other match query in this file, deliberately NOT scoped to a
+ * requester. Modeled on GET /v1/competitions (v1Competitions.ts), the
+ * existing precedent for a public, unscoped, status-filtered list endpoint.
+ * idx_matches_status already covers `status = 'ACTIVE'` — no new index
+ * needed.
+ */
+export async function listActiveMatches(limit = 50): Promise<MatchWithPlayers[]> {
+    const { rows } = await pool.query<MatchWithPlayers>(
+        `SELECT m.*,
+                COALESCE(NULLIF(c.display_name, ''), split_part(c.email, '@', 1)) AS challenger_name,
+                c.elo_rating AS challenger_elo,
+                COALESCE(NULLIF(o.display_name, ''), split_part(o.email, '@', 1)) AS opponent_name,
+                o.elo_rating AS opponent_elo
+         FROM matches m
+         JOIN users c ON c.id = m.challenger_id
+         JOIN users o ON o.id = m.opponent_id
+         WHERE m.status = 'ACTIVE'
+         ORDER BY m.started_at DESC
+         LIMIT $1`,
+        [limit],
+    );
+    return rows;
 }
 
 // ── Internal helpers ──

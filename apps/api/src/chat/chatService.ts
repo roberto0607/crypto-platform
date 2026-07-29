@@ -126,6 +126,14 @@ export async function sendMessage(
     const senderName = await getDisplayName(senderId);
     const recipients = await getOtherParticipants(conversationId, senderId);
 
+    // Match conversations are always exactly 2 participants, so this loop
+    // publishes exactly once per message — safe to also tag that single call
+    // with matchId (context_id) so anyone spectating this match's chat gets
+    // the live push too, without the double-delivery risk that would arise
+    // from tagging matchId on more than one publish() call for the same
+    // event (see matchEvents.ts's publishMatchEvent).
+    const matchId = conversation.type === "match" ? (conversation.context_id ?? undefined) : undefined;
+
     for (const recipientId of recipients) {
         publish(createEvent("message.received", {
             conversationId,
@@ -136,7 +144,7 @@ export async function sendMessage(
             body: message.body,
             imageUrl: message.image_url,
             createdAt: message.created_at,
-        }, { userId: recipientId }));
+        }, { userId: recipientId, matchId }));
     }
 
     return message;
@@ -150,6 +158,21 @@ export async function listMessages(
 ): Promise<MessageRow[]> {
     await requireParticipant(conversationId, userId);
     await assertNotBlocked(conversationId, userId);
+    return listMessagesPaginated(conversationId, limit, cursor);
+}
+
+/**
+ * Spectator read path — the caller (v1MatchChat.ts) has already authorized
+ * the requester via matchService.canViewMatch before reaching here, so this
+ * skips requireParticipant/assertNotBlocked: a spectator isn't a
+ * conversation_participants row, and block-lists are a between-participants
+ * concern that doesn't apply to a read-only third party.
+ */
+export async function listMessagesReadOnly(
+    conversationId: string,
+    limit: number,
+    cursor: { ca: string; id: string } | null,
+): Promise<MessageRow[]> {
     return listMessagesPaginated(conversationId, limit, cursor);
 }
 

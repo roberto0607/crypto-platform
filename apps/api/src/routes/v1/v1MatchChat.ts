@@ -1,8 +1,10 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireUser } from "../../auth/requireUser.js";
 import { v1HandleError } from "../../http/v1Error.js";
+import { AppError } from "../../errors/AppError.js";
 import { decodeCursor, parseLimit, slicePage } from "../../http/pagination.js";
-import { resolveMatchConversationId, sendMessage, listMessages } from "../../chat/chatService.js";
+import { resolveMatchConversationId, sendMessage, listMessages, listMessagesReadOnly } from "../../chat/chatService.js";
+import { getMatchById, canViewMatch } from "../../competitions/matchService.js";
 
 /**
  * Match Chat — reuses Phase 2's sendMessage/listMessages entirely. The only
@@ -10,6 +12,12 @@ import { resolveMatchConversationId, sendMessage, listMessages } from "../../cha
  * participant check, rate limit, and profanity filter are the exact same
  * code path Friends DM uses. No friendship gate — Match Chat is open by
  * default between the two match participants, per the locked design.
+ *
+ * Spectating (read-only) is layered on top of GET only: canViewMatch grants
+ * non-participants a "spectator" role while the match is ACTIVE, and reads
+ * for that role skip the requireParticipant check via listMessagesReadOnly.
+ * POST stays untouched — sending is always participant-only, per the locked
+ * spectating design.
  */
 const v1MatchChat: FastifyPluginAsync = async (app) => {
     // GET /v1/matches/:id/chat/messages — paginated history
@@ -38,11 +46,18 @@ const v1MatchChat: FastifyPluginAsync = async (app) => {
             const { id: matchId } = req.params as { id: string };
             const { limit: rawLimit, cursor: rawCursor } = req.query as { limit?: string; cursor?: string };
 
+            const match = await getMatchById(matchId);
+            if (!match) throw new AppError("match_not_found");
+            const role = canViewMatch(match, userId);
+            if (role === "none") throw new AppError("forbidden");
+
             const conversationId = await resolveMatchConversationId(matchId);
             const limit = parseLimit(rawLimit);
             const cursor = decodeCursor<{ ca: string; id: string }>(rawCursor);
 
-            const rows = await listMessages(conversationId, userId, limit, cursor);
+            const rows = role === "participant"
+                ? await listMessages(conversationId, userId, limit, cursor)
+                : await listMessagesReadOnly(conversationId, limit, cursor);
             const page = slicePage(rows, limit, (row) => ({ ca: row.created_at, id: row.id }));
 
             return reply.send({ ok: true, ...page });

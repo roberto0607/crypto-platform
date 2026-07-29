@@ -5,7 +5,7 @@ import { pool } from "../../../db/pool";
 import { ensureMigrations, resetTestData } from "../../../testing/resetDb";
 import { createTestUser, createTestAssetAndPair } from "../../../testing/fixtures";
 import { createMatch, acceptMatch, forfeitMatch, completeMatch, mutualForfeitMatch } from "../../../competitions/matchService";
-import { subscribe, unsubscribe, type EventHandler } from "../../../events/eventBus";
+import { subscribe, unsubscribe, subscribeToMatch, unsubscribeFromMatch, type EventHandler } from "../../../events/eventBus";
 import type { AppEvent, MessageReceivedData } from "../../../events/eventTypes";
 
 const buildOpts = {
@@ -146,7 +146,7 @@ describe("Match Chat (Phase 3)", () => {
         }
     });
 
-    it("forbids an outsider (non-participant) from reading or sending", async () => {
+    it("forbids an outsider from sending (spectating is read-only)", async () => {
         const matchId = await activeMatch();
 
         const send = await app.inject({
@@ -156,7 +156,55 @@ describe("Match Chat (Phase 3)", () => {
             payload: { body: "let me in" },
         });
         expect(send.statusCode).toBe(403);
+    });
 
+    it("lets a non-participant (spectator) read chat while the match is ACTIVE", async () => {
+        const matchId = await activeMatch();
+        await app.inject({
+            method: "POST",
+            url: `/v1/matches/${matchId}/chat/messages`,
+            headers: auth(app, challenger.id),
+            payload: { body: "visible to spectators" },
+        });
+
+        const list = await app.inject({
+            method: "GET",
+            url: `/v1/matches/${matchId}/chat/messages`,
+            headers: auth(app, outsider.id),
+        });
+        expect(list.statusCode).toBe(200);
+        expect(list.json().data).toHaveLength(1);
+        expect(list.json().data[0].body).toBe("visible to spectators");
+    });
+
+    it("also delivers message.received to the match's spectator room (matchId-tagged)", async () => {
+        const matchId = await activeMatch();
+        const roomEvents: unknown[] = [];
+        const handler: EventHandler = (e) => {
+            if (e.type === "message.received") roomEvents.push(e.data);
+        };
+        subscribeToMatch(matchId, handler);
+        try {
+            await app.inject({
+                method: "POST",
+                url: `/v1/matches/${matchId}/chat/messages`,
+                headers: auth(app, challenger.id),
+                payload: { body: "for spectators too" },
+            });
+            expect(roomEvents).toHaveLength(1);
+        } finally {
+            unsubscribeFromMatch(handler);
+        }
+    });
+
+    it("forbids an outsider from reading once the match is no longer ACTIVE", async () => {
+        const matchId = await activeMatch();
+        await forfeitMatch(matchId, challenger.id);
+
+        // The conversation is purged on end anyway (see the purge test below),
+        // so this exercises the same code path a mid-match forfeit-window race
+        // would hit: canViewMatch denies a non-participant post-ACTIVE before
+        // conversation resolution even matters.
         const list = await app.inject({
             method: "GET",
             url: `/v1/matches/${matchId}/chat/messages`,
