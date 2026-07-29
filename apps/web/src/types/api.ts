@@ -401,6 +401,7 @@ export interface EventEnvelope<T extends string = string, D = unknown> {
   ts: number;
   requestId?: string;
   userId?: string;
+  matchId?: string;
   data: D;
 }
 
@@ -509,6 +510,7 @@ export type SSEEvent =
   | EventEnvelope<"match.started", MatchStartedEvent>
   | EventEnvelope<"match.ended", MatchEndedEvent>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
+  | EventEnvelope<"match.spectator_count", MatchSpectatorCountEvent>
   | EventEnvelope<"challenge.received", ChallengeReceivedEvent>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedEvent>
   | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedEvent>
@@ -545,6 +547,11 @@ export interface MatchPnlUpdateEvent {
   matchId: string;
   challengerPnlPct: string;
   opponentPnlPct: string;
+}
+
+export interface MatchSpectatorCountEvent {
+  matchId: string;
+  count: number;
 }
 
 // ── Social Chat: Friendships (Phase 1) ─────────────────────

@@ -10,7 +10,9 @@ import {
     cancelActiveMatch,
     getActiveMatch,
     getMatchHistory,
+    getActiveMatches,
     type Match,
+    type ActiveMatchListEntry,
 } from "@/api/endpoints/matches";
 import { listCompetitions, getLeaderboard, type LeaderboardEntry } from "@/api/endpoints/competitions";
 import { LiveMatchView } from "@/components/arena/LiveMatchView";
@@ -133,6 +135,16 @@ const ARENA_CSS = `
     font-family:var(--ar-bebas);font-size:14px;letter-spacing:2px;
     padding:2px 8px;display:inline-block;
   }
+
+  /* Live spectate list */
+  .ar-live-card {
+    border:1px solid var(--ar-borderW);background:rgba(255,255,255,0.02);
+    padding:16px 20px;margin-bottom:12px;
+  }
+  .ar-live-header { display:flex;justify-content:space-between;align-items:center;margin-bottom:12px; }
+  .ar-live-watching { font-size:9px;color:var(--ar-muted);letter-spacing:2px; }
+  .ar-live-watching .dot { color:var(--ar-g); }
+  .ar-live-footer { display:flex;justify-content:space-between;align-items:center;margin-top:14px; }
 `;
 
 const DURATION_OPTIONS = [
@@ -167,10 +179,13 @@ export default function ArenaPage() {
     const pairs = useAppStore((s) => s.pairs);
     const { addToast } = useToast();
 
-    const [tab, setTab] = useState<"SEASON" | "1V1">("1V1");
+    const [tab, setTab] = useState<"SEASON" | "1V1" | "LIVE">("1V1");
     const [activeMatch, setActiveMatch] = useState<Match | null>(null);
     const [matchHistory, setMatchHistory] = useState<Match[]>([]);
     const [historyTotal, setHistoryTotal] = useState(0);
+    const [liveMatches, setLiveMatches] = useState<ActiveMatchListEntry[]>([]);
+    const [liveLoading, setLiveLoading] = useState(true);
+    const [liveError, setLiveError] = useState(false);
     const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
     const [seasonInfo, setSeasonInfo] = useState<{ id: string; name: string; end_at: string; season_number?: number } | null>(null);
 
@@ -199,6 +214,18 @@ export default function ArenaPage() {
         } catch { /* ignore */ }
     }, []);
 
+    const loadLiveMatches = useCallback(async () => {
+        try {
+            const { data } = await getActiveMatches({ limit: 50 });
+            setLiveMatches(data.matches);
+            setLiveError(false);
+        } catch {
+            setLiveError(true);
+        } finally {
+            setLiveLoading(false);
+        }
+    }, []);
+
     const loadSeason = useCallback(async () => {
         setSeasonLoading(true);
         setSeasonError(false);
@@ -223,6 +250,17 @@ export default function ArenaPage() {
         loadMatchHistory();
         loadSeason();
     }, [loadActiveMatch, loadMatchHistory, loadSeason]);
+
+    // LIVE tab: load on entry + poll while it's the active tab. Polling (not
+    // SSE) is required here — match.started/match.ended are per-participant
+    // events, so a browser watching the platform-wide browse list would
+    // never learn about someone ELSE's match starting/ending via SSE.
+    useEffect(() => {
+        if (tab !== "LIVE") return;
+        loadLiveMatches();
+        const interval = setInterval(loadLiveMatches, 15_000);
+        return () => clearInterval(interval);
+    }, [tab, loadLiveMatches]);
 
     // Auto-transition to LiveMatchView when a match is accepted (SSE push)
     useEffect(() => {
@@ -400,7 +438,7 @@ export default function ArenaPage() {
 
                 {/* TABS */}
                 <div className="ar-tabs">
-                    {(["SEASON", "1V1"] as const).map((t) => (
+                    {(["SEASON", "1V1", "LIVE"] as const).map((t) => (
                         <div key={t} className={`ar-tab${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
                             {t}
                         </div>
@@ -587,6 +625,64 @@ export default function ArenaPage() {
                                 </table>
                             )}
                         </div>
+                    </>
+                )}
+
+                {/* ═══ LIVE TAB — spectate browse ═══ */}
+                {tab === "LIVE" && (
+                    <>
+                        <div style={{ fontSize: 9, color: "var(--ar-muted)", letterSpacing: 3, marginBottom: 8 }}>
+                            LIVE MATCHES ({liveMatches.length})
+                        </div>
+                        {liveLoading && (
+                            <div className="ar-empty">LOADING LIVE MATCHES...</div>
+                        )}
+                        {!liveLoading && liveError && (
+                            <div className="ar-empty">COULD NOT LOAD LIVE MATCHES</div>
+                        )}
+                        {!liveLoading && !liveError && liveMatches.length === 0 && (
+                            <div className="ar-empty">NO MATCHES IN PROGRESS RIGHT NOW</div>
+                        )}
+                        {!liveLoading && !liveError && liveMatches.map((m) => (
+                            <div key={m.id} className="ar-live-card">
+                                <div className="ar-live-header">
+                                    <div className="ar-mc-vs" style={{ fontSize: 18 }}>
+                                        {m.challenger_name ?? "CHALLENGER"} <span style={{ color: "rgba(255,255,255,0.3)" }}>VS</span> {m.opponent_name ?? "OPPONENT"}
+                                    </div>
+                                    {m.ends_at && (
+                                        <div className="ar-mc-timer" style={{ fontSize: 14 }}>
+                                            {formatTimeRemaining(m.ends_at)}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="ar-mc-scores">
+                                    <div>
+                                        <div className="ar-mc-player">{m.challenger_name ?? "CHALLENGER"} ({m.challenger_elo})</div>
+                                        <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.challenger_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
+                                            {formatPnl(m.challenger_pnl_pct)}
+                                        </div>
+                                    </div>
+                                    <div className="ar-mc-divider" />
+                                    <div>
+                                        <div className="ar-mc-player">{m.opponent_name ?? "OPPONENT"} ({m.opponent_elo})</div>
+                                        <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.opponent_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
+                                            {formatPnl(m.opponent_pnl_pct)}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="ar-live-footer">
+                                    <div className="ar-live-watching">
+                                        <span className="dot">●</span> {m.spectatorCount} WATCHING
+                                    </div>
+                                    <button
+                                        className="ar-btn ar-btn-outline"
+                                        onClick={() => navigate(`/matches/${m.id}/spectate`)}
+                                    >
+                                        WATCH
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
                     </>
                 )}
             </div>

@@ -151,6 +151,12 @@ export function useSSE() {
         );
       },
 
+      onMatchSpectatorCount: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:match.spectator_count", { detail: event.data }),
+        );
+      },
+
       onChallengeReceived: (event) => {
         window.dispatchEvent(
           new CustomEvent("sse:challenge.received", { detail: event.data }),

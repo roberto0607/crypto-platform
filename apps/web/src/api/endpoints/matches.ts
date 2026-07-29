@@ -55,13 +55,41 @@ export function cancelActiveMatch() {
     return client.post<{ ok: true; match: Match }>("/v1/matches/active/cancel");
 }
 
+export type MatchViewerRole = "participant" | "spectator";
+
 export function getMatch(matchId: string) {
-    return client.get<{ ok: true; match: Match }>(`/v1/matches/${matchId}`);
+    return client.get<{ ok: true; match: Match; viewerRole: MatchViewerRole }>(`/v1/matches/${matchId}`);
 }
 
 export function getMatchHistory(params?: { limit?: number; offset?: number }) {
     return client.get<{ ok: true; matches: Match[]; total: number }>(
         "/v1/matches/history",
         { params },
+    );
+}
+
+export interface ActiveMatchListEntry extends Match {
+    spectatorCount: number;
+}
+
+/** All currently-ACTIVE matches platform-wide, for the spectate-browse list. */
+export function getActiveMatches(params?: { limit?: number }) {
+    return client.get<{ ok: true; matches: ActiveMatchListEntry[] }>(
+        "/v1/matches/active-list",
+        { params },
+    );
+}
+
+export function spectateMatch(matchId: string, streamId: string) {
+    return client.post<{ ok: true; spectatorCount: number }>(
+        `/v1/matches/${matchId}/spectate`,
+        { streamId },
+    );
+}
+
+export function unspectateMatch(matchId: string, streamId: string) {
+    return client.post<{ ok: true; spectatorCount: number }>(
+        `/v1/matches/${matchId}/unspectate`,
+        { streamId },
     );
 }
