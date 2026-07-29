@@ -23,6 +23,15 @@ interface BadgeView {
  * "OFFLINE" label only appears for `disconnected` (a connect that gave up) or
  * `isHardOffline` (a reconnect that gave up after 60s) — NEVER during the
  * cold-load `initializing`/`connecting` window, which is the flash this PR fixes.
+ *
+ * "RECONNECTING..." (amber) is reserved for a genuinely dropped connection
+ * actively retrying (`status === "reconnecting"`). `connected` + `priceStale`
+ * is a distinct, less urgent case — the SSE stream never dropped, there's
+ * just been no fresh price tick/ping in the last 10s (e.g. a brief upstream
+ * feed gap, or a Railway redeploy blip that already recovered) — so it gets
+ * its own "PRICE DELAYED..." label in the same cyan as "CONNECTING...",
+ * signaling "transitional, nothing actually broke" rather than "reconnecting
+ * from a real drop".
  */
 function deriveView(status: SseConnectionState, priceStale: boolean, isHardOffline: boolean): BadgeView {
   if (isHardOffline || status === "disconnected") {
@@ -30,7 +39,7 @@ function deriveView(status: SseConnectionState, priceStale: boolean, isHardOffli
   }
   if (status === "connected") {
     return priceStale
-      ? { color: "#f59e0b", dotClass: "bg-yellow-500", glow: false, label: "RECONNECTING..." }
+      ? { color: "#22d3ee", dotClass: "bg-cyan-400", glow: false, label: "PRICE DELAYED..." }
       : { color: "var(--theme-primary, #00ff41)", dotClass: "bg-tradr-green", glow: true, label: "MARKETS LIVE" };
   }
   if (status === "reconnecting") {
