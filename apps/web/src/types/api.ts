@@ -494,6 +494,14 @@ export interface SignalNewEvent {
   tp3: DecimalString;
   stopLoss: DecimalString;
   modelVersion: string;
+  // Explainability fields (Gate 1a) — optional, additive. Populated by
+  // agent-produced signals; absent on signals from the pre-existing ML
+  // pipeline shape above.
+  tradeType?: "scalp" | "swing";
+  riskRewardRatio?: number;
+  entryReason?: string;
+  stopReason?: string;
+  targetReason?: string;
 }
 
 export type SSEEvent =
