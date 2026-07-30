@@ -31,6 +31,18 @@ import {
     unsubscribePressure,
     KNOWN_PAIRS,
 } from "../../services/pressureAggregator";
+import {
+    computeEMA,
+    computeRSI,
+    computeATR,
+    computeMACD,
+    computeBollingerBands,
+    computeVWAP,
+    computeCandleDelta,
+    computeCVD,
+    computeVolumeProfile,
+    type Candle as IndicatorCandle,
+} from "../../indicators";
 
 const SYMBOLS: Record<string, string> = { btc: "BTC_USDT", eth: "ETH_USDT", sol: "SOL_USDT" };
 const FETCH_TIMEOUT = 5000;
@@ -593,6 +605,153 @@ const v1Market: FastifyPluginAsync = async (app) => {
             },
         });
     });
+
+    // GET /v1/market/indicators/:pairId — server-computed indicator snapshot
+    // (agent-tool-friendly: latest numeric values, not chart-rendering series).
+    // Key names match apps/web/src/stores/tradingStore.ts's IndicatorConfig
+    // keys deliberately, so a future setChartConfig tool call can reuse the
+    // same vocabulary.
+    const INDICATOR_KEYS = [
+        "ema20", "ema50", "ema200", "rsi", "atr", "macd",
+        "bollingerBands", "vwap", "delta", "cvd", "vpvr",
+    ] as const;
+    type IndicatorKey = typeof INDICATOR_KEYS[number];
+
+    const indicatorsQuery = z.object({
+        timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d", "1w"]).optional().default("1h"),
+        indicators: z.string().min(1),
+    });
+
+    function toIndicatorCandle(row: {
+        ts: string; open: string; high: string; low: string; close: string;
+        volume: string; buy_volume: string | null; sell_volume: string | null;
+    }): IndicatorCandle {
+        return {
+            time: Math.floor(new Date(row.ts).getTime() / 1000),
+            open: parseFloat(row.open),
+            high: parseFloat(row.high),
+            low: parseFloat(row.low),
+            close: parseFloat(row.close),
+            volume: parseFloat(row.volume),
+            buyVolume: row.buy_volume != null ? parseFloat(row.buy_volume) : undefined,
+            sellVolume: row.sell_volume != null ? parseFloat(row.sell_volume) : undefined,
+        };
+    }
+
+    app.get("/market/indicators/:pairId", {
+        schema: {
+            tags: ["Market"],
+            summary: "Server-computed indicator snapshot for a pair",
+            description: `Returns the latest value of each requested indicator, computed from stored candles. Valid indicator keys: ${INDICATOR_KEYS.join(", ")}.`,
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["pairId"],
+                properties: { pairId: { type: "string", format: "uuid" } },
+            },
+            querystring: {
+                type: "object",
+                required: ["indicators"],
+                properties: {
+                    timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"], default: "1h" },
+                    indicators: { type: "string", description: "Comma-separated indicator keys" },
+                },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { pairId } = req.params as { pairId: string };
+            const q = indicatorsQuery.parse(req.query);
+
+            const requested = q.indicators
+                .split(",")
+                .map((s) => s.trim())
+                .filter((s): s is IndicatorKey => (INDICATOR_KEYS as readonly string[]).includes(s));
+
+            if (requested.length === 0) {
+                return reply.code(400).send({ ok: false, error: "invalid_input", details: { indicators: `must include at least one of: ${INDICATOR_KEYS.join(", ")}` } });
+            }
+
+            const cacheKey = `indicators:${pairId}:${q.timeframe}:${[...requested].sort().join(",")}`;
+            const cached = getCached<Record<string, unknown>>(cacheKey);
+            if (cached) return reply.send(cached);
+
+            // 300 candles covers the longest lookback we compute (EMA 200).
+            const { rows } = await pool.query<{
+                ts: string; open: string; high: string; low: string; close: string;
+                volume: string; buy_volume: string | null; sell_volume: string | null;
+            }>(
+                `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
+                 FROM candles WHERE pair_id = $1 AND timeframe = $2
+                 ORDER BY ts DESC LIMIT 300`,
+                [pairId, q.timeframe],
+            );
+            rows.reverse();
+            const candles = rows.map(toIndicatorCandle);
+
+            if (candles.length === 0) {
+                return reply.send({ ok: true, pairId, timeframe: q.timeframe, asOf: null, indicators: {} });
+            }
+
+            const indicators: Record<string, unknown> = {};
+
+            for (const key of requested) {
+                switch (key) {
+                    case "ema20": indicators.ema20 = lastValue(computeEMA(candles, 20)); break;
+                    case "ema50": indicators.ema50 = lastValue(computeEMA(candles, 50)); break;
+                    case "ema200": indicators.ema200 = lastValue(computeEMA(candles, 200)); break;
+                    case "rsi": indicators.rsi = lastValue(computeRSI(candles)); break;
+                    case "atr": indicators.atr = lastValue(computeATR(candles)); break;
+                    case "vwap": indicators.vwap = lastValue(computeVWAP(candles)); break;
+                    case "delta": indicators.delta = lastValue(computeCandleDelta(candles)); break;
+                    case "macd": {
+                        const { macd, signal, histogram } = computeMACD(candles);
+                        indicators.macd = macd.length > 0
+                            ? { macd: lastValue(macd), signal: lastValue(signal), histogram: lastValue(histogram) }
+                            : null;
+                        break;
+                    }
+                    case "bollingerBands": {
+                        const { upper, middle, lower } = computeBollingerBands(candles);
+                        indicators.bollingerBands = upper.length > 0
+                            ? { upper: lastValue(upper), middle: lastValue(middle), lower: lastValue(lower) }
+                            : null;
+                        break;
+                    }
+                    case "cvd": {
+                        const result = computeCVD(candles);
+                        indicators.cvd = {
+                            value: lastValue(result.values),
+                            dataSource: result.dataSource,
+                        };
+                        break;
+                    }
+                    case "vpvr": {
+                        const profile = computeVolumeProfile(candles);
+                        indicators.vpvr = profile ? { poc: profile.poc, vah: profile.vah, val: profile.val } : null;
+                        break;
+                    }
+                }
+            }
+
+            const response = {
+                ok: true,
+                pairId,
+                timeframe: q.timeframe,
+                asOf: candles[candles.length - 1]!.time,
+                indicators,
+            };
+            setCache(cacheKey, response, 5000);
+            return reply.send(response);
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
 };
+
+function lastValue<T extends { value: unknown }>(points: T[]): T["value"] | null {
+    return points.length > 0 ? points[points.length - 1]!.value : null;
+}
 
 export default v1Market;
