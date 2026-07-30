@@ -27,6 +27,8 @@ import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { txWithEvents } from "../utils/txWithEvents";
 import { processFillForJournal } from "../journal/journalService";
+import { isAgentActionsEnabled } from "../system/systemFlagService";
+import { listOpenOrders } from "./orderRepo";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -76,6 +78,11 @@ export async function placeOrderWithSnapshot(
     // An omitted arg defaults to free-play. There is deliberately no
     // server-side re-resolution — see resolvedMatchId below.
     matchId?: string | null,
+    // Provenance tag. Omitted/null = manual user order — every existing
+    // caller (HTTP route, market-maker bot, trigger engine, sim script)
+    // is unaffected by this param and the kill-switch check below. Only
+    // 'agent' is gated; there is no other special-cased value today.
+    source?: string | null,
 ): Promise<PlaceOrderResult> {
     const startMs = performance.now();
 
@@ -83,6 +90,7 @@ export async function placeOrderWithSnapshot(
     // fallback: a null where a match was expected must surface as the symptom
     // (match_id = NULL) rather than be silently re-resolved and mask the bug.
     const resolvedMatchId: string | null = matchId ?? null;
+    const resolvedSource: string | null = source ?? null;
 
     const logCtx = buildLogContext({
       requestId: requestId ?? "no-request",
@@ -91,9 +99,21 @@ export async function placeOrderWithSnapshot(
       idempotencyKey,
     });
     logger.info(
-        { ...logCtx, eventType: "order.placement_started", matchId: resolvedMatchId },
+        { ...logCtx, eventType: "order.placement_started", matchId: resolvedMatchId, source: resolvedSource },
         "Order placement started",
     );
+
+    // ── 0. Kill switch (agent orders only — manual trading unaffected) ──
+    if (resolvedSource === "agent") {
+        const enabled = await isAgentActionsEnabled();
+        if (!enabled) {
+            ordersRejectedTotal.inc({ reason: "agent_actions_disabled" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: "agent_actions_disabled" },
+                "Order rejected: agent actions disabled");
+            orderPlacementLatency.observe(performance.now() - startMs);
+            throw new AppError("agent_actions_disabled");
+        }
+    }
 
     // ── 1. Idempotency check (outside transaction) ──
     if (idempotencyKey) {
@@ -177,6 +197,7 @@ export async function placeOrderWithSnapshot(
             body.limitPrice,
             competitionId,
             resolvedMatchId,
+            resolvedSource,
         );
 
         // ── 5. Post-fill processing ──
@@ -495,5 +516,77 @@ export async function cancelOrderWithOutbox(
         }, { userId, requestId }));
 
         return cancelResult;
+    });
+}
+
+/**
+ * Bulk-cancel open/partial orders matching the given filters, in one
+ * transaction. Used by the admin cancel-all kill-switch endpoint
+ * (POST /v1/admin/orders/cancel-all) — see betaAdminRoutes.ts.
+ *
+ * Each order is canceled via the same cancelOrderTx() a single-order
+ * cancel uses, passing that order's own owning user_id (not the admin's)
+ * so the ownership check inside cancelOrderInternal passes naturally.
+ * A race loss on one order (e.g. it filled between listOpenOrders() and
+ * this transaction starting) is skipped rather than aborting the whole
+ * batch — cancelOrderTx's "order_not_cancelable" is a plain JS throw, not
+ * a failed SQL statement, so catching it here does not poison the
+ * surrounding Postgres transaction.
+ */
+export async function cancelAllOrdersWithOutbox(
+    filters: { pairId?: string; userId?: string; source?: string },
+    requestId?: string,
+): Promise<{
+    canceled: { order: OrderRow; releasedAmount: string }[];
+    skipped: { orderId: string; reason: string }[];
+}> {
+    const openOrders = await listOpenOrders(filters);
+
+    return txWithEvents(async (client, pendingEvents) => {
+        const canceled: { order: OrderRow; releasedAmount: string }[] = [];
+        const skipped: { orderId: string; reason: string }[] = [];
+
+        for (const order of openOrders) {
+            let cancelResult: { order: OrderRow; releasedAmount: string };
+            try {
+                cancelResult = await cancelOrderTx(client, order.user_id, order.id);
+            } catch (err) {
+                skipped.push({ orderId: order.id, reason: err instanceof Error ? err.message : "unknown_error" });
+                continue;
+            }
+
+            await insertOutboxEventTx(client, {
+                event_type: "EVENT_STREAM_APPEND",
+                aggregate_type: "ORDER",
+                aggregate_id: order.id,
+                payload: {
+                    eventInput: {
+                        eventType: "ORDER_CANCELLED",
+                        entityType: "ORDER",
+                        entityId: order.id,
+                        actorUserId: order.user_id,
+                        payload: {
+                            pairId: cancelResult.order.pair_id,
+                            releasedAmount: cancelResult.releasedAmount,
+                        },
+                    },
+                },
+            });
+
+            pendingEvents.push(createEvent("order.updated", {
+                orderId: order.id,
+                pairId: cancelResult.order.pair_id,
+                side: cancelResult.order.side as "BUY" | "SELL",
+                type: cancelResult.order.type as "MARKET" | "LIMIT",
+                status: cancelResult.order.status,
+                qty: cancelResult.order.qty,
+                filledQty: cancelResult.order.qty_filled,
+                limitPrice: cancelResult.order.limit_price ?? null,
+            }, { userId: order.user_id, requestId }));
+
+            canceled.push(cancelResult);
+        }
+
+        return { canceled, skipped };
     });
 }

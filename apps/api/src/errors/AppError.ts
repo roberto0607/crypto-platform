@@ -102,6 +102,7 @@ const ERROR_STATUS: Record<string, number> = {
   trading_paused_global: 503,
   trading_paused_pair: 503,
   read_only_mode: 503,
+  agent_actions_disabled: 503,
 };
 
 export class AppError extends Error {

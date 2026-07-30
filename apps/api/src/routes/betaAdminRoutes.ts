@@ -8,6 +8,7 @@ import { handleError } from "../http/handleError";
 import { AppError } from "../errors/AppError";
 import { createInvite, listInvites, disableInvite } from "../beta/inviteRepo";
 import { setFlag, setPairTradingEnabled } from "../system/systemFlagService";
+import { cancelAllOrdersWithOutbox } from "../trading/phase6OrderService";
 
 // ── Zod schemas ──
 const createInviteBody = z.object({
@@ -19,6 +20,12 @@ const createInviteBody = z.object({
 const idParams = z.object({ id: z.string().uuid() });
 
 const enabledBody = z.object({ enabled: z.boolean() });
+
+const cancelAllBody = z.object({
+  pairId: z.string().uuid().optional(),
+  userId: z.string().uuid().optional(),
+  source: z.string().optional(),
+});
 
 
 // ── Plugin ──
@@ -138,6 +145,54 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send({ ok: true });
+  });
+
+  // POST /v1/admin/system/agent-actions
+  app.post("/system/agent-actions", { schema: { tags: ["Admin"], summary: "Toggle agent-actions kill switch", description: "Enables or disables agent-originated order placement (orders tagged source='agent'). Manual user trading is never affected. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["enabled"], properties: { enabled: { type: "boolean" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
+    const parsed = enabledBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input" });
+    }
+
+    await setFlag("AGENT_ACTIONS_ENABLED", { enabled: parsed.data.enabled });
+
+    await auditLog({
+      actorUserId: req.user!.id,
+      action: "system.agent_actions",
+      requestId: req.id,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] ?? null,
+      metadata: { enabled: parsed.data.enabled },
+    });
+
+    return reply.send({ ok: true });
+  });
+
+  // ── Emergency order cancellation ──
+
+  // POST /v1/admin/orders/cancel-all
+  app.post("/orders/cancel-all", { schema: { tags: ["Admin"], summary: "Bulk-cancel open orders", description: "Cancels every OPEN/PARTIALLY_FILLED order matching the given filters (all optional -- omitting all three cancels every open order platform-wide). Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", properties: { pairId: { type: "string", format: "uuid" }, userId: { type: "string", format: "uuid" }, source: { type: "string" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, canceledCount: { type: "integer" }, skippedCount: { type: "integer" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } } }, async (req, reply) => {
+    const parsed = cancelAllBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_input" });
+    }
+
+    const result = await cancelAllOrdersWithOutbox(parsed.data, req.id);
+
+    await auditLog({
+      actorUserId: req.user!.id,
+      action: "admin.orders.cancel_all",
+      requestId: req.id,
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] ?? null,
+      metadata: {
+        filters: parsed.data,
+        canceledOrderIds: result.canceled.map((c) => c.order.id),
+        skipped: result.skipped,
+      },
+    });
+
+    return reply.send({ ok: true, canceledCount: result.canceled.length, skippedCount: result.skipped.length });
   });
 
   // ── Pair trading toggle ──
