@@ -142,4 +142,16 @@ export const config = {
 
   // ── Phase 22: Derivatives data ──
   derivativesPollerEnabled: booleanEnv("DERIVATIVES_POLLER_ENABLED", true),
+
+  // ── Gate 1b: Scanner Agent ──
+  // Deliberately NOT requireEnv()'d here — unlike jwtAccessSecret, this key
+  // is only needed by the Scanner Agent, an optional, schedulable background
+  // feature, not core to server boot. Making it hard-required at config
+  // parse time would force every environment (local dev without a key, CI)
+  // to configure it just to start the server. requireEnv() is still the
+  // enforcement mechanism -- it's called lazily, at the point the agent
+  // runner actually constructs the Anthropic client (see
+  // agents/scanner/runner.ts), so the failure surfaces only when the
+  // feature that needs it actually runs.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
 };

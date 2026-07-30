@@ -182,6 +182,169 @@ async function fetchOKXOI(ccy: string): Promise<number | null> {
 }
 
 // ── Routes ──
+// ── Indicator snapshot (server-computed, agent-tool-friendly) ──
+// Key names match apps/web/src/stores/tradingStore.ts's IndicatorConfig keys
+// deliberately, so a future setChartConfig tool call can reuse the same
+// vocabulary. Module scope (not just the route closure below) so the
+// Scanner Agent's getIndicators tool (apps/api/src/agents/scanner/runner.ts)
+// can call it directly in-process, instead of the agent making a wasteful
+// self-HTTP call to its own server.
+export const INDICATOR_KEYS = [
+    "ema20", "ema50", "ema200", "rsi", "atr", "macd",
+    "bollingerBands", "vwap", "delta", "cvd", "vpvr",
+] as const;
+export type IndicatorKey = typeof INDICATOR_KEYS[number];
+
+function toIndicatorCandle(row: {
+    ts: string; open: string; high: string; low: string; close: string;
+    volume: string; buy_volume: string | null; sell_volume: string | null;
+}): IndicatorCandle {
+    return {
+        time: Math.floor(new Date(row.ts).getTime() / 1000),
+        open: parseFloat(row.open),
+        high: parseFloat(row.high),
+        low: parseFloat(row.low),
+        close: parseFloat(row.close),
+        volume: parseFloat(row.volume),
+        buyVolume: row.buy_volume != null ? parseFloat(row.buy_volume) : undefined,
+        sellVolume: row.sell_volume != null ? parseFloat(row.sell_volume) : undefined,
+    };
+}
+
+export interface IndicatorSnapshot {
+    ok: true;
+    pairId: string;
+    timeframe: string;
+    asOf: number | null;
+    indicators: Record<string, unknown>;
+}
+
+export async function computeIndicatorSnapshot(
+    pairId: string,
+    timeframe: string,
+    requested: IndicatorKey[],
+): Promise<IndicatorSnapshot> {
+    const cacheKey = `indicators:${pairId}:${timeframe}:${[...requested].sort().join(",")}`;
+    const cached = getCached<IndicatorSnapshot>(cacheKey);
+    if (cached) return cached;
+
+    // 300 candles covers the longest lookback we compute (EMA 200).
+    const { rows } = await pool.query<{
+        ts: string; open: string; high: string; low: string; close: string;
+        volume: string; buy_volume: string | null; sell_volume: string | null;
+    }>(
+        `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
+         FROM candles WHERE pair_id = $1 AND timeframe = $2
+         ORDER BY ts DESC LIMIT 300`,
+        [pairId, timeframe],
+    );
+    rows.reverse();
+    const candles = rows.map(toIndicatorCandle);
+
+    if (candles.length === 0) {
+        return { ok: true, pairId, timeframe, asOf: null, indicators: {} };
+    }
+
+    const indicators: Record<string, unknown> = {};
+
+    for (const key of requested) {
+        switch (key) {
+            case "ema20": indicators.ema20 = lastValue(computeEMA(candles, 20)); break;
+            case "ema50": indicators.ema50 = lastValue(computeEMA(candles, 50)); break;
+            case "ema200": indicators.ema200 = lastValue(computeEMA(candles, 200)); break;
+            case "rsi": indicators.rsi = lastValue(computeRSI(candles)); break;
+            case "atr": indicators.atr = lastValue(computeATR(candles)); break;
+            case "vwap": indicators.vwap = lastValue(computeVWAP(candles)); break;
+            case "delta": indicators.delta = lastValue(computeCandleDelta(candles)); break;
+            case "macd": {
+                const { macd, signal, histogram } = computeMACD(candles);
+                indicators.macd = macd.length > 0
+                    ? { macd: lastValue(macd), signal: lastValue(signal), histogram: lastValue(histogram) }
+                    : null;
+                break;
+            }
+            case "bollingerBands": {
+                const { upper, middle, lower } = computeBollingerBands(candles);
+                indicators.bollingerBands = upper.length > 0
+                    ? { upper: lastValue(upper), middle: lastValue(middle), lower: lastValue(lower) }
+                    : null;
+                break;
+            }
+            case "cvd": {
+                const result = computeCVD(candles);
+                indicators.cvd = {
+                    value: lastValue(result.values),
+                    dataSource: result.dataSource,
+                };
+                break;
+            }
+            case "vpvr": {
+                const profile = computeVolumeProfile(candles);
+                indicators.vpvr = profile ? { poc: profile.poc, vah: profile.vah, val: profile.val } : null;
+                break;
+            }
+        }
+    }
+
+    const response: IndicatorSnapshot = {
+        ok: true,
+        pairId,
+        timeframe,
+        asOf: candles[candles.length - 1]!.time,
+        indicators,
+    };
+    setCache(cacheKey, response, 5000);
+    return response;
+}
+
+// ── Funding rate / open interest snapshots — module scope for the same
+// in-process-reuse reason as computeIndicatorSnapshot above. Both routes
+// below are unauthenticated, so unlike getIndicators this isn't strictly
+// required for the Scanner to reach them -- extracted anyway for
+// consistency (no in-process caller should self-HTTP-call its own server).
+export async function getFundingRateSnapshot(): Promise<Record<string, unknown>> {
+    const cached = getCached<Record<string, unknown>>("funding-rate");
+    if (cached) return cached;
+
+    const result: Record<string, unknown> = {};
+    await Promise.all(Object.entries(SYMBOLS).map(async ([key, contract]) => {
+        result[key] = await fetchFundingHistory(contract);
+    }));
+
+    setCache("funding-rate", result, 60_000);
+    return result;
+}
+
+export async function getOpenInterestSnapshot(): Promise<Record<string, unknown>> {
+    const cached = getCached<Record<string, unknown>>("open-interest");
+    if (cached) return cached;
+
+    const result: Record<string, unknown> = {};
+    await Promise.all(Object.entries(SYMBOLS).map(async ([key, contract]) => {
+        // OKX only aggregated for BTC per Stage 5 spec
+        const ccy = key.toUpperCase();
+        const [gate, okxCurrent] = await Promise.all([
+            fetchGateIoOI(contract),
+            key === "btc" ? fetchOKXOI(ccy) : Promise.resolve(null),
+        ]);
+
+        const sources: string[] = [];
+        if (gate) sources.push("gateio");
+        if (okxCurrent !== null) sources.push("okx");
+
+        const gateCurrent = gate?.current ?? 0;
+        const history = gate?.history ?? [];
+        // Sum current values across exchanges. History stays Gate.io-only
+        // because OKX doesn't expose the equivalent historical shape.
+        const current = gateCurrent + (okxCurrent ?? 0);
+
+        result[key] = { current, history, sources };
+    }));
+
+    setCache("open-interest", result, 300_000);
+    return result;
+}
+
 const v1Market: FastifyPluginAsync = async (app) => {
 
     // GET /v1/market/funding-rate
@@ -192,15 +355,7 @@ const v1Market: FastifyPluginAsync = async (app) => {
             response: { 200: { type: "object", additionalProperties: true } },
         },
     }, async (_req, reply) => {
-        const cached = getCached<Record<string, unknown>>("funding-rate");
-        if (cached) return reply.send({ ok: true, ...cached });
-
-        const result: Record<string, unknown> = {};
-        await Promise.all(Object.entries(SYMBOLS).map(async ([key, contract]) => {
-            result[key] = await fetchFundingHistory(contract);
-        }));
-
-        setCache("funding-rate", result, 60_000);
+        const result = await getFundingRateSnapshot();
         return reply.send({ ok: true, ...result });
     });
 
@@ -212,32 +367,7 @@ const v1Market: FastifyPluginAsync = async (app) => {
             response: { 200: { type: "object", additionalProperties: true } },
         },
     }, async (_req, reply) => {
-        const cached = getCached<Record<string, unknown>>("open-interest");
-        if (cached) return reply.send({ ok: true, ...cached });
-
-        const result: Record<string, unknown> = {};
-        await Promise.all(Object.entries(SYMBOLS).map(async ([key, contract]) => {
-            // OKX only aggregated for BTC per Stage 5 spec
-            const ccy = key.toUpperCase();
-            const [gate, okxCurrent] = await Promise.all([
-                fetchGateIoOI(contract),
-                key === "btc" ? fetchOKXOI(ccy) : Promise.resolve(null),
-            ]);
-
-            const sources: string[] = [];
-            if (gate) sources.push("gateio");
-            if (okxCurrent !== null) sources.push("okx");
-
-            const gateCurrent = gate?.current ?? 0;
-            const history = gate?.history ?? [];
-            // Sum current values across exchanges. History stays Gate.io-only
-            // because OKX doesn't expose the equivalent historical shape.
-            const current = gateCurrent + (okxCurrent ?? 0);
-
-            result[key] = { current, history, sources };
-        }));
-
-        setCache("open-interest", result, 300_000);
+        const result = await getOpenInterestSnapshot();
         return reply.send({ ok: true, ...result });
     });
     // GET /v1/market/cot/:ccy — CFTC COT report for CME BTC futures (weekly)
@@ -608,35 +738,12 @@ const v1Market: FastifyPluginAsync = async (app) => {
 
     // GET /v1/market/indicators/:pairId — server-computed indicator snapshot
     // (agent-tool-friendly: latest numeric values, not chart-rendering series).
-    // Key names match apps/web/src/stores/tradingStore.ts's IndicatorConfig
-    // keys deliberately, so a future setChartConfig tool call can reuse the
-    // same vocabulary.
-    const INDICATOR_KEYS = [
-        "ema20", "ema50", "ema200", "rsi", "atr", "macd",
-        "bollingerBands", "vwap", "delta", "cvd", "vpvr",
-    ] as const;
-    type IndicatorKey = typeof INDICATOR_KEYS[number];
-
+    // Thin HTTP wrapper — the actual computation is computeIndicatorSnapshot()
+    // above (module scope), shared with the Scanner Agent's getIndicators tool.
     const indicatorsQuery = z.object({
         timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d", "1w"]).optional().default("1h"),
         indicators: z.string().min(1),
     });
-
-    function toIndicatorCandle(row: {
-        ts: string; open: string; high: string; low: string; close: string;
-        volume: string; buy_volume: string | null; sell_volume: string | null;
-    }): IndicatorCandle {
-        return {
-            time: Math.floor(new Date(row.ts).getTime() / 1000),
-            open: parseFloat(row.open),
-            high: parseFloat(row.high),
-            low: parseFloat(row.low),
-            close: parseFloat(row.close),
-            volume: parseFloat(row.volume),
-            buyVolume: row.buy_volume != null ? parseFloat(row.buy_volume) : undefined,
-            sellVolume: row.sell_volume != null ? parseFloat(row.sell_volume) : undefined,
-        };
-    }
 
     app.get("/market/indicators/:pairId", {
         schema: {
@@ -673,76 +780,7 @@ const v1Market: FastifyPluginAsync = async (app) => {
                 return reply.code(400).send({ ok: false, error: "invalid_input", details: { indicators: `must include at least one of: ${INDICATOR_KEYS.join(", ")}` } });
             }
 
-            const cacheKey = `indicators:${pairId}:${q.timeframe}:${[...requested].sort().join(",")}`;
-            const cached = getCached<Record<string, unknown>>(cacheKey);
-            if (cached) return reply.send(cached);
-
-            // 300 candles covers the longest lookback we compute (EMA 200).
-            const { rows } = await pool.query<{
-                ts: string; open: string; high: string; low: string; close: string;
-                volume: string; buy_volume: string | null; sell_volume: string | null;
-            }>(
-                `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
-                 FROM candles WHERE pair_id = $1 AND timeframe = $2
-                 ORDER BY ts DESC LIMIT 300`,
-                [pairId, q.timeframe],
-            );
-            rows.reverse();
-            const candles = rows.map(toIndicatorCandle);
-
-            if (candles.length === 0) {
-                return reply.send({ ok: true, pairId, timeframe: q.timeframe, asOf: null, indicators: {} });
-            }
-
-            const indicators: Record<string, unknown> = {};
-
-            for (const key of requested) {
-                switch (key) {
-                    case "ema20": indicators.ema20 = lastValue(computeEMA(candles, 20)); break;
-                    case "ema50": indicators.ema50 = lastValue(computeEMA(candles, 50)); break;
-                    case "ema200": indicators.ema200 = lastValue(computeEMA(candles, 200)); break;
-                    case "rsi": indicators.rsi = lastValue(computeRSI(candles)); break;
-                    case "atr": indicators.atr = lastValue(computeATR(candles)); break;
-                    case "vwap": indicators.vwap = lastValue(computeVWAP(candles)); break;
-                    case "delta": indicators.delta = lastValue(computeCandleDelta(candles)); break;
-                    case "macd": {
-                        const { macd, signal, histogram } = computeMACD(candles);
-                        indicators.macd = macd.length > 0
-                            ? { macd: lastValue(macd), signal: lastValue(signal), histogram: lastValue(histogram) }
-                            : null;
-                        break;
-                    }
-                    case "bollingerBands": {
-                        const { upper, middle, lower } = computeBollingerBands(candles);
-                        indicators.bollingerBands = upper.length > 0
-                            ? { upper: lastValue(upper), middle: lastValue(middle), lower: lastValue(lower) }
-                            : null;
-                        break;
-                    }
-                    case "cvd": {
-                        const result = computeCVD(candles);
-                        indicators.cvd = {
-                            value: lastValue(result.values),
-                            dataSource: result.dataSource,
-                        };
-                        break;
-                    }
-                    case "vpvr": {
-                        const profile = computeVolumeProfile(candles);
-                        indicators.vpvr = profile ? { poc: profile.poc, vah: profile.vah, val: profile.val } : null;
-                        break;
-                    }
-                }
-            }
-
-            const response = {
-                ok: true,
-                pairId,
-                timeframe: q.timeframe,
-                asOf: candles[candles.length - 1]!.time,
-                indicators,
-            };
-            setCache(cacheKey, response, 5000);
+            const response = await computeIndicatorSnapshot(pairId, q.timeframe, requested);
             return reply.send(response);
         } catch (err) {
             return v1HandleError(reply, err);
