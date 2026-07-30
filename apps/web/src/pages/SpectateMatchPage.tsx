@@ -149,7 +149,14 @@ export default function SpectateMatchPage() {
                 setState("ready");
             } catch (err: any) {
                 if (cancelled) return;
-                const code = err?.response?.data?.code;
+                // v1Matches.ts is inconsistent: match_not_found (thrown as a
+                // plain Error) goes through v1HandleError and lands in
+                // `code`, but forbidden/match_not_active/stream_not_found are
+                // returned inline as `{ ok: false, error: "..." }` — no
+                // `code` field at all. Check both so every branch resolves
+                // regardless of which shape the route happens to use.
+                const data = err?.response?.data;
+                const code = data?.code ?? data?.error;
                 if (code === "forbidden") setState("denied");
                 else if (code === "match_not_found") setState("not_found");
                 else if (code === "match_not_active") setState("not_active");
