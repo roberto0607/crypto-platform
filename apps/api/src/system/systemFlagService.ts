@@ -27,6 +27,17 @@ export async function isReadOnlyMode(): Promise<boolean> {
   return flag.enabled === true;
 }
 
+/**
+ * Gates orders tagged `source: "agent"` in placeOrderWithSnapshot. Manual
+ * user orders (source null) are never affected by this flag — see
+ * phase6OrderService.ts.
+ */
+export async function isAgentActionsEnabled(): Promise<boolean> {
+  const flag = await getFlag("AGENT_ACTIONS_ENABLED");
+  if (!flag) return true;
+  return flag.enabled !== false;
+}
+
 export async function setPairTradingEnabled(pairId: string, enabled: boolean): Promise<void> {
   await pool.query(
     `UPDATE trading_pairs SET trading_enabled = $1, updated_at = now() WHERE id = $2`,

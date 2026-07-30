@@ -125,6 +125,10 @@ async function placeOrderInternal(
     // match-scoped (see migration 066 notes) — we keep free-play wallet
     // lookups even when match_id is set on the order.
     matchId?: string | null,
+    // Provenance tag, stamped onto the order row verbatim. Omitted/null =
+    // manual user order (every existing caller). See phase6OrderService
+    // for where 'agent' is checked against the AGENT_ACTIONS_ENABLED flag.
+    source?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -295,6 +299,7 @@ async function placeOrderInternal(
         reservedAmount: toFixed8(reserveAmount),
         competitionId: competitionId ?? null,
         matchId: matchId ?? null,
+        source: source ?? null,
     });
 
     // ── Phase I: Execute book fills ──
@@ -477,12 +482,13 @@ export async function placeOrder(
     limitPrice?: string,
     competitionId?: string | null,
     matchId?: string | null,
+    source?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
-        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId);
+        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source);
         await client.query("COMMIT");
         return result;
     } catch (err) {
@@ -507,8 +513,9 @@ export async function placeOrderTx(
     limitPrice?: string,
     competitionId?: string | null,
     matchId?: string | null,
+    source?: string | null,
 ): Promise<{ order: OrderRow; fills: TradeRow[] }> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source);
 }
 
 /**

@@ -17,9 +17,12 @@ export type OrderRow = {
     reserved_consumed: string;
     created_at: string;
     updated_at: string;
+    // NULL = manual user order. Non-null (e.g. 'agent') tags provenance
+    // for the AGENT_ACTIONS_ENABLED kill switch — see phase6OrderService.
+    source: string | null;
 };
 
-const ORDER_COLUMNS = `id, user_id, pair_id, side, type, limit_price, qty, qty_filled, status, reserved_wallet_id, reserved_amount, reserved_consumed, created_at, updated_at`;
+const ORDER_COLUMNS = `id, user_id, pair_id, side, type, limit_price, qty, qty_filled, status, reserved_wallet_id, reserved_amount, reserved_consumed, created_at, updated_at, source`;
 
 export async function createOrder(
     client: PoolClient,
@@ -37,12 +40,15 @@ export async function createOrder(
         // Stamps the originating match onto the order row. Read back at
         // match time for maker-side scope resolution (see phase6OrderService).
         matchId?: string | null;
+        // Provenance tag. Omitted/null = manual user order (the default
+        // for every existing caller — no behavior change).
+        source?: string | null;
     }
 ): Promise<OrderRow> {
     const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
-        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id, source)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING ${ORDER_COLUMNS}
         `,
         [
@@ -57,6 +63,7 @@ export async function createOrder(
             params.reservedAmount,
             params.competitionId ?? null,
             params.matchId ?? null,
+            params.source ?? null,
         ]
     );
 
@@ -111,6 +118,39 @@ export async function listOrdersByUserId(
     query += ` ORDER BY created_at DESC`;
 
     const result = await pool.query<OrderRow>(query, params);
+    return result.rows;
+}
+
+/**
+ * Open (OPEN/PARTIALLY_FILLED) orders across users, for the admin bulk
+ * cancel-all endpoint. Ordered by pair_id so a caller that cancels
+ * everything in one transaction acquires per-pair locks in a stable,
+ * deterministic order — cheap deadlock-avoidance against any concurrent
+ * single-pair placeOrder, which only ever locks one pair at a time.
+ */
+export async function listOpenOrders(
+    filters: { pairId?: string; userId?: string; source?: string } = {}
+): Promise<OrderRow[]> {
+    const conditions = ["status IN ('OPEN', 'PARTIALLY_FILLED')"];
+    const params: string[] = [];
+
+    if (filters.pairId) {
+        params.push(filters.pairId);
+        conditions.push(`pair_id = $${params.length}`);
+    }
+    if (filters.userId) {
+        params.push(filters.userId);
+        conditions.push(`user_id = $${params.length}`);
+    }
+    if (filters.source) {
+        params.push(filters.source);
+        conditions.push(`source = $${params.length}`);
+    }
+
+    const result = await pool.query<OrderRow>(
+        `SELECT ${ORDER_COLUMNS} FROM orders WHERE ${conditions.join(" AND ")} ORDER BY pair_id, created_at`,
+        params
+    );
     return result.rows;
 }
 

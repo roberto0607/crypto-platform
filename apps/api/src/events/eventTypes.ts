@@ -216,6 +216,14 @@ export interface SignalNewData {
   tp3: string;
   stopLoss: string;
   modelVersion: string;
+  // Explainability fields (Gate 1a) — optional, additive. Populated by
+  // agent-produced signals (see agents/schemas/tradeProposal.ts); absent
+  // on signals from the pre-existing ML pipeline shape above.
+  tradeType?: "scalp" | "swing";
+  riskRewardRatio?: number;
+  entryReason?: string;
+  stopReason?: string;
+  targetReason?: string;
 }
 
 // ── Discriminated union ──
