@@ -1,0 +1,25 @@
+-- ============================================================
+-- 084_trade_proposals_qty_nullable.sql
+-- Make trade_proposals.qty nullable -- "not yet sized" is a real state.
+-- ============================================================
+--
+-- Context:
+--   The Chart Analysis Agent (Gate 1c) deliberately has no wallet/balance
+--   context (see the design doc's non-goals -- no getOpenPositions, no
+--   execution tools), so it cannot ground a real position size. The first
+--   version of that agent wrote a nominal qty of "1" to satisfy this
+--   column's NOT NULL constraint -- but nothing distinguishes "1, a
+--   placeholder" from "1, an actual sized recommendation" once the row is
+--   read back, which is exactly the kind of ungrounded number this
+--   codebase's agents are supposed to avoid inventing.
+--
+--   NULL now means "not yet sized" directly, with no comment required to
+--   explain it. Real position sizing is Risk Agent territory (Gate 1d),
+--   which is expected to populate qty when it approves a proposal.
+--
+--   Safe to apply: no route or UI reads trade_proposals yet, and the only
+--   writer (Chart Analysis Agent, this same gate) is being updated in the
+--   same change to stop writing a value here.
+-- ============================================================
+
+ALTER TABLE trade_proposals ALTER COLUMN qty DROP NOT NULL;

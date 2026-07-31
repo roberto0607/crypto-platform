@@ -2,6 +2,7 @@ export { tradeProposalSchema, tradeProposalOutcomeSchema, type TradeProposal, ty
 export { agentDecisionSchema, type AgentDecision } from "./agentDecision";
 export { regimeTagSchema, type RegimeTag } from "./regimeTag";
 export { scannerCandidateSchema, scannerResultSchema, type ScannerCandidate, type ScannerResult } from "./scannerResult";
+export { chartAnalysisResultSchema, type ChartAnalysisResult } from "./chartAnalysisResult";
 
 export { getIndicatorsArgsSchema, type GetIndicatorsArgs } from "./toolCalls/getIndicators";
 export { getFundingRateArgsSchema, type GetFundingRateArgs } from "./toolCalls/getFundingRate";
@@ -11,3 +12,4 @@ export { getRegimeTagArgsSchema, type GetRegimeTagArgs } from "./toolCalls/getRe
 export { getOpenPositionsArgsSchema, type GetOpenPositionsArgs } from "./toolCalls/getOpenPositions";
 export { setChartConfigArgsSchema, type SetChartConfigArgs } from "./toolCalls/setChartConfig";
 export { commitDrawingArgsSchema, type CommitDrawingArgs } from "./toolCalls/commitDrawing";
+export { proposeChartConfigArgsSchema, type ProposeChartConfigArgs } from "./toolCalls/proposeChartConfig";
