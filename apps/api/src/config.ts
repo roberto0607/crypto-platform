@@ -154,4 +154,15 @@ export const config = {
   // agents/scanner/runner.ts), so the failure surfaces only when the
   // feature that needs it actually runs.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+
+  // ── Gate 1b Task 5: Scanner Agent scheduling ──
+  // Default disabled (unlike disableMarketMaker, which defaults to
+  // *enabled*) -- each run costs real Anthropic API $ and needs
+  // anthropicApiKey configured, so it must be opt-in per environment.
+  scannerAgentEnabled: booleanEnv("SCANNER_AGENT_ENABLED", false),
+  // Provisional default, not yet validated against real cost/latency data --
+  // revisit after a manual observation period post-merge (see
+  // agent_run_logs for actual per-run cost_usd/latency_ms once
+  // SCANNER_AGENT_ENABLED=true has run for a while in some environment).
+  scannerAgentIntervalSeconds: numberEnv("SCANNER_AGENT_INTERVAL_SECONDS", 1800),
 };
