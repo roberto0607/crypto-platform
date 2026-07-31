@@ -35,6 +35,8 @@ import {
   scannerResultSchema,
   type ScannerResult,
 } from "../schemas";
+import { getLatestRegimeTag } from "../shared/regimeTagRepo";
+import { parseAgentJsonOutput } from "../shared/parseAgentOutput";
 
 const AGENT_NAME = "scanner";
 const MODEL = "claude-haiku-4-5-20251001";
@@ -148,11 +150,7 @@ async function executeTool(name: string, input: unknown): Promise<unknown> {
     }
     case "getRegimeTag": {
       const args = getRegimeTagArgsSchema.parse(input);
-      const { rows } = await pool.query<{ regime: string; confidence: string | null; created_at: string }>(
-        `SELECT regime, confidence, created_at FROM regime_tags WHERE pair_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        [args.pairId],
-      );
-      return rows[0] ?? { regime: null, confidence: null, created_at: null };
+      return getLatestRegimeTag(args.pairId);
     }
     default:
       throw new Error(`Unknown tool requested by model: ${name}`);
@@ -170,43 +168,16 @@ function buildUserMessage(shortlist: RankedCandidate[]): string {
 }
 
 /**
- * Extracts the JSON object the model was asked to return as its entire
- * response. The system prompt forbids any preamble, but this is a
- * backstop for when the model ignores that instruction anyway -- e.g.
- * wrapping the object in a ```json fence, or prefacing it with prose
- * analysis (both observed in the first live run, 2026-07-31). Strips a
- * wrapping code fence if present, then falls back to the last top-level
- * {...} block in the text so leading prose doesn't break the parse.
- */
-function extractJsonCandidate(text: string): string {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenced) {
-    return fenced[1].trim();
-  }
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    return trimmed.slice(firstBrace, lastBrace + 1);
-  }
-  return trimmed;
-}
-
-/**
  * Parses and validates the model's final text against scannerResultSchema.
  * Returns null (never throws) on any parse/validation failure -- the
  * caller logs that as an agent_run_logs error row rather than passing a
- * malformed candidate list downstream.
+ * malformed candidate list downstream. Preamble/fence stripping lives in
+ * the shared parseAgentJsonOutput helper (agents/shared/parseAgentOutput.ts) --
+ * the system prompt forbids any preamble, but real runs have shown the
+ * model doing it anyway (2026-07-31).
  */
 function parseScannerResult(text: string): ScannerResult | null {
-  let json: unknown;
-  try {
-    json = JSON.parse(extractJsonCandidate(text));
-  } catch {
-    return null;
-  }
-  const parsed = scannerResultSchema.safeParse(json);
-  return parsed.success ? parsed.data : null;
+  return parseAgentJsonOutput(text, scannerResultSchema);
 }
 
 interface RunLogInput {
