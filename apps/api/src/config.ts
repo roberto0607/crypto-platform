@@ -165,4 +165,11 @@ export const config = {
   // agent_run_logs for actual per-run cost_usd/latency_ms once
   // SCANNER_AGENT_ENABLED=true has run for a while in some environment).
   scannerAgentIntervalSeconds: numberEnv("SCANNER_AGENT_INTERVAL_SECONDS", 1800),
+
+  // ── Gate 1c: Chart Analysis Agent ──
+  // Event-driven (reacts to scanner.result), not interval-scheduled, so
+  // there's no matching *IntervalSeconds flag -- see chartAnalysisEngine.ts.
+  // Default disabled for the same reason as scannerAgentEnabled: real
+  // Anthropic API $ per run.
+  chartAnalysisAgentEnabled: booleanEnv("CHART_ANALYSIS_AGENT_ENABLED", false),
 };
