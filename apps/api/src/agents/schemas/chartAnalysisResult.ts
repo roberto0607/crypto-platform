@@ -23,6 +23,12 @@ import { tradeProposalSchema } from "./tradeProposal";
  *    quantity would violate the "ground numbers in real tool data" rule.
  *    The runner leaves qty NULL (migration 084 made the column nullable
  *    for exactly this); real sizing is Risk Agent territory (Gate 1d).
+ *  - stopDistancePct/stopDistanceAtrMultiple (migration 085): the runner
+ *    computes these itself from entryPrice/stopPrice and the last ATR
+ *    value seen during the run. Hand-checking real proposals found the
+ *    model's own self-stated stop-distance ratios wrong most of the time
+ *    even when its entry/stop prices were fine -- same "don't let the
+ *    model assert a number it can get wrong" reasoning as qty above.
  */
 export const chartAnalysisResultSchema = tradeProposalSchema.omit({
   pairId: true,
@@ -33,6 +39,8 @@ export const chartAnalysisResultSchema = tradeProposalSchema.omit({
   expiresAt: true,
   chartConfig: true,
   qty: true,
+  stopDistancePct: true,
+  stopDistanceAtrMultiple: true,
 });
 
 export type ChartAnalysisResult = z.infer<typeof chartAnalysisResultSchema>;
