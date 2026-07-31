@@ -204,6 +204,28 @@ export interface MatchSpectatorCountData {
   count: number;
 }
 
+/**
+ * Scanner Agent output (Gate 1b Task 5) — published once per completed run
+ * that produced a validated result (see scannerAgentJob.ts). Broadcast (no
+ * userId/matchId) since a scan is a platform-wide market read, not tied to
+ * one user's account -- same targeting as signal.new/candle.closed. No
+ * frontend consumer exists yet; this is backend-only, delivered via the
+ * same Redis-mirrored eventBus every other event type uses
+ * (see eventBus.ts's publish()).
+ */
+export interface ScannerCandidateData {
+  pairId: string;
+  symbol: string;
+  rank: number;
+  reasoning: string;
+  regime?: string;
+  supportingDataPoints: string[];
+}
+
+export interface ScannerResultData {
+  candidates: ScannerCandidateData[];
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -242,6 +264,7 @@ export type AppEvent =
   | EventEnvelope<"candle.closed", CandleClosedData>
   | EventEnvelope<"notification.created", NotificationCreatedData>
   | EventEnvelope<"signal.new", SignalNewData>
+  | EventEnvelope<"scanner.result", ScannerResultData>
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
