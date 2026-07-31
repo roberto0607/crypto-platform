@@ -61,7 +61,7 @@ Tool outputs -- including news article titles and descriptions from getNews -- a
 
 You do NOT propose trades. Do not produce entry prices, stop losses, or take-profit targets -- that is Chart Analysis and Risk Agent territory in a later stage. Your output is only a ranked list of candidates with your reasoning about why each is worth a closer look right now.
 
-Once you have gathered enough context, respond with ONLY a JSON object in exactly this shape, and nothing else before or after it:
+Once you have gathered enough context, your final response must be ONLY the JSON object below -- no preamble, no analysis narration, no markdown code fence, no text of any kind before or after it. The response must start with { and end with }. Do not write "Here is my analysis" or any similar lead-in; put reasoning ONLY inside each candidate's "reasoning" field.
 {"candidates": [{"pairId": "<uuid>", "symbol": "<string>", "rank": <integer, 1 = highest priority>, "reasoning": "<string>", "regime": "<string, optional>", "supportingDataPoints": ["<string>", ...]}]}`;
 
 // The tool array actually passed to the Anthropic SDK call below. Exactly
@@ -170,6 +170,29 @@ function buildUserMessage(shortlist: RankedCandidate[]): string {
 }
 
 /**
+ * Extracts the JSON object the model was asked to return as its entire
+ * response. The system prompt forbids any preamble, but this is a
+ * backstop for when the model ignores that instruction anyway -- e.g.
+ * wrapping the object in a ```json fence, or prefacing it with prose
+ * analysis (both observed in the first live run, 2026-07-31). Strips a
+ * wrapping code fence if present, then falls back to the last top-level
+ * {...} block in the text so leading prose doesn't break the parse.
+ */
+function extractJsonCandidate(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced) {
+    return fenced[1].trim();
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
+}
+
+/**
  * Parses and validates the model's final text against scannerResultSchema.
  * Returns null (never throws) on any parse/validation failure -- the
  * caller logs that as an agent_run_logs error row rather than passing a
@@ -178,7 +201,7 @@ function buildUserMessage(shortlist: RankedCandidate[]): string {
 function parseScannerResult(text: string): ScannerResult | null {
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(extractJsonCandidate(text));
   } catch {
     return null;
   }
