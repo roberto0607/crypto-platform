@@ -44,6 +44,7 @@ import { startPressureAggregator } from "./services/pressureAggregator"
 import { startTriggerEngine } from "./triggers/triggerEngine";
 import { startAlertEngine } from "./alerts/alertEngine";
 import { startMatchPnlEngine } from "./competitions/matchPnlEngine";
+import { startChartAnalysisEngine } from "./agents/chartAnalysis/chartAnalysisEngine";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
@@ -62,6 +63,8 @@ export interface BuildAppOptions {
   disableAlertEngine?: boolean;
   /** Skip starting match PnL engine (useful for tests). */
   disableMatchPnlEngine?: boolean;
+  /** Skip starting chart analysis engine (useful for tests). */
+  disableChartAnalysisEngine?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
@@ -376,6 +379,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Match PnL engine --
   if (!opts.disableMatchPnlEngine) {
     app.addHook("onReady", async () => { await startMatchPnlEngine(); });
+  }
+
+  // -- Chart analysis engine (Gate 1c) --
+  if (!opts.disableChartAnalysisEngine) {
+    app.addHook("onReady", async () => { await startChartAnalysisEngine(); });
   }
 
   // -- Job runner --
