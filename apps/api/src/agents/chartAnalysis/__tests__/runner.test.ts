@@ -306,6 +306,70 @@ describe("runChartAnalysisAgent — numeric grounding in real tool data", () => 
   });
 });
 
+describe("runChartAnalysisAgent — server-computed stop distance (migration 085)", () => {
+  it("computes stopDistancePct and stopDistanceAtrMultiple from entry/stop prices and the ATR captured during the run", async () => {
+    // Same fixture as the numeric-grounding test above: entry 45210.50,
+    // stop 44897.75, ATR 312.75 -- the stop is exactly one ATR below
+    // entry, so stopDistanceAtrMultiple should come out to exactly 1.
+    mockComputeIndicatorSnapshot.mockResolvedValueOnce({ indicators: { atr: 312.75 } });
+
+    const groundedOutput = {
+      timeframe: "1h",
+      tradeType: "swing",
+      side: "BUY",
+      entryPrice: "45210.50",
+      stopPrice: "44897.75",
+      targetPrice: "46148.75",
+      riskRewardRatio: 3,
+      confidence: 65,
+      entryReason: "Entry at 45210.50, the current close from getIndicators.",
+      stopReason: "Stop below the recent swing low per getIndicators.",
+      targetReason: "Target at 46148.75 for a 3:1 reward relative to the stop distance.",
+      regime: "trending",
+      regimeConfidence: 0.8,
+    };
+
+    mockCreate
+      .mockResolvedValueOnce(
+        mockMessage({
+          stop_reason: "tool_use",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool_1",
+              name: "getIndicators",
+              input: { pairId: CANDIDATE.pairId, timeframe: "1h", indicators: ["atr"] },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: JSON.stringify(groundedOutput) }] }));
+
+    const outcome = await runChartAnalysisAgent(CANDIDATE);
+
+    expect(outcome.error).toBeNull();
+    const insertCall = mockPoolQuery.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO trade_proposals"));
+    const [sql, params] = insertCall!;
+    expect(sql).toContain("stop_distance_pct");
+    expect(sql).toContain("stop_distance_atr_multiple");
+    expect(params[19]).toBeCloseTo(0.006918, 6);
+    expect(params[20]).toBeCloseTo(1, 4);
+  });
+
+  it("stores stopDistanceAtrMultiple as null when the run never called getIndicators with atr", async () => {
+    mockCreate.mockResolvedValueOnce(mockMessage()); // VALID_OUTPUT, no tool calls at all
+
+    const outcome = await runChartAnalysisAgent(CANDIDATE);
+
+    expect(outcome.error).toBeNull();
+    const insertCall = mockPoolQuery.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO trade_proposals"));
+    const [, params] = insertCall!;
+    // VALID_OUTPUT: entryPrice 45000.00, stopPrice 44500.00 -> diff 500.
+    expect(params[19]).toBeCloseTo(0.011111, 6);
+    expect(params[20]).toBeNull();
+  });
+});
+
 describe("runChartAnalysisAgent — agent_run_logs, every invocation", () => {
   it("logs an error row when the Anthropic call itself throws", async () => {
     mockCreate.mockRejectedValueOnce(new Error("network error"));

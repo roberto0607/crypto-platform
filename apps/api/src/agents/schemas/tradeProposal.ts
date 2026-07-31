@@ -3,8 +3,9 @@ import { proposeChartConfigArgsSchema } from "./toolCalls/proposeChartConfig";
 
 /**
  * Mirrors the `trade_proposals` table (migration 079 + 083 for
- * chart_config + 084 for nullable qty). Co-located here rather than as a
- * `packages/agent-schemas` workspace package — see the Gate 1a plan's
+ * chart_config + 084 for nullable qty + 085 for stop-distance columns).
+ * Co-located here rather than as a `packages/agent-schemas` workspace
+ * package — see the Gate 1a plan's
  * deviation note: no agent runner exists yet to be a second consumer, and
  * this repo doesn't currently have a working pnpm workspace for a shared
  * package to live in safely. (That assumption is now stale — Chart
@@ -44,6 +45,17 @@ export const tradeProposalSchema = z.object({
   // the Gate 1c design doc's Q1. Reuses proposeChartConfig's tool-args
   // shape since that's exactly what gets bundled in here.
   chartConfig: proposeChartConfigArgsSchema.optional(),
+  // Migration 085 -- server-computed from entryPrice/stopPrice (and the
+  // last ATR value seen during the run), never asked of the model.
+  // Hand-checking real proposals found the model's own self-stated
+  // stop-distance arithmetic (e.g. "25bp below entry", "~1.7x ATR") wrong
+  // in most cases even though its entry/stop prices themselves were fine
+  // -- same "don't let the model assert a number it can get wrong"
+  // reasoning as qty (migration 084). stopDistanceAtrMultiple is null
+  // whenever the run never called getIndicators with atr in its
+  // indicator list.
+  stopDistancePct: z.number().nonnegative().optional(),
+  stopDistanceAtrMultiple: z.number().nonnegative().optional(),
 });
 
 export type TradeProposal = z.infer<typeof tradeProposalSchema>;
