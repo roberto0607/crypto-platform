@@ -14,6 +14,16 @@ import { proposeChartConfigArgsSchema } from "./toolCalls/proposeChartConfig";
  */
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
+// entryPrice/stopPrice/targetPrice must be real, non-zero prices. Without
+// this, a model that hits a "no data" wall (e.g. every indicator comes back
+// null) can pass schema validation by emitting "0.00000000" for all three --
+// literal zeros are indistinguishable from a real proposal downstream, and
+// 0/0 arithmetic in computeStopDistance produces a stored NaN. A run with no
+// real levels to anchor a proposal to must fail validation, not fabricate
+// zeros.
+const positiveDecimalStr = decimalStr.refine((v) => Number(v) > 0, {
+  message: "must be a positive, non-zero price",
+});
 
 export const tradeProposalSchema = z.object({
   pairId: z.string().uuid(),
@@ -22,9 +32,9 @@ export const tradeProposalSchema = z.object({
   timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d", "1w"]),
   tradeType: z.enum(["scalp", "swing"]),
   side: z.enum(["BUY", "SELL"]),
-  entryPrice: decimalStr,
-  stopPrice: decimalStr,
-  targetPrice: decimalStr,
+  entryPrice: positiveDecimalStr,
+  stopPrice: positiveDecimalStr,
+  targetPrice: positiveDecimalStr,
   // Nullable (migration 084) -- "not yet sized" is a real state, not an
   // omission. An agent with no wallet/balance context (e.g. Chart
   // Analysis, Gate 1c) has no basis to invent a real quantity; Risk Agent

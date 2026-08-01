@@ -285,6 +285,15 @@ function computeStopDistance(
 ): { stopDistancePct: number; stopDistanceAtrMultiple: number | null } {
   const entryPriceNum = Number(result.entryPrice);
   const stopPriceNum = Number(result.stopPrice);
+  // Defense in depth: chartAnalysisResultSchema's positiveDecimalStr
+  // refinement should already reject a zero/invalid entryPrice before this
+  // function ever runs. Guard anyway rather than silently dividing by zero
+  // into a stored NaN -- a bad entryPrice here means the schema guarantee
+  // was bypassed somehow, which should surface as a loud error, not a NaN
+  // in trade_proposals.
+  if (!Number.isFinite(entryPriceNum) || entryPriceNum <= 0) {
+    throw new Error(`computeStopDistance: invalid entryPrice "${result.entryPrice}" (must be a positive number)`);
+  }
   const priceDiff = Math.abs(entryPriceNum - stopPriceNum);
   const stopDistancePct = Number((priceDiff / entryPriceNum).toFixed(6));
   const stopDistanceAtrMultiple =

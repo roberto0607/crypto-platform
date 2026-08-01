@@ -196,6 +196,29 @@ describe("runChartAnalysisAgent — schema validation and trade_proposals write"
     expect(outcome.error).toBe("Model output failed chartAnalysisResult schema validation");
   });
 
+  it("does NOT write to trade_proposals when the model emits zero prices (e.g. a 'no data available' run) -- fails schema validation instead", async () => {
+    const zeroPriceOutput = {
+      ...VALID_OUTPUT,
+      entryPrice: "0.00000000",
+      stopPrice: "0.00000000",
+      targetPrice: "0.00000000",
+      stopReason: "Data unavailable; no swing lows, ATR multiples, or support levels can be derived.",
+    };
+    mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: JSON.stringify(zeroPriceOutput) }] }));
+
+    const outcome = await runChartAnalysisAgent(CANDIDATE);
+
+    expect(outcome.proposalId).toBeNull();
+    expect(outcome.error).toBe("Model output failed chartAnalysisResult schema validation");
+
+    const insertCall = mockPoolQuery.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO trade_proposals"));
+    expect(insertCall).toBeUndefined();
+
+    const logCall = mockPoolQuery.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO agent_run_logs"));
+    const [, logParams] = logCall!;
+    expect(logParams[1]).toBe("error");
+  });
+
   it("handles a preamble/fenced response via the shared defensive JSON parser", async () => {
     const fenced = "Here is my analysis:\n```json\n" + JSON.stringify(VALID_OUTPUT) + "\n```";
     mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: fenced }] }));
