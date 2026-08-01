@@ -218,7 +218,7 @@ export interface ScannerCandidateData {
   symbol: string;
   rank: number;
   reasoning: string;
-  regime?: string;
+  regime?: string | null;
   supportingDataPoints: string[];
 }
 

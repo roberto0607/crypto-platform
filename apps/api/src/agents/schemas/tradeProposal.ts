@@ -45,8 +45,12 @@ export const tradeProposalSchema = z.object({
   entryReason: z.string().min(1),
   stopReason: z.string().min(1),
   targetReason: z.string().min(1),
-  regime: z.string().optional(),
-  regimeConfidence: z.number().min(0).max(1).optional(),
+  // Nullable: getRegimeTag returns { regime: null, confidence: null } when
+  // no regime_tags row exists for a pair yet, and both Scanner and Chart
+  // Analysis ask the model to echo these directly in the final JSON, so the
+  // model legitimately sends null for either rather than inventing values.
+  regime: z.string().nullable().optional(),
+  regimeConfidence: z.number().min(0).max(1).nullable().optional(),
   topFeatures: z.record(z.string(), z.unknown()).optional(),
   forecast: z.record(z.string(), z.unknown()).optional(),
   expiresAt: z.string().datetime(),

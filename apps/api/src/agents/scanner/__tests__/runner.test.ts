@@ -128,6 +128,27 @@ describe("runScannerAgent — schema validation on model output", () => {
     expect(params[4]).toBeNull(); // error
   });
 
+  it("accepts an explicit regime: null -- getRegimeTag legitimately returns null when no regime_tags row exists yet", async () => {
+    // Real production shape (2026-07-31): 3 of 8 shortlisted candidates came
+    // back with "regime": null because getRegimeTag found no regime_tags
+    // row for those pairs. z.string().optional() rejects an explicit JSON
+    // null (it only tolerates the key being absent), so this used to fail
+    // the whole scannerResult schema validation.
+    const payloadWithNullRegime = {
+      candidates: [
+        { pairId: SHORTLIST[0]!.pairId, symbol: "CAP/USD", rank: 1, reasoning: "no regime data available yet", regime: null, supportingDataPoints: [] },
+        { pairId: SHORTLIST[1]!.pairId, symbol: "VET/USD", rank: 2, reasoning: "no regime data available yet", regime: null, supportingDataPoints: [] },
+        { pairId: SHORTLIST[0]!.pairId, symbol: "SOL/USD", rank: 3, reasoning: "trending with volume", regime: "trending", supportingDataPoints: ["24h volume 2x average"] },
+      ],
+    };
+    mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: JSON.stringify(payloadWithNullRegime) }] }));
+
+    const outcome = await runScannerAgent();
+
+    expect(outcome.error).toBeNull();
+    expect(outcome.result).toEqual(payloadWithNullRegime);
+  });
+
   it("does NOT pass a malformed candidate downstream -- invalid JSON logs an error row", async () => {
     mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: "this is not json" }] }));
 
