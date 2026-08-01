@@ -219,6 +219,31 @@ describe("runChartAnalysisAgent — schema validation and trade_proposals write"
     expect(logParams[1]).toBe("error");
   });
 
+  it("accepts explicit regime: null / regimeConfidence: null -- getRegimeTag legitimately returns null when no regime_tags row exists yet", async () => {
+    // Mirrors the Scanner Agent's real production failure (2026-07-31):
+    // getLatestRegimeTag returns { regime: null, confidence: null } when no
+    // regime_tags row exists for the pair, and the model echoes that
+    // directly since both fields are marked optional in its JSON template.
+    // z.string().optional() / z.number().optional() reject an explicit
+    // JSON null (they only tolerate the key being absent), so this used to
+    // fail chartAnalysisResult schema validation too, since it derives from
+    // tradeProposalSchema and doesn't omit regime/regimeConfidence.
+    mockGetLatestRegimeTag.mockResolvedValueOnce({ regime: null, confidence: null, created_at: null });
+    const nullRegimeCandidate: ScannerCandidateData = { ...CANDIDATE, regime: null };
+    const nullRegimeOutput = { ...VALID_OUTPUT, regime: null, regimeConfidence: null };
+    mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: JSON.stringify(nullRegimeOutput) }] }));
+
+    const outcome = await runChartAnalysisAgent(nullRegimeCandidate);
+
+    expect(outcome.error).toBeNull();
+    expect(outcome.proposalId).toBe("proposal-uuid-1");
+
+    const insertCall = mockPoolQuery.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO trade_proposals"));
+    const [, params] = insertCall!;
+    expect(params[15]).toBeNull(); // regime
+    expect(params[16]).toBeNull(); // regime_confidence
+  });
+
   it("handles a preamble/fenced response via the shared defensive JSON parser", async () => {
     const fenced = "Here is my analysis:\n```json\n" + JSON.stringify(VALID_OUTPUT) + "\n```";
     mockCreate.mockResolvedValueOnce(mockMessage({ content: [{ type: "text", text: fenced }] }));

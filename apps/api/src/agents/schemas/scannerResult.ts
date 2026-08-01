@@ -12,7 +12,10 @@ export const scannerCandidateSchema = z.object({
   symbol: z.string().min(1),
   rank: z.number().int().positive(),
   reasoning: z.string().min(1),
-  regime: z.string().optional(),
+  // Nullable: getRegimeTag returns { regime: null, confidence: null } when
+  // no regime_tags row exists for a pair yet, and the model legitimately
+  // echoes that null rather than inventing a regime string.
+  regime: z.string().nullable().optional(),
   supportingDataPoints: z.array(z.string()).default([]),
 });
 
