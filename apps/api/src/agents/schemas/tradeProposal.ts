@@ -54,6 +54,19 @@ export const tradeProposalSchema = z.object({
   // reasoning as qty (migration 084). stopDistanceAtrMultiple is null
   // whenever the run never called getIndicators with atr in its
   // indicator list.
+  //
+  // These two fields are the SOLE authoritative source for stop-distance
+  // figures. stopReason is illustrative prose only -- do NOT parse it for
+  // a numeric distance claim, in this codebase or any future consumer
+  // (Risk Agent, UI, reports, etc.). The system prompt asks the model to
+  // avoid stating a bp/%/ATR-multiple figure in stopReason, but that's
+  // guidance, not an enforced constraint: verified against real
+  // post-fix proposals (2026-08-01) that the model still does it
+  // sometimes, and when it does, the stated figure can itself be wrong
+  // (one observed case: prose said "0.48% risk" while the real,
+  // server-computed stopDistancePct was 0.5017% -- the same class of
+  // error this migration exists to eliminate). Trust these columns, never
+  // the prose.
   stopDistancePct: z.number().nonnegative().optional(),
   stopDistanceAtrMultiple: z.number().nonnegative().optional(),
 });
