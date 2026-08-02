@@ -226,6 +226,21 @@ export interface ScannerResultData {
   candidates: ScannerCandidateData[];
 }
 
+/**
+ * Chart Analysis Agent output (Gate 1c) -- published once per successful
+ * insertTradeProposal, alongside (not replacing) runChartAnalysisAgent's
+ * own return value. Triggers the Risk Agent (Gate 1d), same event-driven
+ * pattern as scanner.result -> Chart Analysis. Deliberately minimal --
+ * the Risk Agent re-fetches the full trade_proposals row itself inside
+ * its evaluation transaction rather than trusting this payload, since a
+ * money-adjacent decision (position sizing) should read the current row
+ * state, not a snapshot taken at publish time.
+ */
+export interface ChartAnalysisProposalCreatedData {
+  proposalId: string;
+  pairId: string;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -265,6 +280,7 @@ export type AppEvent =
   | EventEnvelope<"notification.created", NotificationCreatedData>
   | EventEnvelope<"signal.new", SignalNewData>
   | EventEnvelope<"scanner.result", ScannerResultData>
+  | EventEnvelope<"chart_analysis.proposal_created", ChartAnalysisProposalCreatedData>
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>

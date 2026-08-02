@@ -25,7 +25,8 @@ import { logger } from "../../observability/logContext";
 import { getNewsForPair } from "../scanner/newsClient";
 import { getLatestRegimeTag } from "../shared/regimeTagRepo";
 import { parseAgentJsonOutput } from "../shared/parseAgentOutput";
-import type { ScannerCandidateData } from "../../events/eventTypes";
+import { publish } from "../../events/eventBus";
+import { createEvent, type ScannerCandidateData } from "../../events/eventTypes";
 import {
   computeIndicatorSnapshot,
   getFundingRateSnapshot,
@@ -440,6 +441,11 @@ export async function runChartAnalysisAgent(candidate: ScannerCandidateData): Pr
     }
 
     const proposalId = await insertTradeProposal(candidate, parsed, capturedChartConfig, capturedAtr);
+
+    // Trigger the Risk Agent (Gate 1d) -- fire alongside, not instead of,
+    // this function's own return value (see ChartAnalysisProposalCreatedData's
+    // comment for why the payload stays minimal).
+    publish(createEvent("chart_analysis.proposal_created", { proposalId, pairId: candidate.pairId }));
 
     await logRun({ status: "success", inputTokens, outputTokens, latencyMs, error: null, candidate, rawOutput: finalText, proposalId });
 
