@@ -56,8 +56,14 @@ function baseProposalRow(overrides: Partial<Record<string, unknown>> = {}) {
     pair_id: PAIR_ID,
     outcome: "pending",
     entry_price: "50000.00000000",
-    stop_price: "49500.00000000",
-    stop_distance_pct: "0.01",
+    stop_price: "45000.00000000",
+    // 10% -> notional (riskAmountQuote / stopDistancePct = 1000 / 0.1 =
+    // 10000) sits at 10% of equity, comfortably under the 20% notional cap
+    // added below -- a 1% stopDistancePct here (as earlier revisions of
+    // this fixture used) implies 100% notional and would itself now trip
+    // notional_cap_exceeded, which is not what the exposure-cap tests below
+    // are testing for.
+    stop_distance_pct: "0.1",
     expires_at: FUTURE_EXPIRY,
     ...overrides,
   };
@@ -95,18 +101,18 @@ beforeEach(() => {
 describe("evaluateTradeProposal — approval + sizing", () => {
   it("approves and sizes qty via fixed-fractional risk when well within the exposure cap", async () => {
     // equity 100000, risk/trade 1% -> riskAmountQuote 1000
-    // entry 50000, stopDistancePct 0.01 -> qty = 1000 / (50000 * 0.01) = 2
+    // entry 50000, stopDistancePct 0.1 -> qty = 1000 / (50000 * 0.1) = 0.2
     setupClient(baseProposalRow(), "0");
 
     const result = await evaluateTradeProposal(PROPOSAL_ID);
 
     expect(result.decision).toBe("approved");
-    expect(result.qty).toBe("2.00000000");
+    expect(result.qty).toBe("0.20000000");
     expect(result.riskAmountQuote).toBe("1000.00000000");
 
     const approveUpdate = callsMatching("outcome = 'approved'");
     expect(approveUpdate).toHaveLength(1);
-    expect(approveUpdate[0]![1]).toEqual(["2.00000000", PROPOSAL_ID]);
+    expect(approveUpdate[0]![1]).toEqual(["0.20000000", PROPOSAL_ID]);
 
     const reservationInsert = callsMatching("INSERT INTO risk_reservations");
     expect(reservationInsert).toHaveLength(1);
@@ -151,6 +157,56 @@ describe("evaluateTradeProposal — exposure cap", () => {
     const result = await evaluateTradeProposal(PROPOSAL_ID);
 
     expect(result.decision).toBe("approved");
+  });
+});
+
+describe("evaluateTradeProposal — notional cap", () => {
+  it("rejects a real observed tight-stop proposal (~199% of equity notional) with notional_cap_exceeded, before any exposure-cap query and without reserving risk", async () => {
+    // Real numbers from tonight's Gate 1c observation: stopDistancePct
+    // 0.005017 (~0.5%). riskAmountQuote is still 1000 (1% of 100000
+    // equity, independent of stop distance), but qty = 1000 / (50000 *
+    // 0.005017) balloons notional to 1000 / 0.005017 ~= 199322 -- ~199% of
+    // the 100000 equity, ~10x the 20% notional cap (20000).
+    setupClient(baseProposalRow({ stop_distance_pct: "0.005017" }), "0");
+
+    const result = await evaluateTradeProposal(PROPOSAL_ID);
+
+    expect(result.decision).toBe("rejected");
+    expect(result.reason).toBe("notional_cap_exceeded");
+    expect(result.qty).toBeNull();
+
+    // Never approved, never reserved.
+    expect(callsMatching("outcome = 'approved'")).toHaveLength(0);
+    expect(callsMatching("INSERT INTO risk_reservations")).toHaveLength(0);
+
+    const rejectUpdate = callsMatching("outcome = 'rejected'");
+    expect(rejectUpdate).toHaveLength(1);
+    expect(rejectUpdate[0]![1]).toEqual([PROPOSAL_ID]);
+
+    const decisionInsert = callsMatching("INSERT INTO agent_decisions");
+    expect(decisionInsert).toHaveLength(1);
+    expect(decisionInsert[0]![1][2]).toBe("rejected");
+
+    // Rejected on notional grounds before the open-risk sum is ever queried.
+    expect(callsMatching("SELECT COALESCE(SUM(r.risk_amount_quote)")).toHaveLength(0);
+
+    expect(callsMatching("COMMIT")).toHaveLength(1);
+  });
+
+  it("approves a normal, non-tight stop (~12.5% notional) without tripping the notional cap", async () => {
+    // stopDistancePct 0.08 (8%) -> notional = 1000 / 0.08 = 12500, i.e.
+    // 12.5% of the 100000 equity -- well under the 20% notional cap, and
+    // in the "ordinary proposal" range the cap should not over-reject.
+    setupClient(baseProposalRow({ stop_distance_pct: "0.08" }), "0");
+
+    const result = await evaluateTradeProposal(PROPOSAL_ID);
+
+    expect(result.decision).toBe("approved");
+    expect(result.reason).toBeNull();
+    // qty = 1000 / (50000 * 0.08) = 0.25; notional = 0.25 * 50000 = 12500.
+    expect(result.qty).toBe("0.25000000");
+    expect(result.riskAmountQuote).toBe("1000.00000000");
+    expect(callsMatching("INSERT INTO risk_reservations")).toHaveLength(1);
   });
 });
 

@@ -27,6 +27,18 @@ const AGENT_NAME = "risk-agent";
 // variance. See the design doc's sizing formula section.
 const RISK_PER_TRADE_PCT = D("0.01");
 const TOTAL_EXPOSURE_CAP_PCT = D("0.05");
+// Not a solvency limit (100% of equity would be that) -- a backstop against
+// stop-slippage/gap risk. qty has no ceiling relative to equity on its own:
+// risk_amount_quote is capped at 1% of equity, but stopDistancePct sits in
+// qty's denominator, so a tight enough stop (exactly what volatile-chop/
+// scalp setups regularly produce) inflates qty arbitrarily to still hit
+// that same 1% risk target. A real Gate 1c proposal observed
+// stopDistancePct=0.005017 (~0.5%) implies ~199% of equity in notional on a
+// SINGLE trade at only 1% stated risk. Tight stops are exactly the ones
+// most likely to slip/gap past their stated price in a fast market, so this
+// caps how much notional can ride on any one stop actually executing as
+// intended.
+const NOTIONAL_CAP_PCT = D("0.20");
 
 interface TradeProposalRow {
   id: string;
@@ -130,6 +142,27 @@ export async function evaluateTradeProposal(proposalId: string): Promise<RiskEva
     const riskAmountQuote = equity.mul(RISK_PER_TRADE_PCT);
     const qty = riskAmountQuote.div(entryPrice.mul(stopDistancePct));
 
+    // Notional cap check runs BEFORE the open-risk DB round-trip below --
+    // no reason to spend a query on the portfolio-level exposure sum for a
+    // proposal that's about to be rejected on notional grounds anyway.
+    const notionalQuote = qty.mul(entryPrice);
+    const notionalCap = equity.mul(NOTIONAL_CAP_PCT);
+
+    if (notionalQuote.gt(notionalCap)) {
+      return await rejectTx(client, proposal, "notional_cap_exceeded",
+        `Rejected: notional exposure ${notionalQuote.toFixed(8)} would exceed the ${NOTIONAL_CAP_PCT.mul(100).toFixed(0)}% notional cap (${notionalCap.toFixed(8)}) of equity ${equity.toFixed(8)}.`,
+        {
+          equityQuote: summary.equity_quote,
+          entryPrice: proposal.entry_price,
+          stopDistancePct: proposal.stop_distance_pct,
+          riskAmountQuote: riskAmountQuote.toFixed(8),
+          qty: qty.toFixed(8),
+          notionalQuote: notionalQuote.toFixed(8),
+          notionalCapPct: NOTIONAL_CAP_PCT.toNumber(),
+          notionalCapQuote: notionalCap.toFixed(8),
+        });
+    }
+
     const totalOpenRiskBefore = await getTotalOpenRiskTx(client, botUserId);
     const cap = equity.mul(TOTAL_EXPOSURE_CAP_PCT);
     const totalOpenRiskAfter = totalOpenRiskBefore.plus(riskAmountQuote);
@@ -140,6 +173,10 @@ export async function evaluateTradeProposal(proposalId: string): Promise<RiskEva
       stopDistancePct: proposal.stop_distance_pct,
       riskPerTradePct: RISK_PER_TRADE_PCT.toNumber(),
       riskAmountQuote: riskAmountQuote.toFixed(8),
+      qty: qty.toFixed(8),
+      notionalQuote: notionalQuote.toFixed(8),
+      notionalCapPct: NOTIONAL_CAP_PCT.toNumber(),
+      notionalCapQuote: notionalCap.toFixed(8),
       totalOpenRiskBefore: totalOpenRiskBefore.toFixed(8),
       totalOpenRiskAfter: totalOpenRiskAfter.toFixed(8),
       exposureCapPct: TOTAL_EXPOSURE_CAP_PCT.toNumber(),
