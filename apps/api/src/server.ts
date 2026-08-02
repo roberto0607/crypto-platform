@@ -23,6 +23,7 @@ import { stopTriggerEngine } from "./triggers/triggerEngine";
 import { stopAlertEngine } from "./alerts/alertEngine";
 import { stopMatchPnlEngine } from "./competitions/matchPnlEngine";
 import { stopChartAnalysisEngine } from "./agents/chartAnalysis/chartAnalysisEngine";
+import { stopRiskEngine } from "./agents/riskAgent/riskEngine";
 import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
 import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
@@ -106,6 +107,7 @@ async function start() {
     stopAlertEngine();
     stopMatchPnlEngine();
     stopChartAnalysisEngine();
+    stopRiskEngine();
     stopKrakenFeed();
     stopCoinbaseFeed();
     stopFootprintAggregator();
