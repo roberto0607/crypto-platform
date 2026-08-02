@@ -45,6 +45,7 @@ import { startTriggerEngine } from "./triggers/triggerEngine";
 import { startAlertEngine } from "./alerts/alertEngine";
 import { startMatchPnlEngine } from "./competitions/matchPnlEngine";
 import { startChartAnalysisEngine } from "./agents/chartAnalysis/chartAnalysisEngine";
+import { startRiskEngine } from "./agents/riskAgent/riskEngine";
 import { registerJobs, start as startJobRunner } from "./jobs/jobRunner";
 import { allJobs } from "./jobs/definitions/index";
 import { startOutboxWorker } from "./outbox/outboxWorker";
@@ -65,6 +66,8 @@ export interface BuildAppOptions {
   disableMatchPnlEngine?: boolean;
   /** Skip starting chart analysis engine (useful for tests). */
   disableChartAnalysisEngine?: boolean;
+  /** Skip starting risk engine (useful for tests). */
+  disableRiskEngine?: boolean;
   /** Skip starting job runner (useful for tests). */
   disableJobRunner?: boolean;
   /** Skip starting outbox worker (useful for tests). */
@@ -384,6 +387,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // -- Chart analysis engine (Gate 1c) --
   if (!opts.disableChartAnalysisEngine) {
     app.addHook("onReady", async () => { await startChartAnalysisEngine(); });
+  }
+
+  // -- Risk engine (Gate 1d) --
+  if (!opts.disableRiskEngine) {
+    app.addHook("onReady", async () => { await startRiskEngine(); });
   }
 
   // -- Job runner --
