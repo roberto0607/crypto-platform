@@ -172,4 +172,18 @@ export const config = {
   // Default disabled for the same reason as scannerAgentEnabled: real
   // Anthropic API $ per run.
   chartAnalysisAgentEnabled: booleanEnv("CHART_ANALYSIS_AGENT_ENABLED", false),
+
+  // ── Gate 1d: Risk Management Agent ──
+  // Event-driven (reacts to chart_analysis.proposal_created), not
+  // interval-scheduled -- same reasoning as chartAnalysisAgentEnabled.
+  // Independent of isAgentActionsEnabled() (systemFlagService.ts), which
+  // remains the gate for real order placement (Gate 1e). Default disabled
+  // -- unlike Scanner/Chart Analysis this isn't an Anthropic API cost
+  // concern (pure TypeScript, no LLM call, see the design doc), but it
+  // still shouldn't start approving proposals and reserving risk in an
+  // environment nobody has opted into yet.
+  riskAgentEnabled: booleanEnv("RISK_AGENT_ENABLED", false),
+  // Set this to a random UUID in production via Railway env vars, same
+  // convention as botUserId above.
+  riskAgentBotUserId: process.env.RISK_AGENT_BOT_USER_ID ?? "00000000-0000-0000-0000-000000000002",
 };
