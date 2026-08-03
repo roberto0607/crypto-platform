@@ -2,7 +2,7 @@ import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
 import type { TriggerKind, TriggerOrderRow, TriggerStatus } from "./triggerTypes";
 
-const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, created_at, updated_at`;
+const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, trade_proposal_id, created_at, updated_at`;
 
 export async function createTriggerOrder(params: {
     userId: string;
@@ -15,11 +15,12 @@ export async function createTriggerOrder(params: {
     ocoGroupId?: string;
     trailingOffset?: string;
     trailingHighWaterMark?: string;
+    tradeProposalId?: string;
 }): Promise<TriggerOrderRow> {
     const result = await pool.query<TriggerOrderRow>(
         `
-        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark, trade_proposal_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING ${TRIGGER_COLUMNS}
         `,
         [
@@ -33,6 +34,7 @@ export async function createTriggerOrder(params: {
             params.ocoGroupId ?? null,
             params.trailingOffset ?? null,
             params.trailingHighWaterMark ?? null,
+            params.tradeProposalId ?? null,
         ]
     );
 
