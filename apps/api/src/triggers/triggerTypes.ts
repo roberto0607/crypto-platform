@@ -27,6 +27,7 @@ export type TriggerOrderRow = {
   fail_reason: string | null;
   trailing_offset: string | null;
   trailing_high_water_mark: string | null;
+  trade_proposal_id: string | null;
   created_at: string;
   updated_at: string;
 };

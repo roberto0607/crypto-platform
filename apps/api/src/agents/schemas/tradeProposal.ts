@@ -93,6 +93,7 @@ export const tradeProposalOutcomeSchema = z.enum([
   "rejected",
   "expired",
   "executed",
+  "execution_failed",
 ]);
 
 export type TradeProposalOutcome = z.infer<typeof tradeProposalOutcomeSchema>;
