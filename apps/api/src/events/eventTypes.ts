@@ -241,6 +241,22 @@ export interface ChartAnalysisProposalCreatedData {
   pairId: string;
 }
 
+/**
+ * Risk Agent output (Gate 1d) -- published once per successful
+ * outcome='approved' commit in evaluateTradeProposal, alongside (not
+ * replacing) that function's own return value. Triggers the Execution
+ * Agent (Gate 1e), same event-driven pattern as
+ * chart_analysis.proposal_created -> Risk Agent. Deliberately minimal --
+ * the Execution Agent re-fetches the full trade_proposals row itself
+ * inside its own execution transaction rather than trusting this
+ * payload, since a money-adjacent decision (placing a real order) should
+ * read the current row state, not a snapshot taken at publish time.
+ */
+export interface RiskAgentProposalApprovedData {
+  proposalId: string;
+  pairId: string;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -281,6 +297,7 @@ export type AppEvent =
   | EventEnvelope<"signal.new", SignalNewData>
   | EventEnvelope<"scanner.result", ScannerResultData>
   | EventEnvelope<"chart_analysis.proposal_created", ChartAnalysisProposalCreatedData>
+  | EventEnvelope<"risk_agent.proposal_approved", RiskAgentProposalApprovedData>
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>

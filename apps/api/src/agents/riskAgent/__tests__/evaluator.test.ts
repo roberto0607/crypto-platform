@@ -27,6 +27,11 @@ vi.mock("../botSetup", () => ({
   ensureRiskAgentBotSetup: () => mockEnsureRiskAgentBotSetup(),
 }));
 
+const mockPublish = vi.fn();
+vi.mock("../../../events/eventBus", () => ({
+  publish: (...args: unknown[]) => mockPublish(...args),
+}));
+
 vi.mock("../../../config", () => ({
   config: { riskAgentBotUserId: "bot-user-id" },
 }));
@@ -96,6 +101,7 @@ beforeEach(() => {
   mockGetPortfolioSummary.mockResolvedValue({ equity_quote: "100000.00000000" });
   mockEnsureRiskAgentBotSetup.mockReset();
   mockEnsureRiskAgentBotSetup.mockResolvedValue(undefined);
+  mockPublish.mockClear();
 });
 
 describe("evaluateTradeProposal — approval + sizing", () => {
@@ -244,6 +250,49 @@ describe("evaluateTradeProposal — division-by-zero / missing stop-distance gua
 
     expect(result.decision).toBe("rejected");
     expect(result.reason).toBe("missing_or_invalid_stop_distance");
+  });
+});
+
+describe("evaluateTradeProposal — risk_agent.proposal_approved event", () => {
+  it("publishes risk_agent.proposal_approved exactly once, with proposalId + pairId, on approval", async () => {
+    setupClient(baseProposalRow(), "0");
+
+    await evaluateTradeProposal(PROPOSAL_ID);
+
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "risk_agent.proposal_approved",
+        data: { proposalId: PROPOSAL_ID, pairId: PAIR_ID },
+      }),
+    );
+  });
+
+  it("never publishes risk_agent.proposal_approved on any rejection or expiry path", async () => {
+    // exposure cap exceeded
+    setupClient(baseProposalRow(), "4500");
+    let result = await evaluateTradeProposal(PROPOSAL_ID);
+    expect(result.decision).toBe("rejected");
+    expect(result.reason).toBe("exposure_cap_exceeded");
+
+    // notional cap exceeded
+    setupClient(baseProposalRow({ stop_distance_pct: "0.005017" }), "0");
+    result = await evaluateTradeProposal(PROPOSAL_ID);
+    expect(result.decision).toBe("rejected");
+    expect(result.reason).toBe("notional_cap_exceeded");
+
+    // missing/invalid stop distance
+    setupClient(baseProposalRow({ stop_distance_pct: null }), "0");
+    result = await evaluateTradeProposal(PROPOSAL_ID);
+    expect(result.decision).toBe("rejected");
+    expect(result.reason).toBe("missing_or_invalid_stop_distance");
+
+    // expired
+    setupClient(baseProposalRow({ expires_at: PAST_EXPIRY }));
+    result = await evaluateTradeProposal(PROPOSAL_ID);
+    expect(result.decision).toBe("expired");
+
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 });
 
