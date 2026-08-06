@@ -19,6 +19,8 @@ import { getPortfolioSummary } from "../../portfolio/portfolioService";
 import { getTotalOpenRiskTx, insertRiskReservationTx } from "./reservationRepo";
 import { insertAgentDecisionTx } from "../shared/agentDecisionRepo";
 import { ensureRiskAgentBotSetup } from "./botSetup";
+import { publish } from "../../events/eventBus";
+import { createEvent } from "../../events/eventTypes";
 
 const AGENT_NAME = "risk-agent";
 
@@ -212,6 +214,13 @@ export async function evaluateTradeProposal(proposalId: string): Promise<RiskEva
       priceAtDecision: proposal.entry_price,
     });
     await client.query("COMMIT");
+
+    // Trigger the Execution Agent (Gate 1e) -- fire alongside, not instead
+    // of, this function's own return value (see
+    // RiskAgentProposalApprovedData's comment for why the payload stays
+    // minimal). Same pattern as chartAnalysis/runner.ts publishing
+    // chart_analysis.proposal_created right after its own insert.
+    publish(createEvent("risk_agent.proposal_approved", { proposalId, pairId: proposal.pair_id }));
 
     logger.info({ proposalId, pairId: proposal.pair_id, qty: qtyStr, riskAmountQuote: riskAmountStr }, "risk_agent_approved");
     return { proposalId, decision: "approved", reason: null, qty: qtyStr, riskAmountQuote: riskAmountStr };
