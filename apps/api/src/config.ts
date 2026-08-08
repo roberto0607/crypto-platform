@@ -186,4 +186,18 @@ export const config = {
   // Set this to a random UUID in production via Railway env vars, same
   // convention as botUserId above.
   riskAgentBotUserId: process.env.RISK_AGENT_BOT_USER_ID ?? "00000000-0000-0000-0000-000000000002",
+
+  // ── Gate 1e: Execution Agent ──
+  // Event-driven (reacts to risk_agent.proposal_approved), not
+  // interval-scheduled -- same reasoning as riskAgentEnabled. This is the
+  // only agent in the whole system permitted to call real order-placement
+  // code (placeOrderWithSnapshot), so it stays gated independently of
+  // isAgentActionsEnabled() (systemFlagService.ts) -- both must be true
+  // for a real order to actually place: this flag gates whether the
+  // engine reacts to the event at all; isAgentActionsEnabled() is
+  // placeOrderWithSnapshot's own internal kill switch (phase6OrderService.ts),
+  // checked automatically via the source: "agent" tag every order this
+  // agent places carries -- executor.ts doesn't re-check it separately.
+  // Default disabled, same as every other agent flag here.
+  executionAgentEnabled: booleanEnv("EXECUTION_AGENT_ENABLED", false),
 };
