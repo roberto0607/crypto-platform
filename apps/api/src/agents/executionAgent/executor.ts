@@ -111,8 +111,8 @@ interface TradeProposalRow {
   outcome: string;
 }
 
-/** Narrowed shape once Phase 1's qty/stop_distance_pct null-guard has passed -- carried into Phase 2 with no `!` assertions needed. */
-interface ApprovedProposal {
+/** Narrowed shape once Phase 1's qty/stop_distance_pct null-guard has passed -- carried into Phase 2 with no `!` assertions needed. Exported so executionAgentRecoveryJob.ts can reconstruct one from a stale trade_proposals row. */
+export interface ApprovedProposal {
   id: string;
   pair_id: string;
   side: "BUY" | "SELL";
@@ -397,11 +397,25 @@ async function runPhase1(
  * logs and records a distinct, loud signal
  * (risk_agent_position_auto_flattened) so it can never be mistaken for a
  * normal healthy execution in logs or agent_decisions.
+ *
+ * Exported (not just called from executeTradeProposal below) because
+ * executionAgentRecoveryJob.ts calls this directly against a
+ * reconstructed ApprovedProposal for rows that crashed mid-Phase-2 or
+ * whose earlier auto-flatten also failed. `origin` distinguishes that
+ * call site: on `origin === "recovery"` and a flatten that ALSO fails
+ * here, this is a SECOND consecutive failure to protect or close the
+ * same position, not a fresh first-time one -- it gets its own log
+ * event (execution_agent_recovery_also_failed) and its own
+ * agent_decisions.decision value (recovery_also_failed instead of
+ * auto_flattened) rather than silently reusing the first failure's
+ * signal, so "tried twice, still broken" is never indistinguishable
+ * from "failed once, already resolved."
  */
-async function registerProtectionOrFlatten(
+export async function registerProtectionOrFlatten(
   proposal: ApprovedProposal,
   orderId: string,
   botUserId: string,
+  origin: "phase2" | "recovery" = "phase2",
 ): Promise<ExecutionResult> {
   const proposalId = proposal.id;
   const closingSide: "BUY" | "SELL" = proposal.side === "BUY" ? "SELL" : "BUY";
@@ -509,34 +523,65 @@ async function registerProtectionOrFlatten(
     logger.error({ proposalId, err }, "execution_agent_auto_flatten_failed");
   }
 
-  // KNOWN UNRESOLVED GAP, worst-case branch (flattenOrderId falsy below):
-  // when protection registration exhausts retries AND the flatten
-  // attempt ALSO fails, the position is left open and unprotected, and
-  // the only trace of that fact anywhere in this system is the
-  // "needs manual intervention" string in this reasoning field -- no
-  // distinct log event, no outcome flag, nothing that surfaces this
-  // proactively rather than requiring someone to already know to look.
-  // The planned recovery job (scan trade_proposals for outcome='executed'
-  // with no matching ACTIVE trigger_orders) WOULD incidentally match this
-  // row too -- its detection query can't structurally distinguish "crashed
-  // between Phase 1 and Phase 2" from "ran to completion and both
-  // remediation paths failed" -- but that job (a) does not exist yet in
-  // this build, and (b) as designed, its response is "retry protection or
-  // flatten again," not "alert a human." A persistently-failing flatten
-  // (not a transient blip -- e.g. a delisted pair, sustained insufficient
-  // liquidity) could loop unnoticed indefinitely even once that job is
-  // built. Do not treat "manual intervention" as a mitigation that
-  // exists anywhere yet -- it does not.
+  // RESOLVED (was "KNOWN UNRESOLVED GAP"): this branch is reached when
+  // protection registration exhausts retries AND the flatten attempt
+  // ALSO fails, leaving the position open and unprotected.
+  //
+  // Two gaps used to exist here, both now closed:
+  //   1. "The only trace is a reasoning string" -- closed by
+  //      flatten_order_id (migration 089): it stays NULL here (set only
+  //      in the success branch below), a real column instead of
+  //      string-matching agent_decisions.reasoning.
+  //   2. "The recovery job's detection query can't structurally
+  //      distinguish crashed-before-Phase-2 from ran-to-completion-and-
+  //      both-remediation-paths-failed" -- moot: executionAgentRecoveryJob.ts
+  //      (jobs/definitions/) doesn't need to distinguish them, since both
+  //      get the identical remedy (call this function again via the
+  //      `origin: "recovery"` path below). Its detection query requires
+  //      BOTH "no complete healthy STOP_MARKET/TAKE_PROFIT_MARKET pair"
+  //      AND flatten_order_id IS NULL, which this branch always satisfies.
+  //
+  // Still true: a persistently-failing flatten (not a transient blip --
+  // e.g. a delisted pair, sustained insufficient liquidity) means the
+  // recovery job will keep re-flagging and re-attempting this row every
+  // tick, escalating a louder execution_agent_recovery_also_failed +
+  // decision:"recovery_also_failed" signal each time rather than looping
+  // silently -- but nothing pages a human yet. "Recovery job retries it"
+  // is the mitigation that exists; "alert a human" still does not.
+  const recoveryAlsoFailed = origin === "recovery" && !flattenOrderId;
+  if (recoveryAlsoFailed) {
+    // Distinct from the risk_agent_position_auto_flattened /
+    // execution_agent_auto_flatten_failed lines already logged above --
+    // those fire on ANY exhausted-retry/failed-flatten, including a
+    // fresh first-time failure. This one only fires when the RECOVERY
+    // job's own retry of this exact proposal ALSO failed -- a second
+    // consecutive failure to protect or close the same position, which
+    // needs to read as categorically louder than a first-time failure,
+    // not an identical repeat of the same signal.
+    logger.error(
+      { proposalId, pairId: proposal.pair_id, orderId, stopTriggerId, targetTriggerId, lastTriggerError, flattenError },
+      "execution_agent_recovery_also_failed",
+    );
+  }
+
   const decisionClient = await pool.connect();
   try {
     await decisionClient.query("BEGIN");
+    if (flattenOrderId) {
+      await decisionClient.query(
+        `UPDATE trade_proposals SET flatten_order_id = $1 WHERE id = $2`,
+        [flattenOrderId, proposalId],
+      );
+    }
     await insertAgentDecisionTx(decisionClient, {
       agentName: AGENT_NAME,
       pairId: proposal.pair_id,
-      decision: "auto_flattened",
+      decision: recoveryAlsoFailed ? "recovery_also_failed" : "auto_flattened",
       reasoning: flattenOrderId
         ? `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); position emergency-closed via opposing market order (flattenOrderId=${flattenOrderId}).`
-        : `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- position remains open and UNPROTECTED, needs manual intervention.`,
+        : recoveryAlsoFailed
+          ? `RECOVERY-TRIGGERED RETRY ALSO FAILED: protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- this is a SECOND consecutive failure to protect or close this position (the crash-recovery job retried it and it failed again). Position remains open and UNPROTECTED; needs manual intervention.`
+          : `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- position remains open and UNPROTECTED, needs manual intervention.`,
       tradeProposalId: proposalId,
     });
     await decisionClient.query("COMMIT");
@@ -547,7 +592,13 @@ async function registerProtectionOrFlatten(
     decisionClient.release();
   }
 
-  return { proposalId, outcome: "executed", reason: "auto_flattened", orderId, autoFlattened: true };
+  return {
+    proposalId,
+    outcome: "executed",
+    reason: recoveryAlsoFailed ? "recovery_also_failed" : "auto_flattened",
+    orderId,
+    autoFlattened: true,
+  };
 }
 
 /**
