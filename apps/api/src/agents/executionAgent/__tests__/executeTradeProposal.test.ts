@@ -20,8 +20,9 @@ import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 const mockClientQuery = vi.fn();
 const mockRelease = vi.fn();
 const mockConnect = vi.fn();
+const mockPoolQuery = vi.fn();
 vi.mock("../../../db/pool", () => ({
-  pool: { connect: () => mockConnect() },
+  pool: { connect: () => mockConnect(), query: (...args: unknown[]) => mockPoolQuery(...args) },
 }));
 
 const mockEnsureRiskAgentBotSetup = vi.fn();
@@ -44,7 +45,12 @@ vi.mock("../../../triggers/triggerRepo", () => ({
 }));
 
 vi.mock("../../../config", () => ({
-  config: { riskAgentBotUserId: "bot-user-id", queueTimeoutMs: 5000 },
+  config: { riskAgentBotUserId: "bot-user-id", queueTimeoutMs: 5000, opsAlertEmail: "ops@example.com" },
+}));
+
+const mockSendEmail = vi.fn();
+vi.mock("../../../email/emailTransport", () => ({
+  sendEmail: (...args: unknown[]) => mockSendEmail(...args),
 }));
 
 vi.mock("../../../observability/logContext", () => {
@@ -58,7 +64,8 @@ vi.mock("../../../observability/logContext", () => {
   return { logger: makeMockLogger() };
 });
 
-import { executeTradeProposal } from "../executor";
+import { executeTradeProposal, registerProtectionOrFlatten, type ApprovedProposal } from "../executor";
+import { config } from "../../../config";
 
 const PROPOSAL_ID = "11111111-1111-4111-8111-111111111111";
 const PAIR_ID = "22222222-2222-4222-8222-222222222222";
@@ -116,6 +123,10 @@ beforeEach(() => {
   mockCreateTriggerOrder.mockReset();
   mockCancelTriggerTx.mockReset();
   mockCancelTriggerTx.mockResolvedValue(null);
+  mockPoolQuery.mockReset();
+  mockPoolQuery.mockResolvedValue({ rows: [{ id: PROPOSAL_ID }] }); // claim wins by default
+  mockSendEmail.mockReset();
+  mockSendEmail.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -474,6 +485,127 @@ describe("executeTradeProposal — Phase 2 auto-flatten outcome", () => {
       expect(decisionInsert).toBeDefined();
       const reasoning = decisionInsert![1][3] as string;
       expect(reasoning).toContain("UNPROTECTED");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("registerProtectionOrFlatten — origin='recovery' human-alerting escalation", () => {
+  function baseApprovedProposal(): ApprovedProposal {
+    return {
+      id: PROPOSAL_ID,
+      pair_id: PAIR_ID,
+      side: "BUY",
+      entry_price: "50000.00000000",
+      stop_price: "45000.00000000",
+      target_price: "55000.00000000",
+      qty: "0.20000000",
+      stop_distance_pct: "0.1",
+    };
+  }
+
+  /** Drives registerProtectionOrFlatten to the recovery_also_failed branch: all trigger-registration retries exhausted AND the flatten attempt fails too. */
+  async function runRecoveryAlsoFailed() {
+    setupClient(undefined);
+    mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+    mockPlaceOrderWithSnapshot.mockRejectedValueOnce(new Error("flatten_also_fails"));
+
+    const resultPromise = registerProtectionOrFlatten(baseApprovedProposal(), ORDER_ID, "bot-user-id", "recovery");
+    await vi.advanceTimersByTimeAsync(500 * 2); // two retry delays across three attempts
+    return resultPromise;
+  }
+
+  it("claim wins (human_alerted_at was NULL) and opsAlertEmail is configured -- sends exactly one email to config.opsAlertEmail referencing the proposal, order, and pair", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = await runRecoveryAlsoFailed();
+
+      expect(result.reason).toBe("recovery_also_failed");
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("SET human_alerted_at = now()"),
+        [PROPOSAL_ID],
+      );
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+      const [to, subject, html] = mockSendEmail.mock.calls[0]!;
+      expect(to).toBe("ops@example.com");
+      expect(subject).toContain(PAIR_ID);
+      expect(html).toContain(PROPOSAL_ID);
+      expect(html).toContain(ORDER_ID);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("claim loses (human_alerted_at already set by a concurrent tick/instance) -- does not send an email", async () => {
+    vi.useFakeTimers();
+    try {
+      mockPoolQuery.mockResolvedValue({ rows: [] }); // another caller already won the claim
+      const result = await runRecoveryAlsoFailed();
+
+      expect(result.reason).toBe("recovery_also_failed");
+      expect(mockSendEmail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opsAlertEmail is unset -- claim still wins (human_alerted_at gets set so no future tick re-claims it) but no email is sent", async () => {
+    const originalOpsAlertEmail = config.opsAlertEmail;
+    (config as { opsAlertEmail: string }).opsAlertEmail = "";
+    vi.useFakeTimers();
+    try {
+      const result = await runRecoveryAlsoFailed();
+
+      expect(result.reason).toBe("recovery_also_failed");
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("SET human_alerted_at = now()"),
+        [PROPOSAL_ID],
+      );
+      expect(mockSendEmail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      (config as { opsAlertEmail: string }).opsAlertEmail = originalOpsAlertEmail;
+    }
+  });
+
+  it("sendEmail rejects -- caught and logged, agent_decisions insert still runs, registerProtectionOrFlatten still returns normally rather than rejecting", async () => {
+    vi.useFakeTimers();
+    try {
+      mockSendEmail.mockRejectedValueOnce(new Error("sendgrid_down"));
+
+      // If alertHumanOnRecoveryFailure let this propagate, this await
+      // would reject and the test would fail on that alone -- no
+      // separate "did not throw" assertion needed.
+      const result = await runRecoveryAlsoFailed();
+
+      expect(result.reason).toBe("recovery_also_failed");
+      const decisionInsert = callsMatching("INSERT INTO agent_decisions").find(
+        ([, params]) => (params as unknown[])[2] === "recovery_also_failed",
+      );
+      expect(decisionInsert).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the claim UPDATE itself throws (simulated DB error) -- caught and logged, sendEmail never called, agent_decisions insert still runs, registerProtectionOrFlatten still returns normally rather than rejecting", async () => {
+    vi.useFakeTimers();
+    try {
+      mockPoolQuery.mockRejectedValueOnce(new Error("connection_terminated"));
+
+      // Same "would reject on its own if uncaught" reasoning as above --
+      // this is the case the fix was specifically added for: a failure
+      // in the claim query, not just the send, must not block the
+      // primary agent_decisions write below it.
+      const result = await runRecoveryAlsoFailed();
+
+      expect(result.reason).toBe("recovery_also_failed");
+      expect(mockSendEmail).not.toHaveBeenCalled();
+      const decisionInsert = callsMatching("INSERT INTO agent_decisions").find(
+        ([, params]) => (params as unknown[])[2] === "recovery_also_failed",
+      );
+      expect(decisionInsert).toBeDefined();
     } finally {
       vi.useRealTimers();
     }

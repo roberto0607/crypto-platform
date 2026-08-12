@@ -17,6 +17,7 @@ import { placeOrderWithSnapshot, resolveSnapshot } from "../../trading/phase6Ord
 import { createTriggerOrder, cancelTriggerTx } from "../../triggers/triggerRepo";
 import { insertAgentDecisionTx } from "../shared/agentDecisionRepo";
 import { ensureRiskAgentBotSetup } from "../riskAgent/botSetup";
+import { sendEmail } from "../../email/emailTransport";
 
 const AGENT_NAME = "execution-agent";
 const TRIGGER_RETRY_ATTEMPTS = 3;
@@ -382,6 +383,47 @@ async function runPhase1(
 }
 
 /**
+ * Pages a human when the recovery job's own retry of a stuck proposal
+ * fails again -- see registerProtectionOrFlatten's origin==='recovery'
+ * branch below. Claims human_alerted_at atomically so a
+ * persistently-stuck row (re-flagged every 60s by
+ * executionAgentRecoveryJob, indefinitely, since flatten_order_id never
+ * gets set on this path) alerts exactly once, not once per tick.
+ *
+ * Best-effort and must never throw: this is a secondary feature
+ * piggybacking on registerProtectionOrFlatten's primary job of
+ * recording the agent_decisions row, and a DB blip or SendGrid failure
+ * here must not prevent that from happening -- the whole body is one
+ * try/catch, not just the send.
+ */
+async function alertHumanOnRecoveryFailure(
+  proposalId: string,
+  pairId: string,
+  orderId: string,
+): Promise<void> {
+  try {
+    const { rows } = await pool.query<{ id: string }>(
+      `UPDATE trade_proposals SET human_alerted_at = now() WHERE id = $1 AND human_alerted_at IS NULL RETURNING id`,
+      [proposalId],
+    );
+    if (rows.length === 0) return; // already alerted -- another tick/instance won the claim
+
+    if (!config.opsAlertEmail) {
+      logger.warn({ proposalId }, "execution_agent_human_alert_skipped_no_ops_email");
+      return;
+    }
+
+    await sendEmail(
+      config.opsAlertEmail,
+      `TRADR: unprotected position needs manual intervention (${pairId})`,
+      `<p>Trade proposal <code>${proposalId}</code> (order <code>${orderId}</code>, pair ${pairId}) failed protection registration, auto-flatten, AND the crash-recovery retry. The position is open and unprotected. Manual intervention required.</p>`,
+    );
+  } catch (err) {
+    logger.error({ proposalId, err }, "execution_agent_human_alert_failed");
+  }
+}
+
+/**
  * Phase 2: register the stop/target OCO pair for a just-executed
  * proposal. Runs AFTER Phase 1's transaction has committed and released
  * its client -- a separate transaction/connection, matching
@@ -541,13 +583,15 @@ export async function registerProtectionOrFlatten(
   //      BOTH "no complete healthy STOP_MARKET/TAKE_PROFIT_MARKET pair"
   //      AND flatten_order_id IS NULL, which this branch always satisfies.
   //
-  // Still true: a persistently-failing flatten (not a transient blip --
-  // e.g. a delisted pair, sustained insufficient liquidity) means the
-  // recovery job will keep re-flagging and re-attempting this row every
-  // tick, escalating a louder execution_agent_recovery_also_failed +
+  // A persistently-failing flatten (not a transient blip -- e.g. a
+  // delisted pair, sustained insufficient liquidity) means the recovery
+  // job will keep re-flagging and re-attempting this row every tick,
+  // escalating a louder execution_agent_recovery_also_failed +
   // decision:"recovery_also_failed" signal each time rather than looping
-  // silently -- but nothing pages a human yet. "Recovery job retries it"
-  // is the mitigation that exists; "alert a human" still does not.
+  // silently. alertHumanOnRecoveryFailure below pages a human on this
+  // branch -- claimed once via human_alerted_at (migration 090) so the
+  // 60s recovery-job tick doesn't re-page on every retry of the same
+  // still-stuck row.
   const recoveryAlsoFailed = origin === "recovery" && !flattenOrderId;
   if (recoveryAlsoFailed) {
     // Distinct from the risk_agent_position_auto_flattened /
@@ -562,6 +606,7 @@ export async function registerProtectionOrFlatten(
       { proposalId, pairId: proposal.pair_id, orderId, stopTriggerId, targetTriggerId, lastTriggerError, flattenError },
       "execution_agent_recovery_also_failed",
     );
+    await alertHumanOnRecoveryFailure(proposalId, proposal.pair_id, orderId);
   }
 
   const decisionClient = await pool.connect();

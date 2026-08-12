@@ -143,6 +143,13 @@ export const config = {
   // ── Phase 22: Derivatives data ──
   derivativesPollerEnabled: booleanEnv("DERIVATIVES_POLLER_ENABLED", true),
 
+  // ── Gate 1e: human-alerting escalation ──
+  // Deliberately NOT requireEnv()'d -- same reasoning as anthropicApiKey
+  // below: an unconfigured value degrades to a logged warning (see
+  // executor.ts's alertHumanOnRecoveryFailure), it doesn't block server
+  // boot.
+  opsAlertEmail: process.env.OPS_ALERT_EMAIL || "",
+
   // ── Gate 1b: Scanner Agent ──
   // Deliberately NOT requireEnv()'d here — unlike jwtAccessSecret, this key
   // is only needed by the Scanner Agent, an optional, schedulable background
