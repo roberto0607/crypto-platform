@@ -15,6 +15,7 @@ import { matchCleanupJob } from "./matchCleanupJob";
 import { symbolRefreshJob } from "./symbolRefreshJob";
 import { scannerAgentJob } from "./scannerAgentJob";
 import { executionAgentRecoveryJob } from "./executionAgentRecoveryJob";
+import { agentHealthWatchdogJob } from "./agentHealthWatchdogJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -35,4 +36,5 @@ export const allJobs: JobDefinition[] = [
     symbolRefreshJob,
     scannerAgentJob,
     executionAgentRecoveryJob,
+    agentHealthWatchdogJob,
 ];
