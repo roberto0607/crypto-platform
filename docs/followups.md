@@ -811,3 +811,95 @@ stranger's match completing.
 navigating to/from Profile; the staleness window is specifically "stayed on
 one page through an entire match's end," not a correctness bug in the data
 itself.
+
+---
+
+## 🟠 MEDIUM — Kraken WS connection instability causing intermittent `stale_price_source` rejections
+
+**Discovered:** 2026-08-13, as a side effect of Track 2 (agent-concurrency
+load testing) — NOT found via direct investigation of the ingestion path.
+`agentConcurrencyTest.ts`'s Test B precondition check (`resolveSnapshot`
+returning `source="fallback"` for BTC/USD) failed twice in a row against a
+dev server that had been up for hours. Investigating why led here.
+
+**Hard evidence, one local dev server, ~9.5h uptime:**
+- **65** `[krakenWs] connected` events, **62** `[krakenWs] No ticks for 30s —
+  reconnecting...` events over that window (`src/market/krakenWs.ts:362-363`).
+- At least one `getaddrinfo ENOTFOUND ws.kraken.com` (DNS resolution failure)
+  and one `read ECONNRESET` among the reconnect triggers.
+- **Confirmed whole-connection, not BTC/USD-specific**, by reading the actual
+  watchdog code: `lastTickAt` (`krakenWs.ts:78`) is a single module-level
+  variable, updated by `handleTickerMessage` (`krakenWs.ts:135`) on receipt of
+  *any* ticker message for *any* of the ~137 subscribed symbols on this one
+  connection. The 30s watchdog (`krakenWs.ts:362`) fires when **zero** ticker
+  messages arrived for **zero** symbols in 30+ seconds — a connection-wide
+  silence, not a per-pair liquidity gap.
+- Reconnects cluster in bursts (several within seconds of each other) with
+  longer healthy stretches between clusters (12-78 minutes observed between
+  the outer structured `[footprint] Kraken WS connected/closed` log pairs) —
+  intermittent, not constantly broken, but recurring often enough that two
+  independent test attempts both landed in a dead window.
+- Directly confirmed live via Redis: `cp:snap:BTC/USD` genuinely goes
+  **missing** (`TTL -2`, i.e. key does not exist, not just past the app's 10s
+  staleness check) for stretches of 20-30+ seconds, then reappears with a
+  fresh write, repeatedly.
+
+**Confirming evidence, same night — two more real Test B failures:**
+- **Run at 2026-08-13T02:23:01Z** — `checkLiveSnapshotOrAbort` still had its
+  original single point-in-time check (no polling yet). Failed immediately:
+  `source="fallback"` on the first and only call. This is the failure that
+  triggered the investigation documented above.
+- **Run at 2026-08-13T02:32:43Z** — after adding a 30-second bounded poll
+  (retry every 1.5s, abort only past the deadline) specifically to
+  accommodate this documented gap, Test B **still failed** — 21 consecutive
+  poll attempts over the full 30-second window, every single one
+  `source="fallback"`. A direct Redis check taken immediately after showed a
+  **fresh** tick at `2026-08-13T02:33:27.066Z`, roughly 10 seconds after the
+  script gave up — i.e. this particular outage lasted at least the full 30
+  seconds the harness was willing to wait, then resolved on its own shortly
+  after. This is a materially longer real-world gap than the original
+  "20-30+ second" `TTL -2` observation implied on its own — it shows the
+  outage duration can meet or exceed a full 30-second client-side retry
+  budget, not just brush past the original 10s staleness TTL.
+- **Net result:** Execution Agent's row-lock/idempotency concurrency logic
+  (the actual thing Track 2 Test B was built to exercise) was never reached
+  in either attempt — both failures happened at the precondition check,
+  before any `executeTradeProposal()` call ever ran. Track 2 Test B is
+  **blocked by this issue**, not failed as a script bug.
+
+**Production impact — concrete, not hypothetical:** `resolveSnapshot`'s
+staleness check (`snapshotStore.ts`, 10s TTL) combined with a connection that
+goes fully silent across all symbols for 30+ seconds on a recurring basis
+means `stale_price_source` (`executor.ts:236-247`) is a **real, non-rare
+rejection mode** for actual Execution Agent runs — not just an artifact of
+how the Track 2 test script's precondition check was written. Some fraction
+of otherwise-good `approved` trade_proposals are likely being rejected at
+execution time because the price feed itself dropped out from under them
+momentarily, not because the market actually moved past the execution
+tolerance. This has not been separately confirmed against Railway prod
+specifically — only measured on local dev tonight — but the mechanism
+(single shared WS connection, global watchdog, no per-pair fallback) is not
+dev-only code, so it's a reasonable concern in prod too until checked.
+
+**Root cause NOT determined — intentionally left open, not fixed tonight.**
+Three open hypotheses, unranked:
+1. Local network flakiness between this dev machine and `wss://ws.kraken.com`
+   specifically (would not necessarily reproduce on Railway).
+2. Kraken-side behavior under a single connection subscribed to ~137 symbols
+   at once (ticker/trade/book channels all subscribed together,
+   `krakenWs.ts:100-102`) — e.g. rate-limiting, silent backpressure, or
+   connection resets triggered by subscription breadth.
+3. Something else not yet isolated (reconnect/resubscribe logic itself,
+   `ws` library behavior, etc.).
+
+No production-log correlation, no Railway-specific reproduction, no fix
+proposed yet. Next step for whoever picks this up: check whether the same
+reconnect pattern appears in Railway prod logs, and/or test whether a
+narrower per-connection symbol subscription reduces reconnect frequency,
+before assuming cause #1 or #2.
+
+**Priority:** MEDIUM — not confirmed actively broken in prod (reserving HIGH
+for that), but a real, evidenced gap between "an approved trade got the
+market wrong" and "an approved trade got rejected because our own feed blinked,"
+which undermines trusting `stale_price_source` rejection counts as a market
+signal until this is understood.
