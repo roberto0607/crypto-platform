@@ -814,7 +814,7 @@ itself.
 
 ---
 
-## 🟠 MEDIUM — Kraken WS connection instability causing intermittent `stale_price_source` rejections
+## 🟢 LOW (downgraded from MEDIUM, root cause confirmed) — Kraken WS connection instability causing intermittent `stale_price_source` rejections
 
 **Discovered:** 2026-08-13, as a side effect of Track 2 (agent-concurrency
 load testing) — NOT found via direct investigation of the ingestion path.
@@ -903,3 +903,101 @@ for that), but a real, evidenced gap between "an approved trade got the
 market wrong" and "an approved trade got rejected because our own feed blinked,"
 which undermines trusting `stale_price_source` rejection counts as a market
 signal until this is understood.
+
+**Update 2026-08-13 (later) — two independent Kraken connections found, both
+correlate with Coinbase:** further investigation traced the full connection
+lifecycle in both `krakenWs.ts` and the separate, independently-reconnecting
+`footprintAggregator.ts` socket (same Kraken host, same process/IP, its own
+reconnect loop — not previously documented as a second connection). Reading
+Kraken's own WS v2 docs confirmed subscribing ~137 symbols on one connection
+is explicitly supported and not expected to hit connection limits, which
+weighs against hypothesis 2. Timing correlation across a ~22.5h log
+(`tradr-api-track2.log`) found all ~26 distinct outage events landed within
+0-5 seconds across Kraken-main, Kraken-footprint, **and Coinbase** (an
+unrelated exchange, separate infra) — Coinbase dropping in lockstep with
+Kraken is strong evidence against a Kraken-side subscription-breadth issue,
+since Kraken's behavior can't explain Coinbase failing at the same instant.
+Two explicit errors captured (`getaddrinfo ENOTFOUND ws.kraken.com`,
+`read ECONNRESET`) are both OS/socket-layer, not application-level Kraken
+rejections. Leading hypothesis narrowed to **local/network-path flakiness**,
+with a candidate secondary concern: since `krakenWs.ts` and
+`footprintAggregator.ts` are two independent auto-reconnecting sockets from
+one IP, a shared network blip could make both race to reconnect
+simultaneously, pushing combined attempts toward Kraken's documented
+Cloudflare-edge limit of ~150 reconnects/10min per IP (which bans the IP for
+10min if exceeded) — this was not yet tested with real data at this point.
+
+Diagnostic logging (pure, no behavioral change) was added to both
+`krakenWs.ts` and `footprintAggregator.ts`: WS `close` event code/reason
+logged at the point reconnect is scheduled, plus a new shared module
+(`src/market/krakenReconnectTracker.ts`) tracking a rolling 10-minute count
+of combined reconnect attempts across both connections, logged on every
+reconnect as `combinedReconnectCount10m`. A single clean dev server instance
+was started to run this unattended and collect real data before concluding
+which hypothesis was correct.
+
+**Update 2026-08-15 — root cause CONFIRMED via 53.5h of diagnostic data:**
+the dev server ran continuously for ~53.5 hours (2026-08-13 17:03 UTC →
+2026-08-15 22:30 UTC, PID stayed alive throughout, no crash/restart),
+producing 193 reconnect events (159 from `krakenWs.ts`, 34 from
+`footprintAggregator.ts`) with real `closeCode`/`closeReason`/
+`combinedReconnectCount10m` data:
+
+- **Close codes: 95% code 1006 (184/193), 5% code 1005 (9/193).** Both are
+  TCP/transport-layer failure signatures — 1006 means "abnormal closure, no
+  close frame received" (the connection just died mid-stream) and 1005 means
+  "no status code present." Neither is an application-level close.
+  `closeReason` was an **empty string on all 193 events, with no
+  exceptions** — Kraken's server never sent an explanation, consistent with
+  the connection simply dropping rather than being deliberately closed by
+  either Kraken or Cloudflare. If this were a Cloudflare-side rejection
+  (rate-limit ban, policy violation), the expected signature would be a
+  distinct code like 1008 with an actual reason string — that pattern never
+  appeared once in 193 events.
+- **`combinedReconnectCount10m` stayed low throughout: range 1-7, histogram
+  1→96, 2→56, 3→27, 4→10, 5→2, 6→1, 7→1.** The single worst moment (7) hit
+  during a 3-reconnect cluster on 2026-08-14 17:46-17:51 UTC. Even that worst
+  case is **~4.7% of Kraken's documented ~150/10min Cloudflare threshold**,
+  with no upward drift across the full 53.5h window.
+
+**Both original hypotheses now resolved, not just narrowed:**
+1. **NOT a Kraken-side subscription limit** — ruled out both by Kraken's own
+   docs (many-symbols-per-connection is explicitly supported) and now by
+   data: a subscription-breadth issue would not produce uniform
+   transport-layer close codes with zero application-level rejections.
+2. **NOT a Cloudflare rate-limit / two-connections-racing amplification** —
+   this was a live, testable theory as of the 2026-08-13 update, and the
+   53.5h data disproves it directly: `combinedReconnectCount10m` never
+   climbed past 7, nowhere near the ~150 threshold, across every storm
+   observed including the worst one.
+3. **Confirmed: local/network-path instability**, most likely outside this
+   codebase's control (home/office network path to `wss://ws.kraken.com`,
+   not reproducible as a Kraken-side or Cloudflare-side behavior from this
+   evidence).
+
+**Recommendation — no code fix proposed for the WS connection layer.** The
+existing reconnect-with-backoff behavior in both `krakenWs.ts` and
+`footprintAggregator.ts` is already the correct mitigation for a
+transport-layer failure mode like this — it recovered every single time
+across 193 events over 53.5h, which is the behavior you want from a
+reconnect loop facing genuine network flakiness. There is nothing
+Kraken-side or Cloudflare-side to work around, so a connection-layer change
+would not address the actual cause. The remaining real issue is downstream,
+not in the WS layer: **`stale_price_source` rejections on genuinely good
+trades** during these (now-understood, still-recurring) outage windows. If
+that rejection rate ever becomes a practical problem in production, the fix
+belongs in the Execution Agent's tolerance/staleness handling (e.g. a
+slightly longer grace period on `resolveSnapshot`'s staleness check, or a
+retry-based approach like the one already used elsewhere in Gate 1e) — not
+in the WS connection layer, which is already behaving correctly given a
+flaky network path it can't control.
+
+**Priority:** downgraded from MEDIUM to LOW — the original MEDIUM reflected
+genuine uncertainty about whether this was a fixable connection-layer bug
+(worth prioritizing) or unfixable network flakiness (not directly
+actionable). That uncertainty is now resolved: root cause is understood,
+confirmed not fixable from this codebase, and the reconnect logic already
+handles it correctly. Keeping this entry (rather than closing it outright)
+because it explains a real, recurring `stale_price_source` rejection pattern
+that would otherwise look like an unexplained mystery to whoever next
+investigates Execution Agent rejection rates.
