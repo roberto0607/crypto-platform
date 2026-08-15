@@ -17,6 +17,7 @@ import {
 import { krakenTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 import { eventsPublishedTotal } from "../metrics.js";
 import { getCoinbaseLastTradeAt } from "../feeds/coinbaseWs.js";
+import { recordKrakenReconnectAttempt } from "./krakenReconnectTracker.js";
 
 // Coinbase is the primary price.tick source as of Gate 1 (2026-07-25) — see
 // docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md. Kraken's
@@ -370,9 +371,9 @@ function connect(): void {
 
     ws.on("message", handleMessage);
 
-    ws.on("close", () => {
+    ws.on("close", (code: number, reason: Buffer) => {
         wsConnected = false;
-        scheduleReconnect();
+        scheduleReconnect(code, reason.toString());
     });
 
     ws.on("error", (err) => {
@@ -381,12 +382,17 @@ function connect(): void {
     });
 }
 
-function scheduleReconnect(): void {
+function scheduleReconnect(closeCode?: number, closeReason?: string): void {
     if (stopped) return;
     if (reconnectTimer) return;
 
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
     reconnectAttempt++;
+    const combinedReconnectCount10m = recordKrakenReconnectAttempt();
+    logger.info(
+        { closeCode, closeReason, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
+        "kraken_ws_reconnect_scheduled",
+    );
     console.log(`[krakenWs] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;

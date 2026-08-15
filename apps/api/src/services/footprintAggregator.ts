@@ -10,6 +10,7 @@
 import WebSocket from "ws";
 import { pool } from "../db/pool.js";
 import { logger } from "../observability/logContext.js";
+import { recordKrakenReconnectAttempt } from "../market/krakenReconnectTracker.js";
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 const RECONNECT_DELAYS = [2000, 5000, 10000, 30000];
@@ -172,10 +173,10 @@ function connect(): void {
         }
     });
 
-    ws.on("close", () => {
-        logger.info("[footprint] Kraken WS closed");
+    ws.on("close", (code: number, reason: Buffer) => {
+        logger.info({ code, reason: reason.toString() }, "[footprint] Kraken WS closed");
         ws = null;
-        scheduleReconnect();
+        scheduleReconnect(code, reason.toString());
     });
 
     ws.on("error", (err: Error) => {
@@ -185,11 +186,15 @@ function connect(): void {
     });
 }
 
-function scheduleReconnect(): void {
+function scheduleReconnect(closeCode?: number, closeReason?: string): void {
     if (reconnectTimer) return;
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
     reconnectAttempt++;
-    logger.info({ delay, attempt: reconnectAttempt }, "[footprint] reconnecting...");
+    const combinedReconnectCount10m = recordKrakenReconnectAttempt();
+    logger.info(
+        { closeCode, closeReason, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
+        "[footprint] reconnecting...",
+    );
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
