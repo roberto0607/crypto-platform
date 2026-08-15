@@ -16,6 +16,7 @@
 
 import { pool } from "../db/pool";
 import { config } from "../config";
+import { initRedis } from "../db/redis";
 import { evaluateTradeProposal, type RiskEvaluationResult } from "../agents/riskAgent/evaluator";
 import { executeTradeProposal, type ExecutionResult } from "../agents/executionAgent/executor";
 import { resolveSnapshot, placeOrderWithSnapshot } from "../trading/phase6OrderService";
@@ -345,6 +346,12 @@ async function flattenTestBPosition(botUserId: string, pairId: string, proposalI
 async function main(): Promise<void> {
   console.log("=== Track 2: Agent Concurrency Test ===");
   console.log(`Config: TEST_A_N=${TEST_A_N} TEST_B_N=${TEST_B_N} STOP_DISTANCE_PCT=${STOP_DISTANCE_PCT}`);
+
+  // Without this, getRedis() returns null in THIS process (initRedis() is
+  // otherwise only ever called from server.ts), so snapshotStore.ts silently
+  // falls back to an always-empty InMemorySnapshotStore and Test B's live
+  // snapshot check fails 100% of the time regardless of real feed health.
+  await initRedis();
 
   await ensureRiskAgentBotSetup();
   const botUserId = config.riskAgentBotUserId;
