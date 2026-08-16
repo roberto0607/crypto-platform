@@ -71,6 +71,9 @@ async function start() {
 
   const app = await buildApp({
     disableRateLimit: config.disableRateLimit,
+    disableChartAnalysisEngine: !config.chartAnalysisAgentEnabled,
+    disableRiskEngine: !config.riskAgentEnabled,
+    disableExecutionAgentEngine: !config.executionAgentEnabled,
     ...getWorkerDisableFlags(),
   });
 
@@ -93,6 +96,9 @@ async function start() {
     devMode: {
       disableRateLimit: config.disableRateLimit,
       disableJobRunner: config.disableJobRunner,
+      chartAnalysisAgentEnabled: config.chartAnalysisAgentEnabled,
+      riskAgentEnabled: config.riskAgentEnabled,
+      executionAgentEnabled: config.executionAgentEnabled,
     },
   });
 
