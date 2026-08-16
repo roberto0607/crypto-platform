@@ -1001,3 +1001,17 @@ handles it correctly. Keeping this entry (rather than closing it outright)
 because it explains a real, recurring `stale_price_source` rejection pattern
 that would otherwise look like an unexplained mystery to whoever next
 investigates Execution Agent rejection rates.
+
+**Operational footnote, 2026-08-15 8:43 PM local:** the running dev server's
+`combinedReconnectCount10m` in-memory sliding window (`krakenReconnectTracker.ts`)
+was reset when an unrelated `git checkout -b` in the same working directory
+touched files under active `tsx watch` (including `krakenWs.ts` and
+`footprintAggregator.ts` themselves), triggering an auto-restart. This is well
+after the 53.5h dataset above had already been collected and the root cause
+confirmed (window closed 2026-08-15 22:30 UTC / 6:30 PM local) — it's a gap in
+ongoing standing instrumentation, not a gap in the evidence the conclusion
+above was based on. Lesson for next time: `git checkout`/branch operations
+that touch watched source files in the same working directory as a live `tsx
+watch` process will silently restart it — use a separate worktree, or be
+deliberate about which directory such operations run in, when a long-running
+diagnostic process is active.
