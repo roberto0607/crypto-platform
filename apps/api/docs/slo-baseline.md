@@ -229,6 +229,128 @@ over larger tables) — pre-existing, separate from this fix. Tracked in followu
 
 ---
 
+## Single-VU exec/wait profiling — 2026-08-15
+
+Investigation prompted by a suspected order-path latency regression relative to
+the 2026-05-27 post-fix baseline above (~8ms per-order exec). The regression's
+own source report could not be located in this repo on any local branch or
+remote ref (git log, reflog, stash, and a full-history grep all came up empty)
+— treat any prior "1.8-2.5x slowdown" / "~17.5ms exec" figures as **unconfirmed**
+until/unless that report resurfaces. This entry documents only what was
+independently measured today.
+
+**Goal**: isolate per-order exec cost from queue wait time via a single-VU,
+zero-contention run, since concurrent-load numbers can't distinguish the two.
+
+**Method**: `load/k6/scenario_single_vu_profile.js` (new script, adapted from
+`scenario_trade_burst.js`) — `vus:1`, `iterations:80`, no `sleep()`. Each
+iteration: MARKET BUY 0.001 BTC → LIMIT BUY far below market (rests) → cancel
+it. Ran against an isolated server instance on port 3002 — **not** the
+already-running dev server on 3001, which turned out to be mid-collection on
+an unrelated overnight Kraken WS diagnostic (`DISABLE_JOB_RUNNER=false`,
+untouched by this run). New instance: `DISABLE_RATE_LIMIT=true
+DISABLE_JOB_RUNNER=true DISABLE_MARKET_MAKER=true`, **in-memory queue**
+(`REDIS_URL` unset — deliberate, to guarantee zero cross-process contention
+with the still-running 3001 instance, since Redis Streams consumer groups are
+shared across any connected process and would let 3001 silently execute this
+run's jobs). Re-seeded 50 loadtest users against the same local Postgres, same
+`BTC/USD` pair (`cdec9b36-...`). Waited for the instance's one-time candle
+backfill (425,245 rows, ~130 pairs, 666s) to fully finish before starting the
+timed run.
+
+**⚠️ Backend caveat**: this run is in-memory, not Redis — the verified
+2026-05-27 baseline above is Redis-backed. Per the 2026-05-26 findings earlier
+in this doc, Redis adds roughly 1-2ms of round-trip overhead over in-memory on
+successful ops, so the two aren't perfectly apples-to-apples on absolute ms.
+
+### Queue exec / wait split (`pair_queue_exec_ms` / `pair_queue_wait_ms`, order-placement only, n=160)
+
+| Metric | Count | Sum | Avg |
+|---|---|---|---|
+| `pair_queue_wait_ms` | 160 | 1ms | ~0.006ms |
+| `pair_queue_exec_ms` | 160 | 2021ms | **12.63ms** |
+
+Wait ≈0 confirms true no-contention isolation. This blends MARKET+LIMIT (the
+metric isn't labeled by order type); k6's client-side HTTP timings (which
+include network/auth overhead on top of server exec) separate them: MARKET
+avg 21.58ms / p95 25.68ms vs. LIMIT avg 7.07ms / p95 8.49ms.
+
+### Fill-type breakdown — the book-depth check
+
+Confirmed two ways (k6 counters + an independent `trades.is_system_fill` query
+for the run window): **80/80 MARKET orders book-matched, 0/80 system-filled.**
+Pre-existing resting book liquidity (2 SELL / 3 BUY open/partial orders,
+present before this run started, not created by today's seed step) absorbed
+every 0.001 BTC buy in this run.
+
+**Seed-comparison check against the 2026-05-27 baseline**: `scenario_trade_burst.js`
+and `scripts/seed-loadtest.ts` are both byte-identical between commit `4af0594`
+(the baseline commit) and today's HEAD — neither version, then or now, ever
+creates book depth (no scenario in `load/k6/*.js` places a SELL order in either
+era; the seed script only creates users/wallets/the pair). The only source of
+resting SELL liquidity is the market-maker bot job, gated by
+`config.disableJobRunner` (confirmed in `src/coordination/jobOrchestrator.ts:38`).
+This doc's own methodology note for the same test family one day earlier
+(line ~126, 2026-05-26 in-mem/Redis run) states explicitly: `DISABLE_JOB_RUNNER=true`
+**"(market-maker bot off → thin book)"** — strongly suggesting the 2026-05-27
+baseline's ~8ms exec figure was measured against a thin/empty book (system-fills),
+while today's run happened to hit a book with resting liquidity (book-matched
+fills, which exercise materially more code — maker-side position/journal
+writes, the counter-wallet batch lookup, maker consume-reserved-and-debit).
+The exact env vars for the May 27 run itself aren't restated in that entry, so
+this is strong circumstantial evidence, not fully confirmed.
+
+### Per-label DB timing breakdown (`db_query_duration_ms`, before/after diff)
+
+| name | count | sum_ms | avg_ms |
+|---|---|---|---|
+| outboxRepo.insertOutboxEventTx | 320 | 125.15 | 0.391 |
+| walletRepo.findWalletByUserAndAsset | 320 | 114.64 | 0.358 |
+| orderRepo.updateOrderFill | 240 | 113.55 | 0.473 |
+| walletRepo.lockWalletsForUpdate | 240 | 93.50 | 0.390 |
+| pairRepo.lockPairForUpdate | 240 | 91.30 | 0.380 |
+| orderRepo.createOrder | 160 | 86.56 | 0.541 |
+| orderRepo.fetchRestingOrdersBatch | 160 | 81.48 | 0.509 |
+| walletRepo.creditWalletTx.ledger | 160 | 61.92 | 0.387 |
+| walletRepo.creditWalletTx.update | 160 | 56.11 | 0.351 |
+| tradeRepo.createTrade | 80 | 42.66 | 0.533 |
+| matchingEngine.batchCounterWallets | 80 | 36.41 | 0.455 |
+| walletRepo.debitAvailableTx.ledger | 80 | 34.15 | 0.427 |
+| walletRepo.debitAvailableTx.update | 80 | 31.29 | 0.391 |
+| orderRepo.findOrderByIdForUpdate | 80 | 30.61 | 0.383 |
+| walletRepo.releaseReserved | 80 | 30.13 | 0.377 |
+| walletRepo.reserveFunds | 80 | 28.70 | 0.359 |
+| walletRepo.consumeReservedAndDebitTx.ledger | 80 | 28.67 | 0.358 |
+| walletRepo.consumeReservedAndDebitTx.update | 80 | 26.96 | 0.337 |
+| **Total (raw, spans 160 order-placements + 80 cancels)** | **2720** | **1113.78** | — |
+
+Several labels are shared between order-placement and cancel calls in this
+same run (`pairRepo.lockPairForUpdate` / `walletRepo.lockWalletsForUpdate` —
+both called by `cancelOrderInternal` too; `orderRepo.findOrderByIdForUpdate`
+and `walletRepo.releaseReserved` — both called **only** by cancel, contributing
+0 to order-placement). Apportioning by exact call-graph counts (not timing
+inference): the order-placement-only subset sums to **≈960ms across 160
+order-placements → 6.00ms avg timed-DB-ms/order**.
+
+### Untimed remainder — the observability gap
+
+`pair_queue_exec_ms` (order-placement only) = 2021ms / 160 = 12.63ms/order avg
+minus order-placement-attributable timed DB (≈960ms / 6.00ms/order)
+= **≈1061ms untimed, ≈6.63ms/order avg — roughly 53% of total exec time has
+no per-name breakdown today.** Traced to real, uninstrumented DB work in the
+post-fill path: `applyFillToPositionTx` (4 round-trips, ×2 on a book-matched
+fill — once for taker, once for maker), `processFillForJournal`,
+`writePortfolioSnapshotTx` (3+ round-trips), the maker-order lookup in
+`phase6OrderService.ts`, and the pre-transaction `getSnapshotForUser` /
+sim-config / sim-candle reads — none of these are wrapped in `timedQuery`, so
+none show up in the table above. Which of these specifically dominates the
+53% is not yet broken down further.
+
+**No conclusion drawn yet on regression vs. no-regression** — this entry is
+raw measurement + the seed-comparison finding above, pending review.
+
+---
+
 ## Alert Thresholds (Future)
 
 Once Prometheus + Alertmanager are configured, suggested alert rules:
