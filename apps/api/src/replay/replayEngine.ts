@@ -1,5 +1,7 @@
 import { pool } from "../db/pool";
 import { getSession } from "./replayRepo";
+import type { ReplaySessionRow } from "./replayRepo";
+import { timedQuery } from "../observability/dbTiming";
 import { getSnapshot } from "../market/snapshotStore";
 import { findPairById } from "../trading/pairRepo";
 import type { Snapshot } from "../market/snapshotStore";
@@ -19,7 +21,21 @@ export type ReplayTick = {
 
 export async function getSnapshotForUser(userId: string, pairId: string): Promise<Snapshot> {
     //1. Check for active replay session
-    const session = await getSession(userId, pairId);
+    // Inlined (rather than calling replayRepo.getSession) so this specific
+    // call site can be timed/labeled on its own — getSession() is shared
+    // with advanceReplayLoop() and replayRoutes.ts, which must not be
+    // attributed to getSnapshotForUser's metric name. SQL kept identical
+    // to replayRepo.getSession.
+    const sessionResult = await timedQuery<ReplaySessionRow>(pool, "replayEngine.getSnapshotForUser.session",
+        `
+        SELECT user_id, pair_id, current_ts, end_ts, speed, is_active, is_paused, timeframe, created_at, updated_at
+        FROM replay_sessions
+        WHERE user_id = $1 AND pair_id = $2 AND is_active = true
+        LIMIT 1
+        `,
+        [userId, pairId]
+    );
+    const session = sessionResult.rows[0] ?? null;
 
     if (session && session.is_active) {
         //Derive snapshot from candle at current_ts

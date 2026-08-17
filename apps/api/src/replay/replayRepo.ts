@@ -42,6 +42,9 @@ export async function createOrStartSession(
     return result.rows[0];
 }
 
+// NOTE: this query is duplicated (for per-call-site timing/labeling) in
+// replayEngine.ts's getSnapshotForUser as "replayEngine.getSnapshotForUser.session"
+// — keep both in sync if this query changes.
 export async function getSession(userid: string, pairId: string): Promise<ReplaySessionRow | null> {
     const result = await pool.query<ReplaySessionRow>(
         `
