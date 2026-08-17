@@ -53,6 +53,8 @@ vi.mock("../../metrics", () => ({
   orderPlacementLatency: { observe: vi.fn() },
   ordersCreatedTotal: { inc: vi.fn() },
   ordersRejectedTotal: { inc: vi.fn() },
+  dbQueryTotal: { inc: vi.fn() },
+  dbQueryDurationMs: { observe: vi.fn() },
 }));
 
 /* ── Import under test + mocked modules ─────────────────── */

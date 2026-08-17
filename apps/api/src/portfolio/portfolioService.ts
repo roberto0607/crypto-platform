@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { pool } from "../db/pool";
+import { timedQuery } from "../observability/dbTiming";
 import { D, ZERO, toFixed8 } from "../utils/decimal";
 import { getPositions } from "../analytics/pnlService";
 import { getSnapshotForUser } from "../replay/replayEngine";
@@ -344,7 +345,7 @@ export async function writePortfolioSnapshotTx(
     const matchScope = matchId ?? null;
 
     // 1. Quote asset IDs
-    const { rows: qaRows } = await client.query<{ quote_asset_id: string }>(
+    const { rows: qaRows } = await timedQuery<{ quote_asset_id: string }>(client, "portfolioService.writePortfolioSnapshotTx.quoteAssets",
         `SELECT DISTINCT quote_asset_id FROM trading_pairs WHERE is_active = true`,
     );
     const quoteAssetIds = qaRows.map((r) => r.quote_asset_id);
@@ -361,7 +362,7 @@ export async function writePortfolioSnapshotTx(
         const params = compId === null
             ? [userId, quoteAssetIds]
             : [userId, quoteAssetIds, compId];
-        const { rows } = await client.query<{ total: string }>(
+        const { rows } = await timedQuery<{ total: string }>(client, "portfolioService.writePortfolioSnapshotTx.cash",
             `SELECT COALESCE(SUM(balance), 0) AS total
              FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
             params,
@@ -371,13 +372,13 @@ export async function writePortfolioSnapshotTx(
 
     // 3. Positions for this exact scope (user, competition, match) — uses
     // COALESCE-nil to collapse NULL scopes onto the free-play row.
-    const { rows: posRows } = await client.query<{
+    const { rows: posRows } = await timedQuery<{
         pair_id: string;
         base_qty: string;
         avg_entry_price: string;
         realized_pnl_quote: string;
         fees_paid_quote: string;
-    }>(
+    }>(client, "portfolioService.writePortfolioSnapshotTx.positions",
         `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
          FROM positions
          WHERE user_id = $1
@@ -417,7 +418,7 @@ export async function writePortfolioSnapshotTx(
 
     // 4. Upsert into equity_snapshots scoped to (user, ts, competition, match).
     // Using a single uniform INSERT (no branching) with explicit scope casts.
-    await client.query(
+    await timedQuery(client, "portfolioService.writePortfolioSnapshotTx.upsert",
         `INSERT INTO equity_snapshots
              (user_id, ts, equity_quote, cash_quote, holdings_quote,
               unrealized_pnl_quote, realized_pnl_quote, fees_paid_quote,

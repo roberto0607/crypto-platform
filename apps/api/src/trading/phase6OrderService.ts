@@ -25,6 +25,7 @@ import { resolveSimulationConfig } from "../sim/simConfigRepo";
 import { computeMarketExecution } from "../sim/slippageModel";
 import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
+import { timedQuery } from "../observability/dbTiming";
 import { txWithEvents } from "../utils/txWithEvents";
 import { processFillForJournal } from "../journal/journalService";
 import { isAgentActionsEnabled } from "../system/systemFlagService";
@@ -259,11 +260,11 @@ export async function placeOrderWithSnapshot(
                         let makerCompetitionId: string | null = null;
                         let makerMatchId: string | null = null;
                         if (makerOrderId) {
-                            const makerResult = await client.query<{
+                            const makerResult = await timedQuery<{
                                 user_id: string;
                                 competition_id: string | null;
                                 match_id: string | null;
-                            }>(
+                            }>(client, "phase6OrderService.placeOrderWithSnapshot.makerOrderLookup",
                                 `SELECT user_id, competition_id, match_id
                                  FROM orders WHERE id = $1`,
                                 [makerOrderId]

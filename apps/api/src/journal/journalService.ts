@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { timedQuery } from "../observability/dbTiming";
 
 export interface ClosedTradeInput {
     userId: string;
@@ -57,7 +58,7 @@ export async function processFillForJournal(
     const closingSide = side === "BUY" ? "SELL" : "BUY";
 
     // 1. Fetch oldest open lots on the opposite side (FIFO order)
-    const { rows: lots } = await client.query(
+    const { rows: lots } = await timedQuery(client, "journalService.processFillForJournal.fetchLots",
         `SELECT id, fill_id, side, price, qty_remaining, fee_quote, filled_at
          FROM open_lots
          WHERE user_id = $1 AND pair_id = $2
@@ -113,7 +114,7 @@ export async function processFillForJournal(
         const holdingSeconds = Math.floor((filledAt.getTime() - new Date(lot.filled_at).getTime()) / 1000);
 
         // Insert closed trade
-        await client.query(
+        await timedQuery(client, "journalService.processFillForJournal.insertClosedTrade",
             `INSERT INTO closed_trades
                 (user_id, pair_id, competition_id, direction,
                  entry_fill_ids, entry_qty, entry_avg_price, entry_fees, entry_at,
@@ -134,7 +135,7 @@ export async function processFillForJournal(
 
         // Decrement lot
         const newRemaining = lotRemaining - consumed;
-        await client.query(
+        await timedQuery(client, "journalService.processFillForJournal.decrementLot",
             `UPDATE open_lots SET qty_remaining = $1 WHERE id = $2`,
             [newRemaining.toFixed(8), lot.id],
         );
@@ -146,7 +147,7 @@ export async function processFillForJournal(
     // 2. If there's remaining qty, create a new open lot (opening position)
     if (remaining > 0) {
         const remainingFee = parseFloat(feeQuote) - consumedFeeQuote;
-        await client.query(
+        await timedQuery(client, "journalService.processFillForJournal.openLot",
             `INSERT INTO open_lots
                 (user_id, pair_id, competition_id, fill_id, side, price,
                  qty_total, qty_remaining, fee_quote, filled_at)

@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import Decimal from "decimal.js";
 import { D, ZERO, toFixed8 } from "../utils/decimal";
+import { timedQuery } from "../observability/dbTiming";
 
 export type PositionRow = {
     user_id: string;
@@ -58,7 +59,7 @@ export async function applyFillToPositionTx(
 
     // Upsert position row if it doesn't exist. COALESCE-based ON CONFLICT
     // target matches the 4-column unique index created in migration 066.
-    await client.query(
+    await timedQuery(client, "positionRepo.applyFillToPositionTx.upsert",
         `INSERT INTO positions (user_id, pair_id, competition_id, match_id)
          VALUES ($1, $2, $3::uuid, $4::uuid)
          ON CONFLICT (user_id, pair_id,
@@ -69,7 +70,7 @@ export async function applyFillToPositionTx(
     );
 
     // Lock and read current position for this exact (user, pair, scope).
-    const posResult = await client.query<PositionRow>(
+    const posResult = await timedQuery<PositionRow>(client, "positionRepo.applyFillToPositionTx.lock",
         `SELECT ${POSITION_COLUMNS}
          FROM positions
          WHERE user_id = $1 AND pair_id = $2
@@ -122,7 +123,7 @@ export async function applyFillToPositionTx(
     // Update position. Bug L1 fix: WHERE includes competition_id AND match_id
     // so we only touch the exact scope row we just locked — previously this
     // UPDATE could clobber rows in other scopes for the same (user, pair).
-    const updateResult = await client.query<PositionRow>(
+    const updateResult = await timedQuery<PositionRow>(client, "positionRepo.applyFillToPositionTx.update",
         `UPDATE positions
          SET base_qty = $3,
              avg_entry_price = $4,
@@ -147,7 +148,7 @@ export async function applyFillToPositionTx(
     // Insert equity snapshot scoped to the same (user, ts, competition, match).
     // Equity = realized PnL - total fees (unrealized computed at read time).
     const equity = realizedPnl.minus(feesPaid);
-    await client.query(
+    await timedQuery(client, "positionRepo.applyFillToPositionTx.equitySnapshot",
         `INSERT INTO equity_snapshots (user_id, ts, equity_quote, competition_id, match_id)
          VALUES ($1, $2, $3, $4::uuid, $5::uuid)
          ON CONFLICT (user_id, ts,
