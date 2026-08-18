@@ -257,6 +257,27 @@ export interface RiskAgentProposalApprovedData {
   pairId: string;
 }
 
+/**
+ * Agent decision-log broadcast (Risk Agent + Execution Agent) -- published
+ * alongside (not replacing) the corresponding agent_decisions insert
+ * (migration 080), for every decision value each agent can reach:
+ * approved/rejected/expired (Risk Agent), executed/execution_failed/
+ * auto_flattened/recovery_also_failed (Execution Agent). Broadcast (no
+ * userId/matchId) -- agent_decisions has no per-user scope, both agents
+ * operate against one shared bot account (config.riskAgentBotUserId).
+ * Deliberately omits the `inputs`/`weights_used` JSONB columns (internal
+ * indicator/portfolio-math detail, not meant for a live feed) and the
+ * agent_decisions row id (insertAgentDecisionTx has no RETURNING clause).
+ */
+export interface AgentDecisionData {
+  agentName: string;
+  pairId: string | null;
+  decision: string;
+  reasoning: string | null;
+  tradeProposalId: string | null;
+  priceAtDecision: string | null;
+}
+
 export interface SignalNewData {
   signalId: string;
   pairId: string;
@@ -298,6 +319,7 @@ export type AppEvent =
   | EventEnvelope<"scanner.result", ScannerResultData>
   | EventEnvelope<"chart_analysis.proposal_created", ChartAnalysisProposalCreatedData>
   | EventEnvelope<"risk_agent.proposal_approved", RiskAgentProposalApprovedData>
+  | EventEnvelope<"agent.decision", AgentDecisionData>
   | EventEnvelope<"match.started", MatchStartedData>
   | EventEnvelope<"match.ended", MatchEndedData>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>

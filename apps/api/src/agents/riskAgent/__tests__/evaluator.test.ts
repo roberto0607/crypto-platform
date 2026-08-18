@@ -48,6 +48,7 @@ vi.mock("../../../observability/logContext", () => {
 });
 
 import { evaluateTradeProposal } from "../evaluator";
+import { logger } from "../../../observability/logContext";
 
 const PROPOSAL_ID = "11111111-1111-4111-8111-111111111111";
 const PAIR_ID = "22222222-2222-4222-8222-222222222222";
@@ -92,6 +93,26 @@ function callsMatching(substr: string) {
   return mockClientQuery.mock.calls.filter(([sql]) => typeof sql === "string" && sql.includes(substr));
 }
 
+/**
+ * agent_decisions column order (see agentDecisionRepo.ts): agent_name,
+ * pair_id, decision, reasoning, regime, regime_confidence, inputs,
+ * weights_used, trade_proposal_id, price_at_decision -- so params[3]=
+ * reasoning, params[8]=tradeProposalId, params[9]=priceAtDecision.
+ */
+function insertedAgentDecisionParams() {
+  const call = callsMatching("INSERT INTO agent_decisions")[0]!;
+  const params = call[1] as unknown[];
+  return {
+    reasoning: params[3] as string | null,
+    tradeProposalId: params[8] as string | null,
+    priceAtDecision: params[9] as string | null,
+  };
+}
+
+function publishedAgentDecision() {
+  return mockPublish.mock.calls.map(([e]) => e).find((e) => e.type === "agent.decision");
+}
+
 beforeEach(() => {
   mockClientQuery.mockReset();
   mockConnect.mockReset();
@@ -102,6 +123,7 @@ beforeEach(() => {
   mockEnsureRiskAgentBotSetup.mockReset();
   mockEnsureRiskAgentBotSetup.mockResolvedValue(undefined);
   mockPublish.mockClear();
+  vi.mocked(logger.warn).mockClear();
 });
 
 describe("evaluateTradeProposal — approval + sizing", () => {
@@ -253,17 +275,24 @@ describe("evaluateTradeProposal — division-by-zero / missing stop-distance gua
   });
 });
 
-describe("evaluateTradeProposal — risk_agent.proposal_approved event", () => {
+describe("evaluateTradeProposal — risk_agent.proposal_approved and agent.decision events", () => {
   it("publishes risk_agent.proposal_approved exactly once, with proposalId + pairId, on approval", async () => {
     setupClient(baseProposalRow(), "0");
 
     await evaluateTradeProposal(PROPOSAL_ID);
 
-    expect(mockPublish).toHaveBeenCalledTimes(1);
+    const approvedCalls = mockPublish.mock.calls.filter(([e]) => e.type === "risk_agent.proposal_approved");
+    expect(approvedCalls).toHaveLength(1);
     expect(mockPublish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "risk_agent.proposal_approved",
         data: { proposalId: PROPOSAL_ID, pairId: PAIR_ID },
+      }),
+    );
+    expect(mockPublish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "agent.decision",
+        data: expect.objectContaining({ decision: "approved", tradeProposalId: PROPOSAL_ID }),
       }),
     );
   });
@@ -292,7 +321,103 @@ describe("evaluateTradeProposal — risk_agent.proposal_approved event", () => {
     result = await evaluateTradeProposal(PROPOSAL_ID);
     expect(result.decision).toBe("expired");
 
-    expect(mockPublish).not.toHaveBeenCalled();
+    // risk_agent.proposal_approved must never fire on a reject/expire path...
+    const approvedCalls = mockPublish.mock.calls.filter(([e]) => e.type === "risk_agent.proposal_approved");
+    expect(approvedCalls).toHaveLength(0);
+    // ...but agent.decision now correctly does, once per call above, with "rejected"/"expired".
+    const decisionCalls = mockPublish.mock.calls.filter(([e]) => e.type === "agent.decision");
+    expect(decisionCalls).toHaveLength(4);
+    expect(decisionCalls.filter(([e]) => e.data.decision === "rejected")).toHaveLength(3);
+    expect(decisionCalls.filter(([e]) => e.data.decision === "expired")).toHaveLength(1);
+  });
+});
+
+describe("evaluateTradeProposal — agent.decision payload correctness", () => {
+  it("expired: reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClient(baseProposalRow({ expires_at: PAST_EXPIRY }));
+
+    await evaluateTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams();
+    const published = publishedAgentDecision();
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+    expect(published!.data.priceAtDecision).toBeNull();
+  });
+
+  it("approved: reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClient(baseProposalRow(), "0");
+
+    await evaluateTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams();
+    const published = publishedAgentDecision();
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+  });
+
+  it("rejected (exposure_cap_exceeded): reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClient(baseProposalRow(), "4500");
+
+    await evaluateTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams();
+    const published = publishedAgentDecision();
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+  });
+});
+
+describe("evaluateTradeProposal — agent.decision publish() exception safety", () => {
+  it("expired: publish() throwing for agent.decision is caught, logs agent_decision_publish_failed, and evaluateTradeProposal still returns decision:'expired' without throwing", async () => {
+    setupClient(baseProposalRow({ expires_at: PAST_EXPIRY }));
+    mockPublish.mockImplementationOnce(() => {
+      throw new Error("publish boom");
+    });
+
+    const result = await evaluateTradeProposal(PROPOSAL_ID);
+
+    expect(result.decision).toBe("expired");
+    expect(result.reason).toBe("expired_before_evaluation");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PROPOSAL_ID }),
+      "agent_decision_publish_failed",
+    );
+    expect(callsMatching("COMMIT")).toHaveLength(1);
+    expect(callsMatching("ROLLBACK")).toHaveLength(0);
+  });
+});
+
+describe("evaluateTradeProposal — risk_agent.proposal_approved publish() bug-fix regression", () => {
+  it("publish() throwing specifically on the risk_agent.proposal_approved call is caught and logged as risk_agent_proposal_approved_publish_failed (not agent_decision_publish_failed) -- evaluateTradeProposal still returns decision:'approved' rather than throwing", async () => {
+    setupClient(baseProposalRow(), "0");
+    mockPublish.mockImplementationOnce((event: { type: string }) => {
+      if (event.type === "risk_agent.proposal_approved") {
+        throw new Error("publish boom");
+      }
+    });
+
+    const result = await evaluateTradeProposal(PROPOSAL_ID);
+
+    expect(result.decision).toBe("approved");
+    expect(result.qty).toBe("0.20000000");
+    expect(mockPublish).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PROPOSAL_ID }),
+      "risk_agent_proposal_approved_publish_failed",
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "agent_decision_publish_failed",
+    );
+    expect(callsMatching("COMMIT")).toHaveLength(1);
+    expect(callsMatching("ROLLBACK")).toHaveLength(0);
   });
 });
 
