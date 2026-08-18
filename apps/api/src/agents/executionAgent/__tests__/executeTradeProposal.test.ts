@@ -44,6 +44,11 @@ vi.mock("../../../triggers/triggerRepo", () => ({
   cancelTriggerTx: (...args: unknown[]) => mockCancelTriggerTx(...args),
 }));
 
+const mockPublish = vi.fn();
+vi.mock("../../../events/eventBus", () => ({
+  publish: (...args: unknown[]) => mockPublish(...args),
+}));
+
 vi.mock("../../../config", () => ({
   config: { riskAgentBotUserId: "bot-user-id", queueTimeoutMs: 5000, opsAlertEmail: "ops@example.com" },
 }));
@@ -66,6 +71,7 @@ vi.mock("../../../observability/logContext", () => {
 
 import { executeTradeProposal, registerProtectionOrFlatten, type ApprovedProposal } from "../executor";
 import { config } from "../../../config";
+import { logger } from "../../../observability/logContext";
 
 const PROPOSAL_ID = "11111111-1111-4111-8111-111111111111";
 const PAIR_ID = "22222222-2222-4222-8222-222222222222";
@@ -110,6 +116,47 @@ function entryOrderResolves(orderId: string) {
   return { order: { id: orderId }, fills: [], snapshot: {}, fromIdempotencyCache: false };
 }
 
+/**
+ * agent_decisions column order (see agentDecisionRepo.ts): agent_name,
+ * pair_id, decision, reasoning, regime, regime_confidence, inputs,
+ * weights_used, trade_proposal_id, price_at_decision -- so params[3]=
+ * reasoning, params[8]=tradeProposalId, params[9]=priceAtDecision. Same
+ * indexing evaluator.test.ts uses.
+ */
+function insertedAgentDecisionParams(decision: string) {
+  const call = callsMatching("INSERT INTO agent_decisions").find(
+    ([, params]) => (params as unknown[])[2] === decision,
+  )!;
+  const params = call[1] as unknown[];
+  return {
+    reasoning: params[3] as string | null,
+    tradeProposalId: params[8] as string | null,
+    priceAtDecision: params[9] as string | null,
+  };
+}
+
+function publishedAgentDecision(decision: string) {
+  return mockPublish.mock.calls
+    .map(([e]) => e)
+    .find((e) => e.type === "agent.decision" && e.data.decision === decision);
+}
+
+/** Moved here from the registerProtectionOrFlatten origin='recovery' describe
+ * block below -- now shared with the new payload-correctness/decisionCommitted
+ * tests, which also call registerProtectionOrFlatten directly. */
+function baseApprovedProposal(): ApprovedProposal {
+  return {
+    id: PROPOSAL_ID,
+    pair_id: PAIR_ID,
+    side: "BUY",
+    entry_price: "50000.00000000",
+    stop_price: "45000.00000000",
+    target_price: "55000.00000000",
+    qty: "0.20000000",
+    stop_distance_pct: "0.1",
+  };
+}
+
 beforeEach(() => {
   mockClientQuery.mockReset();
   mockConnect.mockReset();
@@ -127,6 +174,9 @@ beforeEach(() => {
   mockPoolQuery.mockResolvedValue({ rows: [{ id: PROPOSAL_ID }] }); // claim wins by default
   mockSendEmail.mockReset();
   mockSendEmail.mockResolvedValue(undefined);
+  mockPublish.mockClear();
+  vi.mocked(logger.warn).mockClear();
+  vi.mocked(logger.error).mockClear();
 });
 
 afterEach(() => {
@@ -329,6 +379,31 @@ describe("executeTradeProposal — Phase 2 happy path", () => {
   });
 });
 
+describe("executeTradeProposal — agent.decision publish() exception safety (Phase 1, executed path)", () => {
+  it("executed: publish() throwing for agent.decision is caught, logged as agent_decision_publish_failed, and executeTradeProposal still proceeds to Phase 2 and returns outcome:'executed' rather than throwing", async () => {
+    setupClient(baseProposalRow());
+    mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(ORDER_ID));
+    mockCreateTriggerOrder
+      .mockResolvedValueOnce({ id: STOP_TRIGGER_ID })
+      .mockResolvedValueOnce({ id: TARGET_TRIGGER_ID });
+    mockPublish.mockImplementationOnce(() => {
+      throw new Error("publish boom");
+    });
+
+    const result = await executeTradeProposal(PROPOSAL_ID);
+
+    expect(result).toEqual({ proposalId: PROPOSAL_ID, outcome: "executed", reason: null, orderId: ORDER_ID, autoFlattened: false });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PROPOSAL_ID }),
+      "agent_decision_publish_failed",
+    );
+    // Phase 2 still ran despite the Phase 1 publish() failure -- proves the
+    // exception was fully contained to its own try/catch, not just that the
+    // function eventually returned something.
+    expect(mockCreateTriggerOrder).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("executeTradeProposal — Phase 2 partial-failure retry (duplicate-trigger regression guard)", () => {
   it("retries only the missing leg after a partial failure -- createTriggerOrder for STOP_MARKET is called exactly once across both attempts when only TAKE_PROFIT_MARKET fails on attempt 1", async () => {
     vi.useFakeTimers();
@@ -491,20 +566,88 @@ describe("executeTradeProposal — Phase 2 auto-flatten outcome", () => {
   });
 });
 
-describe("registerProtectionOrFlatten — origin='recovery' human-alerting escalation", () => {
-  function baseApprovedProposal(): ApprovedProposal {
-    return {
-      id: PROPOSAL_ID,
-      pair_id: PAIR_ID,
-      side: "BUY",
-      entry_price: "50000.00000000",
-      stop_price: "45000.00000000",
-      target_price: "55000.00000000",
-      qty: "0.20000000",
-      stop_distance_pct: "0.1",
-    };
-  }
+describe("executeTradeProposal — agent.decision payload correctness", () => {
+  it("execution_failed (stale_price_source): reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClient(baseProposalRow());
+    mockResolveSnapshot.mockResolvedValue({ bid: null, ask: null, last: "999999999", ts: "2026-01-01T00:00:00Z", source: "fallback" });
 
+    await executeTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams("execution_failed");
+    const published = publishedAgentDecision("execution_failed");
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+  });
+
+  it("executed: reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClient(baseProposalRow());
+    mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(ORDER_ID));
+    mockCreateTriggerOrder
+      .mockResolvedValueOnce({ id: STOP_TRIGGER_ID })
+      .mockResolvedValueOnce({ id: TARGET_TRIGGER_ID });
+
+    await executeTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams("executed");
+    const published = publishedAgentDecision("executed");
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+  });
+
+  it("auto_flattened: decision/reasoning/tradeProposalId exactly match the agent_decisions INSERT (priceAtDecision null)", async () => {
+    vi.useFakeTimers();
+    try {
+      setupClient(baseProposalRow());
+      mockPlaceOrderWithSnapshot
+        .mockResolvedValueOnce(entryOrderResolves(ORDER_ID))
+        .mockResolvedValueOnce(entryOrderResolves(FLATTEN_ORDER_ID));
+      mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+
+      const resultPromise = executeTradeProposal(PROPOSAL_ID);
+      await vi.advanceTimersByTimeAsync(500 * 2);
+      await resultPromise;
+
+      const inserted = insertedAgentDecisionParams("auto_flattened");
+      const published = publishedAgentDecision("auto_flattened");
+      expect(published).toBeDefined();
+      expect(published!.data.reasoning).toBe(inserted.reasoning);
+      expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+      expect(inserted.priceAtDecision).toBeNull();
+      expect(published!.data.priceAtDecision).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovery_also_failed: decision/reasoning/tradeProposalId exactly match the agent_decisions INSERT (priceAtDecision null)", async () => {
+    vi.useFakeTimers();
+    try {
+      setupClient(undefined);
+      mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+      mockPlaceOrderWithSnapshot.mockRejectedValueOnce(new Error("flatten_also_fails"));
+
+      const resultPromise = registerProtectionOrFlatten(baseApprovedProposal(), ORDER_ID, "bot-user-id", "recovery");
+      await vi.advanceTimersByTimeAsync(500 * 2);
+      await resultPromise;
+
+      const inserted = insertedAgentDecisionParams("recovery_also_failed");
+      const published = publishedAgentDecision("recovery_also_failed");
+      expect(published).toBeDefined();
+      expect(published!.data.reasoning).toBe(inserted.reasoning);
+      expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+      expect(inserted.priceAtDecision).toBeNull();
+      expect(published!.data.priceAtDecision).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("registerProtectionOrFlatten — origin='recovery' human-alerting escalation", () => {
   /** Drives registerProtectionOrFlatten to the recovery_also_failed branch: all trigger-registration retries exhausted AND the flatten attempt fails too. */
   async function runRecoveryAlsoFailed() {
     setupClient(undefined);
@@ -606,6 +749,94 @@ describe("registerProtectionOrFlatten — origin='recovery' human-alerting escal
         ([, params]) => (params as unknown[])[2] === "recovery_also_failed",
       );
       expect(decisionInsert).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("registerProtectionOrFlatten — decisionCommitted gate", () => {
+  it("decisionClient transaction fails (simulated decisionErr) on the auto_flattened path -- agent.decision is NEVER published, even though execution_agent_auto_flatten_decision_log_failed is logged", async () => {
+    vi.useFakeTimers();
+    try {
+      mockClientQuery.mockImplementation((sql: string) => {
+        if (typeof sql === "string" && sql.includes("INSERT INTO agent_decisions")) {
+          return Promise.reject(new Error("db_write_failed"));
+        }
+        return Promise.resolve({ rows: [] });
+      });
+      mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+      mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(FLATTEN_ORDER_ID));
+
+      const resultPromise = registerProtectionOrFlatten(baseApprovedProposal(), ORDER_ID, "bot-user-id", "phase2");
+      await vi.advanceTimersByTimeAsync(500 * 2);
+      const result = await resultPromise;
+
+      expect(result.reason).toBe("auto_flattened");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalId: PROPOSAL_ID }),
+        "execution_agent_auto_flatten_decision_log_failed",
+      );
+      const agentDecisionCalls = mockPublish.mock.calls.filter(([e]) => e.type === "agent.decision");
+      expect(agentDecisionCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("decisionClient transaction fails (simulated decisionErr) on the recovery_also_failed path (origin='recovery') -- agent.decision is NEVER published either", async () => {
+    vi.useFakeTimers();
+    try {
+      mockClientQuery.mockImplementation((sql: string) => {
+        if (typeof sql === "string" && sql.includes("INSERT INTO agent_decisions")) {
+          return Promise.reject(new Error("db_write_failed"));
+        }
+        return Promise.resolve({ rows: [] });
+      });
+      mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+      mockPlaceOrderWithSnapshot.mockRejectedValueOnce(new Error("flatten_also_fails"));
+
+      const resultPromise = registerProtectionOrFlatten(baseApprovedProposal(), ORDER_ID, "bot-user-id", "recovery");
+      await vi.advanceTimersByTimeAsync(500 * 2);
+      const result = await resultPromise;
+
+      expect(result.reason).toBe("recovery_also_failed");
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalId: PROPOSAL_ID }),
+        "execution_agent_auto_flatten_decision_log_failed",
+      );
+      const agentDecisionCalls = mockPublish.mock.calls.filter(([e]) => e.type === "agent.decision");
+      expect(agentDecisionCalls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("registerProtectionOrFlatten — agent.decision publish() exception safety", () => {
+  it("auto_flattened: decisionClient commits successfully but publish() throws -- caught, logged as agent_decision_publish_failed (NOT execution_agent_auto_flatten_decision_log_failed), and registerProtectionOrFlatten still returns outcome:'executed', autoFlattened:true", async () => {
+    vi.useFakeTimers();
+    try {
+      setupClient(undefined);
+      mockCreateTriggerOrder.mockRejectedValue(new Error("persistent_db_error"));
+      mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(FLATTEN_ORDER_ID));
+      mockPublish.mockImplementationOnce(() => {
+        throw new Error("publish boom");
+      });
+
+      const resultPromise = registerProtectionOrFlatten(baseApprovedProposal(), ORDER_ID, "bot-user-id", "phase2");
+      await vi.advanceTimersByTimeAsync(500 * 2);
+      const result = await resultPromise;
+
+      expect(result).toEqual({ proposalId: PROPOSAL_ID, outcome: "executed", reason: "auto_flattened", orderId: ORDER_ID, autoFlattened: true });
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ proposalId: PROPOSAL_ID }),
+        "agent_decision_publish_failed",
+      );
+      expect(logger.error).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "execution_agent_auto_flatten_decision_log_failed",
+      );
     } finally {
       vi.useRealTimers();
     }

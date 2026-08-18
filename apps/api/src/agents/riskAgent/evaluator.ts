@@ -116,6 +116,20 @@ export async function evaluateTradeProposal(proposalId: string): Promise<RiskEva
         tradeProposalId: proposalId,
       });
       await client.query("COMMIT");
+
+      try {
+        publish(createEvent("agent.decision", {
+          agentName: AGENT_NAME,
+          pairId: proposal.pair_id,
+          decision: "expired",
+          reasoning: "Proposal expired before Risk Agent evaluation.",
+          tradeProposalId: proposalId,
+          priceAtDecision: null,
+        }));
+      } catch (err) {
+        logger.warn({ err, proposalId }, "agent_decision_publish_failed");
+      }
+
       return { proposalId, decision: "expired", reason: "expired_before_evaluation", qty: null, riskAmountQuote: null };
     }
 
@@ -220,7 +234,34 @@ export async function evaluateTradeProposal(proposalId: string): Promise<RiskEva
     // RiskAgentProposalApprovedData's comment for why the payload stays
     // minimal). Same pattern as chartAnalysis/runner.ts publishing
     // chart_analysis.proposal_created right after its own insert.
-    publish(createEvent("risk_agent.proposal_approved", { proposalId, pairId: proposal.pair_id }));
+    //
+    // BUG FIX (found during agent.decision recon, unrelated to that
+    // feature): this call used to be unguarded. eventBus.ts's publish()
+    // can throw synchronously (its Redis fan-out does an un-try/catch'd
+    // JSON.stringify before the fire-and-forget redis.publish().catch()) --
+    // if it did, the exception would propagate out of THIS try block, hit
+    // the catch below, attempt a no-op ROLLBACK, and rethrow to the caller
+    // even though the trade above already committed successfully. A
+    // broadcast-layer failure after COMMIT must never be reported as an
+    // evaluation failure.
+    try {
+      publish(createEvent("risk_agent.proposal_approved", { proposalId, pairId: proposal.pair_id }));
+    } catch (err) {
+      logger.warn({ err, proposalId }, "risk_agent_proposal_approved_publish_failed");
+    }
+
+    try {
+      publish(createEvent("agent.decision", {
+        agentName: AGENT_NAME,
+        pairId: proposal.pair_id,
+        decision: "approved",
+        reasoning: `Approved: sized ${qtyStr} at ${RISK_PER_TRADE_PCT.mul(100).toFixed(0)}% risk (${riskAmountStr} quote); total open risk after: ${totalOpenRiskAfter.toFixed(8)} of ${cap.toFixed(8)} cap.`,
+        tradeProposalId: proposalId,
+        priceAtDecision: proposal.entry_price,
+      }));
+    } catch (err) {
+      logger.warn({ err, proposalId }, "agent_decision_publish_failed");
+    }
 
     logger.info({ proposalId, pairId: proposal.pair_id, qty: qtyStr, riskAmountQuote: riskAmountStr }, "risk_agent_approved");
     return { proposalId, decision: "approved", reason: null, qty: qtyStr, riskAmountQuote: riskAmountStr };
@@ -255,6 +296,20 @@ async function rejectTx(
     priceAtDecision: proposal.entry_price,
   });
   await client.query("COMMIT");
+
+  try {
+    publish(createEvent("agent.decision", {
+      agentName: AGENT_NAME,
+      pairId: proposal.pair_id,
+      decision: "rejected",
+      reasoning,
+      tradeProposalId: proposal.id,
+      priceAtDecision: proposal.entry_price,
+    }));
+  } catch (err) {
+    logger.warn({ err, proposalId: proposal.id }, "agent_decision_publish_failed");
+  }
+
   return {
     proposalId: proposal.id,
     decision: "rejected",

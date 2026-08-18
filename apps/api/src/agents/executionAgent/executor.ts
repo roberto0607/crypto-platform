@@ -18,6 +18,8 @@ import { createTriggerOrder, cancelTriggerTx } from "../../triggers/triggerRepo"
 import { insertAgentDecisionTx } from "../shared/agentDecisionRepo";
 import { ensureRiskAgentBotSetup } from "../riskAgent/botSetup";
 import { sendEmail } from "../../email/emailTransport";
+import { publish } from "../../events/eventBus";
+import { createEvent } from "../../events/eventTypes";
 
 const AGENT_NAME = "execution-agent";
 const TRIGGER_RETRY_ATTEMPTS = 3;
@@ -159,6 +161,20 @@ async function failExecutionTx(
     priceAtDecision,
   });
   await client.query("COMMIT");
+
+  try {
+    publish(createEvent("agent.decision", {
+      agentName: AGENT_NAME,
+      pairId: proposal.pair_id,
+      decision: "execution_failed",
+      reasoning,
+      tradeProposalId: proposal.id,
+      priceAtDecision: priceAtDecision ?? null,
+    }));
+  } catch (err) {
+    logger.warn({ err, proposalId: proposal.id }, "agent_decision_publish_failed");
+  }
+
   logger.warn({ proposalId: proposal.id, reason }, "execution_agent_execution_failed");
   return { proposalId: proposal.id, outcome: "execution_failed", reason, orderId: null, autoFlattened: false };
 }
@@ -358,6 +374,19 @@ async function runPhase1(
       priceAtDecision: snapshot.last,
     });
     await client.query("COMMIT");
+
+    try {
+      publish(createEvent("agent.decision", {
+        agentName: AGENT_NAME,
+        pairId: proposal.pair_id,
+        decision: "executed",
+        reasoning: `Executed: placed ${proposal.side} MARKET order for ${qty} (orderId=${orderId}).`,
+        tradeProposalId: proposalId,
+        priceAtDecision: snapshot.last,
+      }));
+    } catch (err) {
+      logger.warn({ err, proposalId }, "agent_decision_publish_failed");
+    }
 
     logger.info({ proposalId, pairId: proposal.pair_id, orderId }, "execution_agent_order_placed");
 
@@ -609,7 +638,15 @@ export async function registerProtectionOrFlatten(
     await alertHumanOnRecoveryFailure(proposalId, proposal.pair_id, orderId);
   }
 
+  const decisionValue = recoveryAlsoFailed ? "recovery_also_failed" : "auto_flattened";
+  const decisionReasoning = flattenOrderId
+    ? `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); position emergency-closed via opposing market order (flattenOrderId=${flattenOrderId}).`
+    : recoveryAlsoFailed
+      ? `RECOVERY-TRIGGERED RETRY ALSO FAILED: protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- this is a SECOND consecutive failure to protect or close this position (the crash-recovery job retried it and it failed again). Position remains open and UNPROTECTED; needs manual intervention.`
+      : `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- position remains open and UNPROTECTED, needs manual intervention.`;
+
   const decisionClient = await pool.connect();
+  let decisionCommitted = false;
   try {
     await decisionClient.query("BEGIN");
     if (flattenOrderId) {
@@ -621,15 +658,12 @@ export async function registerProtectionOrFlatten(
     await insertAgentDecisionTx(decisionClient, {
       agentName: AGENT_NAME,
       pairId: proposal.pair_id,
-      decision: recoveryAlsoFailed ? "recovery_also_failed" : "auto_flattened",
-      reasoning: flattenOrderId
-        ? `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); position emergency-closed via opposing market order (flattenOrderId=${flattenOrderId}).`
-        : recoveryAlsoFailed
-          ? `RECOVERY-TRIGGERED RETRY ALSO FAILED: protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- this is a SECOND consecutive failure to protect or close this position (the crash-recovery job retried it and it failed again). Position remains open and UNPROTECTED; needs manual intervention.`
-          : `Protection registration failed after ${TRIGGER_RETRY_ATTEMPTS} attempts (${lastTriggerError instanceof Error ? lastTriggerError.message : "unknown_error"}); auto-flatten ALSO failed (${flattenError instanceof Error ? flattenError.message : "unknown_error"}) -- position remains open and UNPROTECTED, needs manual intervention.`,
+      decision: decisionValue,
+      reasoning: decisionReasoning,
       tradeProposalId: proposalId,
     });
     await decisionClient.query("COMMIT");
+    decisionCommitted = true;
   } catch (decisionErr) {
     await decisionClient.query("ROLLBACK").catch(() => {});
     logger.error({ proposalId, decisionErr }, "execution_agent_auto_flatten_decision_log_failed");
@@ -637,10 +671,34 @@ export async function registerProtectionOrFlatten(
     decisionClient.release();
   }
 
+  // Broadcast OUTSIDE the decisionClient try/catch above, gated on
+  // decisionCommitted -- this function's DB write is itself allowed to
+  // fail-and-swallow (see the catch above), so unlike every other site in
+  // this file, reaching "after the try/catch" does NOT imply the write
+  // succeeded. Publishing here must never fire for a decision that was
+  // never durably written, and a publish() failure must never be logged
+  // under execution_agent_auto_flatten_decision_log_failed -- that event
+  // name specifically means the DB write failed, which would be
+  // misleading if the write actually succeeded and only the broadcast did not.
+  if (decisionCommitted) {
+    try {
+      publish(createEvent("agent.decision", {
+        agentName: AGENT_NAME,
+        pairId: proposal.pair_id,
+        decision: decisionValue,
+        reasoning: decisionReasoning,
+        tradeProposalId: proposalId,
+        priceAtDecision: null,
+      }));
+    } catch (err) {
+      logger.warn({ err, proposalId }, "agent_decision_publish_failed");
+    }
+  }
+
   return {
     proposalId,
     outcome: "executed",
-    reason: recoveryAlsoFailed ? "recovery_also_failed" : "auto_flattened",
+    reason: decisionValue,
     orderId,
     autoFlattened: true,
   };
