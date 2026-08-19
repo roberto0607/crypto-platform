@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { useAgentActivityStore } from "@/stores/agentActivityStore";
 import { useChatStore } from "@/stores/chatStore";
 import { connectSSE, disconnectSSE, forceReconnectSSE, type SSEHandlers } from "@/api/sse";
 
@@ -131,6 +132,15 @@ export function useSSE() {
         window.dispatchEvent(
           new CustomEvent("sse:signal.new", { detail: event.data }),
         );
+      },
+
+      // Writes into agentActivityStore (persists across panel close/reopen)
+      // rather than the window-CustomEvent pattern used above -- unlike
+      // signal.new/match.*, this has no page-local consumer; the panel is a
+      // global, always-mounted layout element (see AppLayout.tsx), so it
+      // needs state that survives regardless of what's currently rendered.
+      onAgentDecision: (event) => {
+        useAgentActivityStore.getState().addDecision(event.data, event.ts);
       },
 
       onMatchStarted: (event) => {

@@ -504,6 +504,15 @@ export interface SignalNewEvent {
   targetReason?: string;
 }
 
+export interface AgentDecisionEvent {
+  agentName: string;
+  pairId: UUID | null;
+  decision: string;
+  reasoning: string | null;
+  tradeProposalId: UUID | null;
+  priceAtDecision: DecimalString | null;
+}
+
 export type SSEEvent =
   | EventEnvelope<"order.updated", OrderUpdatedEvent>
   | EventEnvelope<"trade.created", TradeCreatedEvent>
@@ -515,6 +524,7 @@ export type SSEEvent =
   | EventEnvelope<"candle.closed", CandleClosedEvent>
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
   | EventEnvelope<"signal.new", SignalNewEvent>
+  | EventEnvelope<"agent.decision", AgentDecisionEvent>
   | EventEnvelope<"match.started", MatchStartedEvent>
   | EventEnvelope<"match.ended", MatchEndedEvent>
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
