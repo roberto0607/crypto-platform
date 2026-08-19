@@ -13,6 +13,7 @@ import { NavIcon } from "@/components/NavIcon";
 import TickerBar from "@/components/TickerBar";
 import { CompetitionBottomBar } from "@/components/CompetitionBottomBar";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
+import { AgentActivityPanel } from "@/components/AgentActivityPanel";
 import { useSSE } from "@/hooks/useSSE";
 import { useChatStore } from "@/stores/chatStore";
 
@@ -352,6 +353,12 @@ export default function AppLayout() {
           already visible via TradingPage's own bar / MatchHeaderBar. Renders
           null itself when there's no active match. */}
       <CompetitionBottomBar />
+
+      {/* Agent activity feed — global toggle button + floating panel,
+          mounted unconditionally (not inside the isTradePage-gated topbar
+          above, unlike NotificationBell) so it's reachable on every route
+          including /trade. Renders its own button; nothing else here. */}
+      <AgentActivityPanel />
     </div>
   );
 }
