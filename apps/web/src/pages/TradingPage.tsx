@@ -15,6 +15,7 @@ import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
 import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateEvent } from "@/types/api";
+import Spinner from "@/components/Spinner";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -1088,6 +1089,7 @@ async function fetchAllOpensInto(
 ───────────────────────────────────────── */
 export default function TradingPage() {
   const pairs = useAppStore((s) => s.pairs);
+  const pairsLoaded = useAppStore((s) => s.pairsLoaded);
   const wallets = useAppStore((s) => s.wallets);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
@@ -1239,9 +1241,18 @@ export default function TradingPage() {
   const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
   if (!selectedPair) {
-    return (
+    // "NO PAIRS AVAILABLE" is only truthful once GET /pairs has succeeded and
+    // returned an empty list. Before the first successful fetch — or during the
+    // one render tick after pairs arrive but before the "default to first pair"
+    // effect above runs — show a spinner instead of the empty state.
+    const pairsGenuinelyEmpty = pairsLoaded && pairs.length === 0;
+    return pairsGenuinelyEmpty ? (
       <div className="flex items-center justify-center h-full text-white/30 font-mono text-sm tracking-widest">
         NO PAIRS AVAILABLE
+      </div>
+    ) : (
+      <div className="flex items-center justify-center h-full">
+        <Spinner size="lg" />
       </div>
     );
   }

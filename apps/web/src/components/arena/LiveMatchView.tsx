@@ -13,6 +13,7 @@ import { MatchChatPanel } from "./MatchChatPanel";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
 import type { Position, MatchEndedEvent, MatchPnlUpdateEvent, MessageReceivedEvent } from "@/types/api";
+import Spinner from "@/components/Spinner";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -728,6 +729,7 @@ interface LiveMatchViewProps {
 export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchViewProps) {
     const userId = useAuthStore((s) => s.user?.id) ?? "";
     const pairs = useAppStore((s) => s.pairs);
+    const pairsLoaded = useAppStore((s) => s.pairsLoaded);
     const wallets = useAppStore((s) => s.wallets);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const selectPair = useTradingStore((s) => s.selectPair);
@@ -981,7 +983,16 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
     if (!selectedPair) {
-        return <div className="lmv-wrap" style={{ alignItems: "center", justifyContent: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>NO PAIRS AVAILABLE</div>;
+        // Show the empty state only once GET /pairs has succeeded and come back
+        // empty; until then (or during the tick before the select-first-pair
+        // effect runs) show a spinner. ArenaPage renders this view directly with
+        // no pairs gate of its own, so the guard has to live here.
+        const pairsGenuinelyEmpty = pairsLoaded && pairs.length === 0;
+        return (
+            <div className="lmv-wrap" style={{ alignItems: "center", justifyContent: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+                {pairsGenuinelyEmpty ? "NO PAIRS AVAILABLE" : <Spinner size="md" />}
+            </div>
+        );
     }
 
     return (

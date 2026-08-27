@@ -14,6 +14,10 @@ interface AppState {
   userStatus: UserStatus | null;
   riskStatus: RiskStatus | null;
   pairs: TradingPair[];
+  // Flips true after the first successful GET /pairs and stays true. Lets
+  // consumers tell "pairs haven't loaded yet" apart from "pairs loaded and
+  // came back empty" — the two were previously indistinguishable ([] for both).
+  pairsLoaded: boolean;
   assets: Asset[];
   wallets: Wallet[];
   selectedPairId: string | null;
@@ -41,6 +45,7 @@ export const useAppStore = create<AppState>((set) => ({
   userStatus: null,
   riskStatus: null,
   pairs: [],
+  pairsLoaded: false,
   assets: [],
   wallets: [],
   selectedPairId: null,
@@ -59,7 +64,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Test-fixture pairs are excluded server-side (GET /pairs only returns
   // pairs with an active exchange_symbol_map row) — no client-side filter
   // needed. See pairRepo.ts's listActivePairsForDisplay().
-  setPairs: (pairs) => set({ pairs }),
+  setPairs: (pairs) => set({ pairs, pairsLoaded: true }),
   setAssets: (assets) => set({ assets }),
   setWallets: (wallets) => set({ wallets }),
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
