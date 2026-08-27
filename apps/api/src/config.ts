@@ -207,4 +207,20 @@ export const config = {
   // agent places carries -- executor.ts doesn't re-check it separately.
   // Default disabled, same as every other agent flag here.
   executionAgentEnabled: booleanEnv("EXECUTION_AGENT_ENABLED", false),
+
+  // ── Gate 1f: News Agent ──
+  // Deliberately NOT requireEnv()'d -- same reasoning as anthropicApiKey
+  // above: this key is only needed by the News Agent's job (Gate 1f), an
+  // optional, schedulable background feature, not core to server boot. A
+  // missing key degrades to a logged warning inside the job, it doesn't
+  // block server boot.
+  newsApiKey: process.env.NEWS_API_KEY || "",
+
+  // Event-driven at the gate (Execution Agent's runPhase1 reads
+  // pair_news_flags synchronously), but the flag itself gates the
+  // *populating* job (newsAgentJob.ts) -- same reasoning as
+  // scannerAgentEnabled: real API cost/quota per run, so it must be
+  // opt-in per environment. Default disabled, same as every other agent
+  // flag here.
+  newsAgentEnabled: booleanEnv("NEWS_AGENT_ENABLED", false),
 };

@@ -14,6 +14,7 @@ import type { JobContext } from "../../jobTypes";
 const mockConfig = vi.hoisted(() => ({
   scannerAgentEnabled: true,
   chartAnalysisAgentEnabled: true,
+  newsAgentEnabled: false,
 }));
 vi.mock("../../../config", () => ({ config: mockConfig }));
 
@@ -48,6 +49,7 @@ describe("agentHealthWatchdogJob", () => {
     vi.setSystemTime(NOW);
     mockConfig.scannerAgentEnabled = true;
     mockConfig.chartAnalysisAgentEnabled = true;
+    mockConfig.newsAgentEnabled = false;
   });
 
   afterEach(() => {
@@ -132,5 +134,68 @@ describe("agentHealthWatchdogJob", () => {
       }),
       "agent_health_watchdog_unhealthy",
     );
+  });
+
+  describe("news-agent entry", () => {
+    // Isolate these assertions from scanner/chart-analysis's own
+    // query/log activity so call/log counts here mean exactly what they
+    // say, rather than 1-of-3 or 2-of-3.
+    beforeEach(() => {
+      mockConfig.scannerAgentEnabled = false;
+      mockConfig.chartAnalysisAgentEnabled = false;
+      mockConfig.newsAgentEnabled = true;
+    });
+
+    it("logs nothing when pair_news_flags.updated_at (MAX) is recent, within the 35-minute threshold -- queries pair_news_flags, not agent_run_logs", async () => {
+      mockQuery.mockResolvedValue({ rows: [{ max: minutesAgo(10) }] });
+
+      await agentHealthWatchdogJob.run(fakeCtx());
+
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0]![0]).toContain("pair_news_flags");
+      expect(mockQuery.mock.calls[0]![0]).not.toContain("agent_run_logs");
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it("logs agent_health_watchdog_unhealthy with agentName='news-agent' when the last update is older than 35 minutes", async () => {
+      mockQuery.mockResolvedValue({ rows: [{ max: minutesAgo(36) }] });
+
+      await agentHealthWatchdogJob.run(fakeCtx());
+
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentName: "news-agent",
+          lastSuccessAt: minutesAgo(36).toISOString(),
+          minutesSinceLastSuccess: 36,
+        }),
+        "agent_health_watchdog_unhealthy",
+      );
+    });
+
+    it("logs with lastSuccessAt: null, minutesSinceLastSuccess: null when pair_news_flags has never been updated (MAX returns null)", async () => {
+      mockQuery.mockResolvedValue({ rows: [{ max: null }] });
+
+      await agentHealthWatchdogJob.run(fakeCtx());
+
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentName: "news-agent",
+          lastSuccessAt: null,
+          minutesSinceLastSuccess: null,
+        }),
+        "agent_health_watchdog_unhealthy",
+      );
+    });
+
+    it("skips the query entirely for news-agent when config.newsAgentEnabled is false, and does not log", async () => {
+      mockConfig.newsAgentEnabled = false;
+
+      await agentHealthWatchdogJob.run(fakeCtx());
+
+      expect(mockQuery).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
   });
 });
