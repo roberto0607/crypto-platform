@@ -16,6 +16,7 @@ import { symbolRefreshJob } from "./symbolRefreshJob";
 import { scannerAgentJob } from "./scannerAgentJob";
 import { executionAgentRecoveryJob } from "./executionAgentRecoveryJob";
 import { agentHealthWatchdogJob } from "./agentHealthWatchdogJob";
+import { newsAgentJob } from "./newsAgentJob";
 import type { JobDefinition } from "../jobTypes";
 
 export const allJobs: JobDefinition[] = [
@@ -37,4 +38,5 @@ export const allJobs: JobDefinition[] = [
     scannerAgentJob,
     executionAgentRecoveryJob,
     agentHealthWatchdogJob,
+    newsAgentJob,
 ];

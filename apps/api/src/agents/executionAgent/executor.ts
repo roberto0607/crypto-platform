@@ -237,6 +237,52 @@ async function runPhase1(
       };
     }
 
+    // ── News Agent safety gate (Gate 1f) ──
+    // Independent of price/tolerance -- checked first among the two
+    // pre-execution guards since it's a single indexed local SELECT on
+    // the already-open `client` transaction (pair_news_flags.pair_id is
+    // its primary key), cheaper than resolveSnapshot's external-feed
+    // round trip below. Deliberately its own try/catch, NOT sharing
+    // failExecutionTx's caller-level error handling with the stale-price
+    // guard immediately after this one: the two guards have opposite
+    // failure directions on purpose. An unreadable/stale PRICE fails
+    // CLOSED (reject) -- a wrong price could let real risk exceed what
+    // Risk Agent approved. An unreachable NEWS check fails OPEN (proceed
+    // as not-flagged) -- a broken check is not itself evidence of
+    // negative news (see the design lock recon: this gate can only ever
+    // BLOCK, never approve, so the safe default on its own failure is to
+    // not block). newsFlagged stays false on any query error, so the
+    // reject branch below can only ever fire on a genuine flagged row,
+    // never on a caught exception -- structurally, not just by
+    // convention.
+    let newsFlagged = false;
+    let newsFlagReason: string | null = null;
+    try {
+      const { rows: newsRows } = await client.query<{ reason: string | null }>(
+        `SELECT reason FROM pair_news_flags
+         WHERE pair_id = $1 AND flagged_negative = true AND expires_at > now()`,
+        [proposal.pair_id],
+      );
+      if (newsRows[0]) {
+        newsFlagged = true;
+        newsFlagReason = newsRows[0].reason;
+      }
+    } catch (err) {
+      logger.warn({ err, proposalId, pairId: proposal.pair_id }, "news_agent_check_failed");
+    }
+
+    if (newsFlagged) {
+      return {
+        terminal: await failExecutionTx(
+          client,
+          proposal,
+          "news_agent_negative_flag",
+          `Rejected: pair_news_flags reports negative news for this pair (reason="${newsFlagReason ?? "unknown"}").`,
+          { pairId: proposal.pair_id, newsFlagReason },
+        ),
+      };
+    }
+
     // ── Tolerance check ──
     const snapshot = await resolveSnapshot(botUserId, proposal.pair_id);
 

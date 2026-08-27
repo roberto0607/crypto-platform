@@ -112,6 +112,31 @@ function callsMatching(substr: string) {
   return mockClientQuery.mock.calls.filter(([sql]) => typeof sql === "string" && sql.includes(substr));
 }
 
+/**
+ * Layers a pair_news_flags SELECT response on top of the base proposal-row
+ * setup, for the News Agent gate tests. `newsFlagBehavior`: a row shape
+ * (flagged, with a reason) to simulate a genuine flagged match; the string
+ * "not_flagged" to simulate a real query that finds no matching row; or
+ * "throw" to simulate the SELECT itself failing (the fail-open case).
+ */
+function setupClientWithNewsFlag(
+  proposalRow: Record<string, unknown> | undefined,
+  newsFlagBehavior: { reason: string | null } | "not_flagged" | "throw",
+) {
+  mockClientQuery.mockImplementation((sql: string) => {
+    if (typeof sql !== "string") return Promise.resolve({ rows: [] });
+    if (sql.includes("FROM pair_news_flags")) {
+      if (newsFlagBehavior === "throw") return Promise.reject(new Error("connection_terminated"));
+      if (newsFlagBehavior === "not_flagged") return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [newsFlagBehavior] });
+    }
+    if (sql.includes("FROM trade_proposals") && sql.includes("FOR UPDATE")) {
+      return Promise.resolve({ rows: proposalRow ? [proposalRow] : [] });
+    }
+    return Promise.resolve({ rows: [] });
+  });
+}
+
 function entryOrderResolves(orderId: string) {
   return { order: { id: orderId }, fills: [], snapshot: {}, fromIdempotencyCache: false };
 }
@@ -278,6 +303,75 @@ describe("executeTradeProposal — Phase 1 missing qty / stop_distance_pct guard
     expect(result.reason).toBe("missing_qty_or_stop_distance");
     expect(mockPlaceOrderWithSnapshot).not.toHaveBeenCalled();
     expect(mockCreateTriggerOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe("executeTradeProposal — Phase 1 News Agent safety gate (Gate 1f)", () => {
+  it("execution_failed('news_agent_negative_flag') when pair_news_flags reports flagged_negative=true and not expired -- rejects BEFORE resolveSnapshot is ever called, reasoning references the pair_news_flags.reason value, no order placed, no createTriggerOrder call", async () => {
+    setupClientWithNewsFlag(baseProposalRow(), { reason: "APITube sentiment.overall: polarity=negative, score=-0.80" });
+
+    const result = await executeTradeProposal(PROPOSAL_ID);
+
+    expect(result.outcome).toBe("execution_failed");
+    expect(result.reason).toBe("news_agent_negative_flag");
+    expect(callsMatching("outcome = 'execution_failed'")).toHaveLength(1);
+
+    const decisionInsert = callsMatching("INSERT INTO agent_decisions").find(
+      ([, params]) => (params as unknown[])[2] === "execution_failed",
+    );
+    expect(decisionInsert).toBeDefined();
+    const reasoning = decisionInsert![1][3] as string;
+    expect(reasoning).toContain("APITube sentiment.overall: polarity=negative, score=-0.80");
+
+    // Proves the check-first ordering claimed in executor.ts's own
+    // comment -- a genuinely flagged pair rejects without ever reaching
+    // the (more expensive, external-feed) snapshot resolution.
+    expect(mockResolveSnapshot).not.toHaveBeenCalled();
+    expect(mockPlaceOrderWithSnapshot).not.toHaveBeenCalled();
+    expect(mockCreateTriggerOrder).not.toHaveBeenCalled();
+  });
+
+  it("proceeds normally -- resolveSnapshot IS called, no rejection -- when pair_news_flags has no matching row for this pair", async () => {
+    setupClientWithNewsFlag(baseProposalRow(), "not_flagged");
+    mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(ORDER_ID));
+    mockCreateTriggerOrder
+      .mockResolvedValueOnce({ id: STOP_TRIGGER_ID })
+      .mockResolvedValueOnce({ id: TARGET_TRIGGER_ID });
+
+    const result = await executeTradeProposal(PROPOSAL_ID);
+
+    expect(result.outcome).toBe("executed");
+    expect(mockResolveSnapshot).toHaveBeenCalledTimes(1);
+    expect(callsMatching("outcome = 'execution_failed'")).toHaveLength(0);
+  });
+
+  it("fail-open: the pair_news_flags SELECT itself throws -- logs news_agent_check_failed via logger.warn, proceeds as NOT flagged (resolveSnapshot IS still called), does not reject", async () => {
+    setupClientWithNewsFlag(baseProposalRow(), "throw");
+    mockPlaceOrderWithSnapshot.mockResolvedValueOnce(entryOrderResolves(ORDER_ID));
+    mockCreateTriggerOrder
+      .mockResolvedValueOnce({ id: STOP_TRIGGER_ID })
+      .mockResolvedValueOnce({ id: TARGET_TRIGGER_ID });
+
+    const result = await executeTradeProposal(PROPOSAL_ID);
+
+    // The single most important assertion in this whole feature: a DB
+    // error on the news check must never turn into a rejection. If the
+    // fail-open branch were wired wrong (e.g. sharing the stale-price
+    // guard's fail-CLOSED handling), this would come back
+    // execution_failed instead of executed.
+    expect(result.outcome).toBe("executed");
+    expect(result.reason).toBeNull();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ proposalId: PROPOSAL_ID, pairId: PAIR_ID }),
+      "news_agent_check_failed",
+    );
+
+    // Proves execution genuinely continued past the gate on the error
+    // path, not just that the final result happened to look right.
+    expect(mockResolveSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockPlaceOrderWithSnapshot).toHaveBeenCalledTimes(1);
+    expect(callsMatching("outcome = 'execution_failed'")).toHaveLength(0);
   });
 });
 
@@ -567,6 +661,19 @@ describe("executeTradeProposal — Phase 2 auto-flatten outcome", () => {
 });
 
 describe("executeTradeProposal — agent.decision payload correctness", () => {
+  it("execution_failed (news_agent_negative_flag): reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
+    setupClientWithNewsFlag(baseProposalRow(), { reason: "APITube sentiment.overall: polarity=negative, score=-0.50" });
+
+    await executeTradeProposal(PROPOSAL_ID);
+
+    const inserted = insertedAgentDecisionParams("execution_failed");
+    const published = publishedAgentDecision("execution_failed");
+    expect(published).toBeDefined();
+    expect(published!.data.reasoning).toBe(inserted.reasoning);
+    expect(published!.data.tradeProposalId).toBe(inserted.tradeProposalId);
+    expect(published!.data.priceAtDecision).toBe(inserted.priceAtDecision);
+  });
+
   it("execution_failed (stale_price_source): reasoning/tradeProposalId/priceAtDecision exactly match the agent_decisions INSERT", async () => {
     setupClient(baseProposalRow());
     mockResolveSnapshot.mockResolvedValue({ bid: null, ask: null, last: "999999999", ts: "2026-01-01T00:00:00Z", source: "fallback" });
