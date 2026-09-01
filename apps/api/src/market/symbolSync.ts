@@ -13,12 +13,14 @@ import WebSocket from "ws";
 import { pool } from "../db/pool.js";
 import { autoCreateWallets } from "../wallets/autoWallets.js";
 import { logger as rootLogger } from "../observability/logContext.js";
+import { config } from "../config.js";
 
 const logger = rootLogger.child({ module: "symbolSync" });
 
 const KRAKEN_BASE_URL = "https://api.kraken.com/0/public";
 const COINBASE_BASE_URL = "https://api.coinbase.com/api/v3/brokerage/market/products";
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
+const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 
 /**
  * Kraken's REST AssetPairs "wsname" field is unreliable for legacy-coded
@@ -31,9 +33,34 @@ const KRAKEN_WS_SYMBOL_OVERRIDES: Record<string, string> = {
     "XBT/USD": "BTC/USD",
 };
 
-/** Curated universe size — shared by the one-time backfill script and the
- *  periodic refresh job so they never drift apart. */
-export const DEFAULT_SYNC_LIMIT = 75;
+/** Market-cap rank cutoff for pair eligibility — a Kraken ∩ Coinbase pair
+ *  is synced / kept active only if its base asset sits within the top
+ *  MARKET_CAP_RANK_CUTOFF by market cap (CoinGecko /coins/markets). Shared
+ *  by the periodic refresh job and the one-time backfill/prune scripts so
+ *  they never drift. Replaces DEFAULT_SYNC_LIMIT (the old top-75-by-24h-
+ *  volume gate), which had no symmetric prune and let the active set grow
+ *  without bound. */
+export const MARKET_CAP_RANK_CUTOFF = 30;
+
+/** Consecutive symbol-refresh runs (6h each) an active pair must sit
+ *  outside the top MARKET_CAP_RANK_CUTOFF before prunePairs() deactivates
+ *  it. 12 × 6h = 3 days — long enough that a coin hovering at the rank
+ *  boundary doesn't flicker is_active on/off run to run. */
+export const MCAP_PRUNE_GRACE_RUNS = 12;
+
+/** The "this pair holds nothing a user could be stranded by" predicate —
+ *  no non-zero position, no OPEN/PARTIALLY_FILLED order, no ACTIVE
+ *  trigger. Shared verbatim by prunePairs()'s Layer-A nominee filter and
+ *  deactivatePairsGuarded()'s Layer-B atomic guard so the two can never
+ *  drift. References the `tp` alias, which both call sites use. */
+export const PAIR_HOLDS_NOTHING_LIVE_SQL = `
+    NOT EXISTS (SELECT 1 FROM positions p
+                 WHERE p.pair_id = tp.id AND p.base_qty <> 0)
+    AND NOT EXISTS (SELECT 1 FROM orders o
+                     WHERE o.pair_id = tp.id
+                       AND o.status IN ('OPEN', 'PARTIALLY_FILLED'))
+    AND NOT EXISTS (SELECT 1 FROM trigger_orders t
+                     WHERE t.pair_id = tp.id AND t.status = 'ACTIVE')`;
 
 /** Default decimals for newly created assets — matches the existing BTC/ETH/SOL
  *  convention (assets.decimals) and wallets.balance's NUMERIC(28,8) precision.
@@ -183,16 +210,106 @@ export async function fetchCoinbaseCandidates(): Promise<CoinbaseCandidate[]> {
         }));
 }
 
+interface CoinGeckoMarketRow {
+    id: string;
+    symbol: string;
+    name: string;
+    market_cap_rank: number | null;
+}
+
 /**
- * Fetch Kraken + Coinbase candidates, intersect on base symbol, live-verify
- * Kraken WS symbols, and rank by Coinbase's approximate_quote_24h_volume
- * (already USD-denominated; Kraken's AssetPairs has no volume field, and
- * ranking only needs to apply within the already-intersected set).
+ * Fetch the top `topN` coins by market cap from CoinGecko, returned as a
+ * Map<UPPERCASE_SYMBOL, market_cap_rank>. This is the new pair-eligibility
+ * gate for the symbol-refresh job: a Kraken INTERSECT Coinbase pair is
+ * synced / kept active only if its base symbol is a key in this map (see
+ * discoverSyncCandidates). Replaces the old "top 75 by Coinbase 24h
+ * volume" ranking, which only ever grew the active set because nothing
+ * ever pruned a pair that merely fell down the ranking.
+ *
+ * Keyless by default (config.coingeckoApiKey empty); a Demo key, if set,
+ * is sent as x-cg-demo-api-key. One call per 6h run either way.
+ *
+ * FAIL-LOUD by design -- every failure mode throws:
+ *   - non-2xx HTTP / network error / timeout / non-array body
+ *   - fewer than `topN` well-formed rows: an empty or truncated list
+ *     must NEVER be read as "nothing is eligible", because that would
+ *     make the prune pass try to deactivate every active pair.
+ * discoverSyncCandidates does not catch this, so a CoinGecko outage
+ * fails the entire symbol-refresh run -- that run adds nothing and
+ * prunes nothing, and the job retries in 6h. Deliberately safer than
+ * falling back to volume ranking, which would silently re-admit
+ * long-tail pairs for the duration of the outage.
  */
-export async function discoverSyncCandidates(limit: number): Promise<SyncCandidate[]> {
-    const [krakenRaw, coinbase] = await Promise.all([
+export async function fetchTopMarketCapSymbols(topN: number): Promise<Map<string, number>> {
+    const url = `${COINGECKO_BASE_URL}/coins/markets`
+        + `?vs_currency=usd&order=market_cap_desc&per_page=${topN}&page=1&sparkline=false`;
+
+    const headers: Record<string, string> = {};
+    if (config.coingeckoApiKey) headers["x-cg-demo-api-key"] = config.coingeckoApiKey;
+
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+        throw new Error(`CoinGecko coins/markets HTTP ${res.status} ${res.statusText}`);
+    }
+
+    const body = await res.json() as unknown;
+    if (!Array.isArray(body)) {
+        throw new Error("CoinGecko coins/markets returned a non-array body");
+    }
+    const rows = body as CoinGeckoMarketRow[];
+
+    // UPPERCASE symbol -> best (lowest) market_cap_rank. Rows arrive
+    // sorted by rank ascending, so the first sighting of a symbol is its
+    // best rank; a later duplicate (two coins sharing a ticker) is a
+    // lower-ranked impostor and is ignored. validRows counts well-formed
+    // rows independently of the map so a rare top-N ticker collision
+    // can't trip the truncation guard below.
+    const bySymbol = new Map<string, number>();
+    let validRows = 0;
+    for (const row of rows) {
+        if (typeof row.symbol !== "string" || typeof row.market_cap_rank !== "number") continue;
+        validRows++;
+        const symbol = row.symbol.toUpperCase();
+        if (!bySymbol.has(symbol)) bySymbol.set(symbol, row.market_cap_rank);
+    }
+
+    if (validRows < topN) {
+        throw new Error(
+            `CoinGecko coins/markets returned only ${validRows} well-formed rows (expected >= ${topN}) `
+            + `-- refusing to run the eligibility gate on a truncated list`,
+        );
+    }
+
+    return bySymbol;
+}
+
+/**
+ * Fetch Kraken + Coinbase candidates plus CoinGecko's top-`cutoff`
+ * market-cap set, intersect all three on base symbol, live-verify the
+ * surviving Kraken WS symbols, and return them ordered by market-cap rank
+ * ascending.
+ *
+ * The market-cap intersection is what bounds the WS-verification round
+ * trip now (~20-30 symbols) — the old "+25 buffer then slice to N" logic
+ * is gone: every pair that passes Kraken ∩ Coinbase ∩ top-`cutoff` is
+ * verified, and whichever verify are returned. A few WS-verification
+ * failures just yield a slightly smaller set; there is deliberately no
+ * back-fill from rank cutoff+1.
+ *
+ * volumeUsd24h is still populated on each SyncCandidate (from Coinbase)
+ * but is informational only now — market-cap rank is the ranking signal.
+ *
+ * If fetchTopMarketCapSymbols throws (CoinGecko outage / truncated list),
+ * Promise.all rejects and this function throws — the whole symbol-refresh
+ * run fails, adding and pruning nothing that cycle.
+ */
+export async function discoverSyncCandidates(
+    cutoff: number = MARKET_CAP_RANK_CUTOFF,
+): Promise<SyncCandidate[]> {
+    const [krakenRaw, coinbase, mcapRank] = await Promise.all([
         fetchKrakenCandidates(),
         fetchCoinbaseCandidates(),
+        fetchTopMarketCapSymbols(cutoff),
     ]);
 
     const coinbaseBySymbol = new Map(coinbase.map((c) => [c.baseSymbol, c]));
@@ -201,18 +318,19 @@ export async function discoverSyncCandidates(limit: number): Promise<SyncCandida
         if (coinbaseBySymbol.has(k.baseSymbol)) krakenBySymbol.set(k.baseSymbol, k);
     }
 
-    // Rank by volume BEFORE live-verifying — only the top `limit` (plus a
-    // buffer, since a few may fail verification) need a real WS round trip,
-    // not the entire ~300-pair intersection.
-    const ranked = [...krakenBySymbol.entries()]
+    // Kraken ∩ Coinbase ∩ top-`cutoff` by market cap, ordered by rank
+    // ascending. The market-cap filter is what keeps the WS-verification
+    // batch small (~20-30), so the whole eligible set is verified — no
+    // pre-verification slice / buffer.
+    const eligible = [...krakenBySymbol.entries()]
+        .filter(([baseSymbol]) => mcapRank.has(baseSymbol))
         .map(([baseSymbol, kraken]) => ({ baseSymbol, kraken, cb: coinbaseBySymbol.get(baseSymbol)! }))
-        .sort((a, b) => b.cb.volumeUsd24h - a.cb.volumeUsd24h)
-        .slice(0, limit + 25);
+        .sort((a, b) => mcapRank.get(a.baseSymbol)! - mcapRank.get(b.baseSymbol)!);
 
-    const verified = await verifyKrakenWsSymbols(ranked.map((r) => r.kraken.wsCandidate));
+    const verified = await verifyKrakenWsSymbols(eligible.map((r) => r.kraken.wsCandidate));
 
     const intersected: SyncCandidate[] = [];
-    for (const { baseSymbol, kraken, cb } of ranked) {
+    for (const { baseSymbol, kraken, cb } of eligible) {
         if (!verified.has(kraken.wsCandidate)) continue;
         intersected.push({
             ourSymbol: `${baseSymbol}/USD`,
@@ -225,7 +343,9 @@ export async function discoverSyncCandidates(limit: number): Promise<SyncCandida
         });
     }
 
-    return intersected.slice(0, limit);
+    // Defensive only — `eligible` can't exceed `cutoff` distinct symbols
+    // by construction. Kept per the "leave the final slice as-is" scope.
+    return intersected.slice(0, cutoff);
 }
 
 export interface UpsertResult {
@@ -348,8 +468,10 @@ export async function applyCandidates(candidates: SyncCandidate[]): Promise<Upse
 
 /** Convenience wrapper for callers that always want to commit immediately
  *  (the periodic refresh job — see jobs/definitions/symbolRefreshJob.ts). */
-export async function syncSymbols(limit: number): Promise<{ candidates: SyncCandidate[]; results: UpsertResult[] }> {
-    const candidates = await discoverSyncCandidates(limit);
+export async function syncSymbols(
+    cutoff: number = MARKET_CAP_RANK_CUTOFF,
+): Promise<{ candidates: SyncCandidate[]; results: UpsertResult[] }> {
+    const candidates = await discoverSyncCandidates(cutoff);
     const results = await applyCandidates(candidates);
     return { candidates, results };
 }
@@ -361,16 +483,23 @@ export interface DelistingResult {
 
 /**
  * Check every currently-active exchange_symbol_map row against a fresh
- * fetch of each exchange's online USD pairs. A pair that drops out of the
- * "top N by volume" ranking is NOT a delisting — this checks the full raw
+ * fetch of each exchange's online USD pairs. A pair merely dropping out
+ * of the top-MARKET_CAP_RANK_CUTOFF eligibility ranking is NOT a delisting
+ * (that's the prunePairs() grace-counter path) — this checks the full raw
  * listing (fetchKrakenCandidates/fetchCoinbaseCandidates, unfiltered by
  * intersection or rank) for each exchange independently, so a pair that's
- * merely gone quiet in volume stays mapped and tradeable.
+ * merely fallen down the ranking stays mapped and tradeable.
  *
  * Deactivates one exchange's mapping row at a time — trading_pairs.is_active
  * only flips off once BOTH exchange rows are inactive, so a pair delisted on
  * one exchange but still live on the other keeps trading (the whole point of
  * dual-sourcing Kraken + Coinbase).
+ *
+ * NOTE: unlike prunePairs(), this has NO held-position safety gate. A
+ * genuine two-exchange delisting means the asset is untradeable on any
+ * venue we source, so deactivating it even with an open position is
+ * correct — there is nothing left to trade against. The resulting
+ * can't-close-a-stranded-position gap is pre-existing; see docs/followups.md.
  */
 export async function checkDelistings(client: PoolClient): Promise<DelistingResult> {
     const [krakenRaw, coinbaseRaw] = await Promise.all([
@@ -422,4 +551,129 @@ export async function checkDelistings(client: PoolClient): Promise<DelistingResu
     }
 
     return { exchangeRowsDeactivated, pairsDeactivated };
+}
+
+export interface PruneResult {
+    missesReset: number;        // active pairs back in the top-N (counter was > 0)
+    missesIncremented: number;  // active pairs outside the top-N this run
+    pairsDeactivated: number;   // past the grace window AND cleared the safety gate
+}
+
+/**
+ * LAYER B of the pair-deactivation safety gate. Atomically flips
+ * is_active = false for exactly `pairIds`, with PAIR_HOLDS_NOTHING_LIVE_SQL
+ * IN THE UPDATE's OWN WHERE clause — the check and the write are one
+ * statement (no TOCTOU), and a bug in a *separate* safety query cannot
+ * cause a wrong deactivation.
+ *
+ * Returns the IDs actually deactivated. If that is fewer than `pairIds`,
+ * a caller's Layer-A filter admitted a pair that holds something live:
+ * this logs the offenders and THROWS, so the caller's transaction rolls
+ * back rather than half-applying. It never silently skips.
+ */
+export async function deactivatePairsGuarded(client: PoolClient, pairIds: string[]): Promise<string[]> {
+    if (pairIds.length === 0) return [];
+    const { rows } = await client.query<{ id: string }>(
+        `UPDATE trading_pairs tp
+            SET is_active = false
+          WHERE tp.id = ANY($1::uuid[])
+            AND ${PAIR_HOLDS_NOTHING_LIVE_SQL}
+          RETURNING tp.id`,
+        [pairIds],
+    );
+    if (rows.length !== pairIds.length) {
+        const deactivated = new Set(rows.map((r) => r.id));
+        const blocked = pairIds.filter((id) => !deactivated.has(id));
+        logger.error({ blockedPairIds: blocked }, "pair_deactivation_safety_assertion_failed");
+        throw new Error(
+            `deactivatePairsGuarded: safety assertion failed — ${blocked.length} of ${pairIds.length} `
+            + `target pair(s) hold a live position / order / trigger and were refused by the atomic `
+            + `guard. Rolling back; no pairs deactivated.`,
+        );
+    }
+    return rows.map((r) => r.id);
+}
+
+/**
+ * Market-cap prune pass for the symbol-refresh job. In one transaction:
+ *   1. reset mcap_rank_misses to 0 for active pairs back in the top-N
+ *   2. increment it for active pairs outside the top-N
+ *   3. Layer A — nominate active pairs past MCAP_PRUNE_GRACE_RUNS that
+ *      hold nothing live (a held pair is never nominated)
+ *   4. Layer B — deactivatePairsGuarded re-checks atomically and throws
+ *      on any mismatch
+ *
+ * `eligibleSymbols` defaults to the current top-MARKET_CAP_RANK_CUTOFF
+ * set from CoinGecko (its own fetch — one extra call per 6h run). Tests
+ * and the one-time backlog script inject their own set.
+ *
+ * Throws (→ job run FAILED, last_error persisted) on: CoinGecko failure,
+ * an empty eligible set, or a Layer-B assertion mismatch. Rolls back
+ * whole on any error — never half-applies.
+ */
+export async function prunePairs(eligibleSymbols?: Set<string>): Promise<PruneResult> {
+    const eligible = eligibleSymbols
+        ?? new Set((await fetchTopMarketCapSymbols(MARKET_CAP_RANK_CUTOFF)).keys());
+
+    // An empty set would mark every active pair as a miss and march the
+    // whole book toward deactivation. fetchTopMarketCapSymbols already
+    // throws on a truncated list; this guards a caller-injected set.
+    if (eligible.size === 0) {
+        throw new Error("prunePairs: refusing to run with an empty eligible-symbol set");
+    }
+
+    const eligibleArr = [...eligible];
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+
+        const reset = await client.query(
+            `UPDATE trading_pairs tp
+                SET mcap_rank_misses = 0
+               FROM assets a
+              WHERE a.id = tp.base_asset_id
+                AND tp.is_active = true
+                AND tp.mcap_rank_misses <> 0
+                AND a.symbol = ANY($1::text[])`,
+            [eligibleArr],
+        );
+
+        const incremented = await client.query(
+            `UPDATE trading_pairs tp
+                SET mcap_rank_misses = mcap_rank_misses + 1
+               FROM assets a
+              WHERE a.id = tp.base_asset_id
+                AND tp.is_active = true
+                AND NOT (a.symbol = ANY($1::text[]))`,
+            [eligibleArr],
+        );
+
+        // Layer A — past the grace window AND holding nothing live.
+        const { rows: nominees } = await client.query<{ id: string; symbol: string }>(
+            `SELECT tp.id, tp.symbol
+               FROM trading_pairs tp
+              WHERE tp.is_active = true
+                AND tp.mcap_rank_misses >= $1
+                AND ${PAIR_HOLDS_NOTHING_LIVE_SQL}`,
+            [MCAP_PRUNE_GRACE_RUNS],
+        );
+
+        // Layer B — atomic re-check + assertion.
+        const deactivatedIds = await deactivatePairsGuarded(client, nominees.map((n) => n.id));
+        for (const n of nominees) {
+            logger.info({ pairSymbol: n.symbol, pairId: n.id }, "mcap_prune_pair_deactivated");
+        }
+
+        await client.query("COMMIT");
+        return {
+            missesReset: reset.rowCount ?? 0,
+            missesIncremented: incremented.rowCount ?? 0,
+            pairsDeactivated: deactivatedIds.length,
+        };
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 }

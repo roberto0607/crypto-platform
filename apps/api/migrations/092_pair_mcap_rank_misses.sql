@@ -1,0 +1,47 @@
+-- ============================================================
+-- 092_pair_mcap_rank_misses.sql
+-- Grace-period counter for the market-cap pair-eligibility prune.
+-- ============================================================
+--
+-- Context:
+--   The symbol-refresh job (jobs/definitions/symbolRefreshJob.ts) is
+--   moving its pair-eligibility gate from "top 75 by Coinbase 24h
+--   volume" to "Kraken INTERSECT Coinbase INTERSECT top-30 by market
+--   cap" (CoinGecko). Volume ranking only ever ADDED pairs --
+--   checkDelistings() deactivates a pair only on a genuine
+--   two-exchange delisting, never on a ranking drop -- so the active
+--   set grew without bound (209 active trading_pairs against a limit
+--   of 75). Market-cap ranking needs a symmetric prune: a pair that
+--   falls out of the top 30 should eventually be deactivated again.
+--
+--   Market-cap rank right at a rank-30 cutoff is noisy -- a coin at
+--   rank 27-34 crosses the line day to day. Deactivating immediately
+--   would flip trading_pairs.is_active on/off every 6h, churning the
+--   Kraken/Coinbase WS subscriptions (symbolRegistry.ts is
+--   is_active-gated) and restarting candle ingestion each time. This
+--   counter implements a grace period instead: each symbol-refresh run
+--   increments it for an active pair NOT in the current top 30, resets
+--   it to 0 for pairs that ARE, and the prune pass only deactivates a
+--   pair once the counter crosses a threshold (~12 consecutive misses,
+--   about 3 days at the 6h cadence).
+--
+--   Additive only. NOT NULL DEFAULT 0 -- every existing row starts at
+--   zero misses and there is zero behaviour change until the prune
+--   logic ships (Phase 4). A constant DEFAULT is a metadata-only add
+--   in Postgres (no table rewrite), and trading_pairs is ~200 rows
+--   regardless.
+--
+-- Paired code changes land in later phases, NOT this migration's PR:
+--   - market/symbolSync.ts                  : increment/reset the
+--     counter in the new prune pass; the two-layer safety gate
+--     (candidate filter + atomic assertion) that guarantees a pair
+--     with an open position / open order / armed trigger is never
+--     deactivated
+--   - jobs/definitions/symbolRefreshJob.ts  : wire the prune pass in
+--   - scripts/prunePairs.ts (new)           : one-time dry-run-first
+--     prune of the existing backlog, mirroring
+--     scripts/backfillExchangeSymbols.ts
+-- ============================================================
+
+ALTER TABLE trading_pairs
+    ADD COLUMN IF NOT EXISTS mcap_rank_misses INTEGER NOT NULL DEFAULT 0;
