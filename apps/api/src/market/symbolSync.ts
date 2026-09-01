@@ -42,6 +42,26 @@ const KRAKEN_WS_SYMBOL_OVERRIDES: Record<string, string> = {
  *  without bound. */
 export const MARKET_CAP_RANK_CUTOFF = 30;
 
+/** Consecutive symbol-refresh runs (6h each) an active pair must sit
+ *  outside the top MARKET_CAP_RANK_CUTOFF before prunePairs() deactivates
+ *  it. 12 × 6h = 3 days — long enough that a coin hovering at the rank
+ *  boundary doesn't flicker is_active on/off run to run. */
+export const MCAP_PRUNE_GRACE_RUNS = 12;
+
+/** The "this pair holds nothing a user could be stranded by" predicate —
+ *  no non-zero position, no OPEN/PARTIALLY_FILLED order, no ACTIVE
+ *  trigger. Shared verbatim by prunePairs()'s Layer-A nominee filter and
+ *  deactivatePairsGuarded()'s Layer-B atomic guard so the two can never
+ *  drift. References the `tp` alias, which both call sites use. */
+const PAIR_HOLDS_NOTHING_LIVE_SQL = `
+    NOT EXISTS (SELECT 1 FROM positions p
+                 WHERE p.pair_id = tp.id AND p.base_qty <> 0)
+    AND NOT EXISTS (SELECT 1 FROM orders o
+                     WHERE o.pair_id = tp.id
+                       AND o.status IN ('OPEN', 'PARTIALLY_FILLED'))
+    AND NOT EXISTS (SELECT 1 FROM trigger_orders t
+                     WHERE t.pair_id = tp.id AND t.status = 'ACTIVE')`;
+
 /** Default decimals for newly created assets — matches the existing BTC/ETH/SOL
  *  convention (assets.decimals) and wallets.balance's NUMERIC(28,8) precision.
  *  Not derived per-asset from Kraken/Coinbase (their reported decimals vary and
@@ -463,16 +483,23 @@ export interface DelistingResult {
 
 /**
  * Check every currently-active exchange_symbol_map row against a fresh
- * fetch of each exchange's online USD pairs. A pair that drops out of the
- * "top N by volume" ranking is NOT a delisting — this checks the full raw
+ * fetch of each exchange's online USD pairs. A pair merely dropping out
+ * of the top-MARKET_CAP_RANK_CUTOFF eligibility ranking is NOT a delisting
+ * (that's the prunePairs() grace-counter path) — this checks the full raw
  * listing (fetchKrakenCandidates/fetchCoinbaseCandidates, unfiltered by
  * intersection or rank) for each exchange independently, so a pair that's
- * merely gone quiet in volume stays mapped and tradeable.
+ * merely fallen down the ranking stays mapped and tradeable.
  *
  * Deactivates one exchange's mapping row at a time — trading_pairs.is_active
  * only flips off once BOTH exchange rows are inactive, so a pair delisted on
  * one exchange but still live on the other keeps trading (the whole point of
  * dual-sourcing Kraken + Coinbase).
+ *
+ * NOTE: unlike prunePairs(), this has NO held-position safety gate. A
+ * genuine two-exchange delisting means the asset is untradeable on any
+ * venue we source, so deactivating it even with an open position is
+ * correct — there is nothing left to trade against. The resulting
+ * can't-close-a-stranded-position gap is pre-existing; see docs/followups.md.
  */
 export async function checkDelistings(client: PoolClient): Promise<DelistingResult> {
     const [krakenRaw, coinbaseRaw] = await Promise.all([
@@ -524,4 +551,129 @@ export async function checkDelistings(client: PoolClient): Promise<DelistingResu
     }
 
     return { exchangeRowsDeactivated, pairsDeactivated };
+}
+
+export interface PruneResult {
+    missesReset: number;        // active pairs back in the top-N (counter was > 0)
+    missesIncremented: number;  // active pairs outside the top-N this run
+    pairsDeactivated: number;   // past the grace window AND cleared the safety gate
+}
+
+/**
+ * LAYER B of the pair-deactivation safety gate. Atomically flips
+ * is_active = false for exactly `pairIds`, with PAIR_HOLDS_NOTHING_LIVE_SQL
+ * IN THE UPDATE's OWN WHERE clause — the check and the write are one
+ * statement (no TOCTOU), and a bug in a *separate* safety query cannot
+ * cause a wrong deactivation.
+ *
+ * Returns the IDs actually deactivated. If that is fewer than `pairIds`,
+ * a caller's Layer-A filter admitted a pair that holds something live:
+ * this logs the offenders and THROWS, so the caller's transaction rolls
+ * back rather than half-applying. It never silently skips.
+ */
+async function deactivatePairsGuarded(client: PoolClient, pairIds: string[]): Promise<string[]> {
+    if (pairIds.length === 0) return [];
+    const { rows } = await client.query<{ id: string }>(
+        `UPDATE trading_pairs tp
+            SET is_active = false
+          WHERE tp.id = ANY($1::uuid[])
+            AND ${PAIR_HOLDS_NOTHING_LIVE_SQL}
+          RETURNING tp.id`,
+        [pairIds],
+    );
+    if (rows.length !== pairIds.length) {
+        const deactivated = new Set(rows.map((r) => r.id));
+        const blocked = pairIds.filter((id) => !deactivated.has(id));
+        logger.error({ blockedPairIds: blocked }, "pair_deactivation_safety_assertion_failed");
+        throw new Error(
+            `deactivatePairsGuarded: safety assertion failed — ${blocked.length} of ${pairIds.length} `
+            + `target pair(s) hold a live position / order / trigger and were refused by the atomic `
+            + `guard. Rolling back; no pairs deactivated.`,
+        );
+    }
+    return rows.map((r) => r.id);
+}
+
+/**
+ * Market-cap prune pass for the symbol-refresh job. In one transaction:
+ *   1. reset mcap_rank_misses to 0 for active pairs back in the top-N
+ *   2. increment it for active pairs outside the top-N
+ *   3. Layer A — nominate active pairs past MCAP_PRUNE_GRACE_RUNS that
+ *      hold nothing live (a held pair is never nominated)
+ *   4. Layer B — deactivatePairsGuarded re-checks atomically and throws
+ *      on any mismatch
+ *
+ * `eligibleSymbols` defaults to the current top-MARKET_CAP_RANK_CUTOFF
+ * set from CoinGecko (its own fetch — one extra call per 6h run). Tests
+ * and the one-time backlog script inject their own set.
+ *
+ * Throws (→ job run FAILED, last_error persisted) on: CoinGecko failure,
+ * an empty eligible set, or a Layer-B assertion mismatch. Rolls back
+ * whole on any error — never half-applies.
+ */
+export async function prunePairs(eligibleSymbols?: Set<string>): Promise<PruneResult> {
+    const eligible = eligibleSymbols
+        ?? new Set((await fetchTopMarketCapSymbols(MARKET_CAP_RANK_CUTOFF)).keys());
+
+    // An empty set would mark every active pair as a miss and march the
+    // whole book toward deactivation. fetchTopMarketCapSymbols already
+    // throws on a truncated list; this guards a caller-injected set.
+    if (eligible.size === 0) {
+        throw new Error("prunePairs: refusing to run with an empty eligible-symbol set");
+    }
+
+    const eligibleArr = [...eligible];
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+
+        const reset = await client.query(
+            `UPDATE trading_pairs tp
+                SET mcap_rank_misses = 0
+               FROM assets a
+              WHERE a.id = tp.base_asset_id
+                AND tp.is_active = true
+                AND tp.mcap_rank_misses <> 0
+                AND a.symbol = ANY($1::text[])`,
+            [eligibleArr],
+        );
+
+        const incremented = await client.query(
+            `UPDATE trading_pairs tp
+                SET mcap_rank_misses = mcap_rank_misses + 1
+               FROM assets a
+              WHERE a.id = tp.base_asset_id
+                AND tp.is_active = true
+                AND NOT (a.symbol = ANY($1::text[]))`,
+            [eligibleArr],
+        );
+
+        // Layer A — past the grace window AND holding nothing live.
+        const { rows: nominees } = await client.query<{ id: string; symbol: string }>(
+            `SELECT tp.id, tp.symbol
+               FROM trading_pairs tp
+              WHERE tp.is_active = true
+                AND tp.mcap_rank_misses >= $1
+                AND ${PAIR_HOLDS_NOTHING_LIVE_SQL}`,
+            [MCAP_PRUNE_GRACE_RUNS],
+        );
+
+        // Layer B — atomic re-check + assertion.
+        const deactivatedIds = await deactivatePairsGuarded(client, nominees.map((n) => n.id));
+        for (const n of nominees) {
+            logger.info({ pairSymbol: n.symbol, pairId: n.id }, "mcap_prune_pair_deactivated");
+        }
+
+        await client.query("COMMIT");
+        return {
+            missesReset: reset.rowCount ?? 0,
+            missesIncremented: incremented.rowCount ?? 0,
+            pairsDeactivated: deactivatedIds.length,
+        };
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 }

@@ -227,6 +227,15 @@ export const config = {
   // an optional background job, never blocks server boot.
   coingeckoApiKey: process.env.COINGECKO_API_KEY || "",
 
+  // ── Market-cap pair prune (symbol-refresh job) ──
+  // When false (default) the symbol-refresh job skips the prune pass
+  // entirely -- the mcap_rank_misses counter is not touched and no pair
+  // is deactivated by rank. Flip to true only AFTER the one-time backlog
+  // prune (scripts/prunePairs.ts) has run, so the job maintains steady
+  // state (~0-2 pairs/run) instead of hitting ~180 grace-window expiries
+  // in one run. Same opt-in-per-environment pattern as the agent flags.
+  mcapPruneEnabled: booleanEnv("MCAP_PRUNE_ENABLED", false),
+
   // Event-driven at the gate (Execution Agent's runPhase1 reads
   // pair_news_flags synchronously), but the flag itself gates the
   // *populating* job (newsAgentJob.ts) -- same reasoning as

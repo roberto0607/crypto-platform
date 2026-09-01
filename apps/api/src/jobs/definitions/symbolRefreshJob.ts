@@ -3,7 +3,9 @@ import { pool } from "../../db/pool.js";
 import {
     syncSymbols,
     checkDelistings,
+    prunePairs,
 } from "../../market/symbolSync.js";
+import { config } from "../../config.js";
 
 /**
  * Periodic refresh of the Kraken ∩ Coinbase curated symbol universe — runs
@@ -14,7 +16,7 @@ import {
  * backfill script (scripts/backfillExchangeSymbols.ts) via
  * src/market/symbolSync.ts — no duplicated fetch/parse code.
  *
- * Two independent passes per run:
+ * Three passes per run:
  *   1. syncSymbols — new pairs present on BOTH exchanges get upserted,
  *      wallets provisioned for existing users, then activated (same as the
  *      backfill script's --commit path). A pair that already has a
@@ -25,6 +27,10 @@ import {
  *      that exchange's mapping row deactivated; trading_pairs.is_active
  *      only flips off once BOTH exchange rows are inactive (a pair delisted
  *      on one exchange but still live on the other keeps trading).
+ *   3. prunePairs — grace-counter maintenance + safety-gated deactivation
+ *      of pairs that have sat outside the top MARKET_CAP_RANK_CUTOFF for
+ *      MCAP_PRUNE_GRACE_RUNS consecutive runs. Opt-in per environment via
+ *      MCAP_PRUNE_ENABLED; skipped entirely when disabled.
  */
 export const symbolRefreshJob: JobDefinition = {
     name: "symbol-refresh",
@@ -55,13 +61,26 @@ export const symbolRefreshJob: JobDefinition = {
             client.release();
         }
 
-        if (added.length > 0 || reactivated.length > 0 || delisting.exchangeRowsDeactivated > 0) {
+        // Market-cap prune pass — opt-in per environment (config.mcapPruneEnabled).
+        // Its own CoinGecko fetch + transaction. Throws (→ job FAILED) on a
+        // CoinGecko outage or a Layer-B safety-assertion mismatch.
+        let prune: Awaited<ReturnType<typeof prunePairs>> | null = null;
+        if (config.mcapPruneEnabled) {
+            prune = await prunePairs();
+        }
+
+        if (added.length > 0 || reactivated.length > 0 || delisting.exchangeRowsDeactivated > 0
+            || (prune !== null && (prune.pairsDeactivated > 0 || prune.missesIncremented > 0 || prune.missesReset > 0))) {
             ctx.logger.info(
                 {
                     pairsAdded: added.length,
                     pairsReactivated: reactivated.length,
                     exchangeRowsDeactivated: delisting.exchangeRowsDeactivated,
                     pairsDeactivated: delisting.pairsDeactivated,
+                    mcapPruneEnabled: config.mcapPruneEnabled,
+                    mcapPairsDeactivated: prune?.pairsDeactivated ?? 0,
+                    mcapMissesIncremented: prune?.missesIncremented ?? 0,
+                    mcapMissesReset: prune?.missesReset ?? 0,
                 },
                 "symbol_refresh_done",
             );

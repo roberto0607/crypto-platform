@@ -1015,3 +1015,29 @@ that touch watched source files in the same working directory as a live `tsx
 watch` process will silently restart it — use a separate worktree, or be
 deliberate about which directory such operations run in, when a long-running
 diagnostic process is active.
+
+---
+
+## 🔵 LOW — Genuine two-exchange delisting can strand an open position
+
+**Discovered:** 2026-09-01, designing the market-cap pair-eligibility prune.
+
+**Context:** `checkDelistings()` (symbol-refresh job) flips
+`trading_pairs.is_active = false` once a pair is delisted from BOTH Kraken and
+Coinbase. `matchingEngine.ts`'s `placeOrderInternal` rejects ALL orders on an
+inactive pair (`if (!pair || !pair.is_active) throw "pair_not_found"`) with no
+reduce-only exemption — so a user (or the agent pipeline) holding an open
+position on a pair that then fully delists cannot place the closing order.
+Position rows and history stay intact, but P&L freezes (the feed drops the
+symbol) and the position is uncloseable.
+
+**Why LOW:** needs a *held* pair to delist from both US exchanges at once; today
+only BTC/ETH/SOL are ever held and none will delist. The new `prunePairs()`
+path is unaffected — its two-layer safety gate never deactivates a held pair.
+This is strictly about the pre-existing `checkDelistings` path.
+
+**Scope of fix:** either (a) a reduce-only exemption in `matchingEngine.ts`'s
+pair-active check (permit an order that strictly reduces |position| even on an
+inactive pair — the more general fix, also helps the admin "disable pair"
+action), or (b) a force-close sweep in `checkDelistings` before a pair goes
+fully inactive.
