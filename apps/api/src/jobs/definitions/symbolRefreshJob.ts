@@ -3,7 +3,6 @@ import { pool } from "../../db/pool.js";
 import {
     syncSymbols,
     checkDelistings,
-    DEFAULT_SYNC_LIMIT,
 } from "../../market/symbolSync.js";
 
 /**
@@ -33,7 +32,7 @@ export const symbolRefreshJob: JobDefinition = {
     timeoutMs: 60_000,
     maxRunSeconds: 90,
     async run(ctx) {
-        const { results } = await syncSymbols(DEFAULT_SYNC_LIMIT);
+        const { results } = await syncSymbols();
         const added = results.filter((r) => r.isNewPair);
         for (const a of added) {
             ctx.logger.info({ symbol: a.ourSymbol, pairId: a.pairId }, "symbol_refresh_pair_added");

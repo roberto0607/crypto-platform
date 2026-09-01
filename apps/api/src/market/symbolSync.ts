@@ -13,12 +13,14 @@ import WebSocket from "ws";
 import { pool } from "../db/pool.js";
 import { autoCreateWallets } from "../wallets/autoWallets.js";
 import { logger as rootLogger } from "../observability/logContext.js";
+import { config } from "../config.js";
 
 const logger = rootLogger.child({ module: "symbolSync" });
 
 const KRAKEN_BASE_URL = "https://api.kraken.com/0/public";
 const COINBASE_BASE_URL = "https://api.coinbase.com/api/v3/brokerage/market/products";
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
+const COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3";
 
 /**
  * Kraken's REST AssetPairs "wsname" field is unreliable for legacy-coded
@@ -31,9 +33,14 @@ const KRAKEN_WS_SYMBOL_OVERRIDES: Record<string, string> = {
     "XBT/USD": "BTC/USD",
 };
 
-/** Curated universe size — shared by the one-time backfill script and the
- *  periodic refresh job so they never drift apart. */
-export const DEFAULT_SYNC_LIMIT = 75;
+/** Market-cap rank cutoff for pair eligibility — a Kraken ∩ Coinbase pair
+ *  is synced / kept active only if its base asset sits within the top
+ *  MARKET_CAP_RANK_CUTOFF by market cap (CoinGecko /coins/markets). Shared
+ *  by the periodic refresh job and the one-time backfill/prune scripts so
+ *  they never drift. Replaces DEFAULT_SYNC_LIMIT (the old top-75-by-24h-
+ *  volume gate), which had no symmetric prune and let the active set grow
+ *  without bound. */
+export const MARKET_CAP_RANK_CUTOFF = 30;
 
 /** Default decimals for newly created assets — matches the existing BTC/ETH/SOL
  *  convention (assets.decimals) and wallets.balance's NUMERIC(28,8) precision.
@@ -183,16 +190,106 @@ export async function fetchCoinbaseCandidates(): Promise<CoinbaseCandidate[]> {
         }));
 }
 
+interface CoinGeckoMarketRow {
+    id: string;
+    symbol: string;
+    name: string;
+    market_cap_rank: number | null;
+}
+
 /**
- * Fetch Kraken + Coinbase candidates, intersect on base symbol, live-verify
- * Kraken WS symbols, and rank by Coinbase's approximate_quote_24h_volume
- * (already USD-denominated; Kraken's AssetPairs has no volume field, and
- * ranking only needs to apply within the already-intersected set).
+ * Fetch the top `topN` coins by market cap from CoinGecko, returned as a
+ * Map<UPPERCASE_SYMBOL, market_cap_rank>. This is the new pair-eligibility
+ * gate for the symbol-refresh job: a Kraken INTERSECT Coinbase pair is
+ * synced / kept active only if its base symbol is a key in this map (see
+ * discoverSyncCandidates). Replaces the old "top 75 by Coinbase 24h
+ * volume" ranking, which only ever grew the active set because nothing
+ * ever pruned a pair that merely fell down the ranking.
+ *
+ * Keyless by default (config.coingeckoApiKey empty); a Demo key, if set,
+ * is sent as x-cg-demo-api-key. One call per 6h run either way.
+ *
+ * FAIL-LOUD by design -- every failure mode throws:
+ *   - non-2xx HTTP / network error / timeout / non-array body
+ *   - fewer than `topN` well-formed rows: an empty or truncated list
+ *     must NEVER be read as "nothing is eligible", because that would
+ *     make the prune pass try to deactivate every active pair.
+ * discoverSyncCandidates does not catch this, so a CoinGecko outage
+ * fails the entire symbol-refresh run -- that run adds nothing and
+ * prunes nothing, and the job retries in 6h. Deliberately safer than
+ * falling back to volume ranking, which would silently re-admit
+ * long-tail pairs for the duration of the outage.
  */
-export async function discoverSyncCandidates(limit: number): Promise<SyncCandidate[]> {
-    const [krakenRaw, coinbase] = await Promise.all([
+export async function fetchTopMarketCapSymbols(topN: number): Promise<Map<string, number>> {
+    const url = `${COINGECKO_BASE_URL}/coins/markets`
+        + `?vs_currency=usd&order=market_cap_desc&per_page=${topN}&page=1&sparkline=false`;
+
+    const headers: Record<string, string> = {};
+    if (config.coingeckoApiKey) headers["x-cg-demo-api-key"] = config.coingeckoApiKey;
+
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) {
+        throw new Error(`CoinGecko coins/markets HTTP ${res.status} ${res.statusText}`);
+    }
+
+    const body = await res.json() as unknown;
+    if (!Array.isArray(body)) {
+        throw new Error("CoinGecko coins/markets returned a non-array body");
+    }
+    const rows = body as CoinGeckoMarketRow[];
+
+    // UPPERCASE symbol -> best (lowest) market_cap_rank. Rows arrive
+    // sorted by rank ascending, so the first sighting of a symbol is its
+    // best rank; a later duplicate (two coins sharing a ticker) is a
+    // lower-ranked impostor and is ignored. validRows counts well-formed
+    // rows independently of the map so a rare top-N ticker collision
+    // can't trip the truncation guard below.
+    const bySymbol = new Map<string, number>();
+    let validRows = 0;
+    for (const row of rows) {
+        if (typeof row.symbol !== "string" || typeof row.market_cap_rank !== "number") continue;
+        validRows++;
+        const symbol = row.symbol.toUpperCase();
+        if (!bySymbol.has(symbol)) bySymbol.set(symbol, row.market_cap_rank);
+    }
+
+    if (validRows < topN) {
+        throw new Error(
+            `CoinGecko coins/markets returned only ${validRows} well-formed rows (expected >= ${topN}) `
+            + `-- refusing to run the eligibility gate on a truncated list`,
+        );
+    }
+
+    return bySymbol;
+}
+
+/**
+ * Fetch Kraken + Coinbase candidates plus CoinGecko's top-`cutoff`
+ * market-cap set, intersect all three on base symbol, live-verify the
+ * surviving Kraken WS symbols, and return them ordered by market-cap rank
+ * ascending.
+ *
+ * The market-cap intersection is what bounds the WS-verification round
+ * trip now (~20-30 symbols) — the old "+25 buffer then slice to N" logic
+ * is gone: every pair that passes Kraken ∩ Coinbase ∩ top-`cutoff` is
+ * verified, and whichever verify are returned. A few WS-verification
+ * failures just yield a slightly smaller set; there is deliberately no
+ * back-fill from rank cutoff+1.
+ *
+ * volumeUsd24h is still populated on each SyncCandidate (from Coinbase)
+ * but is informational only now — market-cap rank is the ranking signal.
+ *
+ * If fetchTopMarketCapSymbols throws (CoinGecko outage / truncated list),
+ * Promise.all rejects and this function throws — the whole symbol-refresh
+ * run fails, adding and pruning nothing that cycle.
+ */
+export async function discoverSyncCandidates(
+    cutoff: number = MARKET_CAP_RANK_CUTOFF,
+): Promise<SyncCandidate[]> {
+    const [krakenRaw, coinbase, mcapRank] = await Promise.all([
         fetchKrakenCandidates(),
         fetchCoinbaseCandidates(),
+        fetchTopMarketCapSymbols(cutoff),
     ]);
 
     const coinbaseBySymbol = new Map(coinbase.map((c) => [c.baseSymbol, c]));
@@ -201,18 +298,19 @@ export async function discoverSyncCandidates(limit: number): Promise<SyncCandida
         if (coinbaseBySymbol.has(k.baseSymbol)) krakenBySymbol.set(k.baseSymbol, k);
     }
 
-    // Rank by volume BEFORE live-verifying — only the top `limit` (plus a
-    // buffer, since a few may fail verification) need a real WS round trip,
-    // not the entire ~300-pair intersection.
-    const ranked = [...krakenBySymbol.entries()]
+    // Kraken ∩ Coinbase ∩ top-`cutoff` by market cap, ordered by rank
+    // ascending. The market-cap filter is what keeps the WS-verification
+    // batch small (~20-30), so the whole eligible set is verified — no
+    // pre-verification slice / buffer.
+    const eligible = [...krakenBySymbol.entries()]
+        .filter(([baseSymbol]) => mcapRank.has(baseSymbol))
         .map(([baseSymbol, kraken]) => ({ baseSymbol, kraken, cb: coinbaseBySymbol.get(baseSymbol)! }))
-        .sort((a, b) => b.cb.volumeUsd24h - a.cb.volumeUsd24h)
-        .slice(0, limit + 25);
+        .sort((a, b) => mcapRank.get(a.baseSymbol)! - mcapRank.get(b.baseSymbol)!);
 
-    const verified = await verifyKrakenWsSymbols(ranked.map((r) => r.kraken.wsCandidate));
+    const verified = await verifyKrakenWsSymbols(eligible.map((r) => r.kraken.wsCandidate));
 
     const intersected: SyncCandidate[] = [];
-    for (const { baseSymbol, kraken, cb } of ranked) {
+    for (const { baseSymbol, kraken, cb } of eligible) {
         if (!verified.has(kraken.wsCandidate)) continue;
         intersected.push({
             ourSymbol: `${baseSymbol}/USD`,
@@ -225,7 +323,9 @@ export async function discoverSyncCandidates(limit: number): Promise<SyncCandida
         });
     }
 
-    return intersected.slice(0, limit);
+    // Defensive only — `eligible` can't exceed `cutoff` distinct symbols
+    // by construction. Kept per the "leave the final slice as-is" scope.
+    return intersected.slice(0, cutoff);
 }
 
 export interface UpsertResult {
@@ -348,8 +448,10 @@ export async function applyCandidates(candidates: SyncCandidate[]): Promise<Upse
 
 /** Convenience wrapper for callers that always want to commit immediately
  *  (the periodic refresh job — see jobs/definitions/symbolRefreshJob.ts). */
-export async function syncSymbols(limit: number): Promise<{ candidates: SyncCandidate[]; results: UpsertResult[] }> {
-    const candidates = await discoverSyncCandidates(limit);
+export async function syncSymbols(
+    cutoff: number = MARKET_CAP_RANK_CUTOFF,
+): Promise<{ candidates: SyncCandidate[]; results: UpsertResult[] }> {
+    const candidates = await discoverSyncCandidates(cutoff);
     const results = await applyCandidates(candidates);
     return { candidates, results };
 }

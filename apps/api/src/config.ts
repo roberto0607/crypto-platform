@@ -216,6 +216,17 @@ export const config = {
   // block server boot.
   newsApiKey: process.env.NEWS_API_KEY || "",
 
+  // ── Pair-eligibility market-cap gate (symbol-refresh job) ──
+  // CoinGecko's /coins/markets is called keyless by default -- the
+  // symbol-refresh job hits it once per 6h run, well within CoinGecko's
+  // 5-15 req/min public limit. Set COINGECKO_API_KEY to a free "Demo"
+  // key ONLY if Railway's shared egress IP starts getting 429'd; when
+  // present it's sent as x-cg-demo-api-key and raises the limit to
+  // 100/min. Empty (the default) = keyless, which is expected.
+  // Not requireEnv()'d -- same reasoning as newsApiKey: needed only by
+  // an optional background job, never blocks server boot.
+  coingeckoApiKey: process.env.COINGECKO_API_KEY || "",
+
   // Event-driven at the gate (Execution Agent's runPhase1 reads
   // pair_news_flags synchronously), but the flag itself gates the
   // *populating* job (newsAgentJob.ts) -- same reasoning as
