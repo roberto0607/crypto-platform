@@ -53,7 +53,7 @@ export const MCAP_PRUNE_GRACE_RUNS = 12;
  *  trigger. Shared verbatim by prunePairs()'s Layer-A nominee filter and
  *  deactivatePairsGuarded()'s Layer-B atomic guard so the two can never
  *  drift. References the `tp` alias, which both call sites use. */
-const PAIR_HOLDS_NOTHING_LIVE_SQL = `
+export const PAIR_HOLDS_NOTHING_LIVE_SQL = `
     NOT EXISTS (SELECT 1 FROM positions p
                  WHERE p.pair_id = tp.id AND p.base_qty <> 0)
     AND NOT EXISTS (SELECT 1 FROM orders o
@@ -571,7 +571,7 @@ export interface PruneResult {
  * this logs the offenders and THROWS, so the caller's transaction rolls
  * back rather than half-applying. It never silently skips.
  */
-async function deactivatePairsGuarded(client: PoolClient, pairIds: string[]): Promise<string[]> {
+export async function deactivatePairsGuarded(client: PoolClient, pairIds: string[]): Promise<string[]> {
     if (pairIds.length === 0) return [];
     const { rows } = await client.query<{ id: string }>(
         `UPDATE trading_pairs tp
