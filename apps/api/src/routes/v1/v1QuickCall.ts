@@ -97,8 +97,9 @@ const v1QuickCall: FastifyPluginAsync = async (app) => {
     },
   }, async (req, reply) => {
     try {
-      const identity = await resolveIdentity(req, reply, { create: false });
-      if (!identity) return reply.send({ ok: true, call: null, streak: 0, history: [] });
+      // Issues the anon session cookie on first visit so the landing stream
+      // (which can't set cookies — raw SSE) opened after this knows who it's for.
+      const identity = (await resolveIdentity(req, reply, { create: true }))!;
       return reply.send({ ok: true, ...(await getCurrent(identity)) });
     } catch (err) {
       return v1HandleError(reply, err);

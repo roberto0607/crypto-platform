@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { handleSchema } from "../../auth/handle.js";
 import { pool } from "../../db/pool.js";
 import { requireUser } from "../../auth/requireUser.js";
 import { getUserTier, getUserTierHistory } from "../../competitions/tierRepo.js";
@@ -7,10 +8,7 @@ import { getUserBadges } from "../../competitions/badgeRepo.js";
 
 
 const displayNameSchema = z.object({
-    displayName: z.string()
-        .min(3, "Display name must be at least 3 characters")
-        .max(30, "Display name must be at most 30 characters")
-        .regex(/^[a-zA-Z0-9_]+$/, "Display name can only contain letters, numbers, and underscores"),
+    displayName: handleSchema,
 });
 
 const v1Profile: FastifyPluginAsync = async (app) => {
@@ -80,7 +78,6 @@ const v1Profile: FastifyPluginAsync = async (app) => {
 
             return reply.send({ ok: true, displayName });
         } catch (err: any) {
-            // If unique constraint on display_name exists:
             if (err?.code === "23505") {
                 return reply.code(409).send({
                     ok: false,

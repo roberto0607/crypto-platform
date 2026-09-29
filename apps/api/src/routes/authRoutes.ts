@@ -23,13 +23,20 @@ import { verificationEmail, passwordResetEmail } from "../email/templates";
 import { logger } from "../observability/logContext";
 import { autoCreateWallets } from "../wallets/autoWallets";
 import { transferAnonQuickCallState } from "../quickCall/anonTransfer";
+import { handleSchema, HANDLE_UNIQUE_CONSTRAINT } from "../auth/handle";
 
 // ── Zod schemas ──
 const registerBody = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(72),
   inviteCode: z.string().optional(),
+  displayName: handleSchema.optional(),
 });
+
+/** Which unique constraint a register INSERT hit. */
+function conflictError(err: { constraint?: string }): "email_taken" | "display_name_taken" {
+  return err.constraint === HANDLE_UNIQUE_CONSTRAINT ? "display_name_taken" : "email_taken";
+}
 
 const loginBody = z.object({
   email: z.string().email(),
@@ -52,6 +59,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           email: { type: "string", description: "User email address" },
           password: { type: "string", description: "User password (8-72 chars)" },
           inviteCode: { type: "string", description: "Required when BETA_MODE is enabled" },
+          displayName: { type: "string", description: "Optional handle (3-30 chars, letters/numbers/underscore, unique case-insensitively)" },
         },
       },
       response: {
@@ -81,7 +89,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["email_taken"] },
+            error: { type: "string", enum: ["email_taken", "display_name_taken"] },
           },
         },
       },
@@ -118,10 +126,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const passwordHash = await hashPassword(parsed.data.password);
 
         const userResult = await client.query<{ id: string; email: string; role: string }>(
-          `INSERT INTO users (email, email_normalized, password_hash)
-           VALUES ($1, $2, $3)
+          `INSERT INTO users (email, email_normalized, password_hash, display_name)
+           VALUES ($1, $2, $3, $4)
            RETURNING id, email, role`,
-          [email, emailNormalized, passwordHash],
+          [email, emailNormalized, passwordHash, parsed.data.displayName ?? null],
         );
         const user = userResult.rows[0];
 
@@ -161,7 +169,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         });
       } catch (err: any) {
         await client.query("ROLLBACK").catch(() => {});
-        if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
+        if (err?.code === "23505") return handleError(reply, new AppError(conflictError(err)));
         if (err?.message === "invite_invalid") return handleError(reply, new AppError("invite_invalid"));
         req.log.error({ err }, "register_failed");
         return handleError(reply, new AppError("server_error"));
@@ -175,7 +183,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const passwordHash = await hashPassword(parsed.data.password);
 
     try {
-      const user = await createUser({ email, emailNormalized, passwordHash });
+      const user = await createUser({ email, emailNormalized, passwordHash, displayName: parsed.data.displayName });
 
       // Create free-play wallets + fund the USD wallet with starting capital.
       // Awaited (its own transaction) before the 201 so a registered user is
@@ -206,7 +214,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         user: { id: user.id, email: user.email, role: user.role },
       });
     } catch (err: any) {
-      if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
+      if (err?.code === "23505") return handleError(reply, new AppError(conflictError(err)));
       req.log.error({ err }, "register_failed");
       return handleError(reply, new AppError("server_error"));
     }
