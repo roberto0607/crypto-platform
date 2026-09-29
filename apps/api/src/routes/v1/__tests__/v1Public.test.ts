@@ -205,6 +205,9 @@ describe("Public landing stream", () => {
   });
 
   it("GET /v1/public/landing-stream needs no auth and streams featured: null when idle", async () => {
+    // A known price means addConnection writes frames immediately — the
+    // headers (with the event-stream content type) must already be out.
+    recordTrade("BTC/USD", "84000.10");
     await app.listen({ port: 0, host: "127.0.0.1" });
     const { port } = app.server.address() as AddressInfo;
     const body = await new Promise<{ status: number; type: string; text: string }>((resolve, reject) => {
@@ -225,6 +228,8 @@ describe("Public landing stream", () => {
     });
     expect(body.status).toBe(200);
     expect(body.type).toContain("text/event-stream");
+    expect(body.text.startsWith(": connected\n\n")).toBe(true);
+    expect(body.text).toContain('event: price\ndata: {"symbol":"BTC","price":"84000.10"}');
     expect(body.text).toContain("event: featured\ndata: null\n\n");
   });
 

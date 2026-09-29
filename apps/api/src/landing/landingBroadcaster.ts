@@ -178,13 +178,19 @@ function stopLoops(): void {
   featuredTimer = null;
 }
 
+/** Whether another stream from `ip` fits under the per-IP and global caps. */
+export function hasCapacity(ip: string): boolean {
+  return (perIp.get(ip) ?? 0) < MAX_CONNECTIONS_PER_IP && connections.size < MAX_CONNECTIONS_TOTAL;
+}
+
 /**
- * Register a connection. Returns an unregister function, or null when the
- * per-IP or global connection cap is hit (the route answers 429).
+ * Register a connection and immediately send it the current prices and
+ * featured match — so the caller must have written its SSE headers first.
+ * Returns an unregister function, or null when a cap is hit.
  */
 export function addConnection(conn: LandingConnection): (() => void) | null {
+  if (!hasCapacity(conn.ip)) return null;
   const ipCount = perIp.get(conn.ip) ?? 0;
-  if (ipCount >= MAX_CONNECTIONS_PER_IP || connections.size >= MAX_CONNECTIONS_TOTAL) return null;
 
   connections.add(conn);
   perIp.set(conn.ip, ipCount + 1);

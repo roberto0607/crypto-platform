@@ -8,7 +8,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { checkHandleAvailability, HANDLE_MAX } from "../../auth/handle";
 import { resolveIdentity } from "../../quickCall/identity";
-import { addConnection } from "../../landing/landingBroadcaster";
+import { addConnection, hasCapacity } from "../../landing/landingBroadcaster";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
@@ -27,7 +27,22 @@ const v1Public: FastifyPluginAsync = async (app) => {
     // @fastify/cookie writes Set-Cookie, so the stream can't mint a session.
     const identity = await resolveIdentity(req, reply, { create: false });
 
+    if (!hasCapacity(req.ip)) {
+      return reply.code(429).send({ ok: false, error: "too_many_streams" });
+    }
+
+    // Headers go out before registering: addConnection sends the current
+    // prices/featured state synchronously, and a raw write before writeHead
+    // would flush implicit headers without the event-stream content type.
+    reply.header("Content-Type", "text/event-stream");
+    reply.header("Cache-Control", "no-cache");
+    reply.header("Connection", "keep-alive");
+    reply.header("X-Accel-Buffering", "no");
+    reply.raw.writeHead(200, reply.getHeaders() as import("node:http").OutgoingHttpHeaders);
+    reply.raw.write(": connected\n\n");
+
     let closed = false;
+    let remove: (() => void) | null = null;
     const write = (chunk: string) => {
       if (closed) return;
       try {
@@ -36,30 +51,26 @@ const v1Public: FastifyPluginAsync = async (app) => {
         cleanup();
       }
     };
-
-    const remove = addConnection({
-      ip: req.ip,
-      identityKey: identity?.key ?? null,
-      send: (event, data) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-    });
-    if (!remove) {
-      return reply.code(429).send({ ok: false, error: "too_many_streams" });
-    }
-
-    reply.header("Content-Type", "text/event-stream");
-    reply.header("Cache-Control", "no-cache");
-    reply.header("Connection", "keep-alive");
-    reply.header("X-Accel-Buffering", "no");
-    reply.raw.writeHead(200, reply.getHeaders() as import("node:http").OutgoingHttpHeaders);
-    reply.raw.write(": connected\n\n");
-
     const heartbeat = setInterval(() => write(": heartbeat\n\n"), HEARTBEAT_INTERVAL_MS);
 
     function cleanup() {
       if (closed) return;
       closed = true;
       clearInterval(heartbeat);
-      remove!();
+      remove?.();
+    }
+
+    remove = addConnection({
+      ip: req.ip,
+      identityKey: identity?.key ?? null,
+      send: (event, data) => write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+    });
+    if (!remove) {
+      // Unreachable today (nothing awaits between the capacity check and
+      // here); kept so a cap hit can never leave a dangling stream.
+      cleanup();
+      reply.raw.end();
+      return reply;
     }
     req.raw.on("close", cleanup);
   });
