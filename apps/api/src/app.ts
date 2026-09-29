@@ -84,6 +84,7 @@ export interface BuildAppOptions {
 export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
     logger: opts.logger ?? true,
+    trustProxy: config.trustProxyHops > 0 ? config.trustProxyHops : false,
     genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
   });
 

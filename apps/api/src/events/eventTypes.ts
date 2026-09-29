@@ -300,6 +300,23 @@ export interface SignalNewData {
   targetReason?: string;
 }
 
+/**
+ * Landing-page quick call settled. Targeted with `userId` = the caller's
+ * quick-call identity key (`anon:<uuid>` or `user:<uuid>`), not a bare user
+ * id — no SSE user stream is registered under those keys, so it only
+ * reaches the landing-stream module's global subscriber, which fans it out
+ * to that identity's own connections.
+ */
+export interface QuickCallSettledData {
+  id: string;
+  direction: "UP" | "DOWN";
+  entryPrice: string;
+  exitPrice: string | null;
+  outcome: "WIN" | "LOSS" | "PUSH" | "VOID";
+  settledAt: number;
+  streak: number;
+}
+
 // ── Discriminated union ──
 
 export type AppEvent =
@@ -327,7 +344,8 @@ export type AppEvent =
   | EventEnvelope<"challenge.received", ChallengeReceivedData>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedData>
   | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>
-  | EventEnvelope<"message.received", MessageReceivedData>;
+  | EventEnvelope<"message.received", MessageReceivedData>
+  | EventEnvelope<"quickcall.settled", QuickCallSettledData>;
 
 // ── Helper to create events ──
 

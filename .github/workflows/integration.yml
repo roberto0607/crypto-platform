@@ -11,6 +11,7 @@ on:
       - "apps/api/src/queue/**"
       - "apps/api/src/trading/**"
       - "apps/api/src/db/redis.ts"
+      - "apps/api/src/quickCall/**"
       - "apps/api/vitest.integration.config.ts"
       - ".github/workflows/integration.yml"
 
