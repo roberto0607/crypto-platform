@@ -11,7 +11,8 @@
  * Safe to run multiple times — uses ON CONFLICT DO NOTHING / DO UPDATE.
  *
  * Usage:
- *   cd apps/api && pnpm dev:me
+ *   cd apps/api && SEED_DEV_USER_PASSWORD=... pnpm dev:me
+ *   (or set SEED_DEV_USER_PASSWORD in apps/api/.env)
  */
 import "dotenv/config";
 import { execSync } from "node:child_process";
@@ -19,11 +20,24 @@ import { pool } from "../src/db/pool";
 import { hashPassword } from "../src/auth/password";
 
 const EMAIL = "rtirado0607@gmail.com";
-const PASSWORD = "Likemike23ts$";
+const PASSWORD = requirePassword();
 const DISPLAY_NAME = "rtirado0607";
 const USD_BALANCE = "100000.00000000";
 const REAL_PAIRS = ["BTC/USD", "ETH/USD", "SOL/USD"];
 const MIN_CANDLES = 100;
+
+// Never hardcode or default this — the repo is public.
+function requirePassword(): string {
+    const pw = process.env.SEED_DEV_USER_PASSWORD;
+    if (!pw) {
+        console.error(
+            "SEED_DEV_USER_PASSWORD is not set. Set it in apps/api/.env (see .env.example) " +
+            "to the password for the dev account. There is no default.",
+        );
+        process.exit(1);
+    }
+    return pw;
+}
 
 async function main() {
     console.log("=== Dev Environment Seed ===\n");
