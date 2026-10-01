@@ -51,7 +51,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
-  streamState = { prices: { BTC: { price: "84000", move: null } }, featured: null, lastResult: null };
+  streamState = { prices: { BTC: { price: "84000", move: null, at: 0 } }, featured: null, lastResult: null };
   quickState = baseQuick();
   vi.mocked(checkHandle).mockReset();
 });
@@ -68,7 +68,7 @@ describe("LandingPage", () => {
   });
 
   it("shows only BTC/ETH/SOL in the ticker, and only coins with a price", () => {
-    streamState.prices = { BTC: { price: "84000", move: "up" }, SOL: { price: "140", move: null } };
+    streamState.prices = { BTC: { price: "84000", move: "up", at: 0 }, SOL: { price: "140", move: null, at: 0 } };
     renderPage();
     const ticker = screen.getByRole("list", { name: "Live prices" });
     expect(ticker.textContent).toMatch(/BTC/);

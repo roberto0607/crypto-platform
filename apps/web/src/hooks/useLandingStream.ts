@@ -12,6 +12,9 @@ import type { FeaturedMatch, SettledQuickCall } from "@/api/endpoints/landing";
 
 const STREAM_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/public/landing-stream`;
 const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
+/** Frames only arrive on change, so silence this long means the feed is down: hide the price. */
+export const PRICE_EXPIRY_MS = 60_000;
+const EXPIRY_CHECK_MS = 5_000;
 
 export type LandingSymbol = "BTC" | "ETH" | "SOL";
 
@@ -19,6 +22,8 @@ export interface PriceTick {
   price: string;
   /** Direction of the last change, null on the first tick. */
   move: "up" | "down" | null;
+  /** Local receipt time, for expiry. */
+  at: number;
 }
 
 export interface LandingStreamState {
@@ -59,7 +64,7 @@ export function useLandingStream(enabled: boolean): LandingStreamState {
           setPrices((prev) => {
             const before = prev[symbol]?.price;
             const move = before === undefined ? null : Number(price) >= Number(before) ? "up" : "down";
-            return { ...prev, [symbol]: { price, move } };
+            return { ...prev, [symbol]: { price, move, at: Date.now() } };
           });
         } else if (msg.event === "featured") {
           setFeatured(data as FeaturedMatch | null);
@@ -74,7 +79,21 @@ export function useLandingStream(enabled: boolean): LandingStreamState {
       },
     });
 
-    return () => ctrl.abort();
+    const expiry = setInterval(() => {
+      const cutoff = Date.now() - PRICE_EXPIRY_MS;
+      setPrices((prev) => {
+        const stale = (Object.keys(prev) as LandingSymbol[]).filter((s) => prev[s]!.at < cutoff);
+        if (stale.length === 0) return prev;
+        const next = { ...prev };
+        for (const s of stale) delete next[s];
+        return next;
+      });
+    }, EXPIRY_CHECK_MS);
+
+    return () => {
+      ctrl.abort();
+      clearInterval(expiry);
+    };
   }, [enabled]);
 
   return { prices, featured, lastResult };

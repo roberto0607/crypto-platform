@@ -124,7 +124,7 @@ describe("LiveMatchPanel", () => {
 
 describe("QuickCallPanel (idle)", () => {
   it("renders the idle state: badge, question, price, UP/DOWN, streak meter", () => {
-    render(<QuickCallPanel btc={{ price: "84000.5", move: null }} quick={quick({ streak: 2 })} notify={notify} reducedMotion={false} />);
+    render(<QuickCallPanel btc={{ price: "84000.5", move: null, at: 0 }} quick={quick({ streak: 2 })} notify={notify} reducedMotion={false} />);
     expect(screen.getByText("NO LIVE MATCH")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Where's BTC in 60 seconds?" })).toBeInTheDocument();
     expect(screen.getByText("$84,000.50")).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe("QuickCallPanel (idle)", () => {
       call: { id: "c1", direction: "UP" as const, entryPrice: "84000", entryAt: 0, settleAt: 60_000 },
       deadline: Date.now() + 42_000,
     };
-    render(<QuickCallPanel btc={{ price: "84010", move: "up" }} quick={quick({ round, roundInProgress: true })} notify={notify} reducedMotion />);
+    render(<QuickCallPanel btc={{ price: "84010", move: "up", at: 0 }} quick={quick({ round, roundInProgress: true })} notify={notify} reducedMotion />);
     expect(screen.getByRole("button", { name: /UP/ })).toBeDisabled();
     expect(screen.getByText(/42s · UP from \$84,000\.00/)).toBeInTheDocument();
   });
