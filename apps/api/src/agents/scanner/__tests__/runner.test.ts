@@ -6,6 +6,7 @@
  * mocked unit test can meaningfully assert.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { runLogPolicy } from "../../shared/runLogPolicy";
 
 const mockCreate = vi.fn();
 
@@ -74,6 +75,9 @@ function mockMessage(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(() => {
+  // Per-process heartbeat state would otherwise sample out every success
+  // after the first one in this file.
+  runLogPolicy.reset();
   mockCreate.mockReset();
   mockPoolQuery.mockReset();
   mockPoolQuery.mockResolvedValue({ rows: [] }); // default: agent_run_logs INSERT succeeds

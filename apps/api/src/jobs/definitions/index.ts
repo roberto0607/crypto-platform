@@ -3,6 +3,7 @@ import { cleanupReplaySessionsJob } from "./cleanupReplaySessionsJob";
 import { cleanupIdempotencyKeysJob } from "./cleanupIdempotencyKeysJob";
 import { portfolioSamplingJob } from "./portfolioSamplingJob";
 import { retentionJob } from "./retentionJob";
+import { storageRetentionJob } from "./storageRetentionJob";
 import { cleanupLoginAttemptsJob } from "./cleanupLoginAttemptsJob";
 import { cleanupEmailTokensJob } from "./cleanupEmailTokensJob";
 import { competitionLifecycleJob } from "./competitionLifecycleJob";
@@ -25,6 +26,7 @@ export const allJobs: JobDefinition[] = [
     cleanupIdempotencyKeysJob,
     portfolioSamplingJob,
     retentionJob,
+    storageRetentionJob,
     cleanupLoginAttemptsJob,
     cleanupEmailTokensJob,
     competitionLifecycleJob,

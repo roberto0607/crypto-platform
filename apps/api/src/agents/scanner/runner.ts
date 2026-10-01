@@ -36,6 +36,7 @@ import {
   type ScannerResult,
 } from "../schemas";
 import { getLatestRegimeTag } from "../shared/regimeTagRepo";
+import { runLogPolicy } from "../shared/runLogPolicy";
 import { parseAgentJsonOutput } from "../shared/parseAgentOutput";
 
 const AGENT_NAME = "scanner";
@@ -191,12 +192,14 @@ interface RunLogInput {
 }
 
 /**
- * One row per invocation, success or failure, from the first version --
- * never retrofitted. Failure to write this row is itself logged but does
- * not throw; observability must not be able to break the feature it
+ * Every failure, plus a heartbeat/sampled subset of successes (see
+ * runLogPolicy.ts -- a Scanner run never acts by itself, so its successes
+ * are never "action" rows). Failure to write this row is itself logged but
+ * does not throw; observability must not be able to break the feature it
  * observes (same convention as audit/log.ts's auditLog()).
  */
 async function logRun(input: RunLogInput): Promise<void> {
+  if (!runLogPolicy.shouldPersist({ agentName: AGENT_NAME, status: input.status, ledToAction: false })) return;
   const costUsd = input.inputTokens * INPUT_COST_PER_TOKEN + input.outputTokens * OUTPUT_COST_PER_TOKEN;
   try {
     await pool.query(

@@ -22,6 +22,7 @@
 import { subscribeGlobal, unsubscribe, type EventHandler } from "../../events/eventBus";
 import type { ScannerCandidateData } from "../../events/eventTypes";
 import { config } from "../../config";
+import { nonEssentialWritesPaused } from "../../observability/writePause";
 import { logger } from "../../observability/logContext";
 import { runChartAnalysisAgent } from "./runner";
 
@@ -66,6 +67,10 @@ export async function startChartAnalysisEngine(): Promise<void> {
   handler = (event) => {
     if (event.type !== "scanner.result") return;
     if (!config.chartAnalysisAgentEnabled) return;
+    if (nonEssentialWritesPaused()) {
+      logger.warn({ eventType: "db_size" }, "chart_analysis_skipped_db_size_critical");
+      return;
+    }
 
     void processShortlist(event.data.candidates).catch((err) => {
       logger.error({ err }, "chart_analysis_engine_process_shortlist_error");

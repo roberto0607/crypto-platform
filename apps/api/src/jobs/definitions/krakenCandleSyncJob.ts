@@ -2,6 +2,7 @@ import type { JobDefinition } from "../jobTypes.js";
 import { pool } from "../../db/pool.js";
 import { fetchOHLC, REST_PAIR_MAP, sleep } from "../../market/krakenRest.js";
 import { listActivePairs } from "../../trading/pairRepo.js";
+import { filterMarketDataPairs } from "../../market/marketSymbols.js";
 import { publish } from "../../events/eventBus.js";
 import { createEvent } from "../../events/eventTypes.js";
 import { logger as rootLogger } from "../../observability/logContext.js";
@@ -69,7 +70,10 @@ export const krakenCandleSyncJob: JobDefinition = {
     intervalSeconds: 60,
     maxRunSeconds: 120, // 120s = 2× the default 60s run timeout; Kraken REST sync across pairs is network-bound
     async run(_ctx) {
-        const pairs = await listActivePairs();
+        // MARKET_SYMBOLS allowlist: this job only writes candles, so pairs
+        // outside it are skipped entirely (the live aggregator still
+        // publishes their candle.closed events).
+        const pairs = filterMarketDataPairs(await listActivePairs(), (p) => p.symbol);
         const mapped = pairs.filter((p) => REST_PAIR_MAP[p.symbol]);
 
         for (const pair of mapped) {

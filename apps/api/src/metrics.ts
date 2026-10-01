@@ -224,6 +224,19 @@ export const retentionRowsDeletedTotal = new client.Counter({
     labelNames: ["table"] as const,
 });
 
+// ── DB recovery: disk-pressure guardrail (observability/dbSizeGuard.ts) ──
+
+export const dbSizeBytesGauge = new client.Gauge({
+    name: "db_size_bytes",
+    help: "Postgres size in bytes from the last hourly check (kind: database | wal)",
+    labelNames: ["kind"] as const,
+});
+
+export const dbSizeNonEssentialPausedGauge = new client.Gauge({
+    name: "db_size_non_essential_writes_paused",
+    help: "1 while the DB is at/above the critical size threshold and non-essential writes are paused",
+});
+
 export const retentionRollupsTotal = new client.Counter({
     name: "retention_rollups_total",
     help: "Total rows rolled up by retention job",

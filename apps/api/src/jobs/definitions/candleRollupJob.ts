@@ -1,6 +1,7 @@
 import type { JobDefinition } from "../jobTypes.js";
 import { pool } from "../../db/pool.js";
 import { logger } from "../../observability/logContext.js";
+import { filterMarketDataPairs } from "../../market/marketSymbols.js";
 
 /**
  * Rollup 1m candles into higher timeframes.
@@ -146,10 +147,11 @@ export const candleRollupJob: JobDefinition = {
     intervalSeconds: 60,
     maxRunSeconds: 120, // 120s = 2× the default 60s run timeout; multi-timeframe candle batching can stretch under load
     async run(_ctx) {
-        // Get all active pairs
-        const { rows: pairs } = await pool.query<{ id: string }>(
-            `SELECT id FROM trading_pairs WHERE is_active = true`,
+        // Active pairs inside the MARKET_SYMBOLS storage allowlist
+        const { rows } = await pool.query<{ id: string; symbol: string }>(
+            `SELECT id, symbol FROM trading_pairs WHERE is_active = true`,
         );
+        const pairs = filterMarketDataPairs(rows, (p) => p.symbol);
 
         for (const pair of pairs) {
             for (const rollup of ROLLUPS) {

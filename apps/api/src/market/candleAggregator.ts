@@ -2,6 +2,7 @@ import { pool } from "../db/pool.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { logger } from "../observability/logContext.js";
+import { getMarketDataPairIds } from "./marketSymbols.js";
 
 interface Tick {
     price: string;
@@ -77,6 +78,16 @@ export async function flushDueCandles(): Promise<void> {
     const now = Date.now();
     const currentMinute = minuteFloor(now);
 
+    // MARKET_SYMBOLS allowlist: only these pairs are persisted. Others still
+    // publish candle.closed below so their live charts keep updating.
+    let storable: Set<string>;
+    try {
+        storable = await getMarketDataPairIds();
+    } catch (err) {
+        logger.error({ err }, "candle_flush_allowlist_lookup_failed");
+        return; // keep open candles in memory; retry on the next flush
+    }
+
     for (const [pairId, candle] of openCandles) {
         if (candle.minuteKey >= currentMinute) continue; // Still open
 
@@ -84,19 +95,21 @@ export async function flushDueCandles(): Promise<void> {
         const ts = new Date(candle.minuteKey).toISOString();
 
         try {
-            await pool.query(
-                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
-                 VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9)
-                 ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
-                     open = EXCLUDED.open,
-                     high = GREATEST(candles.high, EXCLUDED.high),
-                     low = LEAST(candles.low, EXCLUDED.low),
-                     close = EXCLUDED.close,
-                     volume = candles.volume + EXCLUDED.volume,
-                     buy_volume = candles.buy_volume + EXCLUDED.buy_volume,
-                     sell_volume = candles.sell_volume + EXCLUDED.sell_volume`,
-                [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.buyVolume, candle.sellVolume],
-            );
+            if (storable.has(pairId)) {
+                await pool.query(
+                    `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
+                     VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9)
+                     ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
+                         open = EXCLUDED.open,
+                         high = GREATEST(candles.high, EXCLUDED.high),
+                         low = LEAST(candles.low, EXCLUDED.low),
+                         close = EXCLUDED.close,
+                         volume = candles.volume + EXCLUDED.volume,
+                         buy_volume = candles.buy_volume + EXCLUDED.buy_volume,
+                         sell_volume = candles.sell_volume + EXCLUDED.sell_volume`,
+                    [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.buyVolume, candle.sellVolume],
+                );
+            }
 
             // Publish candle.closed event for live chart updates
             publish(createEvent("candle.closed", {

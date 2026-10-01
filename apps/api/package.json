@@ -35,6 +35,7 @@
     "openapi": "tsx src/scripts/generateOpenapi.ts",
     "backfill": "tsx src/scripts/backfillCandles.ts",
     "candles:backfill": "tsx scripts/backfill-candles.ts",
+    "backfill:history": "tsx src/scripts/backfillMarketHistory.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],

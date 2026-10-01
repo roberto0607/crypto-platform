@@ -86,7 +86,7 @@ describe("runBackfill recency skip", () => {
         );
         // 5m/15m/1d/4h have no rows at all → should NOT be skipped.
 
-        const result = await runBackfill();
+        const result = await runBackfill({ marketSymbols: new Set([`CB${uid.toUpperCase()}/USD`]) });
 
         // Only 1m is skipped (fresh candle); 5m/15m/1h/1d are missing/stale
         // and get fetched (backfillPairTimeframe paginates internally, so
@@ -107,7 +107,7 @@ describe("runBackfill recency skip", () => {
             );
         }
 
-        const result = await runBackfill();
+        const result = await runBackfill({ marketSymbols: new Set([`CB${uid.toUpperCase()}/USD`]) });
 
         expect(result.totalSkipped).toBe(7); // 5 fetch timeframes + the 4h rollup check + the 1w rollup check
         expect(fetchCallCount).toBe(0);

@@ -37,6 +37,8 @@ import { initOrderBookAggregator, stopOrderBookAggregator } from "./market/order
 import { initMacroCorrelation, stopMacroCorrelation } from "./market/macroCorrelationService";
 import { initOptionsGamma, stopOptionsGamma } from "./market/optionsGammaService";
 import { initOnChainFlow, stopOnChainFlow } from "./market/onChainFlowService";
+import { startDbSizeGuard, stopDbSizeGuard } from "./observability/dbSizeGuard";
+import { logger as rootLogger } from "./observability/logContext";
 
 function getGitCommit(): string {
   try {
@@ -96,10 +98,24 @@ async function start() {
     devMode: {
       disableRateLimit: config.disableRateLimit,
       disableJobRunner: config.disableJobRunner,
+      agentsEnabled: config.agentsEnabled,
       chartAnalysisAgentEnabled: config.chartAnalysisAgentEnabled,
       riskAgentEnabled: config.riskAgentEnabled,
       executionAgentEnabled: config.executionAgentEnabled,
     },
+  });
+
+  // ── Disk-pressure guardrail (per instance: each keeps its own pause flag) ──
+  startDbSizeGuard({
+    pool,
+    logger: rootLogger.child({ module: "dbSizeGuard" }),
+    thresholds: {
+      limitBytes: config.dbSizeLimitMb * 1024 * 1024,
+      warnPct: config.dbSizeWarnPct,
+      criticalPct: config.dbSizeCriticalPct,
+    },
+    intervalMs: config.dbSizeCheckIntervalMs,
+    elevatedIntervalMs: config.dbSizeElevatedIntervalMs,
   });
 
   // ── Start orchestrator (leader election for background jobs) ──
@@ -109,6 +125,7 @@ async function start() {
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
     await stopOrchestrator();
+    stopDbSizeGuard();
     await stopEventBus();
     stopTriggerEngine();
     stopAlertEngine();

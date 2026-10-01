@@ -45,6 +45,7 @@ import {
   type ChartAnalysisResult,
   type ProposeChartConfigArgs,
 } from "../schemas";
+import { runLogPolicy } from "../shared/runLogPolicy";
 
 const AGENT_NAME = "chart-analysis";
 const MODEL = "claude-haiku-4-5-20251001";
@@ -243,11 +244,12 @@ interface RunLogInput {
 }
 
 /**
- * One row per invocation, success or failure -- same observability
- * convention as the Scanner Agent's logRun. Failure to write this row is
- * itself logged but does not throw.
+ * Every failure and every run that produced a trade proposal, plus a
+ * heartbeat/sampled subset of no-proposal successes (runLogPolicy.ts).
+ * Failure to write this row is itself logged but does not throw.
  */
 async function logRun(input: RunLogInput): Promise<void> {
+  if (!runLogPolicy.shouldPersist({ agentName: AGENT_NAME, status: input.status, ledToAction: input.proposalId !== null })) return;
   const costUsd = input.inputTokens * INPUT_COST_PER_TOKEN + input.outputTokens * OUTPUT_COST_PER_TOKEN;
   try {
     await pool.query(

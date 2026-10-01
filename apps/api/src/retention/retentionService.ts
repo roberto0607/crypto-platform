@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type { Logger } from "pino";
 import type { RetentionConfig, RetentionResult, RetentionStats } from "./retentionTypes";
 import { rollupEquity1m, rollupEquity1d } from "./rollupService";
+import { deleteInBatches, type BatchDeleteOptions } from "./batchDelete";
 import {
     retentionRowsDeletedTotal,
     retentionRollupsTotal,
@@ -32,6 +33,7 @@ export async function runRetention(
     pool: Pool,
     logger: Logger,
     configOverride?: Partial<RetentionConfig>,
+    batch: BatchDeleteOptions = {},
 ): Promise<RetentionResult> {
     const config: RetentionConfig = { ...DEFAULT_CONFIG, ...configOverride };
     const startMs = performance.now();
@@ -84,68 +86,59 @@ export async function runRetention(
 
         // ── Step 3: Delete raw equity_snapshots older than retention ──
         {
-            const result = await pool.query(
-                `DELETE FROM equity_snapshots WHERE ts < $1`,
-                [rawCutoffMs],
-            );
-            equityRawDeleted = result.rowCount ?? 0;
+            const result = await deleteInBatches(pool, "equity_snapshots", "ts < $1", [rawCutoffMs], batch);
+            equityRawDeleted = result.deleted;
         }
         retentionRowsDeletedTotal.inc({ table: "equity_snapshots" }, equityRawDeleted);
         logger.info({ equityRawDeleted }, "Deleted old raw equity snapshots");
 
         // ── Step 4: Delete 1m equity snapshots older than 90d ──
         {
-            const result = await pool.query(
-                `DELETE FROM equity_snapshots_1m WHERE bucket_ts < $1`,
-                [m1CutoffMs],
-            );
-            equity1mDeleted = result.rowCount ?? 0;
+            const result = await deleteInBatches(pool, "equity_snapshots_1m", "bucket_ts < $1", [m1CutoffMs], batch);
+            equity1mDeleted = result.deleted;
         }
         retentionRowsDeletedTotal.inc({ table: "equity_snapshots_1m" }, equity1mDeleted);
         logger.info({ equity1mDeleted }, "Deleted old 1m equity snapshots");
 
         // ── Step 5: Delete expired idempotency keys ──
         {
-            const result = await pool.query(
-                `DELETE FROM idempotency_keys
-                 WHERE created_at < now() - make_interval(days => $1)`,
-                [config.idempotencyRetentionDays],
+            const result = await deleteInBatches(
+                pool, "idempotency_keys", "created_at < now() - make_interval(days => $1)",
+                [config.idempotencyRetentionDays], batch,
             );
-            idempotencyKeysDeleted = result.rowCount ?? 0;
+            idempotencyKeysDeleted = result.deleted;
         }
         retentionRowsDeletedTotal.inc({ table: "idempotency_keys" }, idempotencyKeysDeleted);
         logger.info({ idempotencyKeysDeleted }, "Deleted expired idempotency keys");
 
         // ── Step 6: Delete old strategy signals ──
         {
-            const result = await pool.query(
-                `DELETE FROM strategy_signals
-                 WHERE created_at < now() - make_interval(days => $1)`,
-                [config.strategySignalRetentionDays],
+            const result = await deleteInBatches(
+                pool, "strategy_signals", "created_at < now() - make_interval(days => $1)",
+                [config.strategySignalRetentionDays], batch,
             );
-            strategySignalsDeleted = result.rowCount ?? 0;
+            strategySignalsDeleted = result.deleted;
         }
         retentionRowsDeletedTotal.inc({ table: "strategy_signals" }, strategySignalsDeleted);
         logger.info({ strategySignalsDeleted }, "Deleted old strategy signals");
 
         // ── Step 7: Delete old audit logs ──
         {
-            const result = await pool.query(
-                `DELETE FROM audit_log
-                 WHERE created_at < now() - make_interval(days => $1)`,
-                [config.auditLogRetentionDays],
+            const result = await deleteInBatches(
+                pool, "audit_log", "created_at < now() - make_interval(days => $1)",
+                [config.auditLogRetentionDays], batch,
             );
-            auditLogsDeleted = result.rowCount ?? 0;
+            auditLogsDeleted = result.deleted;
         }
         retentionRowsDeletedTotal.inc({ table: "audit_log" }, auditLogsDeleted);
         logger.info({ auditLogsDeleted }, "Deleted old audit logs");
 
         // ── Step 8: Delete old footprint candles (>24h) ──
         {
-            const result = await pool.query(
-                `DELETE FROM footprint_candles WHERE open_time < now() - interval '24 hours'`,
+            const result = await deleteInBatches(
+                pool, "footprint_candles", "open_time < now() - interval '24 hours'", [], batch,
             );
-            const footprintDeleted = result.rowCount ?? 0;
+            const footprintDeleted = result.deleted;
             retentionRowsDeletedTotal.inc({ table: "footprint_candles" }, footprintDeleted);
             logger.info({ footprintDeleted }, "Deleted old footprint candles");
         }
