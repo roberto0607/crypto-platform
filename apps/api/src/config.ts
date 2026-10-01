@@ -72,6 +72,11 @@ export const config = {
   backupRetentionDays: numberEnv("BACKUP_RETENTION_DAYS", 14),
   restoreDbName: process.env.RESTORE_DB_NAME ?? "cp_restore_test",
   disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
+  // Number of reverse-proxy hops in front of the API whose X-Forwarded-For
+  // entries Fastify should trust when computing req.ip. 0 (default) keeps
+  // req.ip = the TCP peer, which behind Railway's edge is the proxy itself —
+  // so any per-IP limit buckets every visitor together until this is set.
+  trustProxyHops: numberEnv("TRUST_PROXY_HOPS", 0),
   disableJobRunner: booleanEnv("DISABLE_JOB_RUNNER", false),
 
   // ── Phase 10 PR3: Pool tuning ──

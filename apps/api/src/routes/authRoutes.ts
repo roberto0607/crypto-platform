@@ -22,6 +22,7 @@ import { sendEmail } from "../email/emailTransport";
 import { verificationEmail, passwordResetEmail } from "../email/templates";
 import { logger } from "../observability/logContext";
 import { autoCreateWallets } from "../wallets/autoWallets";
+import { transferAnonQuickCallState } from "../quickCall/anonTransfer";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -134,6 +135,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await client.query("COMMIT");
 
         inviteConsumedTotal.inc();
+        await transferAnonQuickCallState(req, reply, user.id);
 
         await auditLog({
           actorUserId: user.id,
@@ -179,6 +181,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       // Awaited (its own transaction) before the 201 so a registered user is
       // guaranteed funded before they can trade. Idempotent — see autoCreateWallets.
       await autoCreateWallets(user.id);
+      await transferAnonQuickCallState(req, reply, user.id);
 
       await auditLog({
         actorUserId: user.id,
@@ -326,6 +329,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieSetOptions(refreshExpiresAt));
+    await transferAnonQuickCallState(req, reply, user.id);
 
     await auditLog({
       actorUserId: user.id,
