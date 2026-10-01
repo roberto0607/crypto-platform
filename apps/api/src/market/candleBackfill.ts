@@ -17,6 +17,8 @@ import {
     type CoinbaseGranularity,
 } from "../marketData/coinbaseRest.js";
 import { loadActiveSymbols } from "./symbolRegistry.js";
+import { filterMarketDataPairs } from "./marketSymbols.js";
+import { config } from "../config.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 
 const logger = rootLogger.child({ module: "candleBackfill" });
@@ -248,13 +250,19 @@ async function rollup1wFromDaily(pairId: string): Promise<number> {
  * Run the candle backfill for all active pairs and timeframes.
  * Fetches the last 7 days from Coinbase, then rolls up 4h from 1h and 1w from 1d.
  */
-export async function runBackfill(): Promise<BackfillResult> {
+export async function runBackfill(
+    opts: { marketSymbols?: ReadonlySet<string> } = {},
+): Promise<BackfillResult> {
     const start = Date.now();
     let totalInserted = 0;
     let totalErrors = 0;
     let totalSkipped = 0;
 
-    const mappedPairs = await loadActiveSymbols("coinbase");
+    const mappedPairs = filterMarketDataPairs(
+        await loadActiveSymbols("coinbase"),
+        (p) => p.ourSymbol,
+        opts.marketSymbols ?? config.marketSymbols,
+    );
 
     if (mappedPairs.length === 0) {
         logger.warn("No active pairs with Coinbase REST mapping found");

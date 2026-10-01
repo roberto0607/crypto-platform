@@ -22,6 +22,30 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return v === "true" || v === "1";
 }
 
+/** Default market-data storage allowlist (MARKET_SYMBOLS). */
+export const DEFAULT_MARKET_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD"] as const;
+
+/**
+ * Normalize an exchange-style pair symbol to our trading_pairs.symbol form:
+ * "btc-usd" / "BTC/USD" / " BTC-USD " → "BTC/USD". Throws on anything that
+ * isn't BASE<sep>QUOTE so a typo in MARKET_SYMBOLS fails at boot instead of
+ * silently storing nothing for that pair.
+ */
+export function normalizeMarketSymbol(raw: string): string {
+  const parts = raw.trim().toUpperCase().split(/[-/]/);
+  if (parts.length !== 2 || !/^[A-Z0-9]+$/.test(parts[0]!) || !/^[A-Z0-9]+$/.test(parts[1]!)) {
+    throw new Error(`Invalid market symbol "${raw}" — expected BASE-QUOTE, e.g. BTC-USD`);
+  }
+  return `${parts[0]}/${parts[1]}`;
+}
+
+/** Parse MARKET_SYMBOLS (comma-separated); unset/blank → the default three. */
+export function parseMarketSymbols(raw: string | undefined): ReadonlySet<string> {
+  const tokens = (raw ?? "").split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+  const list = tokens.length > 0 ? tokens : [...DEFAULT_MARKET_SYMBOLS];
+  return new Set(list.map(normalizeMarketSymbol));
+}
+
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProd = nodeEnv === "production";
 
@@ -134,6 +158,13 @@ export const config = {
   disableMarketMaker: booleanEnv("DISABLE_MARKET_MAKER", false),
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
+
+  // ── DB recovery: market-data storage allowlist ──
+  // Only these pairs ever get candle / footprint rows written. Every other
+  // active pair still streams live (price.tick / candle.closed events,
+  // trading_pairs.last_price) but nothing is persisted as history for it.
+  // Normalized to trading_pairs.symbol form ("BTC/USD").
+  marketSymbols: parseMarketSymbols(process.env.MARKET_SYMBOLS),
 
   // ── Phase 19: Candle backfill on boot ──
   candleBackfillOnBoot: booleanEnv("CANDLE_BACKFILL_ON_BOOT", true),
