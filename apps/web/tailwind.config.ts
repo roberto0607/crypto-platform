@@ -7,6 +7,7 @@ const config: Config = {
       fontFamily: {
         bebas: ['"Bebas Neue"', "sans-serif"],
         mono: ['"Space Mono"', "monospace"],
+        anton: ["Anton", '"Bebas Neue"', "sans-serif"],
       },
       colors: {
         tradr: {
@@ -14,6 +15,14 @@ const config: Config = {
           red: "#ff3b3b",
           bg: "#040404",
           bg2: "#070707",
+        },
+        // Landing hero. Contrast on tradr.bg (#040404): accent 15.9:1,
+        // amber 11.5:1, muted 8.1:1, down 7.4:1 — all clear WCAG AA 4.5:1.
+        lp: {
+          accent: "#7CFF5B",
+          amber: "#F2B84B",
+          muted: "#A3A3A3",
+          down: "#FF6B6B",
         },
       },
       keyframes: {

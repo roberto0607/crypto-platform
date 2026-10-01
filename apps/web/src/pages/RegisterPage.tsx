@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AxiosError } from "axios";
 import { useAppStore } from "@/stores/appStore";
 import { register } from "@/api/endpoints/auth";
@@ -9,12 +9,16 @@ import type { LegacyApiError, V1ApiError } from "@/types/api";
 import Input from "@/components/Input";
 import Button from "@/components/Button";
 import ErrorBanner from "@/components/ErrorBanner";
+import { HANDLE_RE } from "@/lib/landing";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const systemStatus = useAppStore((s) => s.systemStatus);
   const setSystemStatus = useAppStore((s) => s.setSystemStatus);
 
+  // Prefilled when arriving from the landing page's handle form.
+  const [handle, setHandle] = useState(() => searchParams.get("handle") ?? "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -39,6 +43,9 @@ export default function RegisterPage() {
   }, []);
 
   function validate(): string | null {
+    if (handle.trim() && !HANDLE_RE.test(handle.trim())) {
+      return "Handle must be 3–30 characters: letters, numbers, underscore";
+    }
     if (password.length < 8) return "Password must be at least 8 characters";
     if (password.length > 72) return "Password must be at most 72 characters";
     if (password !== confirmPassword) return "Passwords do not match";
@@ -58,7 +65,7 @@ export default function RegisterPage() {
 
     setSubmitting(true);
     try {
-      await register(email, password, betaMode ? inviteCode.trim() : undefined);
+      await register(email, password, betaMode ? inviteCode.trim() : undefined, handle.trim() || undefined);
       navigate("/login?registered=1", { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
@@ -77,6 +84,16 @@ export default function RegisterPage() {
       </h1>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+      <Input
+        id="handle"
+        label="Handle (optional)"
+        type="text"
+        autoComplete="username"
+        maxLength={30}
+        value={handle}
+        onChange={(e) => setHandle(e.target.value)}
+      />
 
       <Input
         ref={emailRef}
