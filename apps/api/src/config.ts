@@ -181,6 +181,15 @@ export const config = {
   retentionAgentRunLogDays: numberEnv("RETENTION_AGENT_RUN_LOG_DAYS", 14),
   retentionOutboxDoneDays: numberEnv("RETENTION_OUTBOX_DONE_DAYS", 7),
 
+  // ── DB recovery: disk-pressure guardrail (observability/dbSizeGuard.ts) ──
+  // Set DB_SIZE_LIMIT_MB to the Postgres volume size (MB). 0/unset = size is
+  // still logged hourly but the warn/pause thresholds are inactive.
+  dbSizeLimitMb: numberEnv("DB_SIZE_LIMIT_MB", 0),
+  dbSizeWarnPct: numberEnv("DB_SIZE_WARN_PCT", 70),
+  dbSizeCriticalPct: numberEnv("DB_SIZE_CRITICAL_PCT", 85),
+  dbSizeCheckIntervalMs: numberEnv("DB_SIZE_CHECK_INTERVAL_MS", 3_600_000),
+  dbSizeElevatedIntervalMs: numberEnv("DB_SIZE_ELEVATED_INTERVAL_MS", 300_000),
+
   // ── Phase 19: Candle backfill on boot ──
   candleBackfillOnBoot: booleanEnv("CANDLE_BACKFILL_ON_BOOT", true),
 

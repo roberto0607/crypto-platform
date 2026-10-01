@@ -58,6 +58,7 @@ import { pool } from "../../db/pool";
 import type { JobDefinition, JobContext } from "../jobTypes";
 import { config } from "../../config";
 import { getShortlist } from "../../agents/scanner/rank";
+import { nonEssentialWritesPaused } from "../../observability/writePause";
 
 const APITUBE_BASE_URL = "https://api.apitube.io/v1";
 const FETCH_TIMEOUT_MS = 8000;
@@ -269,6 +270,10 @@ export const newsAgentJob: JobDefinition = {
   maxRunSeconds: 45,
   async run(ctx) {
     if (!config.newsAgentEnabled) return;
+    if (nonEssentialWritesPaused()) {
+      ctx.logger.warn({ eventType: "db_size" }, "news_agent_skipped_db_size_critical");
+      return;
+    }
 
     // Loud, not silent -- every cycle the key is missing, not just once.
     // A one-time warning would fade out of recent logs while the gate

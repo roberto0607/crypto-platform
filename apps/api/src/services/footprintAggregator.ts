@@ -12,6 +12,7 @@ import { pool } from "../db/pool.js";
 import { logger } from "../observability/logContext.js";
 import { recordKrakenReconnectAttempt } from "../market/krakenReconnectTracker.js";
 import { isMarketDataSymbol } from "../market/marketSymbols.js";
+import { nonEssentialWritesPaused } from "../observability/writePause.js";
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
 const RECONNECT_DELAYS = [2000, 5000, 10000, 30000];
@@ -69,6 +70,8 @@ function bucketsToJson(buckets: BucketMap): Record<string, { b: number; s: numbe
 async function persistCandle(tf: string, agg: CandleAgg): Promise<void> {
     // BTC/USD-only feed; still honor the MARKET_SYMBOLS storage allowlist.
     if (!isMarketDataSymbol("BTC/USD")) return;
+    // Disk-pressure guard: footprint history is non-essential.
+    if (nonEssentialWritesPaused()) return;
     try {
         const bucketsJson = JSON.stringify(bucketsToJson(agg.buckets));
         const delta = agg.totalBuy - agg.totalSell;

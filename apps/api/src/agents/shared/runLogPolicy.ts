@@ -12,10 +12,14 @@
  *                                 (keeps the watchdog truthful), otherwise
  *                                 with probability sampleRate.
  *
+ * While the disk-pressure guard is critical (dbSizeGuard.ts), nothing is
+ * persisted -- agent logs are the first non-essential write to go.
+ *
  * Heartbeat state is per process; a restart simply persists the next
  * success, which is the conservative direction.
  */
 import { config } from "../../config";
+import { nonEssentialWritesPaused } from "../../observability/writePause";
 
 export interface RunLogCandidate {
   agentName: string;
@@ -33,13 +37,16 @@ export function createRunLogPolicy(opts: {
   heartbeatMs: number;
   now?: () => number;
   random?: () => number;
+  paused?: () => boolean;
 }): RunLogPolicy {
+  const paused = opts.paused ?? nonEssentialWritesPaused;
   const now = opts.now ?? Date.now;
   const random = opts.random ?? Math.random;
   const lastPersistedSuccess = new Map<string, number>();
 
   return {
     shouldPersist(run) {
+      if (paused()) return false;
       if (run.status !== "success" || run.ledToAction) return true;
       const t = now();
       const last = lastPersistedSuccess.get(run.agentName);

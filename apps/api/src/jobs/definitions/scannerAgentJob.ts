@@ -1,5 +1,6 @@
 import type { JobDefinition } from "../jobTypes";
 import { config } from "../../config.js";
+import { nonEssentialWritesPaused } from "../../observability/writePause.js";
 import { runScannerAgent } from "../../agents/scanner/runner.js";
 import { publish } from "../../events/eventBus.js";
 import { createEvent } from "../../events/eventTypes.js";
@@ -22,6 +23,10 @@ export const scannerAgentJob: JobDefinition = {
   maxRunSeconds: 120,
   async run(ctx) {
     if (!config.scannerAgentEnabled) return;
+    if (nonEssentialWritesPaused()) {
+      ctx.logger.warn({ eventType: "db_size" }, "scanner_agent_skipped_db_size_critical");
+      return;
+    }
 
     const outcome = await runScannerAgent();
     if (!outcome.result) {
