@@ -16,6 +16,7 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 
 import { config } from "./config";
+import { trustProxyOption } from "./http/trustProxy";
 
 import metricsPlugin from "./metrics";
 import healthRoutes from "./routes/healthRoutes";
@@ -84,7 +85,7 @@ export interface BuildAppOptions {
 export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
     logger: opts.logger ?? true,
-    trustProxy: config.trustProxyHops > 0 ? config.trustProxyHops : false,
+    trustProxy: trustProxyOption(config.trustProxyHops),
     genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
   });
 

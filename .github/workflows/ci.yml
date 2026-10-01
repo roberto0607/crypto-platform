@@ -106,11 +106,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # Runs on PRs to main too, not just pushes: Railway deploys the API from
+  # this Dockerfile, so a PR that type-checks locally but fails the image
+  # build (as happened with the unlocked fastify upgrade) must fail here,
+  # before merge, rather than at deploy time.
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
     needs: [api, web]
-    if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v4
