@@ -26,6 +26,7 @@ import v1Conversations from "./v1Conversations";
 import v1MatchChat from "./v1MatchChat";
 import v1Moderation from "./v1Moderation";
 import v1QuickCall from "./v1QuickCall";
+import v1Public from "./v1Public";
 
 const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1Orders);
@@ -54,6 +55,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1MatchChat);
     await app.register(v1Moderation);
     await app.register(v1QuickCall);
+    await app.register(v1Public);
 };
 
 export default v1Routes;

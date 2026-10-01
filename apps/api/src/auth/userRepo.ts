@@ -14,16 +14,17 @@ export async function createUser(params: {
     email: string;
     emailNormalized: string;
     passwordHash: string;
+    displayName?: string;
 }): Promise<UserRow> {
-    const { email, emailNormalized, passwordHash } = params;
+    const { email, emailNormalized, passwordHash, displayName } = params;
 
     const result = await pool.query<UserRow>(
         `
-        INSERT INTO users (email, email_normalized, password_hash)
-        VALUES ($1, $2, $3)
+        INSERT INTO users (email, email_normalized, password_hash, display_name)
+        VALUES ($1, $2, $3, $4)
         RETURNING id, email, email_normalized, role, created_at, updated_at
         `,
-        [email, emailNormalized, passwordHash]
+        [email, emailNormalized, passwordHash, displayName ?? null]
     );
 
     return result.rows[0];

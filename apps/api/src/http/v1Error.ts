@@ -56,6 +56,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   message_not_found: "The requested message was not found.",
   // 409
   email_taken: "This email address is already registered.",
+  display_name_taken: "That handle is already taken.",
   wallet_already_exists: "A wallet for this asset already exists.",
   asset_already_exists: "An asset with this symbol already exists.",
   pair_already_exists: "This trading pair already exists.",
