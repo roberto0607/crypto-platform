@@ -49,6 +49,12 @@ export function parseMarketSymbols(raw: string | undefined): ReadonlySet<string>
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProd = nodeEnv === "production";
 
+// Master switch for every agent (Scanner, Chart Analysis, Risk, Execution,
+// News). Off by default in production; each per-agent flag below is ANDed
+// with it, so AGENTS_ENABLED=false wins no matter what the individual flags
+// say. Outside prod it defaults on so the per-agent flags alone decide.
+const agentsEnabled = booleanEnv("AGENTS_ENABLED", !isProd);
+
 // Boot-time safety guard: rate limiting must remain enabled in production.
 if (isProd && (process.env.DISABLE_RATE_LIMIT === "true" || process.env.DISABLE_RATE_LIMIT === "1")) {
   throw new Error("DISABLE_RATE_LIMIT cannot be true in production");
@@ -186,6 +192,17 @@ export const config = {
   // boot.
   opsAlertEmail: process.env.OPS_ALERT_EMAIL || "",
 
+  // ── Agents: master switch + run-log persistence policy ──
+  agentsEnabled,
+  // agent_run_logs persistence: errors and runs that produced an action
+  // (a trade proposal) are always written. Plain successful cycles are
+  // written only as a heartbeat (at most one per agent per
+  // AGENT_LOG_HEARTBEAT_MINUTES -- keeps agentHealthWatchdogJob's 90-min
+  // "last success" check truthful) plus a random AGENT_LOG_SAMPLE_RATE
+  // fraction, instead of one row every cycle.
+  agentLogSampleRate: numberEnv("AGENT_LOG_SAMPLE_RATE", 0.05),
+  agentLogHeartbeatMinutes: numberEnv("AGENT_LOG_HEARTBEAT_MINUTES", 30),
+
   // ── Gate 1b: Scanner Agent ──
   // Deliberately NOT requireEnv()'d here — unlike jwtAccessSecret, this key
   // is only needed by the Scanner Agent, an optional, schedulable background
@@ -202,7 +219,7 @@ export const config = {
   // Default disabled (unlike disableMarketMaker, which defaults to
   // *enabled*) -- each run costs real Anthropic API $ and needs
   // anthropicApiKey configured, so it must be opt-in per environment.
-  scannerAgentEnabled: booleanEnv("SCANNER_AGENT_ENABLED", false),
+  scannerAgentEnabled: agentsEnabled && booleanEnv("SCANNER_AGENT_ENABLED", false),
   // Provisional default, not yet validated against real cost/latency data --
   // revisit after a manual observation period post-merge (see
   // agent_run_logs for actual per-run cost_usd/latency_ms once
@@ -214,7 +231,7 @@ export const config = {
   // there's no matching *IntervalSeconds flag -- see chartAnalysisEngine.ts.
   // Default disabled for the same reason as scannerAgentEnabled: real
   // Anthropic API $ per run.
-  chartAnalysisAgentEnabled: booleanEnv("CHART_ANALYSIS_AGENT_ENABLED", false),
+  chartAnalysisAgentEnabled: agentsEnabled && booleanEnv("CHART_ANALYSIS_AGENT_ENABLED", false),
 
   // ── Gate 1d: Risk Management Agent ──
   // Event-driven (reacts to chart_analysis.proposal_created), not
@@ -225,7 +242,7 @@ export const config = {
   // concern (pure TypeScript, no LLM call, see the design doc), but it
   // still shouldn't start approving proposals and reserving risk in an
   // environment nobody has opted into yet.
-  riskAgentEnabled: booleanEnv("RISK_AGENT_ENABLED", false),
+  riskAgentEnabled: agentsEnabled && booleanEnv("RISK_AGENT_ENABLED", false),
   // Set this to a random UUID in production via Railway env vars, same
   // convention as botUserId above.
   riskAgentBotUserId: process.env.RISK_AGENT_BOT_USER_ID ?? "00000000-0000-0000-0000-000000000002",
@@ -242,7 +259,7 @@ export const config = {
   // checked automatically via the source: "agent" tag every order this
   // agent places carries -- executor.ts doesn't re-check it separately.
   // Default disabled, same as every other agent flag here.
-  executionAgentEnabled: booleanEnv("EXECUTION_AGENT_ENABLED", false),
+  executionAgentEnabled: agentsEnabled && booleanEnv("EXECUTION_AGENT_ENABLED", false),
 
   // ── Gate 1f: News Agent ──
   // Deliberately NOT requireEnv()'d -- same reasoning as anthropicApiKey
@@ -278,5 +295,5 @@ export const config = {
   // scannerAgentEnabled: real API cost/quota per run, so it must be
   // opt-in per environment. Default disabled, same as every other agent
   // flag here.
-  newsAgentEnabled: booleanEnv("NEWS_AGENT_ENABLED", false),
+  newsAgentEnabled: agentsEnabled && booleanEnv("NEWS_AGENT_ENABLED", false),
 };

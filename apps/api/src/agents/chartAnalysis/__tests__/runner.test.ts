@@ -8,6 +8,7 @@
  * assert. Mirrors agents/scanner/__tests__/runner.test.ts's conventions.
  */
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { runLogPolicy } from "../../shared/runLogPolicy";
 
 const mockCreate = vi.fn();
 
@@ -109,6 +110,9 @@ const VALID_OUTPUT = {
 };
 
 beforeEach(() => {
+  // Per-process heartbeat state would otherwise sample out every success
+  // after the first one in this file.
+  runLogPolicy.reset();
   mockCreate.mockReset();
   mockPoolQuery.mockReset();
   mockPoolQuery.mockImplementation((sql: string) => {

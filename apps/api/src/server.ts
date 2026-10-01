@@ -96,6 +96,7 @@ async function start() {
     devMode: {
       disableRateLimit: config.disableRateLimit,
       disableJobRunner: config.disableJobRunner,
+      agentsEnabled: config.agentsEnabled,
       chartAnalysisAgentEnabled: config.chartAnalysisAgentEnabled,
       riskAgentEnabled: config.riskAgentEnabled,
       executionAgentEnabled: config.executionAgentEnabled,
