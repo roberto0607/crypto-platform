@@ -148,6 +148,12 @@ describe("Public landing stream", () => {
     }
   });
 
+  it("does not feature an ACTIVE match whose window has already ended", async () => {
+    const matchId = await activeMatch();
+    await pool.query(`UPDATE matches SET ends_at = now() - interval '1 second' WHERE id = $1`, [matchId]);
+    expect(await computeFeaturedMatch()).toBeNull();
+  });
+
   it("a player without a display name gets a null handle, never their email", async () => {
     await activeMatch();
     const featured = (await computeFeaturedMatch())!;

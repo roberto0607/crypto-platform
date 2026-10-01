@@ -27,7 +27,9 @@ export async function listActiveMatchesForLanding(limit = 50): Promise<ActiveMat
        FROM matches m
        JOIN users c ON c.id = m.challenger_id
        JOIN users o ON o.id = m.opponent_id
-      WHERE m.status = 'ACTIVE' AND m.ends_at IS NOT NULL
+      -- ends_at > now(): a match past its window but not yet closed by the
+      -- completion job is over for the viewer; don't feature a 00:00:00 clock.
+      WHERE m.status = 'ACTIVE' AND m.ends_at > now()
       ORDER BY m.started_at DESC
       LIMIT $1`,
     [limit],
