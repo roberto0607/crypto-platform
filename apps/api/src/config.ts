@@ -172,6 +172,15 @@ export const config = {
   // Normalized to trading_pairs.symbol form ("BTC/USD").
   marketSymbols: parseMarketSymbols(process.env.MARKET_SYMBOLS),
 
+  // ── DB recovery: storage-budget retention (storage-retention job) ──
+  // Fine-grained candles age out; 1h/4h/1d/1w are kept indefinitely (a few
+  // MB per pair per year). Set a window to 0 to keep that series forever.
+  retentionCandle1mDays: numberEnv("RETENTION_CANDLE_1M_DAYS", 30),
+  retentionCandle5mDays: numberEnv("RETENTION_CANDLE_5M_DAYS", 365),
+  retentionCandle15mDays: numberEnv("RETENTION_CANDLE_15M_DAYS", 365),
+  retentionAgentRunLogDays: numberEnv("RETENTION_AGENT_RUN_LOG_DAYS", 14),
+  retentionOutboxDoneDays: numberEnv("RETENTION_OUTBOX_DONE_DAYS", 7),
+
   // ── Phase 19: Candle backfill on boot ──
   candleBackfillOnBoot: booleanEnv("CANDLE_BACKFILL_ON_BOOT", true),
 
