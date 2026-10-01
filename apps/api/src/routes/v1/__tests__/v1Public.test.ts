@@ -21,6 +21,7 @@ import {
   computeFeaturedMatch,
   recordMatchReturns,
   MAX_CONNECTIONS_PER_IP,
+  MAX_PRICE_AGE_MS,
   __onEventForTest,
   __resetLandingForTest,
   type LandingConnection,
@@ -190,6 +191,18 @@ describe("Public landing stream", () => {
         { symbol: "BTC", price: "84000.10" },
         { symbol: "SOL", price: "142.5" },
       ]);
+    } finally {
+      remove();
+    }
+  });
+
+  it("does not send a stale price to a new viewer", () => {
+    recordTrade("BTC/USD", "84000.10", Date.now() - MAX_PRICE_AGE_MS - 1);
+    recordTrade("ETH/USD", "2600", Date.now());
+    const f = fakeConn("1.1.1.1", null);
+    const remove = addConnection(f.conn)!;
+    try {
+      expect(f.frames.filter((x) => x.event === "price").map((x) => x.data)).toEqual([{ symbol: "ETH", price: "2600" }]);
     } finally {
       remove();
     }

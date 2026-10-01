@@ -26,6 +26,12 @@ export const PRICE_INTERVAL_MS = 500;
 export const FEATURED_REFRESH_MS = 5_000;
 const SERIES_MAX_POINTS = 120;
 const SERIES_MIN_SPACING_MS = 5_000;
+/**
+ * A price older than this isn't sent to a newly connected viewer: if the feed
+ * has died, the page should show no price rather than an old one as live.
+ * (Ongoing frames are only sent on change, so a dead feed sends nothing.)
+ */
+export const MAX_PRICE_AGE_MS = 60_000;
 export const MAX_CONNECTIONS_PER_IP = 4;
 export const MAX_CONNECTIONS_TOTAL = 5_000;
 
@@ -199,7 +205,9 @@ export function addConnection(conn: LandingConnection): (() => void) | null {
   // Initial state so the page renders without waiting for the next tick.
   for (const symbol of LANDING_SYMBOLS) {
     const latest = getLatestTrade(symbol);
-    if (latest) conn.send("price", { symbol: shortSymbol(symbol), price: latest.price });
+    if (latest && Date.now() - latest.receivedAt <= MAX_PRICE_AGE_MS) {
+      conn.send("price", { symbol: shortSymbol(symbol), price: latest.price });
+    }
   }
   if (featuredTimer && !refreshing) conn.send("featured", featured);
 
