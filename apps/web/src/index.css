@@ -68,6 +68,16 @@ canvas, .tv-lightweight-charts, [data-no-theme-transition] {
   transition: none !important;
 }
 
+/* Landing hero: prefers-reduced-motion means no motion at all — including
+   the global theme transitions on `html *` above. */
+@media (prefers-reduced-motion: reduce) {
+  .lp-root,
+  .lp-root * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
 /* ── TRADR Landing Page Custom Styles ── */
 
 /* Boot sequence line reveal */

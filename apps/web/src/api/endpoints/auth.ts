@@ -10,11 +10,13 @@ export function register(
   email: string,
   password: string,
   inviteCode?: string,
+  displayName?: string,
 ) {
   return client.post<RegisterResponse>("/auth/register", {
     email,
     password,
     ...(inviteCode ? { inviteCode } : {}),
+    ...(displayName ? { displayName } : {}),
   });
 }
 
