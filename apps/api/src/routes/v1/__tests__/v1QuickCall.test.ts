@@ -113,7 +113,7 @@ describe("Quick call", () => {
     expect(res.statusCode).toBe(200);
     const cookie = res.cookies.find((c) => c.name === ANON_COOKIE_NAME)!;
     expect(cookie.httpOnly).toBe(true);
-    expect(cookie.sameSite?.toLowerCase()).toBe("lax"); // dev/test; "none"+secure in prod
+    expect(cookie.sameSite?.toLowerCase()).toBe("lax"); // every env; prod adds Secure (auth/__tests__/cookieOptions.test.ts)
     const { call } = res.json();
     expect(call.entryPrice).toBe("84000.00");
     expect(call.entryAt).toBe(now);

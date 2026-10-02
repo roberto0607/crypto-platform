@@ -9,8 +9,9 @@ TRADR is a competitive crypto paper trading platform. Users trade BTC/ETH/SOL wi
 - **Monorepo**: pnpm workspaces — `apps/api/` (Fastify/TypeScript) + `apps/web/` (Vite/React)
 - **Database**: PostgreSQL 16 via raw SQL (`pg` pool, no ORM) + Redis for distributed state
 - **Deployment**: Railway — separate web and API services
-  - Frontend: `gallant-reprieve-production.up.railway.app`
-  - API: `crypto-platform-production-691d.up.railway.app`
+  - Frontend: `playtradr.com` (Railway service `gallant-reprieve`; legacy host `gallant-reprieve-production.up.railway.app` 301s to it via `apps/web/nginx.conf`)
+  - API: `api.playtradr.com` (Railway service `crypto-platform`; legacy host `crypto-platform-production-691d.up.railway.app`)
+  - DNS on Cloudflare, proxied (orange cloud) for both hosts
 - **Auth**: Argon2 + JWT access tokens + HttpOnly refresh cookie rotation
 - **Trading**: Simulated order book with limit/market orders, slippage model, TP/SL/trailing stop triggers
 
@@ -98,9 +99,10 @@ All new indicators follow this pattern:
 - Heights persisted in localStorage key `tradr_panel_heights`
 
 ### Auth & Cookies
-- Production uses `sameSite: "none"` + `secure: true` (cross-origin Railway deployment)
-- Dev uses `sameSite: "lax"` (Vite proxy makes it same-origin)
-- **Never change cookie config without checking `config.isProd` condition**
+- Refresh + quick-call anon cookies: `SameSite=Lax`, `HttpOnly`, host-only (no `Domain`), `Secure` in prod (`config.isProd`), in every environment. Pinned by `auth/__tests__/cookieOptions.test.ts`.
+- Works because web (`playtradr.com`) and API (`api.playtradr.com`) are **same-site**, and SameSite compares sites, not origins. Dev is same-origin via the Vite proxy.
+- **Never reintroduce `SameSite=None`.** It existed only because web and API were separate `*.up.railway.app` hosts. `up.railway.app` is on the Public Suffix List, so those hosts were different sites; Safari treated the refresh cookie as third-party and dropped it, logging users out on every reload.
+- Any web origin that isn't same-site with the API can't refresh a session. Keep such hosts redirected to `playtradr.com` (`apps/web/nginx.conf`).
 
 ### Error Handling
 - Never use `process.exit()` silently — always log before exiting

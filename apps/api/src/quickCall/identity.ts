@@ -25,13 +25,13 @@ export interface Identity {
   key: string;
 }
 
-// Same cross-site rule as the refresh cookie (auth/cookieOptions.ts): prod web
-// and API are different sites, so the cookie must be SameSite=None; Secure to
-// be sent on the landing page's fetches. Dev goes through the Vite proxy.
+// Same rule as the refresh cookie (auth/cookieOptions.ts): web and API are
+// same-site (playtradr.com / api.playtradr.com), so SameSite=Lax is sent on
+// the app's credentialed fetches. Host-only (no Domain). Dev uses the Vite proxy.
 export const anonCookieOptions = {
   httpOnly: true,
   secure: config.isProd,
-  sameSite: (config.isProd ? "none" : "lax") as "none" | "lax",
+  sameSite: "lax" as const,
   path: "/",
 };
 
