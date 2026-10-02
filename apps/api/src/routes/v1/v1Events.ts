@@ -63,6 +63,17 @@ export function shouldDeliverToStream(event: AppEvent, interestSet: Set<string>)
 }
 
 /**
+ * Serialize one event as an SSE frame. price.tick frames carry `sentAt` —
+ * the server clock at the moment the frame is written to this socket — so
+ * the browser can separate "server published late" (sentAt − ts) from
+ * "frame arrived late" (receive − sentAt, which also includes clock skew).
+ */
+export function formatSseFrame(event: AppEvent, now: number = Date.now()): string {
+  const payload = event.type === "price.tick" ? { ...event, sentAt: now } : event;
+  return `event: ${event.type}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+/**
  * TEST-ONLY — do not call from production code paths.
  *
  * Lets route-level tests pre-populate a stream entry (as if a real SSE
@@ -155,8 +166,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
       const interestSet = streamInterestSets.get(streamId)?.interestSet ?? new Set<string>();
       if (!shouldDeliverToStream(event, interestSet)) return;
       try {
-        const frame = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-        reply.raw.write(frame);
+        reply.raw.write(formatSseFrame(event));
       } catch {
         eventsDeliveryFailuresTotal.inc();
       }

@@ -144,6 +144,12 @@ export const ordersCreatedTotal = new client.Counter({
   help: "Total orders successfully created",
 });
 
+export const marketFillOffBookTotal = new client.Counter({
+  name: "tradr_market_fill_off_book_total",
+  help: "MARKET orders whose average fill was >25bps from the displayed Kraken touch (diagnostic)",
+  labelNames: ["side", "direction"] as const,
+});
+
 export const ordersRejectedTotal = new client.Counter({
   name: "orders_rejected_total",
   help: "Total orders rejected",

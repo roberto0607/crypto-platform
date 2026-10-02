@@ -38,6 +38,7 @@ import { initMacroCorrelation, stopMacroCorrelation } from "./market/macroCorrel
 import { initOptionsGamma, stopOptionsGamma } from "./market/optionsGammaService";
 import { initOnChainFlow, stopOnChainFlow } from "./market/onChainFlowService";
 import { startDbSizeGuard, stopDbSizeGuard } from "./observability/dbSizeGuard";
+import { startEventLoopMonitor, stopEventLoopMonitor } from "./observability/feedHealth";
 import { logger as rootLogger } from "./observability/logContext";
 
 function getGitCommit(): string {
@@ -105,6 +106,9 @@ async function start() {
     },
   });
 
+  // ── Event-loop lag monitor (diagnostic; feeds /metrics + /v1/market/feed-health) ──
+  startEventLoopMonitor();
+
   // ── Disk-pressure guardrail (per instance: each keeps its own pause flag) ──
   startDbSizeGuard({
     pool,
@@ -126,6 +130,7 @@ async function start() {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
     await stopOrchestrator();
     stopDbSizeGuard();
+    stopEventLoopMonitor();
     await stopEventBus();
     stopTriggerEngine();
     stopAlertEngine();

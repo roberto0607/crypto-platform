@@ -18,6 +18,7 @@ import { krakenTradeSide, addSample as addPressureSample } from "../services/pre
 import { eventsPublishedTotal } from "../metrics.js";
 import { getCoinbaseLastTradeAt } from "../feeds/coinbaseWs.js";
 import { recordKrakenReconnectAttempt } from "./krakenReconnectTracker.js";
+import { recordFeedTick, recordFeedReconnect, type ReconnectCause } from "../observability/feedHealth.js";
 
 // Coinbase is the primary price.tick source as of Gate 1 (2026-07-25) — see
 // docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md. Kraken's
@@ -78,6 +79,9 @@ let backfillDone = false;
 const WATCHDOG_TIMEOUT_MS = 30_000;
 let lastTickAt = 0;
 let wsConnected = false;
+// Why the socket is being closed, set by the watchdog / error handler just
+// before they call close() — read once by scheduleReconnect for feedHealth.
+let pendingCloseCause: { cause: ReconnectCause; detail: string | null } | null = null;
 
 export function getKrakenWsHealth(): {
     connected: boolean;
@@ -138,6 +142,7 @@ async function handleTickerMessage(data: any[]): Promise<void> {
         const krakenSymbol = tick.symbol;
         const ourSymbol = wsToOurSymbol[krakenSymbol];
         if (!ourSymbol) continue;
+        recordFeedTick("kraken_ticker", ourSymbol);
 
         const last = String(tick.last);
         const bid = tick.bid != null ? String(tick.bid) : null;
@@ -169,6 +174,7 @@ async function handleTickerMessage(data: any[]): Promise<void> {
                         bid,
                         ask,
                         last,
+                        source: "kraken",
                     }));
                     eventsPublishedTotal.inc({ type: "price.tick" });
                 } catch {
@@ -208,6 +214,7 @@ function handleTradeMessage(data: any[]): void {
             : Date.now();
         // Kraken WS v2 trade channel includes 'side' ("buy" or "sell", taker).
         const side = krakenTradeSide(trade);
+        recordFeedTick("kraken_trade", ourSymbol, trade.timestamp ? ts : null);
 
         aggregateTick(pairId, { price, volume, ts, side });
 
@@ -290,6 +297,7 @@ function handleBookMessage(data: any[], type: string): void {
 
         const pairId = symbolToPairId[ourSymbol];
         if (!pairId) continue;
+        recordFeedTick("kraken_book", ourSymbol, entry.timestamp ? new Date(entry.timestamp).getTime() : null);
 
         const rawBids: any[] = entry.bids || [];
         const rawAsks: any[] = entry.asks || [];
@@ -362,6 +370,7 @@ function connect(): void {
             watchdogInterval = setInterval(() => {
                 if (lastTickAt > 0 && Date.now() - lastTickAt > WATCHDOG_TIMEOUT_MS && wsConnected) {
                     console.log("[krakenWs] No ticks for 30s — reconnecting...");
+                    pendingCloseCause = { cause: "watchdog_stale", detail: `no ticker for ${Date.now() - lastTickAt}ms` };
                     wsConnected = false;
                     ws?.close();
                 }
@@ -378,6 +387,7 @@ function connect(): void {
 
     ws.on("error", (err) => {
         console.error("[krakenWs] error", err.message);
+        pendingCloseCause ??= { cause: "socket_error", detail: err.message };
         ws?.close();
     });
 }
@@ -389,8 +399,11 @@ function scheduleReconnect(closeCode?: number, closeReason?: string): void {
     const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
     reconnectAttempt++;
     const combinedReconnectCount10m = recordKrakenReconnectAttempt();
+    const closeCause = pendingCloseCause ?? { cause: "socket_close" as const, detail: null };
+    pendingCloseCause = null;
+    recordFeedReconnect("kraken", closeCause.cause, { closeCode, closeReason, detail: closeCause.detail });
     logger.info(
-        { closeCode, closeReason, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
+        { closeCode, closeReason, cause: closeCause.cause, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
         "kraken_ws_reconnect_scheduled",
     );
     console.log(`[krakenWs] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
@@ -435,4 +448,19 @@ export function stopKrakenFeed(): void {
         ws.close();
         ws = null;
     }
+}
+
+/**
+ * DEV-ONLY fault injection for the feed-staleness repro (routes/v1/
+ * v1DebugFeedFault.ts, never registered in production). "close" terminates
+ * the socket (exercises the reconnect path); "stall" stops reading from it
+ * without closing (a half-open/silent stall — only the 30s watchdog can
+ * notice); "resume" undoes a stall.
+ */
+export function __debugFaultKrakenSocket(mode: "close" | "stall" | "resume"): boolean {
+    if (!ws) return false;
+    if (mode === "close") ws.terminate();
+    else if (mode === "stall") ws.pause();
+    else ws.resume();
+    return true;
 }

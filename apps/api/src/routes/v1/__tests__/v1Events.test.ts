@@ -16,6 +16,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../../app";
 import { createEvent } from "../../../events/eventTypes";
 import {
+  formatSseFrame,
   shouldDeliverToStream,
   __setStreamForTest,
   __getStreamForTest,
@@ -24,6 +25,20 @@ import {
 
 const PAIR_A = "11111111-1111-1111-1111-111111111111";
 const PAIR_B = "22222222-2222-2222-2222-222222222222";
+
+describe("formatSseFrame", () => {
+  it("stamps sentAt on price.tick frames only", () => {
+    const tick = createEvent("price.tick", { pairId: PAIR_A, symbol: "BTC/USD", bid: null, ask: null, last: "1", source: "coinbase" });
+    const frame = formatSseFrame(tick, 1234);
+    expect(frame.startsWith("event: price.tick\ndata: ")).toBe(true);
+    expect(frame.endsWith("\n\n")).toBe(true);
+    const parsed = JSON.parse(frame.slice("event: price.tick\ndata: ".length));
+    expect(parsed).toMatchObject({ type: "price.tick", sentAt: 1234, ts: tick.ts, data: { source: "coinbase" } });
+
+    const other = createEvent("notification.created", { notificationId: "n", kind: "k", title: "t", body: "b" } as never);
+    expect(JSON.parse(formatSseFrame(other, 1234).split("data: ")[1]!)).not.toHaveProperty("sentAt");
+  });
+});
 
 describe("shouldDeliverToStream", () => {
   it("delivers price.tick only when its pairId is in the interest set", () => {
