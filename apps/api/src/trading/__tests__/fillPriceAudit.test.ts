@@ -1,13 +1,16 @@
 /**
- * fillPriceAudit.test.ts — the audit helper, plus reproductions of the two
- * prod BTC/USD market fills from 2026-10-01 using the REAL pricing function
- * (computeMarketExecution) with the migration-021 default sim config.
+ * fillPriceAudit.test.ts — the audit helper, plus characterization tests of
+ * the SYSTEM-fill price model (computeMarketExecution, migration-021 default
+ * sim config).
  *
- * The "REPRO" cases assert CURRENT behavior on purpose: they show the fill
- * engine prices off snapshot.last + a synthetic spread and never consults
- * the displayed Kraken book or a staleness bound. When the follow-up fix
- * lands (fills priced from best bid/ask with a staleness guard), these are
- * expected to fail and should be rewritten against the new behavior.
+ * NOT the 2026-10-01 prod fills: prod trades show both bad BTC/USD fills
+ * (84818.68 and 84699.32) had is_system_fill=false with maker
+ * mmbot@system.local — they were sweeps of stale market-maker quotes, so
+ * neither went through this model. Their regression test lands with the
+ * MM-quote / collar fixes. These cases document what the system-fill path
+ * can do on its own: it prices off snapshot.last + a synthetic spread and
+ * never consults the displayed Kraken book or a staleness bound. They assert
+ * CURRENT behavior and must be rewritten when fills move to best bid/ask.
  */
 import { describe, it, expect } from "vitest";
 import { buildFillPriceAudit } from "../fillPriceAudit";
@@ -71,9 +74,9 @@ describe("buildFillPriceAudit", () => {
     });
 });
 
-describe("REPRO: 2026-10-01 BTC/USD market fills", () => {
-    it("fill #2 (~$69 WORSE than ask): fresh price, but the fill is last + synthetic spread/slippage, not the real ask", () => {
-        // Real book at the time: best ask 84,630.50. Kraken last ≈ the touch.
+describe("system-fill price model (characterization, not the prod fills)", () => {
+    it("with a fresh price, a system-filled BUY lands ~8bps above the real ask: last + synthetic spread/slippage", () => {
+        // Kraken last ≈ the touch.
         const snapshot: Snapshot = { bid: "84630.4", ask: "84630.5", last: "84630.5", ts: new Date(NOW - 1_000).toISOString(), source: "live" };
         // A ~$60 1-minute range — ordinary BTC volatility.
         const sim = computeMarketExecution(snapshot, "BUY", "0.1", simConfig, "50", "84660", "84600")!;
@@ -93,7 +96,7 @@ describe("REPRO: 2026-10-01 BTC/USD market fills", () => {
         expect(audit.deviationBps).toBeLessThan(9);
     });
 
-    it("fill #1 (~$350 BETTER than ask): a fallback snapshot priced off a stale trading_pairs.last_price", () => {
+    it("with a stale fallback snapshot, a system-filled BUY can land far below the real ask", () => {
         // Kraken ticker snapshot >10s old → resolveSnapshot falls back to trading_pairs.last_price,
         // stamped ts = now (so it LOOKS fresh) with no staleness bound. Here last_price is a
         // few-minutes-old 84,759 while the market has moved to an ask of ~85,175.
@@ -102,7 +105,7 @@ describe("REPRO: 2026-10-01 BTC/USD market fills", () => {
         const fill = Number(sim.execPrice);
 
         expect(fill).toBeGreaterThan(84_800);
-        expect(fill).toBeLessThan(84_840); // ≈ the observed 84,818.68
+        expect(fill).toBeLessThan(84_840);
 
         const audit = buildFillPriceAudit({
             side: "BUY", snapshot: fallback, simExecPrice: sim.execPrice, now: NOW,
@@ -115,7 +118,7 @@ describe("REPRO: 2026-10-01 BTC/USD market fills", () => {
         expect(audit.deviationBps!).toBeLessThan(-40);
     });
 
-    it("a market BUY can never fill below snapshot.last with a fresh snapshot — so a 'better than ask' fill implies stale input or an internal resting order", () => {
+    it("a system-filled BUY never lands below a fresh snapshot.last — a 'better than ask' fill means stale input or an internal resting order", () => {
         const snapshot: Snapshot = { bid: null, ask: null, last: "85175", ts: new Date(NOW).toISOString(), source: "live" };
         const sim = computeMarketExecution(snapshot, "BUY", "0.1", simConfig, "50", "85200", "85150")!;
         expect(Number(sim.execPrice)).toBeGreaterThan(85175);
