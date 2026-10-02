@@ -1,4 +1,8 @@
+import type { Pool, PoolClient } from "pg";
 import { pool } from "../db/pool";
+
+/** The shared pool, or a specific checked-out client (the job runner passes the one it already holds). */
+type Db = Pool | PoolClient;
 
 export interface JobRow {
     job_name: string;
@@ -77,10 +81,11 @@ export async function upsertJobRow(
  */
 export async function markStarted(
     name: string,
-    expectedStartedAt?: string | Date | null
+    expectedStartedAt?: string | Date | null,
+    db: Db = pool,
 ): Promise<Date | null> {
     if (expectedStartedAt === undefined) {
-        const r = await pool.query<{ last_started_at: Date }>(
+        const r = await db.query<{ last_started_at: Date }>(
             `UPDATE job_runs
              SET last_started_at = now(), last_status = 'RUNNING', last_error = NULL
              WHERE job_name = $1
@@ -90,7 +95,7 @@ export async function markStarted(
         return r.rows[0]?.last_started_at ?? null;
     }
 
-    const r = await pool.query<{ last_started_at: Date }>(
+    const r = await db.query<{ last_started_at: Date }>(
         `UPDATE job_runs
          SET last_started_at = now(), last_status = 'RUNNING', last_error = NULL
          WHERE job_name = $1
@@ -122,9 +127,10 @@ export async function resetStaleRunningOnStartup(): Promise<number> {
 export async function markFinished(
     name: string,
     status: "SUCCESS" | "FAILED",
-    error?: string
+    error?: string,
+    db: Db = pool,
 ): Promise<void> {
-    await pool.query(
+    await db.query(
         `UPDATE job_runs
          SET last_finished_at = now(),
              last_status = $2,

@@ -201,6 +201,17 @@ export const jobDurationMs = new client.Histogram({
   buckets: [10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000],
 });
 
+export const jobSkippedTotal = new client.Counter({
+  name: "job_skipped_total",
+  help: "Due job runs not started by the runner, by reason",
+  labelNames: ["job", "reason"] as const,
+});
+
+export const jobsInflight = new client.Gauge({
+  name: "jobs_inflight",
+  help: "Background jobs currently running on this instance",
+});
+
 export const jobLockContentionTotal = new client.Counter({
   name: "job_lock_contention_total",
   help: "Number of times a job was skipped due to lock contention",

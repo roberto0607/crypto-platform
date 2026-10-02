@@ -111,6 +111,10 @@ export const config = {
 
   // ── Phase 10 PR3: Pool tuning ──
   dbPoolMax: numberEnv("DB_POOL_MAX", 20),
+  // Job runner pool safety (see jobs/jobRunner.ts). Concurrency is further
+  // clamped at start() so in-flight jobs can never exhaust the pool.
+  jobMaxConcurrency: numberEnv("JOB_MAX_CONCURRENCY", 4),
+  jobAcquireTimeoutMs: numberEnv("JOB_ACQUIRE_TIMEOUT_MS", 30_000),
 
   // ── Phase 10 PR2: Observability ──
   dbSlowQueryMs: numberEnv("DB_SLOW_QUERY_MS", 200),
