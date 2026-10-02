@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AxiosError } from "axios";
 import { useAuthStore } from "@/stores/authStore";
 import { login } from "@/api/endpoints/auth";
 import { normalizeApiError } from "@/lib/errors";
+import { safeRedirectTarget } from "@/lib/safeRedirect";
 import type { LegacyApiError, V1ApiError } from "@/types/api";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
 
   const [email, setEmail] = useState("");
@@ -45,7 +47,9 @@ export default function LoginPage() {
       const res = await login(email, password);
       setTerminalText("tradr@auth:~$ ACCESS GRANTED \u2014 redirecting to arena_");
       setAuth(res.data.accessToken, res.data.user);
-      navigate("/trade", { replace: true });
+      // Back to where ProtectedRoute bounced us from — path AND query, so
+      // e.g. /trade?debug=1 survives the login round-trip.
+      navigate(safeRedirectTarget(searchParams.get("redirect")), { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
         err as AxiosError<LegacyApiError | V1ApiError>,

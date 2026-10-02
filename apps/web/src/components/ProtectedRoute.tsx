@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import Spinner from "@/components/Spinner";
+import { loginUrlFor } from "@/lib/safeRedirect";
 
 export default function ProtectedRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -17,8 +18,7 @@ export default function ProtectedRoute() {
   }
 
   if (!isAuthenticated) {
-    const redirect = location.pathname + location.search;
-    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />;
+    return <Navigate to={loginUrlFor(location)} replace />;
   }
 
   return <Outlet />;
