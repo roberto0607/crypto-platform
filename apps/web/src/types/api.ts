@@ -399,6 +399,8 @@ export interface V1ApiError {
 export interface EventEnvelope<T extends string = string, D = unknown> {
   type: T;
   ts: number;
+  /** Server socket-write time — present on price.tick frames only (diagnostic). */
+  sentAt?: number;
   requestId?: string;
   userId?: string;
   matchId?: string;
@@ -440,6 +442,8 @@ export interface PriceTickEvent {
   bid: DecimalString | null;
   ask: DecimalString | null;
   last: DecimalString;
+  /** Exchange feed that produced the tick (diagnostic). */
+  source?: "coinbase" | "kraken";
 }
 
 export interface ReplayTickEvent {

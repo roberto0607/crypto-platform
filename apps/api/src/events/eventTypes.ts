@@ -67,6 +67,9 @@ export interface PriceTickData {
   bid: string | null;
   ask: string | null;
   last: string;
+  /** Which exchange feed produced this tick (diagnostic — Coinbase is primary,
+   *  Kraken only publishes when Coinbase looks stale). */
+  source?: "coinbase" | "kraken";
 }
 
 export interface TriggerFiredData {

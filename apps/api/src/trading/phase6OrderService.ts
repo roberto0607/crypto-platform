@@ -16,6 +16,7 @@ import { AppError } from "../errors/AppError";
 import { createEvent } from "../events/eventTypes";
 import { buildLogContext, logger } from "../observability/logContext";
 import {
+  marketFillOffBookTotal,
   orderPlacementLatency,
   ordersCreatedTotal,
   ordersRejectedTotal,
@@ -30,6 +31,8 @@ import { txWithEvents } from "../utils/txWithEvents";
 import { processFillForJournal } from "../journal/journalService";
 import { isAgentActionsEnabled } from "../system/systemFlagService";
 import { listOpenOrders } from "./orderRepo";
+import { bookSnapshots } from "../market/orderFlowFeatures";
+import { buildFillPriceAudit } from "./fillPriceAudit";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -463,6 +466,26 @@ export async function placeOrderWithSnapshot(
     ordersCreatedTotal.inc();
     orderPlacementLatency.observe(performance.now() - startMs);
     logger.info({ ...logCtx, orderId: result.order.id, eventType: "order.placement_complete", fills: result.fills.length }, "Order placement complete");
+
+    // Diagnostic only (2026-10-01 bad-fill investigation): record every input
+    // to the MARKET fill price next to the Kraken book the user was looking
+    // at. Never affects the order — any failure here is swallowed.
+    if (body.type === "MARKET" && result.fills.length > 0) {
+        try {
+            const audit = buildFillPriceAudit({
+                side: body.side,
+                snapshot,
+                simExecPrice,
+                fills: result.fills,
+                book: bookSnapshots.get(body.pairId),
+                now: Date.now(),
+            });
+            if (audit.offBook) marketFillOffBookTotal.inc({ side: body.side, direction: audit.offBook });
+            logger.info({ ...logCtx, orderId: result.order.id, eventType: "order.fill_price_audit", ...audit }, "Market fill price audit");
+        } catch (err) {
+            logger.warn({ ...logCtx, err }, "fill_price_audit_failed");
+        }
+    }
 
     return {
         order: result.order,

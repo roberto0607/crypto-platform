@@ -6,6 +6,7 @@ import { coinbaseTradeSide, addSample as addPressureSample } from "../services/p
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { eventsPublishedTotal } from "../metrics.js";
+import { recordFeedTick, recordFeedReconnect } from "../observability/feedHealth.js";
 
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
@@ -56,6 +57,8 @@ interface Batch {
 }
 
 const batches = new Map<number, Batch>();
+// batch index → last socket error message, consumed by the close handler (diagnostic only).
+const lastErrorByBatch = new Map<number, string>();
 
 function chunk<T>(arr: T[], size: number): T[][] {
     const out: T[][] = [];
@@ -136,6 +139,7 @@ function handleMessage(raw: WebSocket.Data): void {
                 }
 
                 lastTradeAt = Date.now();
+                recordFeedTick("coinbase_trade", ourSymbol, trade.time ? ts : null);
 
                 // Primary price.tick source (Gate 1, 2026-07-25) — Coinbase's
                 // trade prints carry far more volume than Kraken's ticker
@@ -150,6 +154,7 @@ function handleMessage(raw: WebSocket.Data): void {
                         bid: null,
                         ask: null,
                         last: price,
+                        source: "coinbase",
                     }));
                     eventsPublishedTotal.inc({ type: "price.tick" });
                 } catch {
@@ -180,12 +185,28 @@ function connectBatch(batch: Batch): void {
 
     batch.ws.on("message", handleMessage);
 
-    batch.ws.on("close", () => {
+    batch.ws.on("close", (code: number, reason: Buffer) => {
+        // Diagnostic only: an error closes via the handler below, so the
+        // error message (if any) is the better cause than a bare close.
+        const errDetail = lastErrorByBatch.get(batch.index) ?? null;
+        lastErrorByBatch.delete(batch.index);
+        if (!stopped) {
+            recordFeedReconnect("coinbase", errDetail ? "socket_error" : "socket_close", {
+                closeCode: code,
+                closeReason: reason.toString(),
+                detail: errDetail ? `batch ${batch.index}: ${errDetail}` : `batch ${batch.index}`,
+            });
+            logger.info(
+                { batch: batch.index, closeCode: code, closeReason: reason.toString(), error: errDetail, delay: batch.reconnectDelay },
+                "coinbase_ws_reconnect_scheduled",
+            );
+        }
         scheduleBatchReconnect(batch);
     });
 
     batch.ws.on("error", (err) => {
         console.error(`[coinbaseWs] batch ${batch.index} error`, err.message);
+        lastErrorByBatch.set(batch.index, err.message);
         batch.ws?.close();
     });
 }
@@ -285,4 +306,21 @@ export function stopCoinbaseFeed(): void {
     }
     for (const batch of batches.values()) teardownBatch(batch);
     batches.clear();
+}
+
+/**
+ * DEV-ONLY fault injection — see krakenWs.ts's __debugFaultKrakenSocket.
+ * Note there is no Coinbase staleness watchdog, so a "stall" here is never
+ * recovered automatically; only Kraken's fallback publish masks it.
+ */
+export function __debugFaultCoinbaseSockets(mode: "close" | "stall" | "resume"): number {
+    let n = 0;
+    for (const batch of batches.values()) {
+        if (!batch.ws) continue;
+        if (mode === "close") batch.ws.terminate();
+        else if (mode === "stall") batch.ws.pause();
+        else batch.ws.resume();
+        n++;
+    }
+    return n;
 }

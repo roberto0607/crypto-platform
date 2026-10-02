@@ -9,7 +9,7 @@ export type Snapshot = {
     source: "live" | "replay" | "fallback";
 };
 
-type CachedSnapshot = Omit<Snapshot, "source"> & { receivedAt: number };
+export type CachedSnapshot = Omit<Snapshot, "source"> & { receivedAt: number };
 
 const DEFAULT_STALE_TTL_MS = 10_000;
 
@@ -18,6 +18,7 @@ const DEFAULT_STALE_TTL_MS = 10_000;
 interface SnapshotStore {
     setSnapshot(pairSymbol: string, snap: Omit<Snapshot, "source">): Promise<void>;
     getSnapshot(pairSymbol: string, staleTtlMs?: number): Promise<Snapshot | null>;
+    peekSnapshot(pairSymbol: string): Promise<CachedSnapshot | null>;
 }
 
 // ── Redis implementation (HASH) ──
@@ -56,6 +57,18 @@ class RedisSnapshotStore implements SnapshotStore {
             source: "live",
         };
     }
+
+    async peekSnapshot(pairSymbol: string): Promise<CachedSnapshot | null> {
+        const data = await this.redis.hgetall(`snap:${pairSymbol}`);
+        if (!data || !data.last) return null;
+        return {
+            bid: data.bid || null,
+            ask: data.ask || null,
+            last: data.last,
+            ts: data.ts,
+            receivedAt: parseInt(data.receivedAt, 10),
+        };
+    }
 }
 
 // ── In-memory implementation ──
@@ -81,6 +94,10 @@ class InMemorySnapshotStore implements SnapshotStore {
             source: "live",
         };
     }
+
+    async peekSnapshot(pairSymbol: string): Promise<CachedSnapshot | null> {
+        return this.store.get(pairSymbol) ?? null;
+    }
 }
 
 // ── Factory + singleton ──
@@ -101,4 +118,14 @@ export async function setSnapshot(pairSymbol: string, snap: Omit<Snapshot, "sour
 
 export async function getSnapshot(pairSymbol: string, staleTtlMs: number = DEFAULT_STALE_TTL_MS): Promise<Snapshot | null> {
     return getInstance().getSnapshot(pairSymbol, staleTtlMs);
+}
+
+/**
+ * Diagnostic read that ignores the stale TTL — returns the raw cached entry
+ * with its receivedAt so callers can report its age. Never use this for
+ * pricing. With Redis the key itself expires ~15s after the last write, so
+ * an older snapshot reads back as null.
+ */
+export async function peekSnapshot(pairSymbol: string): Promise<CachedSnapshot | null> {
+    return getInstance().peekSnapshot(pairSymbol);
 }
