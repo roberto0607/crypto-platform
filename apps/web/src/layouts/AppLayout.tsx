@@ -14,6 +14,7 @@ import TickerBar from "@/components/TickerBar";
 import { CompetitionBottomBar } from "@/components/CompetitionBottomBar";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
 import { AgentActivityPanel } from "@/components/AgentActivityPanel";
+import { FeedDebugOverlay } from "@/components/FeedDebugOverlay";
 import { useSSE } from "@/hooks/useSSE";
 import { useChatStore } from "@/stores/chatStore";
 
@@ -52,9 +53,24 @@ function breadcrumbLabel(pathname: string): string {
   return "TRADE";
 }
 
+// ?debug=1 turns on the feed-diagnostics overlay for this tab session (kept
+// across in-app navigation, which drops the query string); ?debug=0 turns it off.
+const FEED_DEBUG_KEY = "tradr_feed_debug";
+function readFeedDebugFlag(search: string): boolean {
+  const param = new URLSearchParams(search).get("debug");
+  try {
+    if (param === "1") sessionStorage.setItem(FEED_DEBUG_KEY, "1");
+    if (param === "0") sessionStorage.removeItem(FEED_DEBUG_KEY);
+    return sessionStorage.getItem(FEED_DEBUG_KEY) === "1";
+  } catch {
+    return param === "1";
+  }
+}
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const feedDebug = readFeedDebugFlag(location.search);
   const user = useAuthStore((s) => s.user);
   const isAdmin = useAuthStore((s) => s.isAdmin);
   const clearAuth = useAuthStore((s) => s.clearAuth);
@@ -359,6 +375,8 @@ export default function AppLayout() {
           above, unlike NotificationBell) so it's reachable on every route
           including /trade. Renders its own button; nothing else here. */}
       <AgentActivityPanel />
+
+      {feedDebug && <FeedDebugOverlay />}
     </div>
   );
 }

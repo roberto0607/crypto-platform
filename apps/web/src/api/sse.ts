@@ -1,4 +1,5 @@
 import { fetchEventSource, EventStreamContentType } from "@microsoft/fetch-event-source";
+import { recordStreamReady } from "@/lib/feedDiagnostics";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import type { SSEEvent } from "@/types/api";
@@ -208,6 +209,7 @@ export function connectSSE(
         try {
           const data = JSON.parse(msg.data) as { streamId: string };
           currentStreamId = data.streamId;
+          recordStreamReady(data.streamId);
           const waiters = streamIdWaiters;
           streamIdWaiters = [];
           waiters.forEach((resolve) => resolve(data.streamId));

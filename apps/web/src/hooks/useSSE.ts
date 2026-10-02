@@ -7,6 +7,7 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { useAgentActivityStore } from "@/stores/agentActivityStore";
 import { useChatStore } from "@/stores/chatStore";
 import { connectSSE, disconnectSSE, forceReconnectSSE, type SSEHandlers } from "@/api/sse";
+import { recordPing, recordPriceTick } from "@/lib/feedDiagnostics";
 
 const STALE_THRESHOLD_MS = 15_000; // force reconnect if no ping/tick for 15s
 
@@ -61,6 +62,7 @@ export function useSSE() {
       },
 
       onPriceTick: (event) => {
+        recordPriceTick(event);
         const d = event.data;
         if (d.pairId === useTradingStore.getState().selectedPairId) {
           useTradingStore.getState().setSnapshot({
@@ -203,7 +205,8 @@ export function useSSE() {
       },
 
       // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing
-      onPing: () => {
+      onPing: (ts) => {
+        recordPing(ts);
         useAppStore.getState().setLastPriceTickAt(Date.now());
       },
 
