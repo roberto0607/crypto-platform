@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
+import { allowSymbolForTest } from "../src/market/marketSymbols";
 
 let app: FastifyInstance;
 
@@ -63,7 +64,7 @@ beforeAll(async () => {
     method: "POST",
     url: "/admin/pairs",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { baseAssetId, quoteAssetId, symbol: `P${uid}`, feeBps: 0 },
+    payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`P${uid}/USD`), feeBps: 0 },
   });
   pairId = pairRes.json().pair.id;
 
@@ -259,7 +260,7 @@ describe("Price-time priority — deterministic matching", () => {
       method: "POST",
       url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: ptBaseId, quoteAssetId: ptQuoteId, symbol: `T${ptUid}`, feeBps: 0 },
+      payload: { baseAssetId: ptBaseId, quoteAssetId: ptQuoteId, symbol: allowSymbolForTest(`T${ptUid}/USD`), feeBps: 0 },
     });
     ptPairId = pairRes.json().pair.id;
 
@@ -473,7 +474,7 @@ describe("Self-trade prevention", () => {
     const pairRes = await app.inject({
       method: "POST", url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: stpBaseId, quoteAssetId: stpQuoteId, symbol: `Q${stpUid}`, feeBps: 0 },
+      payload: { baseAssetId: stpBaseId, quoteAssetId: stpQuoteId, symbol: allowSymbolForTest(`Q${stpUid}/USD`), feeBps: 0 },
     });
     stpPairId = pairRes.json().pair.id;
 
@@ -620,7 +621,7 @@ describe("Financial integrity — precision & invariants", () => {
     const pairRes = await app.inject({
       method: "POST", url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: fiBaseId, quoteAssetId: fiQuoteId, symbol: `H${fiUid}`, feeBps: 30 },
+      payload: { baseAssetId: fiBaseId, quoteAssetId: fiQuoteId, symbol: allowSymbolForTest(`H${fiUid}/USD`), feeBps: 30 },
     });
     fiPairId = pairRes.json().pair.id;
 

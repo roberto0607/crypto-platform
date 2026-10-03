@@ -117,3 +117,23 @@ describe("autoCreateWallets — free-play funding", () => {
     expect(await freePlayCredits()).toHaveLength(0);
   });
 });
+
+describe("autoCreateWallets — MARKET_SYMBOLS scope", () => {
+  it("creates wallets only for assets of allowlisted pairs, never for other pairs' or orphan assets", async () => {
+    const { rows: [usd] } = await pool.query<{ id: string }>(`SELECT id FROM assets WHERE symbol = 'USD'`);
+    const { rows: [doge] } = await pool.query<{ id: string }>(
+      `INSERT INTO assets (symbol, name, decimals) VALUES ('DOGE', 'Dogecoin', 8) RETURNING id`,
+    );
+    await pool.query(
+      `INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, is_active)
+       VALUES ($1, $2, 'DOGE/USD', true)`,
+      [doge!.id, usd!.id],
+    );
+    await pool.query(`INSERT INTO assets (symbol, name, decimals) VALUES ('ORPH', 'No pair', 8)`);
+
+    await autoCreateWallets(userId);
+
+    const symbols = (await freePlayWallets()).map((w) => w.symbol);
+    expect(symbols).toEqual(["BTC", "USD"]);
+  });
+});

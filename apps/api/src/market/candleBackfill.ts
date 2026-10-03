@@ -258,10 +258,13 @@ export async function runBackfill(
     let totalErrors = 0;
     let totalSkipped = 0;
 
+    // loadActiveSymbols already restricts to the allowlist; passing the same
+    // set keeps a caller-supplied override (tests) consistent end to end.
+    const allow = opts.marketSymbols ?? config.marketSymbols;
     const mappedPairs = filterMarketDataPairs(
-        await loadActiveSymbols("coinbase"),
+        await loadActiveSymbols("coinbase", allow),
         (p) => p.ourSymbol,
-        opts.marketSymbols ?? config.marketSymbols,
+        allow,
     );
 
     if (mappedPairs.length === 0) {

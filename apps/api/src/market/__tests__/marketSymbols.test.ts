@@ -13,9 +13,45 @@ import {
     filterMarketDataPairs,
     getMarketDataPairIds,
     resetMarketDataPairIdCache,
+    isTradableSymbol,
+    tradableSymbols,
+    assertTradableSymbol,
 } from "../marketSymbols";
+import { AppError } from "../../errors/AppError";
 import { aggregateTick, flushDueCandles } from "../candleAggregator";
 import { runBackfill } from "../candleBackfill";
+
+describe("tradability (same allowlist as stored candles)", () => {
+    const allow = parseMarketSymbols("BTC-USD,ETH-USD,SOL-USD");
+
+    it("accepts exactly BTC/ETH/SOL in any spelling, rejects everything else", () => {
+        expect(isTradableSymbol("BTC/USD", allow)).toBe(true);
+        expect(isTradableSymbol("eth-usd", allow)).toBe(true);
+        expect(isTradableSymbol(" SOL/USD ", allow)).toBe(true);
+        expect(isTradableSymbol("DOGE/USD", allow)).toBe(false);
+        expect(isTradableSymbol("BTC/EUR", allow)).toBe(false);
+        expect(isTradableSymbol("garbage", allow)).toBe(false);
+    });
+
+    it("tradableSymbols() returns the sorted allowlist; the default is BTC/ETH/SOL", () => {
+        expect(tradableSymbols(parseMarketSymbols("SOL-USD,BTC-USD"))).toEqual(["BTC/USD", "SOL/USD"]);
+        expect(tradableSymbols(parseMarketSymbols(undefined))).toEqual(["BTC/USD", "ETH/USD", "SOL/USD"]);
+    });
+
+    it("assertTradableSymbol throws a 400 pair_not_tradable listing the allowed symbols", () => {
+        expect(() => assertTradableSymbol("BTC/USD", allow)).not.toThrow();
+        try {
+            assertTradableSymbol("AVAX/USD", allow);
+            expect.fail("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(AppError);
+            const e = err as AppError;
+            expect(e.code).toBe("pair_not_tradable");
+            expect(e.statusCode).toBe(400);
+            expect(e.details).toEqual({ allowedSymbols: ["BTC/USD", "ETH/USD", "SOL/USD"] });
+        }
+    });
+});
 
 describe("parseMarketSymbols", () => {
     it("defaults to BTC-USD, ETH-USD, SOL-USD when unset or blank", () => {

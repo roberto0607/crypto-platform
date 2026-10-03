@@ -11,6 +11,7 @@ import {
     countActiveAlertsForUser,
 } from "../../alerts/alertRepo";
 import { AppError } from "../../errors/AppError";
+import { assertTradablePairId } from "../../market/marketSymbols";
 import type { AlertRow } from "../../alerts/alertTypes";
 import { publish } from "../../events/eventBus";
 import { createEvent } from "../../events/eventTypes";
@@ -84,6 +85,7 @@ const v1Alerts: FastifyPluginAsync = async (app) => {
                 throw new AppError("invalid_input", parsed.error.flatten());
             }
             const b = parsed.data;
+            await assertTradablePairId(b.pairId);
 
             const activeCount = await countActiveAlertsForUser(actor.id);
             if (activeCount >= MAX_ACTIVE_ALERTS_PER_USER) {

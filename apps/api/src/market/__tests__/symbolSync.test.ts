@@ -266,12 +266,26 @@ describe("discoverSyncCandidates — market-cap ranking", () => {
             coingecko: { rows: [mcapRow("bbb", 1), mcapRow("ccc", 2), mcapRow("aaa", 3)] },
         });
 
-        const candidates = await discoverSyncCandidates(3);
+        const candidates = await discoverSyncCandidates(3, new Set(["AAA/USD", "BBB/USD", "CCC/USD"]));
 
         expect(candidates.map((c) => c.baseSymbol)).toEqual(["BBB", "CCC", "AAA"]);
         // volumeUsd24h still populated on each candidate — just not the sort key.
         expect(candidates.find((c) => c.baseSymbol === "BBB")!.volumeUsd24h).toBe(5);
         expect(candidates.find((c) => c.baseSymbol === "AAA")!.volumeUsd24h).toBe(1_000_000);
+    });
+
+    it("never yields a pair outside the MARKET_SYMBOLS allowlist, even when it ranks top-N on both exchanges", async () => {
+        mockUpstream({
+            kraken: { symbols: [{ symbol: "BTC" }, { symbol: "DOGE" }, { symbol: "ETH" }, { symbol: "SOL" }] },
+            coinbase: { symbols: [{ symbol: "BTC" }, { symbol: "DOGE" }, { symbol: "ETH" }, { symbol: "SOL" }] },
+            // DOGE outranks SOL — the market-cap gate alone would keep it.
+            coingecko: { rows: [mcapRow("btc", 1), mcapRow("eth", 2), mcapRow("doge", 3), mcapRow("sol", 4)] },
+        });
+
+        // Default allow = config.marketSymbols (BTC/ETH/SOL).
+        const candidates = await discoverSyncCandidates(4);
+
+        expect(candidates.map((c) => c.ourSymbol)).toEqual(["BTC/USD", "ETH/USD", "SOL/USD"]);
     });
 
     it("propagates a CoinGecko fetch failure — the whole call rejects, no candidates", async () => {
