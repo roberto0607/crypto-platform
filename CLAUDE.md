@@ -151,6 +151,7 @@ All new indicators follow this pattern:
 - **Refresh token rotation** — tokens stored as hashes with expiry, reuse detection, and family revocation
 - **Paper trading** — platform uses simulated balances only; `debitUnconstrainedTx()` allows negative balance for short sells
 - **Order-book exchange model** — market maker bot provides liquidity; real limit order matching with price-time priority
+- **Tradable pairs = `MARKET_SYMBOLS`** (default BTC/ETH/SOL) — one allowlist (`market/marketSymbols.ts`) gates stored candles AND listing/search, order/trigger/alert/replay placement (`pair_not_tradable`, 400), feed subscriptions, symbol-sync, and new-user wallets — regardless of `trading_pairs.is_active`. Test fixtures trading on their own pair use `allowSymbolForTest()`. Data step + undo: `docs/runbooks/restrict-pairs.md`.
 
 ## Environment Variables
 
