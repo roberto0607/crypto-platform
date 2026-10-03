@@ -47,6 +47,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   wallet_not_found: "The requested wallet was not found.",
   order_not_found: "The requested order was not found.",
   pair_not_found: "The requested trading pair was not found.",
+  pair_not_tradable: "This trading pair is not available on TRADR (see details.allowedSymbols).",
   replay_not_found: "The requested replay was not found.",
   trigger_not_found: "The requested trigger order was not found.",
   alert_not_found: "The requested alert was not found.",

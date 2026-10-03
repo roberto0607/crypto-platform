@@ -16,6 +16,7 @@ import OrderDock from "@/components/trading/OrderDock";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
 import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateEvent } from "@/types/api";
 import Spinner from "@/components/Spinner";
+import { pickInitialPairId } from "@/lib/pairs";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -1140,10 +1141,12 @@ export default function TradingPage() {
     return () => window.removeEventListener("sse:match.pnl.update", handler);
   }, [activeMatch]);
 
-  // Default to first pair on mount
+  // Default on mount: the user's last pick if it's still offered, else
+  // BTC/USD (pickInitialPairId in lib/pairs).
   useEffect(() => {
     if (!selectedPairId && pairs.length > 0) {
-      selectPair(pairs[0]!.id);
+      const initial = pickInitialPairId(pairs);
+      if (initial) selectPair(initial);
     }
   }, [selectedPairId, pairs, selectPair]);
 

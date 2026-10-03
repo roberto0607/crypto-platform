@@ -100,3 +100,16 @@ export interface COTResponse {
 export function fetchCOT(ccy: string) {
     return client.get<COTResponse>(`/v1/market/cot/${ccy}`);
 }
+
+// ── Public ticker (pre-login strip) ──
+
+export interface PublicTicker {
+    symbol: string;              // "BTC/USD"
+    price: string | null;
+    change24hPct: number | null;
+}
+
+/** GET /v1/market/tickers — public; BTC/ETH/SOL last price + 24h change. */
+export function getPublicTickers() {
+    return client.get<{ data: PublicTicker[] }>("/v1/market/tickers");
+}

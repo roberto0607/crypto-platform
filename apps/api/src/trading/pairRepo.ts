@@ -1,6 +1,7 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
 import { timedQuery } from "../observability/dbTiming";
+import { tradableSymbols } from "../market/marketSymbols";
 
 export type PairRow = {
     id: string,
@@ -52,14 +53,21 @@ export async function findPairById(id: string): Promise<PairRow | null> {
     return result.rows[0] ?? null;
 }
 
+/**
+ * Every list below is restricted to the MARKET_SYMBOLS allowlist (see
+ * market/marketSymbols.ts) on top of is_active: a pair outside it is never
+ * listed, quoted by the market maker, or candle-synced, even if its row is
+ * still active.
+ */
 export async function listActivePairs(): Promise<PairRow[]> {
     const result = await pool.query<PairRow>(
         `
         SELECT ${PAIR_COLUMNS}
         FROM trading_pairs
-        WHERE is_active = true
+        WHERE is_active = true AND symbol = ANY($1)
         ORDER BY symbol
-        `
+        `,
+        [tradableSymbols()]
     );
 
     return result.rows;
@@ -100,11 +108,11 @@ export async function listActivePairsLimited(limit: number): Promise<PairRow[]> 
         `
         SELECT ${PAIR_COLUMNS}
         FROM trading_pairs
-        WHERE is_active = true
+        WHERE is_active = true AND symbol = ANY($2)
         ORDER BY symbol ASC
         LIMIT $1
         `,
-        [limit]
+        [limit, tradableSymbols()]
     );
 
     return result.rows;
@@ -126,6 +134,7 @@ export async function listActivePairsLimited(limit: number): Promise<PairRow[]> 
  */
 export async function listActivePairsForDisplay(options: { limit?: number; search?: string }): Promise<PairRow[]> {
     const { limit, search } = options;
+    const allow = tradableSymbols();
     const exchangeBacked = `EXISTS (
         SELECT 1 FROM exchange_symbol_map esm
         WHERE esm.pair_id = trading_pairs.id AND esm.is_active = true
@@ -145,33 +154,35 @@ export async function listActivePairsForDisplay(options: { limit?: number; searc
                 SELECT ${PAIR_COLUMNS}
                 FROM trading_pairs
                 WHERE is_active = true
+                  AND symbol = ANY($3)
                   AND symbol ILIKE $1 || '%'
                   AND ${exchangeBacked}
                 ORDER BY symbol ASC
                 LIMIT $2
                 `,
-                [search, limit ?? 20]
+                [search, limit ?? 20, allow]
             )
             : await pool.query<PairRow>(
                 `
                 SELECT ${PAIR_COLUMNS}
                 FROM trading_pairs
                 WHERE is_active = true
+                  AND symbol = ANY($3)
                   AND symbol % $1
                   AND ${exchangeBacked}
                 ORDER BY similarity(symbol, $1) DESC
                 LIMIT $2
                 `,
-                [search, limit ?? 20]
+                [search, limit ?? 20, allow]
             );
         return result.rows;
     }
 
     const result = await pool.query<PairRow>(
         limit != null
-            ? `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND ${exchangeBacked} ORDER BY symbol ASC LIMIT $1`
-            : `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND ${exchangeBacked} ORDER BY symbol ASC`,
-        limit != null ? [limit] : [],
+            ? `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND symbol = ANY($1) AND ${exchangeBacked} ORDER BY symbol ASC LIMIT $2`
+            : `SELECT ${PAIR_COLUMNS} FROM trading_pairs WHERE is_active = true AND symbol = ANY($1) AND ${exchangeBacked} ORDER BY symbol ASC`,
+        limit != null ? [allow, limit] : [allow],
     );
     return result.rows;
 }

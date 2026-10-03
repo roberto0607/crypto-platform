@@ -5,6 +5,7 @@ import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { parseLimit } from "../../http/pagination";
 import { listActivePairsForDisplay } from "../../trading/pairRepo";
+import { getPublicTickers } from "../../market/publicTickers";
 import { pool } from "../../db/pool.js";
 
 const pairsQuery = z.object({
@@ -47,6 +48,39 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
                 : await listActivePairsForDisplay({ limit: parseLimit(q.limit) });
 
             return reply.send({ data: pairs, nextCursor: null });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // Public — feeds the pre-login ticker strip (login/register/landing).
+    app.get("/market/tickers", {
+        schema: {
+            tags: ["Pairs"],
+            summary: "Public price ticker",
+            description: "Last price and 24h change for the tradable pairs (MARKET_SYMBOLS). No auth; cached ~10s.",
+            response: {
+                200: {
+                    type: "object",
+                    properties: {
+                        data: {
+                            type: "array",
+                            items: {
+                                type: "object",
+                                properties: {
+                                    symbol: { type: "string" },
+                                    price: { type: "string", nullable: true },
+                                    change24hPct: { type: "number", nullable: true },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }, async (_req, reply) => {
+        try {
+            return reply.send({ data: await getPublicTickers() });
         } catch (err) {
             return v1HandleError(reply, err);
         }

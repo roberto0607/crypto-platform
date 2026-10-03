@@ -13,6 +13,7 @@ import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
 import { getActiveMatchIdForUser } from "../competitions/matchService";
+import { assertTradablePairId } from "../market/marketSymbols";
 
 
 // ── Zod schemas ──
@@ -158,7 +159,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded"] },
+            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable"] },
             details: { type: "object", additionalProperties: true },
           },
         },
@@ -201,6 +202,9 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         // both queue backends behave identically. No client header needed — the
         // server knows the user's match state.
         const matchId = await getActiveMatchIdForUser(actor.id);
+
+        // Only MARKET_SYMBOLS pairs are tradable — reject before enqueueing.
+        await assertTradablePairId(parsed.data.pairId);
 
         const result = await enqueueOrder(
             parsed.data.pairId,
