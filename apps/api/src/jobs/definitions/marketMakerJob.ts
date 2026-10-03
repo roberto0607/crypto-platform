@@ -1,7 +1,6 @@
 import type { JobDefinition, JobContext } from "../jobTypes";
 import { getSnapshot } from "../../market/snapshotStore";
-import { placeOrderWithSnapshot, cancelOrderWithOutbox } from "../../trading/phase6OrderService";
-import { listOrdersByUserId } from "../../trading/orderRepo";
+import { placeOrderWithSnapshot, cancelAllOrdersWithOutbox } from "../../trading/phase6OrderService";
 import { listActivePairs, type PairRow } from "../../trading/pairRepo";
 import { pool } from "../../db/pool";
 import { config } from "../../config";
@@ -32,8 +31,13 @@ const BASE_QTY: Record<string, string> = {
     "SOL/USD": "100.00000000",
 };
 
-/** Re-quote threshold: cancel + re-place if mid moved more than this many bps. */
-const REQUOTE_THRESHOLD_BPS = 50;
+/**
+ * Re-quote threshold: cancel + re-place if mid moved at least this many bps.
+ * Was 50 until 2026-10: a 5bps quote could then sit ~45bps off the real market
+ * without being refreshed, and a market order swept it (prod fill 84818.68 on
+ * 2026-10-01 hit an ask quoted 20 min earlier, ~37bps below Kraken).
+ */
+export const REQUOTE_THRESHOLD_BPS = 10;
 
 /** Funding amounts for bot wallets. */
 const BOT_USD_BALANCE = "10000000.00000000";   // $10M
@@ -61,6 +65,12 @@ export const marketMakerJob: JobDefinition = {
 
         if (!botInitialized) {
             await ensureBotSetup(ctx);
+            // Nothing quoted by a previous process survives a restart: those
+            // quotes were priced off a market we no longer know. Pull them all,
+            // then quote fresh below (lastQuotedMid is empty, so every pair
+            // with a live price requotes this run).
+            await cancelBotQuotes(ctx, undefined, "boot");
+            lastQuotedMid.clear();
             botInitialized = true;
         }
 
@@ -81,10 +91,16 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
     const baseQty = BASE_QTY[pair.symbol];
     if (!baseQty) return; // Unknown pair — skip
 
-    // 1. Get live price from Kraken snapshot store
+    // 1. Get live price from Kraken snapshot store. getSnapshot returns null
+    //    once the snapshot is older than its 10s TTL — the same staleness rule
+    //    the execution agent rejects on (source="fallback" = stale_price_source).
     const snapshot = await getSnapshot(pair.symbol);
     if (!snapshot) {
-        // No live price available — don't quote stale prices
+        // Price source is stale: our resting quotes were priced off a market we
+        // can no longer see. Pull them, and forget the quoted mid so we requote
+        // as soon as the price is fresh again (whatever the move).
+        await cancelBotQuotes(ctx, pair, "stale_price_source");
+        lastQuotedMid.delete(pair.id);
         return;
     }
 
@@ -102,33 +118,8 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
         }
     }
 
-    // 3. Cancel existing bot orders for this pair
-    const openOrders = await listOrdersByUserId(BOT_USER_ID, {
-        pairId: pair.id,
-        status: "OPEN",
-    });
-
-    for (const order of openOrders) {
-        try {
-            await cancelOrderWithOutbox(BOT_USER_ID, order.id);
-        } catch {
-            // Order may have been filled between check and cancel — safe to ignore
-        }
-    }
-
-    // Also cancel partially filled orders
-    const partialOrders = await listOrdersByUserId(BOT_USER_ID, {
-        pairId: pair.id,
-        status: "PARTIALLY_FILLED",
-    });
-
-    for (const order of partialOrders) {
-        try {
-            await cancelOrderWithOutbox(BOT_USER_ID, order.id);
-        } catch {
-            // Safe to ignore
-        }
-    }
+    // 3. Cancel existing bot orders for this pair (OPEN + PARTIALLY_FILLED)
+    await cancelBotQuotes(ctx, pair, "requote");
 
     // 4. Place fresh orders at each level
     let placedCount = 0;
@@ -176,6 +167,27 @@ async function quotePair(pair: PairRow, ctx: JobContext): Promise<void> {
         lastQuotedMid.set(pair.id, mid.toString());
         ctx.logger.info({ pair: pair.symbol, mid: mid.toFixed(2), orders: placedCount }, "mm_quoted");
     }
+}
+
+/**
+ * Cancel the bot's resting quotes — for one pair, or every pair when `pair` is
+ * omitted. Orders filled between listing and cancel are skipped, not errors.
+ */
+async function cancelBotQuotes(
+    ctx: JobContext,
+    pair: PairRow | undefined,
+    reason: "boot" | "stale_price_source" | "requote",
+): Promise<void> {
+    const { canceled } = await cancelAllOrdersWithOutbox({ userId: BOT_USER_ID, pairId: pair?.id });
+    if (canceled.length > 0 && reason !== "requote") {
+        ctx.logger.warn({ pair: pair?.symbol ?? "ALL", canceled: canceled.length, reason }, "mm_quotes_pulled");
+    }
+}
+
+/** TEST-ONLY — forget per-process quoting state (as on a fresh boot). */
+export function __resetMarketMakerForTest(): void {
+    botInitialized = false;
+    lastQuotedMid.clear();
 }
 
 // ── Bot Setup (runs once) ──
