@@ -216,6 +216,9 @@ export async function fetchRestingOrdersBatch(
     bookSide: "BUY" | "SELL",
     options: {
         priceBound?: string;
+        /** Inclusive price band (MARKET collar) — resting orders outside it are not fetched. */
+        priceMin?: string;
+        priceMax?: string;
         excludeUserId?: string;
         cursor?: BookCursor;
         batchSize?: number;
@@ -246,6 +249,15 @@ export async function fetchRestingOrdersBatch(
             // Taker is SELL: fetch buys at or above taker's limit price
             conditions.push(`limit_price >= $${params.length}`);
         }
+    }
+
+    if (options.priceMin !== undefined) {
+        params.push(options.priceMin);
+        conditions.push(`limit_price >= $${params.length}`);
+    }
+    if (options.priceMax !== undefined) {
+        params.push(options.priceMax);
+        conditions.push(`limit_price <= $${params.length}`);
     }
 
     // Keyset cursor for pagination

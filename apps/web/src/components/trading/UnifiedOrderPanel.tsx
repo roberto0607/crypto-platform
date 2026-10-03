@@ -31,6 +31,7 @@ const ERROR_MAP: Record<string, string> = {
     RATE_LIMITED: "RATE LIMITED",
     insufficient_balance: "INSUFFICIENT BALANCE",
     insufficient_liquidity: "INSUFFICIENT LIQUIDITY",
+    stale_price_source: "PRICE FEED DELAYED — RETRY",
 };
 
 function fmtUsd(n: number): string {

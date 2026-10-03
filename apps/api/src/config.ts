@@ -167,6 +167,12 @@ export const config = {
 
   // ── Market maker bot ──
   disableMarketMaker: booleanEnv("DISABLE_MARKET_MAKER", false),
+  // Market-order price collar (trading/priceCollar.ts): MARKET orders only
+  // fill against internal resting orders within this many bps of the real
+  // Kraken best bid/ask, and reject (stale_price_source) when the Kraken book
+  // is older than the max age.
+  marketCollarBps: numberEnv("MARKET_COLLAR_BPS", 25),
+  marketCollarMaxBookAgeMs: numberEnv("MARKET_COLLAR_MAX_BOOK_AGE_MS", 5_000),
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
 

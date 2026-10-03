@@ -4,7 +4,7 @@
  * Tests placeOrder() and cancelOrder() directly (not via HTTP routes).
  * Each test resets the database and creates fresh fixtures.
  */
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { pool } from "../../db/pool";
 import { placeOrder, cancelOrder } from "../matchingEngine";
 import { resetTestData, ensureMigrations } from "../../testing/resetDb";
@@ -13,6 +13,7 @@ import {
   createTestAssetAndPair,
   createTestWallets,
 } from "../../testing/fixtures";
+import { seedReferenceBook, widenCollarForTest } from "../../testing/referenceBook";
 
 /* ── query helpers ────────────────────────────────────── */
 
@@ -77,8 +78,18 @@ let buyerUsd: { id: string };
 let sellerBtc: { id: string };
 let sellerUsd: { id: string };
 
+// These tests cover book mechanics with resting orders spread ±4% around the
+// 50000 last price, not the market-order collar (see marketCollar.test.ts), so
+// the collar is widened for this file and a fresh Kraken book is seeded per test.
+let restoreCollar: () => void;
+
 beforeAll(async () => {
   await ensureMigrations();
+  restoreCollar = widenCollarForTest();
+});
+
+afterAll(() => {
+  restoreCollar();
 });
 
 beforeEach(async () => {
@@ -90,6 +101,7 @@ beforeEach(async () => {
   btcAsset = assets.btcAsset;
   usdAsset = assets.usdAsset;
   pair = assets.pair;
+  seedReferenceBook(pair.id, "50000");
 
   // Buyer: lots of USD, no BTC; Seller: lots of BTC, some USD
   const bw = await createTestWallets(
@@ -536,6 +548,7 @@ describe("placeOrder", () => {
         [ethId, usdAsset.id],
       );
       const pair2Id = pair2Rows[0].id;
+      seedReferenceBook(pair2Id, "3000");
 
       // Users for pair2
       const s2 = await createTestUser(pool);
