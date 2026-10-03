@@ -165,7 +165,7 @@ All new indicators follow this pattern:
 | `DISABLE_JOB_RUNNER` | no | `false` | Skip background jobs (load test) |
 | `DB_POOL_MAX` | no | `20` | pg pool size per instance |
 | `JOB_MAX_CONCURRENCY` | no | `4` | Max background jobs in flight; clamped to `floor((DB_POOL_MAX - 3) / 2)` so jobs can never exhaust the pool |
-| `JOB_ACQUIRE_TIMEOUT_MS` | no | `30000` | A job run that gets no DB client within this is skipped (stays due) instead of waiting forever |
+| `DB_POOL_ACQUIRE_TIMEOUT_MS` | no | `10000` | Max wait for a free pool client; past it pg throws (logged as `pg.pool_acquire_timeout`) instead of hanging. A job run that hits it is skipped and stays due |
 | `AGENTS_ENABLED` | no | `false` in prod, `true` elsewhere | Master switch ANDed into every `*_AGENT_ENABLED` flag |
 | `MARKET_SYMBOLS` | no | `BTC-USD,ETH-USD,SOL-USD` | Only pairs whose candle/footprint history is written to Postgres |
 | `DB_SIZE_LIMIT_MB` | no (set in prod) | `0` (guardrail off) | Postgres volume size; warn at 70%, pause non-essential writes at 85%. See `docs/runbooks/db-recovery.md` |

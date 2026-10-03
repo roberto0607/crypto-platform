@@ -12,7 +12,8 @@
  *
  * Integration-style against the real test Postgres, but with a 7-client pool
  * so "more due jobs than clients" is cheap to set up. job_runs is truncated
- * per test.
+ * per test. The 3-client pool cases (no hang, lock released on failure, acquire
+ * timeout) live in jobRunner.smallPool.test.ts.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import pg from "pg";
@@ -24,7 +25,7 @@ vi.mock("../../db/pool", async (importOriginal) => {
     const { Pool } = await import("pg");
     return {
         ...actual,
-        pool: new Pool({ connectionString: process.env.DATABASE_URL, max: SMALL_POOL_MAX }),
+        pool: new Pool({ connectionString: process.env.DATABASE_URL, max: SMALL_POOL_MAX, connectionTimeoutMillis: 5_000 }),
     };
 });
 
@@ -164,28 +165,6 @@ describe("jobRunner — pool safety", () => {
         expect(allDone).toBe(true);
         expect(maxRunning).toBeLessThanOrEqual(2);
         expect([...runs.values()]).toEqual([1, 1, 1, 1, 1]);
-    });
-
-    it("skips a run instead of hanging when no client frees up in time, then recovers", async () => {
-        registerJobs([job("starvetest", async () => {})]);
-        await start({ acquireTimeoutMs: 300 });
-
-        // Starve the pool completely, then ask for a run.
-        const held = await Promise.all(Array.from({ length: SMALL_POOL_MAX }, () => pool.connect()));
-        try {
-            const t0 = Date.now();
-            const res = await triggerJob("starvetest");
-            expect(res.status).toBe("SKIPPED");
-            expect(Date.now() - t0).toBeLessThan(2_000);
-            const r = await held[0]!.query<{ last_status: string | null }>(
-                `SELECT last_status FROM job_runs WHERE job_name = 'starvetest'`,
-            );
-            expect(r.rows[0]!.last_status).toBeNull(); // never claimed, nothing wedged in RUNNING
-        } finally {
-            held.forEach((c) => c.release());
-        }
-
-        expect((await triggerJob("starvetest")).status).toBe("SUCCESS");
     });
 
     it("manual trigger reports ALREADY_RUNNING for an in-flight job instead of running it twice", async () => {

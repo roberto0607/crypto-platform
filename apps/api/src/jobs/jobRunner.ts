@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { pool } from "../db/pool";
+import { pool, isPoolAcquireTimeout, logPoolAcquireTimeout } from "../db/pool";
 import { config } from "../config";
 import { logger as rootLogger } from "../observability/logContext";
 import {
@@ -31,8 +31,9 @@ const logger = rootLogger.child({ module: "jobRunner" });
  *     lock clients plus the leader-election reserve leave at least as many
  *     free clients again for job bodies and request traffic;
  *   - a job name is never started while it is already in flight;
- *   - a run that can't get a client within `acquireTimeoutMs` is skipped
- *     (it stays due) rather than waiting forever;
+ *   - a run that can't get a client within the pool's acquire timeout
+ *     (DB_POOL_ACQUIRE_TIMEOUT_MS) is skipped, loudly, and stays due —
+ *     it never waits forever;
  *   - the advisory lock is released before the client goes back to the pool.
  */
 
@@ -46,7 +47,6 @@ let ticking = false;
 const inflightJobs: Set<Promise<void>> = new Set();
 const inflightNames: Set<string> = new Set();
 let maxConcurrency = 1;
-let acquireTimeoutMs = config.jobAcquireTimeoutMs;
 
 export function registerJobs(defs: JobDefinition[]): void {
     for (const d of defs) {
@@ -63,13 +63,12 @@ export function safeMaxConcurrency(poolMax: number): number {
     return Math.max(1, Math.floor((poolMax - LEADER_LOCK_RESERVE) / 2));
 }
 
-export async function start(opts: { maxConcurrency?: number; acquireTimeoutMs?: number } = {}): Promise<void> {
+export async function start(opts: { maxConcurrency?: number } = {}): Promise<void> {
     stopping = false;
 
     const poolMax = pool.options.max ?? config.dbPoolMax;
     const requested = opts.maxConcurrency ?? config.jobMaxConcurrency;
     maxConcurrency = Math.max(1, Math.min(requested, safeMaxConcurrency(poolMax)));
-    acquireTimeoutMs = opts.acquireTimeoutMs ?? config.jobAcquireTimeoutMs;
     if (maxConcurrency < requested) {
         logger.warn(
             { requested, maxConcurrency, poolMax },
@@ -94,7 +93,7 @@ export async function start(opts: { maxConcurrency?: number; acquireTimeoutMs?: 
     }
 
     logger.info(
-        { jobs: Array.from(definitions.keys()), maxConcurrency, acquireTimeoutMs },
+        { jobs: Array.from(definitions.keys()), maxConcurrency },
         "Job runner started"
     );
 
@@ -164,22 +163,6 @@ function track(promise: Promise<unknown>): void {
     inflightJobs.add(p);
 }
 
-/** pool.connect() with a deadline; null on timeout (a late client is released, never leaked). */
-async function connectWithin(ms: number): Promise<PoolClient | null> {
-    const pending = pool.connect();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), ms);
-    });
-    const winner = await Promise.race([pending, timedOut]);
-    clearTimeout(timer);
-    if (winner === null) {
-        pending.then((c) => c.release()).catch(() => {});
-        return null;
-    }
-    return winner;
-}
-
 type RunOutcome = "ran" | "skipped";
 
 async function runJob(def: JobDefinition, expectedStartedAt?: string | Date | null): Promise<RunOutcome> {
@@ -191,10 +174,13 @@ async function runJob(def: JobDefinition, expectedStartedAt?: string | Date | nu
     let client: PoolClient | null = null;
     let locked = false;
     try {
-        client = await connectWithin(acquireTimeoutMs);
-        if (!client) {
+        try {
+            client = await pool.connect();
+        } catch (err) {
+            if (!isPoolAcquireTimeout(err)) throw err;
+            // Not claimed, so the row stays due and the next tick retries it.
             jobSkippedTotal.inc({ job: def.name, reason: "acquire_timeout" });
-            logger.warn({ job: def.name, acquireTimeoutMs }, "No DB client within timeout, skipping run");
+            logPoolAcquireTimeout(`jobRunner:${def.name}`, pool);
             return "skipped";
         }
 
