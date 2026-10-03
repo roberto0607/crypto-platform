@@ -33,3 +33,38 @@ export function seedAndStripPairs(wirePairs: TradingPairWire[]): TradingPair[] {
   // (Strip activated at step 8 alongside the type field deletion.)
   return wirePairs.map(({ last_price: _last_price, ...rest }) => rest);
 }
+
+// ── Initial pair selection ──
+//
+// The server only ever returns MARKET_SYMBOLS pairs (BTC/ETH/SOL), so the
+// `pairs` list a page already holds IS the allowed list — no client-side
+// copy of the allowlist to drift. The user's last pick is remembered by
+// SYMBOL (not id) so it survives a DB reseed, and is honored only if it's
+// still in that list; otherwise BTC/USD, then whatever comes first.
+
+export const LAST_PAIR_STORAGE_KEY = "tradr_last_pair";
+export const DEFAULT_PAIR_SYMBOL = "BTC/USD";
+
+export function readLastPairSymbol(): string | null {
+  try {
+    return localStorage.getItem(LAST_PAIR_STORAGE_KEY);
+  } catch {
+    return null; // storage blocked (private mode etc.) — fall back to default
+  }
+}
+
+export function rememberPairSymbol(symbol: string): void {
+  try {
+    localStorage.setItem(LAST_PAIR_STORAGE_KEY, symbol);
+  } catch {
+    // best-effort convenience only
+  }
+}
+
+export function pickInitialPairId(
+  pairs: readonly Pick<TradingPair, "id" | "symbol">[],
+  lastSymbol: string | null = readLastPairSymbol(),
+): string | null {
+  const bySymbol = (s: string | null) => (s ? pairs.find((p) => p.symbol === s) : undefined);
+  return (bySymbol(lastSymbol) ?? bySymbol(DEFAULT_PAIR_SYMBOL) ?? pairs[0])?.id ?? null;
+}

@@ -14,6 +14,7 @@ import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
 import type { Position, MatchEndedEvent, MatchPnlUpdateEvent, MessageReceivedEvent } from "@/types/api";
 import Spinner from "@/components/Spinner";
+import { pickInitialPairId } from "@/lib/pairs";
 
 /* ─────────────────────────────────────────
    LIVE MATCH VIEW CSS
@@ -811,10 +812,12 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
     const opponentPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
 
-    // Default to first active pair on mount
+    // Default on mount: the user's last pick if it's still offered, else
+    // BTC/USD (pickInitialPairId in lib/pairs).
     useEffect(() => {
         if (!selectedPairId && pairs.length > 0) {
-            selectPair(pairs[0]!.id);
+            const initial = pickInitialPairId(pairs);
+            if (initial) selectPair(initial);
         }
     }, [selectedPairId, pairs, selectPair]);
 

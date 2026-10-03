@@ -20,6 +20,7 @@ import {
 import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
 import { createThrottle } from "@/lib/throttle";
+import { rememberPairSymbol } from "@/lib/pairs";
 
 // Order-book refreshes are driven by live price ticks (see useSSE.onPriceTick).
 // Ticks arrive many times per second; this throttle gates them to at most one
@@ -199,6 +200,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
 
   selectPair: (pairId: string) => {
+    // Remember the pick across refresh (see pickInitialPairId in lib/pairs).
+    const picked = useAppStore.getState().pairs.find((p) => p.id === pairId);
+    if (picked) rememberPairSymbol(picked.symbol);
     set({
       selectedPairId: pairId,
       orderBook: null,
