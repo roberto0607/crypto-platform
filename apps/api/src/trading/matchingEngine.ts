@@ -66,7 +66,10 @@ import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
 import { isTradableSymbol } from "../market/marketSymbols";
-import { getCollarReference, collarBand } from "./priceCollar";
+import { getMarketReference, collarBand, systemFillPrice, isOnMarket, type CollarReference } from "./priceCollar";
+import { logger as rootLogger } from "../observability/logContext";
+
+const logger = rootLogger.child({ module: "matchingEngine" });
 import {
     createOrder,
     findOrderById,
@@ -131,7 +134,11 @@ async function placeOrderInternal(
     // manual user order (every existing caller). See phase6OrderService
     // for where 'agent' is checked against the AGENT_ACTIONS_ENABLED flag.
     source?: string | null,
-): Promise<{ order: OrderRow; fills: TradeRow[] }> {
+    // MARKET pricing override — only for a solo replay session, whose orders
+    // price off historical candles, not the live Kraken market. Omitted =
+    // resolve the live Kraken reference (book, else ticker) under the pair lock.
+    pricing?: CollarReference,
+): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
     // placeOrder/cancelOrder on the same pair_id will queue here.
@@ -140,16 +147,17 @@ async function placeOrderInternal(
     // MARKET_SYMBOLS backstop — HTTP routes reject earlier (with details), but
     // agents, the trigger engine and the market maker reach this directly.
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
-    if (type === "MARKET" && !pair.last_price) throw new Error("no_price_available");
 
-    // Price collar (MARKET only): resting orders are swept only within the
-    // band around the real Kraken touch, so a stale quote can never fill. No
-    // fresh Kraken book → no way to tell a stale quote from a live one → reject.
+    // Market reference (MARKET only): the real Kraken touch — fresh book, else
+    // fresh ticker bid/ask. It collars which resting orders may be swept (so a
+    // stale quote can never fill) and prices the system-fill remainder. No
+    // fresh reference → reject; never fall back to trading_pairs.last_price.
+    let reference: CollarReference | null = null;
     let collar: { min: string; max: string } | null = null;
     if (type === "MARKET") {
-        const ref = getCollarReference(pairId);
-        if (!ref) throw new Error("stale_price_source");
-        const band = collarBand(ref, side);
+        reference = pricing ?? await getMarketReference(pairId, pair.symbol);
+        if (!reference) throw new Error("stale_price_source");
+        const band = collarBand(reference, side);
         collar = { min: band.min.toFixed(8), max: band.max.toFixed(8) };
     }
 
@@ -205,7 +213,8 @@ async function placeOrderInternal(
 
     let systemFill: SystemFillPlan | null = null;
     if (type === "MARKET" && remaining.gt(0)) {
-        const sysPrice = D(pair.last_price!);
+        // The real touch the taker crosses — no synthetic spread on top.
+        const sysPrice = systemFillPrice(reference!, side);
         const sysQuote = remaining.mul(sysPrice);
         const sysFee = sysQuote.mul(pair.fee_bps).div(BPS_DIVISOR);
         systemFill = { fillQty: remaining, fillPrice: sysPrice, quoteAmt: sysQuote, feeAmt: sysFee };
@@ -476,15 +485,34 @@ async function placeOrderInternal(
         if (excess.gt(0)) await releaseReserved(client, reserveWalletId!, toFixed8(excess));
     }
 
-    // ── Phase L: Update pair.last_price ──
+    // ── Phase L: Update pair.last_price (on-market fills only) ──
+    // last_price is the live market reference other paths read, so a fill only
+    // moves it when it printed within the collar of the real Kraken touch. An
+    // off-market print — an uncollared LIMIT cross, a replay-session fill, any
+    // fill with no fresh reference — leaves it to the Kraken ticker sync. (A
+    // stale-quote sweep once wrote $63,566 into last_price with BTC at ~$84.6k.)
     if (lastFillPrice !== null) {
-        await client.query(
-            `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
-            [toFixed8(lastFillPrice), pairId]
-        );
+        const ref = reference ?? await getMarketReference(pairId, pair.symbol);
+        if (isOnMarket(lastFillPrice, ref)) {
+            await client.query(
+                `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
+                [toFixed8(lastFillPrice), pairId]
+            );
+        } else {
+            logger.warn(
+                {
+                    pairId,
+                    fillPrice: toFixed8(lastFillPrice),
+                    referenceSource: ref?.source ?? null,
+                    bestBid: ref?.bestBid.toString() ?? null,
+                    bestAsk: ref?.bestAsk.toString() ?? null,
+                },
+                "last_price_update_skipped_off_market",
+            );
+        }
     }
 
-    return { order: updatedOrder, fills };
+    return { order: updatedOrder, fills, reference };
 }
 
 /**
@@ -501,12 +529,13 @@ export async function placeOrder(
     competitionId?: string | null,
     matchId?: string | null,
     source?: string | null,
-): Promise<{ order: OrderRow; fills: TradeRow[] }> {
+    pricing?: CollarReference,
+): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
-        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source);
+        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing);
         await client.query("COMMIT");
         return result;
     } catch (err) {
@@ -532,8 +561,9 @@ export async function placeOrderTx(
     competitionId?: string | null,
     matchId?: string | null,
     source?: string | null,
-): Promise<{ order: OrderRow; fills: TradeRow[] }> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source);
+    pricing?: CollarReference,
+): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing);
 }
 
 /**

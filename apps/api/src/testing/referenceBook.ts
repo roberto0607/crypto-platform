@@ -8,6 +8,7 @@
  */
 import type { Pool } from "pg";
 import { bookSnapshots } from "../market/orderFlowFeatures";
+import { setSnapshot, __resetSnapshotStoreForTest } from "../market/snapshotStore";
 import { config } from "../config";
 
 /** Seed a Kraken top-of-book for `pairId`, `ageMs` old (default: fresh now). */
@@ -34,6 +35,15 @@ export async function seedReferenceBooksFromLastPrice(db: Pool): Promise<void> {
 
 export function clearReferenceBooks(): void {
     bookSnapshots.clear();
+    __resetSnapshotStoreForTest();
+}
+
+/**
+ * Seed the Kraken TICKER snapshot (the fallback reference when the book is
+ * stale). It is stamped "received now"; age it with vi.setSystemTime.
+ */
+export async function seedTicker(symbol: string, bid: string | null, ask: string | null, last: string = ask ?? bid ?? "0"): Promise<void> {
+    await setSnapshot(symbol, { bid, ask, last, ts: new Date().toISOString() });
 }
 
 /**
