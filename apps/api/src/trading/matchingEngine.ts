@@ -65,6 +65,7 @@ import type { PoolClient } from "pg";
 import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
+import { isTradableSymbol } from "../market/marketSymbols";
 import {
     createOrder,
     findOrderById,
@@ -135,6 +136,9 @@ async function placeOrderInternal(
     // placeOrder/cancelOrder on the same pair_id will queue here.
     const pair = await lockPairForUpdate(client, pairId);
     if (!pair || !pair.is_active) throw new Error("pair_not_found");
+    // MARKET_SYMBOLS backstop — HTTP routes reject earlier (with details), but
+    // agents, the trigger engine and the market maker reach this directly.
+    if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
     if (type === "MARKET" && !pair.last_price) throw new Error("no_price_available");
 
     // ── Phase B: Find user's wallets (non-locking read) ──

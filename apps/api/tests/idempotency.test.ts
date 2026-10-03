@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
+import { allowSymbolForTest } from "../src/market/marketSymbols";
 
 let app: FastifyInstance;
 
@@ -54,7 +55,7 @@ beforeAll(async () => {
     method: "POST",
     url: "/admin/pairs",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { baseAssetId, quoteAssetId, symbol: `K${uid}`, feeBps: 0 },
+    payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`K${uid}/USD`), feeBps: 0 },
   });
   pairId = pairRes.json().pair.id;
 

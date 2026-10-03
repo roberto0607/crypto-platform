@@ -14,6 +14,7 @@ import { pool } from "../db/pool.js";
 import { autoCreateWallets } from "../wallets/autoWallets.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 import { config } from "../config.js";
+import { isTradableSymbol } from "./marketSymbols.js";
 
 const logger = rootLogger.child({ module: "symbolSync" });
 
@@ -305,6 +306,7 @@ export async function fetchTopMarketCapSymbols(topN: number): Promise<Map<string
  */
 export async function discoverSyncCandidates(
     cutoff: number = MARKET_CAP_RANK_CUTOFF,
+    allow: ReadonlySet<string> = config.marketSymbols,
 ): Promise<SyncCandidate[]> {
     const [krakenRaw, coinbase, mcapRank] = await Promise.all([
         fetchKrakenCandidates(),
@@ -322,8 +324,13 @@ export async function discoverSyncCandidates(
     // ascending. The market-cap filter is what keeps the WS-verification
     // batch small (~20-30), so the whole eligible set is verified — no
     // pre-verification slice / buffer.
+    //
+    // MARKET_SYMBOLS gate: only allowlisted pairs ever become candidates, so
+    // neither the refresh job nor the backfill script (the only two callers,
+    // both via this function) can insert or re-activate any other pair.
     const eligible = [...krakenBySymbol.entries()]
         .filter(([baseSymbol]) => mcapRank.has(baseSymbol))
+        .filter(([baseSymbol]) => isTradableSymbol(`${baseSymbol}/USD`, allow))
         .map(([baseSymbol, kraken]) => ({ baseSymbol, kraken, cb: coinbaseBySymbol.get(baseSymbol)! }))
         .sort((a, b) => mcapRank.get(a.baseSymbol)! - mcapRank.get(b.baseSymbol)!);
 

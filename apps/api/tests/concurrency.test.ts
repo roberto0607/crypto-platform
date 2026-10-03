@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
+import { allowSymbolForTest } from "../src/market/marketSymbols";
 
 let app: FastifyInstance;
 let adminToken: string;
@@ -60,7 +61,7 @@ async function createPair(): Promise<PairCtx> {
   const pairRes = await app.inject({
     method: "POST", url: "/admin/pairs",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { baseAssetId: baseId, quoteAssetId: quoteId, symbol: `P${uid}`, feeBps: 0 },
+    payload: { baseAssetId: baseId, quoteAssetId: quoteId, symbol: allowSymbolForTest(`P${uid}/USD`), feeBps: 0 },
   });
   const pairId = pairRes.json().pair.id;
 

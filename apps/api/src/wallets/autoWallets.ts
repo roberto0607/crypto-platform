@@ -3,9 +3,11 @@ import { pool } from "../db/pool";
 import { logger } from "../observability/logContext";
 import { creditWalletTx } from "./walletRepo";
 import { STARTING_CAPITAL_USD, FREE_PLAY_CREDIT_ENTRY_TYPE } from "./startingCapital";
+import { tradableSymbols } from "../market/marketSymbols";
 
 /**
- * Auto-create one wallet per active asset for a user, and — for the free-play
+ * Auto-create one wallet per tradable asset (base/quote of a MARKET_SYMBOLS
+ * pair) for a user, and — for the free-play
  * scope (competition_id NULL) — fund the USD wallet with STARTING_CAPITAL_USD.
  *
  * Runs in a single transaction so wallet creation and funding land atomically.
@@ -34,12 +36,21 @@ export async function autoCreateWallets(
     try {
         if (ownTx) await client.query("BEGIN");
 
+        // Only the assets of MARKET_SYMBOLS pairs (base + quote) — a wallet
+        // for any other asset would be a dead zero-balance row in the UI.
+        // Not filtered on is_active: symbolSync provisions wallets for a new
+        // pair's asset BEFORE flipping that pair active.
         const result = await client.query(
             `INSERT INTO wallets (id, user_id, asset_id, competition_id, balance, reserved)
              SELECT gen_random_uuid(), $1, a.id, $2, '0.00000000', '0.00000000'
              FROM assets a
+             WHERE a.id IN (
+                 SELECT base_asset_id FROM trading_pairs WHERE symbol = ANY($3)
+                 UNION
+                 SELECT quote_asset_id FROM trading_pairs WHERE symbol = ANY($3)
+             )
              ON CONFLICT DO NOTHING`,
-            [userId, compId],
+            [userId, compId, tradableSymbols()],
         );
 
         let funded = false;

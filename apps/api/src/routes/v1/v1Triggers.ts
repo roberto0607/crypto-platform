@@ -11,6 +11,7 @@ import {
     cancelTriggerByUser,
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
+import { assertTradablePairId } from "../../market/marketSymbols";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
@@ -124,6 +125,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 throw new AppError("invalid_input", parsed.error.flatten());
             }
             const b = parsed.data;
+            await assertTradablePairId(b.pairId);
 
             const trigger = await createTriggerOrder({
                 userId: actor.id,
@@ -269,6 +271,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 throw new AppError("invalid_input", parsed.error.flatten());
             }
             const b = parsed.data;
+            await assertTradablePairId(b.pairId);
 
             const ocoGroupId = crypto.randomUUID();
 

@@ -24,6 +24,7 @@ import { useAppStore } from "@/stores/appStore";
 import { normalizeApiError } from "@/lib/errors";
 import type { ReplaySession, Position, UUID } from "@/types/api";
 import type { AxiosError } from "axios";
+import { usePublicTicker, tickerLoop } from "@/hooks/usePublicTicker";
 
 /* ── CSS ── injected once on mount ── */
 const REPLAY_CSS = `
@@ -307,15 +308,6 @@ const REPLAY_CSS = `
   .rp-d3{animation-delay:0.15s} .rp-d4{animation-delay:0.2s}
 `;
 
-const TICKS = [
-  { s: "BTC", p: "$84,220.44", c: "+2.31%", up: true },
-  { s: "ETH", p: "$3,941.12", c: "+1.84%", up: true },
-  { s: "SOL", p: "$142.88", c: "-0.71%", up: false },
-  { s: "BNB", p: "$621.50", c: "+0.42%", up: true },
-  { s: "AVAX", p: "$38.12", c: "-1.18%", up: false },
-  { s: "DOGE", p: "$0.1822", c: "+5.09%", up: true },
-];
-
 const SPEEDS = [1, 2, 5, 10, 20];
 
 /* ── helpers ── */
@@ -506,6 +498,7 @@ function ReplayChart({ session, pairId }: ReplayChartProps) {
    MAIN REPLAY COMPONENT
 ───────────────────────────────────────── */
 export default function ReplayPage() {
+  const tickerItems = tickerLoop(usePublicTicker());
   const pairs = useAppStore((s) => s.pairs);
 
   // Map symbol like "BTC/USD" to pair id
@@ -1108,25 +1101,26 @@ export default function ReplayPage() {
         </div>
       )}
 
-      {/* TICKER */}
-      <div className="rp-ticker">
-        <div className="rp-tick-lbl">LIVE</div>
-        <div style={{ overflow: "hidden", flex: 1 }}>
-          <div className="rp-tick-inner">
-            {[...TICKS, ...TICKS].map((t, i) => (
-              <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span className="rp-tick-sym">{t.s}</span>
-                <span style={{ color: "rgba(255,255,255,0.65)" }}>{t.p}</span>
-                <span className={t.up ? "rp-tick-up" : "rp-tick-dn"}>
-                  {t.up ? "+" : ""}
-                  {t.c}
+      {/* TICKER — real BTC/ETH/SOL prices, hidden until loaded */}
+      {tickerItems.length > 0 && (
+        <div className="rp-ticker">
+          <div className="rp-tick-lbl">LIVE</div>
+          <div style={{ overflow: "hidden", flex: 1 }}>
+            <div className="rp-tick-inner">
+              {tickerItems.map((t, i) => (
+                <span key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="rp-tick-sym">{t.sym}</span>
+                  <span style={{ color: "rgba(255,255,255,0.65)" }}>{t.price}</span>
+                  <span className={t.up ? "rp-tick-up" : "rp-tick-dn"}>
+                    {t.chg}
+                  </span>
+                  <span style={{ color: "rgba(255,255,255,0.06)", marginLeft: 6 }}>|</span>
                 </span>
-                <span style={{ color: "rgba(255,255,255,0.06)", marginLeft: 6 }}>|</span>
-              </span>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

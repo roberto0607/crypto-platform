@@ -1,4 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import { loginUrlFor } from "@/lib/safeRedirect";
 
 interface RetryableConfig extends InternalAxiosRequestConfig {
   _isRetry?: boolean;
@@ -76,7 +77,8 @@ function hardLogoutAndRedirect(): void {
   } catch { /* private-mode or quota errors — ignore */ }
   clearAuth();
   if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-    window.location.href = "/login";
+    // Keep where the user was (incl. ?debug=1) so login returns them there.
+    window.location.href = loginUrlFor(window.location);
   }
 }
 

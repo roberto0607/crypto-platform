@@ -5,6 +5,7 @@ import { requireUser } from "../auth/requireUser";
 import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { findPairById } from "../trading/pairRepo";
+import { isTradableSymbol } from "../market/marketSymbols";
 import {
     createOrStartSession,
     getSession,
@@ -51,6 +52,9 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
         const pair = await findPairById(parsed.data.pairId);
         if (!pair) {
             return reply.code(404).send({ ok: false, error: "pair_not_found" });
+        }
+        if (!isTradableSymbol(pair.symbol)) {
+            return reply.code(400).send({ ok: false, error: "pair_not_tradable" });
         }
 
         const actor = req.user!;

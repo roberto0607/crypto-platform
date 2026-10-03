@@ -1,17 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Outlet, Link } from "react-router-dom";
 import SystemBanner from "@/components/SystemBanner";
-
-const TICKS = [
-  { sym: "BTC", price: "$84,220.44", chg: "+2.31%", up: true },
-  { sym: "ETH", price: "$3,941.12", chg: "+1.84%", up: true },
-  { sym: "SOL", price: "$142.88", chg: "-0.71%", up: false },
-  { sym: "BNB", price: "$621.50", chg: "+0.42%", up: true },
-  { sym: "AVAX", price: "$38.12", chg: "-1.18%", up: false },
-  { sym: "DOGE", price: "$0.1822", chg: "+5.09%", up: true },
-  { sym: "ARB", price: "$1.24", chg: "+3.22%", up: true },
-  { sym: "LINK", price: "$18.40", chg: "+1.10%", up: true },
-];
+import { usePublicTicker, tickerLoop } from "@/hooks/usePublicTicker";
 
 export default function AuthLayout() {
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -33,7 +23,8 @@ export default function AuthLayout() {
     return () => document.removeEventListener("mousemove", handleMouseMove);
   }, [handleMouseMove]);
 
-  const tickerItems = [...TICKS, ...TICKS];
+  // Real BTC/ETH/SOL prices; the strip stays hidden until they load.
+  const tickerItems = tickerLoop(usePublicTicker());
 
   return (
     <div className="tradr-cursor h-screen flex flex-col bg-tradr-bg font-mono text-white/85 overflow-hidden">
@@ -70,25 +61,27 @@ export default function AuthLayout() {
       </div>
 
       {/* Ticker Bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-[100] bg-tradr-bg/95 border-t border-tradr-green/[0.18] h-8 flex items-center overflow-hidden">
-        <div className="flex-shrink-0 px-3.5 h-full flex items-center bg-tradr-green text-[9px] font-bold text-black tracking-[3px] whitespace-nowrap">
-          LIVE
-        </div>
-        <div className="overflow-hidden flex-1">
-          <div className="flex gap-12 whitespace-nowrap animate-ticker-scroll text-[9px]">
-            {tickerItems.map((t, i) => (
-              <span key={i} className="flex items-center gap-1.5">
-                <span className="text-white/30 tracking-[2px]">{t.sym}</span>
-                <span className="text-white/70">{t.price}</span>
-                <span className={t.up ? "text-tradr-green" : "text-tradr-red"}>
-                  {t.up ? "\u25B2" : "\u25BC"} {t.chg}
+      {tickerItems.length > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-[100] bg-tradr-bg/95 border-t border-tradr-green/[0.18] h-8 flex items-center overflow-hidden">
+          <div className="flex-shrink-0 px-3.5 h-full flex items-center bg-tradr-green text-[9px] font-bold text-black tracking-[3px] whitespace-nowrap">
+            LIVE
+          </div>
+          <div className="overflow-hidden flex-1">
+            <div className="flex gap-12 whitespace-nowrap animate-ticker-scroll text-[9px]">
+              {tickerItems.map((t, i) => (
+                <span key={i} className="flex items-center gap-1.5">
+                  <span className="text-white/30 tracking-[2px]">{t.sym}</span>
+                  <span className="text-white/70">{t.price}</span>
+                  <span className={t.up ? "text-tradr-green" : "text-tradr-red"}>
+                    {t.up ? "\u25B2" : "\u25BC"} {t.chg}
+                  </span>
+                  <span className="text-white/[0.06] ml-4">|</span>
                 </span>
-                <span className="text-white/[0.06] ml-4">|</span>
-              </span>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

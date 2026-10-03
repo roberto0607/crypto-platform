@@ -24,6 +24,7 @@ const ERROR_STATUS: Record<string, number> = {
   message_contains_profanity: 400,
   message_empty: 400,
   cannot_report_own_message: 400,
+  pair_not_tradable: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,

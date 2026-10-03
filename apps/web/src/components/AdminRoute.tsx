@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
+import { loginUrlFor } from "@/lib/safeRedirect";
 
 export default function AdminRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -7,8 +8,7 @@ export default function AdminRoute() {
   const location = useLocation();
 
   if (!isAuthenticated) {
-    const redirect = location.pathname + location.search;
-    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />;
+    return <Navigate to={loginUrlFor(location)} replace />;
   }
 
   if (!isAdmin) return <Navigate to="/trade" replace />;

@@ -31,3 +31,6 @@ toolbar-*.png
 
 # Verification screenshots (PR visual proofs — not source)
 pr*.png
+
+# one-time pair restriction snapshots (pnpm pairs:restrict --commit)
+pair-restriction-*.json
