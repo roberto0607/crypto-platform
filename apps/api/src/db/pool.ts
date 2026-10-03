@@ -24,6 +24,10 @@ export const pool = new Pool({
     connectionString,
     max: config.dbPoolMax, // env DB_POOL_MAX, default 20
     idleTimeoutMillis: 30_000,  // release idle clients after 30s to free PG slots
+    // Bounded wait for a free client (env DB_POOL_ACQUIRE_TIMEOUT_MS, default
+    // 10s). Without it pool.connect()/pool.query() wait forever, so pool
+    // starvation shows up as silently hung requests instead of errors.
+    connectionTimeoutMillis: config.dbPoolAcquireTimeoutMs,
     ...(isRemote && { ssl: { rejectUnauthorized: false } }),
 });
 
@@ -39,7 +43,32 @@ pool.on("error", (err) => {
  */
 export async function acquireClient(): Promise<PoolClient> {
     const start = performance.now();
-    const client = await pool.connect();
+    let client: PoolClient;
+    try {
+        client = await pool.connect();
+    } catch (err) {
+        if (isPoolAcquireTimeout(err)) logPoolAcquireTimeout("acquireClient");
+        throw err;
+    }
     dbPoolAcquireDurationMs.observe(performance.now() - start);
     return client;
+}
+
+/** True for pg's "no client within connectionTimeoutMillis" error (pool exhausted). */
+export function isPoolAcquireTimeout(err: unknown): boolean {
+    return err instanceof Error && err.message.includes("timeout exceeded when trying to connect");
+}
+
+export function logPoolAcquireTimeout(caller: string, p: Pool = pool): void {
+    poolLogger.error(
+        {
+            eventType: "pg.pool_acquire_timeout",
+            caller,
+            timeoutMs: p.options.connectionTimeoutMillis,
+            total: p.totalCount,
+            idle: p.idleCount,
+            waiting: p.waitingCount,
+        },
+        "Timed out waiting for a PostgreSQL pool client (pool exhausted)",
+    );
 }
