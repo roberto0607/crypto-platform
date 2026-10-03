@@ -5,7 +5,8 @@
  * The pg pool dispatches them across real database connections, so
  * pair-level and wallet-level locks are exercised under contention.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { seedReferenceBook, seedReferenceBooksFromLastPrice } from "../src/testing/referenceBook";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
 import { allowSymbolForTest } from "../src/market/marketSymbols";
@@ -34,6 +35,12 @@ beforeAll(async () => {
     payload: { email: admin.email, password: admin.password },
   });
   adminToken = adminLogin.json().accessToken;
+});
+
+// MARKET orders need a fresh Kraken book as their price-collar reference
+// (trading/priceCollar.ts); the feed is off in tests, so seed one per pair.
+beforeEach(async () => {
+  await seedReferenceBooksFromLastPrice(getPool());
 });
 
 afterAll(async () => {
@@ -70,6 +77,7 @@ async function createPair(): Promise<PairCtx> {
     headers: { authorization: `Bearer ${adminToken}` },
     payload: { price: "50000" },
   });
+  seedReferenceBook(pairId, "50000");
 
   return { pairId, baseId, quoteId };
 }

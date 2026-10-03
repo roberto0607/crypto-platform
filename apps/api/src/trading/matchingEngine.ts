@@ -66,6 +66,7 @@ import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
 import { isTradableSymbol } from "../market/marketSymbols";
+import { getCollarReference, collarBand } from "./priceCollar";
 import {
     createOrder,
     findOrderById,
@@ -141,6 +142,17 @@ async function placeOrderInternal(
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
     if (type === "MARKET" && !pair.last_price) throw new Error("no_price_available");
 
+    // Price collar (MARKET only): resting orders are swept only within the
+    // band around the real Kraken touch, so a stale quote can never fill. No
+    // fresh Kraken book → no way to tell a stale quote from a live one → reject.
+    let collar: { min: string; max: string } | null = null;
+    if (type === "MARKET") {
+        const ref = getCollarReference(pairId);
+        if (!ref) throw new Error("stale_price_source");
+        const band = collarBand(ref, side);
+        collar = { min: band.min.toFixed(8), max: band.max.toFixed(8) };
+    }
+
     // ── Phase B: Find user's wallets (non-locking read) ──
     const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id, competitionId);
     const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id, competitionId);
@@ -161,6 +173,8 @@ async function placeOrderInternal(
     while (remaining.gt(0)) {
         const batch = await fetchRestingOrdersBatch(client, pairId, bookSide, {
             priceBound,
+            priceMin: collar?.min,
+            priceMax: collar?.max,
             excludeUserId: userId,
             cursor,
             batchSize: BATCH_SIZE,

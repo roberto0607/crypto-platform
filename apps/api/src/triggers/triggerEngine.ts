@@ -15,6 +15,16 @@ type PriceSnapshot = { last: string };
 let handler: EventHandler | null = null;
 
 /**
+ * A MARKET order is rejected with stale_price_source while the Kraken book (the
+ * price-collar reference) is stale — a transient feed condition, not a verdict
+ * on the trigger. Such a trigger is re-armed rather than FAILED, and not
+ * re-fired until this backoff passes so a feed outage doesn't turn every tick
+ * into an order attempt.
+ */
+export const STALE_REARM_BACKOFF_MS = 2_000;
+const rearmedUntil = new Map<string, number>();
+
+/**
  * Pure crossing check — deterministic given (trigger, snapshot).
  *
  * STOP BUY  / TP SELL  → fire when last >= trigger_price
@@ -174,6 +184,11 @@ export async function fireTrigger(
             updateClient.release();
         }
     } catch (err) {
+        if (err instanceof Error && err.message === "stale_price_source") {
+            await rearmTrigger(trigger, canceledSibling);
+            return; // not fired: no trigger.fired event, no notification
+        }
+
         // Mark FAILED with reason
         const failClient = await pool.connect();
         try {
@@ -229,6 +244,39 @@ export async function fireTrigger(
 }
 
 /**
+ * Put a trigger (and the OCO sibling this firing canceled) back to ACTIVE so it
+ * fires again on a later tick. Only rows still in the state this firing left
+ * them in are touched, so a user cancel in between wins.
+ */
+async function rearmTrigger(trigger: TriggerOrderRow, canceledSibling: TriggerOrderRow | null): Promise<void> {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query(
+            `UPDATE trigger_orders SET status = 'ACTIVE' WHERE id = $1 AND status = 'TRIGGERED' AND derived_order_id IS NULL`,
+            [trigger.id],
+        );
+        if (canceledSibling) {
+            await client.query(
+                `UPDATE trigger_orders SET status = 'ACTIVE' WHERE id = $1 AND status = 'CANCELED'`,
+                [canceledSibling.id],
+            );
+        }
+        await client.query("COMMIT");
+        rearmedUntil.set(trigger.id, Date.now() + STALE_REARM_BACKOFF_MS);
+        logger.warn(
+            { triggerId: trigger.id, siblingId: canceledSibling?.id ?? null, backoffMs: STALE_REARM_BACKOFF_MS },
+            "trigger_rearmed_stale_price_source",
+        );
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        logger.error({ triggerId: trigger.id, err }, "trigger_rearm_error");
+    } finally {
+        client.release();
+    }
+}
+
+/**
  * Evaluate all ACTIVE triggers for a pair against the current price.
  * Fires each trigger that crosses its threshold.
  * Order is deterministic: sorted by created_at ASC, id ASC.
@@ -245,6 +293,11 @@ export async function evaluateTriggersForPair(
             await updateTrailingStop(trigger, snapshot);
         }
         if (shouldTrigger(trigger, snapshot)) {
+            const until = rearmedUntil.get(trigger.id);
+            if (until !== undefined) {
+                if (Date.now() < until) continue;
+                rearmedUntil.delete(trigger.id);
+            }
             await fireTrigger(trigger, snapshot);
         }
     }

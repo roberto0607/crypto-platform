@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { seedReferenceBooksFromLastPrice } from "../src/testing/referenceBook";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
 import { allowSymbolForTest } from "../src/market/marketSymbols";
@@ -94,6 +95,12 @@ beforeAll(async () => {
     headers: { authorization: `Bearer ${adminToken}` },
     payload: { amount: "1000000" },  // 1M USD
   });
+});
+
+// MARKET orders need a fresh Kraken book as their price-collar reference
+// (trading/priceCollar.ts); the feed is off in tests, so seed one per pair.
+beforeEach(async () => {
+  await seedReferenceBooksFromLastPrice(getPool());
 });
 
 afterAll(async () => {

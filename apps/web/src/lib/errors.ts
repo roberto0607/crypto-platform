@@ -101,6 +101,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   trading_paused_global: "Trading is temporarily paused system-wide",
   trading_paused_pair: "Trading is temporarily paused for this pair",
   read_only_mode: "System is in read-only mode — trading is disabled",
+  stale_price_source: "Live price feed is delayed — market orders are paused, try again in a moment",
 };
 
 /** Whether the HTTP status indicates a retryable error */

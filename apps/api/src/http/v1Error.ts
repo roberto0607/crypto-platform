@@ -17,6 +17,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_input: "The request input is invalid.",
   insufficient_balance: "Insufficient wallet balance.",
   no_price_available: "No market price is currently available.",
+  stale_price_source: "Live market price is temporarily unavailable — market orders are paused until the price feed recovers.",
   order_not_cancelable: "This order cannot be canceled.",
   insufficient_liquidity: "Market liquidity insufficient for requested size.",
   trigger_not_cancelable: "This trigger order cannot be canceled.",
