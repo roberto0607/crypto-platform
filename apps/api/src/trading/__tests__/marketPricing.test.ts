@@ -4,6 +4,8 @@
  *   - Fresh Kraken book (≤5s)       → system fill at best ask (BUY) / best bid (SELL), no spread.
  *   - Book stale, ticker fresh (≤10s) → system fill at the ticker's ask / bid.
  *   - Both stale (or no bid/ask)    → reject stale_price_source. Never trading_pairs.last_price.
+ *   - Sweep cap: a MARKET order lifts resting quotes only at the touch or better,
+ *     so no MARKET fill is ever worse than the Kraken touch.
  *   - A fill only moves last_price when it printed on-market (the $63,566 poisoning).
  *
  * Real Postgres; the Kraken book and ticker are seeded in-process.
@@ -119,12 +121,39 @@ describe("book stale → Kraken ticker fallback", () => {
     });
 });
 
-describe("regression: a MARKET BUY fills at or near the best ask", () => {
-    it("hits an in-band MM quote at the MM's 5bps half-spread, then system-fills the rest at the best ask", async () => {
-        // Kraken 84600.0 / 84600.1; MM quotes ±5bps around a 84600.05 mid.
+describe("sweep cap: a MARKET fill is never worse than the Kraken touch", () => {
+    // Kraken 84600.0 / 84600.1; MM quotes ±5bps around a 84600.05 mid.
+    const mid = D("84600.05");
+
+    it("a BUY skips an MM ask above the best ask and system-fills everything at the ask", async () => {
         seedReferenceBook(pairId, "84600.0", "84600.1");
-        const mid = D("84600.05");
-        const mmAsk = mid.mul("1.0005").toFixed(2); // 84642.35
+        const mmAsk = mid.mul("1.0005").toFixed(2); // 84642.35 — the MM's fresh 5bps ask
+        const resting = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.05000000", mmAsk);
+
+        const buy = await placeOrder(taker.id, pairId, "BUY", "MARKET", "0.10000000");
+
+        expect(buy.fills.map((f) => [f.price, f.is_system_fill])).toEqual([["84600.10000000", true]]);
+        const { rows } = await pool.query(`SELECT status FROM orders WHERE id = $1`, [resting.order.id]);
+        expect(rows[0].status).toBe("OPEN");
+    });
+
+    it("a SELL skips an MM bid below the best bid and system-fills everything at the bid", async () => {
+        seedReferenceBook(pairId, "84600.0", "84600.1");
+        const mmBid = mid.mul("0.9995").toFixed(2); // 84557.75 — the MM's fresh 5bps bid
+        await placeOrder(maker.id, pairId, "BUY", "LIMIT", "0.05000000", mmBid);
+
+        const sell = await placeOrder(taker.id, pairId, "SELL", "MARKET", "0.10000000");
+
+        expect(sell.fills.map((f) => [f.price, f.is_system_fill])).toEqual([["84600.00000000", true]]);
+    });
+
+    it("an MM quote better than the touch still fills first, the rest at the touch", async () => {
+        // The MM quoted around an older mid ~8bps away from Kraken (under the
+        // 10bps requote threshold), so one of its quotes sits on the taker's
+        // side of the touch. BUY: a low-mid ask under the Kraken ask.
+        seedReferenceBook(pairId, "84600.0", "84600.1");
+        const staleMid = D("84532.40");                      // ~8bps under Kraken
+        const mmAsk = staleMid.mul("1.0005").toFixed(2);     // 84574.66 < 84600.1
         await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.05000000", mmAsk);
 
         const buy = await placeOrder(taker.id, pairId, "BUY", "MARKET", "0.10000000");
@@ -133,11 +162,37 @@ describe("regression: a MARKET BUY fills at or near the best ask", () => {
             [`${mmAsk}000000`, false],
             ["84600.10000000", true],
         ]);
-        for (const f of buy.fills) {
-            const devBps = (Number(f.price) - 84600.1) / 84600.1 * 10_000;
-            expect(devBps).toBeGreaterThanOrEqual(0);
-            expect(devBps).toBeLessThanOrEqual(5); // within the MM half-spread
-        }
+
+        // Mirror for a SELL: an MM bid quoted off a higher mid sits above the Kraken bid.
+        const highMid = D("84668.00");                        // ~8bps over Kraken
+        const mmBid = highMid.mul("0.9995").toFixed(2);       // 84625.66 > 84600.0
+        await placeOrder(maker.id, pairId, "BUY", "LIMIT", "0.05000000", mmBid);
+
+        const sell = await placeOrder(taker.id, pairId, "SELL", "MARKET", "0.10000000");
+
+        expect(sell.fills.map((f) => [f.price, f.is_system_fill])).toEqual([
+            [`${mmBid}000000`, false],
+            ["84600.00000000", true],
+        ]);
+    });
+
+    it("a resting quote exactly at the touch still fills (inclusive cap)", async () => {
+        seedReferenceBook(pairId, "84600.0", "84600.1");
+        await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "84600.10000000");
+
+        const buy = await placeOrder(taker.id, pairId, "BUY", "MARKET", "0.10000000");
+
+        expect(buy.fills.map((f) => [f.price, f.is_system_fill])).toEqual([["84600.10000000", false]]);
+    });
+
+    it("a stale reference still rejects stale_price_source, leaving resting quotes untouched", async () => {
+        seedReferenceBook(pairId, "84600.0", "84600.1");
+        const resting = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.05000000", "84590.00000000");
+        advance(10_001); // book and (absent) ticker both stale
+
+        await expect(placeOrder(taker.id, pairId, "BUY", "MARKET", "0.10000000")).rejects.toThrow("stale_price_source");
+        const { rows } = await pool.query(`SELECT status, qty_filled::text FROM orders WHERE id = $1`, [resting.order.id]);
+        expect(rows[0]).toEqual({ status: "OPEN", qty_filled: "0.00000000" });
     });
 });
 
