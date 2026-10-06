@@ -33,7 +33,29 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
   // considering removing the limit on /health entirely.
   const healthRateLimit = { config: { rateLimit: { max: 120, timeWindow: 60_000 } } };
 
-  app.get("/health", { ...healthRateLimit, schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status.", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: { type: "object", properties: { connected: { type: "boolean" }, lastTickAt: { type: "number" }, secondsSinceLastTick: { type: "number" }, status: { type: "string" } } } } } } } }, async () => {
+  // Railway's healthcheckPath: always 200 — a stale exchange feed is reported
+  // in krakenWs.status / krakenWs.symbols, never as a failed liveness check
+  // (which would fail deploys during an exchange outage).
+  const krakenWsSchema = {
+    type: "object",
+    properties: {
+      connected: { type: "boolean" },
+      lastTickAt: { type: "number" },
+      secondsSinceLastTick: { type: "number" },
+      status: { type: "string" },
+      heartbeatAgeMs: { type: ["number", "null"] },
+      bookKillEnabled: { type: "boolean" },
+      symbols: {
+        type: "object",
+        additionalProperties: {
+          type: "object",
+          properties: { bookAgeMs: { type: ["number", "null"] }, status: { type: "string" } },
+        },
+      },
+    },
+  };
+
+  app.get("/health", { ...healthRateLimit, schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status (per-symbol book freshness + heartbeat).", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: krakenWsSchema } } } } }, async () => {
     return { ok: true, service: "api", timestamp: new Date().toISOString(), krakenWs: getKrakenWsHealth() };
   });
 

@@ -176,8 +176,26 @@ export const config = {
   // Fallback reference when the Kraken book is stale: the Kraken ticker
   // snapshot's bid/ask, if no older than this (matches snapshotStore's TTL).
   marketTickerMaxAgeMs: numberEnv("MARKET_TICKER_MAX_AGE_MS", 10_000),
+
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
+
+  // ── Feed watchdogs (market/feedWatchdog.ts, wired in krakenWs.ts) ──
+  // Per-symbol Kraken book staleness. Detection always runs; the socket kill
+  // is gated on FEED_WATCHDOG_KILL_ENABLED (off → logs feed_watchdog_would_kill).
+  // Kept above MARKET_COLLAR_MAX_BOOK_AGE_MS on purpose: a short lull gets a
+  // stale_price_source rejection, only a real outage gets a reconnect.
+  // 10s: a 10-min live sample (2026-10-06, BTC/ETH/SOL depth-25) had book p99
+  // gaps of 0.45–0.77s but a 6.3s BTC max, so 8s left too little headroom.
+  feedWatchdogKillEnabled: booleanEnv("FEED_WATCHDOG_KILL_ENABLED", false),
+  feedKrakenBookStaleMs: numberEnv("FEED_KRAKEN_BOOK_STALE_MS", 10_000),
+  // Kraken's v2 heartbeat (1/s on any subscribed socket; same sample: 599 in
+  // 600s, max gap 1.38s, no WS-level pings at all). Its kill is on by default;
+  // FEED_KRAKEN_HEARTBEAT_KILL_ENABLED=false is the escape hatch.
+  feedKrakenHeartbeatStaleMs: numberEnv("FEED_KRAKEN_HEARTBEAT_STALE_MS", 5_000),
+  feedKrakenHeartbeatKillEnabled: booleanEnv("FEED_KRAKEN_HEARTBEAT_KILL_ENABLED", true),
+  // How long after (re)connect a symbol may go without its first message.
+  feedWatchdogGraceMs: numberEnv("FEED_WATCHDOG_GRACE_MS", 10_000),
 
   // ── DB recovery: market-data storage allowlist ──
   // Only these pairs ever get candle / footprint rows written. Every other

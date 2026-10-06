@@ -10,12 +10,16 @@
 import WebSocket from "ws";
 import { pool } from "../db/pool.js";
 import { logger } from "../observability/logContext.js";
-import { recordKrakenReconnectAttempt } from "../market/krakenReconnectTracker.js";
+import {
+    recordKrakenReconnectAttempt,
+    isKrakenReconnectBudgetExceeded,
+    KRAKEN_BACKOFF,
+} from "../market/krakenReconnectTracker.js";
+import { ReconnectBackoff } from "../market/feedWatchdog.js";
 import { isMarketDataSymbol } from "../market/marketSymbols.js";
 import { nonEssentialWritesPaused } from "../observability/writePause.js";
 
 const KRAKEN_WS_URL = "wss://ws.kraken.com/v2";
-const RECONNECT_DELAYS = [2000, 5000, 10000, 30000];
 
 const TF_MS: Record<string, number> = {
     "1m": 60_000,
@@ -42,7 +46,7 @@ const active: Record<string, CandleAgg | null> = {
 };
 
 let ws: WebSocket | null = null;
-let reconnectAttempt = 0;
+const backoff = new ReconnectBackoff(KRAKEN_BACKOFF);
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getOpenTime(ts: number, tfMs: number): number {
@@ -147,23 +151,25 @@ function handleTrade(price: number, qty: number, isSell: boolean, timestampMs: n
 function connect(): void {
     if (ws) return;
 
-    ws = new WebSocket(KRAKEN_WS_URL);
+    const socket = new WebSocket(KRAKEN_WS_URL);
+    ws = socket;
 
-    ws.on("open", () => {
+    socket.on("open", () => {
         logger.info("[footprint] Kraken WS connected");
-        reconnectAttempt = 0;
+        backoff.onOpen(Date.now());
 
         // Subscribe to BTC/USD trades
-        ws?.send(JSON.stringify({
+        socket.send(JSON.stringify({
             method: "subscribe",
             params: { channel: "trade", symbol: ["BTC/USD"] },
         }));
     });
 
-    ws.on("message", (raw: WebSocket.Data) => {
+    socket.on("message", (raw: WebSocket.Data) => {
         try {
             const msg = JSON.parse(raw.toString());
             if (msg.channel !== "trade" || !Array.isArray(msg.data)) return;
+            backoff.onHealthy(Date.now());
 
             for (const trade of msg.data) {
                 const price = parseFloat(trade.price);
@@ -179,26 +185,38 @@ function connect(): void {
         }
     });
 
-    ws.on("close", (code: number, reason: Buffer) => {
+    socket.on("close", (code: number, reason: Buffer) => {
         logger.info({ code, reason: reason.toString() }, "[footprint] Kraken WS closed");
-        ws = null;
-        scheduleReconnect(code, reason.toString());
+        dropSocket(socket, code, reason.toString());
     });
 
-    ws.on("error", (err: Error) => {
+    socket.on("error", (err: Error) => {
         logger.error({ err: err.message }, "[footprint] Kraken WS error");
-        ws?.close();
-        ws = null;
+        dropSocket(socket);
     });
+}
+
+/**
+ * terminate() (not close(): no closing handshake to wait on) and schedule one
+ * reconnect. Listeners come off first so the old socket's late events can't
+ * schedule a second one; the no-op error listener absorbs terminate()'s own.
+ */
+function dropSocket(socket: WebSocket, closeCode?: number, closeReason?: string): void {
+    if (ws !== socket) return;
+    ws = null;
+    socket.removeAllListeners();
+    socket.on("error", () => {});
+    if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+    scheduleReconnect(closeCode, closeReason);
 }
 
 function scheduleReconnect(closeCode?: number, closeReason?: string): void {
     if (reconnectTimer) return;
-    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
-    reconnectAttempt++;
     const combinedReconnectCount10m = recordKrakenReconnectAttempt();
+    const budgetExceeded = isKrakenReconnectBudgetExceeded(combinedReconnectCount10m);
+    const delay = backoff.nextDelay({ budgetExceeded });
     logger.info(
-        { closeCode, closeReason, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
+        { closeCode, closeReason, delay, attempt: backoff.attempts, combinedReconnectCount10m, budgetExceeded },
         "[footprint] reconnecting...",
     );
     reconnectTimer = setTimeout(() => {

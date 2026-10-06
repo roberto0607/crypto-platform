@@ -17,8 +17,17 @@ import {
 import { krakenTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 import { eventsPublishedTotal } from "../metrics.js";
 import { getCoinbaseLastTradeAt } from "../feeds/coinbaseWs.js";
-import { recordKrakenReconnectAttempt } from "./krakenReconnectTracker.js";
-import { recordFeedTick, recordFeedReconnect, type ReconnectCause } from "../observability/feedHealth.js";
+import { recordKrakenReconnectAttempt, isKrakenReconnectBudgetExceeded, KRAKEN_BACKOFF } from "./krakenReconnectTracker.js";
+import {
+    recordFeedTick,
+    recordFeedReconnect,
+    recordWatchdogTrip,
+    setFeedStale,
+    clearFeedStale,
+    setReconnectBackoff,
+    type ReconnectCause,
+} from "../observability/feedHealth.js";
+import { StalenessTracker, ReconnectBackoff, type StaleEpisode } from "./feedWatchdog.js";
 
 // Coinbase is the primary price.tick source as of Gate 1 (2026-07-25) — see
 // docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md. Kraken's
@@ -67,37 +76,83 @@ async function refreshSymbols(): Promise<ActiveSymbol[]> {
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let reconnectDelay = 2000;
-const RECONNECT_DELAYS = [2_000, 5_000, 30_000]; // exponential backoff steps
-let reconnectAttempt = 0;
 let stopped = false;
 let flushInterval: ReturnType<typeof setInterval> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let backfillDone = false;
 
-// ── Watchdog: detect stale connections ──
+// KRAKEN_BACKOFF + the combined 10-min reconnect budget are shared with
+// footprintAggregator.ts's socket (krakenReconnectTracker.ts).
+let backoff = new ReconnectBackoff(KRAKEN_BACKOFF);
+
+// ── Watchdogs (checked every WATCHDOG_CHECK_MS) ──
+//  1. Safety net: no ticker message on ANY symbol for 30s → kill. Ticker only
+//     fires on trades (per-symbol gaps of 15s are normal), hence whole-socket.
+//  2. Heartbeat: Kraken's v2 heartbeat (~1/s) silent for
+//     feedKrakenHeartbeatStaleMs → kill. Catches a dead or half-open socket.
+//  3. Per-symbol book: no book message for one symbol for
+//     feedKrakenBookStaleMs → kill only if FEED_WATCHDOG_KILL_ENABLED, else
+//     log feed_watchdog_would_kill. Catches one symbol's subscription dying
+//     while the rest of the socket (and so 1 and 2) looks healthy.
+// "Kill" is always terminate(): close() waits for a closing handshake a
+// half-open socket never answers (the ws lib's 30s close timeout).
 const WATCHDOG_TIMEOUT_MS = 30_000;
+const WATCHDOG_CHECK_MS = 1_000;
+const HEARTBEAT_KEY = "heartbeat";
+const CONNECTION_SYMBOL = "_connection";
 let lastTickAt = 0;
+// When the current socket opened. The safety net measures from the later of
+// this and lastTickAt, so a fresh socket isn't killed for the previous one's
+// silence before its first ticker arrives.
+let socketOpenedAt = 0;
 let wsConnected = false;
-// Why the socket is being closed, set by the watchdog / error handler just
-// before they call close() — read once by scheduleReconnect for feedHealth.
-let pendingCloseCause: { cause: ReconnectCause; detail: string | null } | null = null;
+
+const trackerOpts = () => ({ graceMs: config.feedWatchdogGraceMs, maxCheckGapMs: 3 * WATCHDOG_CHECK_MS });
+let bookTracker = new StalenessTracker({ staleMs: config.feedKrakenBookStaleMs, ...trackerOpts() });
+let heartbeatTracker = new StalenessTracker({ staleMs: config.feedKrakenHeartbeatStaleMs, ...trackerOpts() });
+
+export type KrakenSymbolHealth = {
+    bookAgeMs: number | null;
+    status: "ok" | "stale" | "waiting";
+};
 
 export function getKrakenWsHealth(): {
     connected: boolean;
     lastTickAt: number;
     secondsSinceLastTick: number;
     status: "connected" | "stale" | "disconnected";
+    heartbeatAgeMs: number | null;
+    bookKillEnabled: boolean;
+    symbols: Record<string, KrakenSymbolHealth>;
 } {
+    const now = Date.now();
     const secondsSinceLastTick = lastTickAt > 0
-        ? Math.round((Date.now() - lastTickAt) / 1000)
+        ? Math.round((now - lastTickAt) / 1000)
         : -1;
+
+    const symbols: Record<string, KrakenSymbolHealth> = {};
+    let anyBookStale = false;
+    for (const s of activeSymbols) {
+        const bookAgeMs = wsConnected ? bookTracker.ageOf(s.ourSymbol, now) : null;
+        const stale = wsConnected && bookTracker.isStale(s.ourSymbol);
+        anyBookStale ||= stale;
+        symbols[s.ourSymbol] = { bookAgeMs, status: stale ? "stale" : bookAgeMs === null ? "waiting" : "ok" };
+    }
+
     const status = !wsConnected
         ? "disconnected"
-        : secondsSinceLastTick > 30
+        : secondsSinceLastTick > 30 || anyBookStale || heartbeatTracker.isStale(HEARTBEAT_KEY)
             ? "stale"
             : "connected";
-    return { connected: wsConnected, lastTickAt, secondsSinceLastTick, status };
+    return {
+        connected: wsConnected,
+        lastTickAt,
+        secondsSinceLastTick,
+        status,
+        heartbeatAgeMs: wsConnected ? heartbeatTracker.ageOf(HEARTBEAT_KEY, now) : null,
+        bookKillEnabled: config.feedWatchdogKillEnabled,
+        symbols,
+    };
 }
 
 function sendSubscription(socket: WebSocket, method: "subscribe" | "unsubscribe", symbols: string[]): void {
@@ -138,6 +193,7 @@ async function reconcileSubscriptions(): Promise<void> {
 
 async function handleTickerMessage(data: any[]): Promise<void> {
     lastTickAt = Date.now();
+    backoff.onHealthy(lastTickAt);
     for (const tick of data) {
         const krakenSymbol = tick.symbol;
         const ourSymbol = wsToOurSymbol[krakenSymbol];
@@ -298,6 +354,9 @@ function handleBookMessage(data: any[], type: string): void {
         const pairId = symbolToPairId[ourSymbol];
         if (!pairId) continue;
         recordFeedTick("kraken_book", ourSymbol, entry.timestamp ? new Date(entry.timestamp).getTime() : null);
+        const now = Date.now();
+        bookTracker.record(ourSymbol, now);
+        backoff.onHealthy(now);
 
         const rawBids: any[] = entry.bids || [];
         const rawAsks: any[] = entry.asks || [];
@@ -313,6 +372,10 @@ function handleBookMessage(data: any[], type: string): void {
 async function handleMessage(raw: WebSocket.Data): Promise<void> {
     try {
         const msg = JSON.parse(raw.toString());
+        if (msg.channel === "heartbeat") {
+            heartbeatTracker.record(HEARTBEAT_KEY, Date.now());
+            return;
+        }
         // Accept both "update" and "snapshot" types for book channel
         if (msg.type !== "update" && msg.type !== "snapshot") return;
 
@@ -331,14 +394,20 @@ async function handleMessage(raw: WebSocket.Data): Promise<void> {
 function connect(): void {
     if (stopped) return;
 
-    ws = new WebSocket(KRAKEN_WS_URL);
+    const socket = new WebSocket(KRAKEN_WS_URL);
+    ws = socket;
 
-    ws.on("open", async () => {
+    socket.on("open", async () => {
         console.log("[krakenWs] connected");
+        const now = Date.now();
         wsConnected = true;
-        reconnectAttempt = 0;
+        socketOpenedAt = now;
+        backoff.onOpen(now);
+        bookTracker.reset(now);
+        heartbeatTracker.reset(now);
         if (!symbolsReady) await refreshSymbols();
-        subscribe(ws!);
+        if (ws !== socket) return; // killed while symbols loaded
+        subscribe(socket);
         if (!flushInterval) {
             flushInterval = setInterval(() => {
                 flushDueCandles().catch((err: unknown) => {
@@ -365,48 +434,126 @@ function connect(): void {
                 .catch((e) => logger.error({ err: e }, "candle_backfill_failed"));
         }
 
-        // Start watchdog to detect stale connections
         if (!watchdogInterval) {
-            watchdogInterval = setInterval(() => {
-                if (lastTickAt > 0 && Date.now() - lastTickAt > WATCHDOG_TIMEOUT_MS && wsConnected) {
-                    console.log("[krakenWs] No ticks for 30s — reconnecting...");
-                    pendingCloseCause = { cause: "watchdog_stale", detail: `no ticker for ${Date.now() - lastTickAt}ms` };
-                    wsConnected = false;
-                    ws?.close();
-                }
-            }, 10_000);
+            watchdogInterval = setInterval(runWatchdogs, WATCHDOG_CHECK_MS);
         }
     });
 
-    ws.on("message", handleMessage);
+    socket.on("message", handleMessage);
 
-    ws.on("close", (code: number, reason: Buffer) => {
-        wsConnected = false;
-        scheduleReconnect(code, reason.toString());
+    socket.on("close", (code: number, reason: Buffer) => {
+        dropSocket(socket, "socket_close", null, code, reason.toString());
     });
 
-    ws.on("error", (err) => {
+    socket.on("error", (err) => {
         console.error("[krakenWs] error", err.message);
-        pendingCloseCause ??= { cause: "socket_error", detail: err.message };
-        ws?.close();
+        dropSocket(socket, "socket_error", err.message);
     });
 }
 
-function scheduleReconnect(closeCode?: number, closeReason?: string): void {
+function runWatchdogs(): void {
+    if (!ws || !wsConnected) return;
+    const now = Date.now();
+
+    // 1. 30s whole-socket ticker safety net — always kills.
+    const silentSince = Math.max(lastTickAt, socketOpenedAt);
+    if (now - silentSince > WATCHDOG_TIMEOUT_MS) {
+        const silentMs = now - silentSince;
+        console.log("[krakenWs] No ticks for 30s — reconnecting...");
+        killSocket("watchdog_stale", CONNECTION_SYMBOL, silentMs, WATCHDOG_TIMEOUT_MS, true, `no ticker for ${silentMs}ms`);
+        return;
+    }
+
+    // 2. Heartbeat.
+    for (const ep of heartbeatTracker.check([HEARTBEAT_KEY], now)) {
+        setFeedStale("kraken", "heartbeat", CONNECTION_SYMBOL, true);
+        if (killSocket("watchdog_heartbeat_stale", CONNECTION_SYMBOL, ep.silentMs, heartbeatTracker.staleMs,
+            config.feedKrakenHeartbeatKillEnabled, describe("heartbeat", ep))) return;
+    }
+    if (!heartbeatTracker.isStale(HEARTBEAT_KEY)) setFeedStale("kraken", "heartbeat", CONNECTION_SYMBOL, false);
+
+    // 3. Per-symbol book.
+    const symbols = activeSymbols.map((s) => s.ourSymbol);
+    for (const ep of bookTracker.check(symbols, now)) {
+        setFeedStale("kraken", "book", ep.key, true);
+        if (killSocket("watchdog_book_stale", ep.key, ep.silentMs, bookTracker.staleMs,
+            config.feedWatchdogKillEnabled, describe("book", ep))) return;
+    }
+    for (const symbol of symbols) {
+        if (!bookTracker.isStale(symbol)) setFeedStale("kraken", "book", symbol, false);
+    }
+}
+
+/** e.g. "no book for SOL/USD for 10400ms", "no heartbeat within 11000ms of connect". */
+function describe(channel: string, ep: StaleEpisode): string {
+    const what = ep.key === HEARTBEAT_KEY ? channel : `${channel} for ${ep.key}`;
+    return ep.seenSinceConnect
+        ? `no ${what} for ${ep.silentMs}ms`
+        : `no ${what} within ${ep.silentMs}ms of connect`;
+}
+
+/**
+ * One stale episode. With `enabled` the socket is terminated and a reconnect
+ * scheduled (returns true); otherwise only feed_watchdog_would_kill is logged.
+ */
+function killSocket(
+    cause: ReconnectCause,
+    symbol: string,
+    silentMs: number,
+    thresholdMs: number,
+    enabled: boolean,
+    detail: string,
+): boolean {
+    const action = enabled ? "kill" : "would_kill";
+    recordWatchdogTrip("kraken", cause, symbol, action);
+    logger.warn(
+        { exchange: "kraken", cause, symbol, silentMs, thresholdMs, attempt: backoff.attempts },
+        enabled ? "feed_watchdog_kill" : "feed_watchdog_would_kill",
+    );
+    if (!enabled || !ws) return false;
+    dropSocket(ws, cause, detail);
+    return true;
+}
+
+/**
+ * Tear down `socket` for good and schedule exactly one reconnect. Listeners
+ * are removed first so the old socket's late close/error events can never
+ * schedule a second reconnect or touch the new socket's state; a no-op error
+ * listener stays because terminate() on a CONNECTING socket emits one.
+ */
+function dropSocket(
+    socket: WebSocket,
+    cause: ReconnectCause,
+    detail: string | null,
+    closeCode?: number,
+    closeReason?: string,
+): void {
+    if (ws !== socket) return;
+    ws = null;
+    wsConnected = false;
+    bookTracker.disconnect();
+    heartbeatTracker.disconnect();
+    clearFeedStale("kraken");
+    socket.removeAllListeners();
+    socket.on("error", () => {});
+    if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+    scheduleReconnect(cause, detail, closeCode, closeReason);
+}
+
+function scheduleReconnect(cause: ReconnectCause, detail: string | null, closeCode?: number, closeReason?: string): void {
     if (stopped) return;
     if (reconnectTimer) return;
 
-    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]!;
-    reconnectAttempt++;
     const combinedReconnectCount10m = recordKrakenReconnectAttempt();
-    const closeCause = pendingCloseCause ?? { cause: "socket_close" as const, detail: null };
-    pendingCloseCause = null;
-    recordFeedReconnect("kraken", closeCause.cause, { closeCode, closeReason, detail: closeCause.detail });
+    const budgetExceeded = isKrakenReconnectBudgetExceeded(combinedReconnectCount10m);
+    const delay = backoff.nextDelay({ budgetExceeded });
+    setReconnectBackoff("kraken", delay);
+    recordFeedReconnect("kraken", cause, { closeCode, closeReason, detail });
     logger.info(
-        { closeCode, closeReason, cause: closeCause.cause, delay, attempt: reconnectAttempt, combinedReconnectCount10m },
+        { closeCode, closeReason, cause, detail, delay, attempt: backoff.attempts, combinedReconnectCount10m, budgetExceeded },
         "kraken_ws_reconnect_scheduled",
     );
-    console.log(`[krakenWs] reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
+    console.log(`[krakenWs] reconnecting in ${delay}ms (attempt ${backoff.attempts})`);
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
@@ -444,6 +591,9 @@ export function stopKrakenFeed(): void {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
+    bookTracker.disconnect();
+    heartbeatTracker.disconnect();
+    clearFeedStale("kraken");
     if (ws) {
         ws.close();
         ws = null;
@@ -454,8 +604,9 @@ export function stopKrakenFeed(): void {
  * DEV-ONLY fault injection for the feed-staleness repro (routes/v1/
  * v1DebugFeedFault.ts, never registered in production). "close" terminates
  * the socket (exercises the reconnect path); "stall" stops reading from it
- * without closing (a half-open/silent stall — only the 30s watchdog can
- * notice); "resume" undoes a stall.
+ * without closing (a half-open/silent stall — the heartbeat watchdog
+ * notices within feedKrakenHeartbeatStaleMs, the 30s ticker net otherwise);
+ * "resume" undoes a stall.
  */
 export function __debugFaultKrakenSocket(mode: "close" | "stall" | "resume"): boolean {
     if (!ws) return false;
@@ -463,4 +614,18 @@ export function __debugFaultKrakenSocket(mode: "close" | "stall" | "resume"): bo
     else if (mode === "stall") ws.pause();
     else ws.resume();
     return true;
+}
+
+/** TEST-ONLY — rebuild the trackers from current config and reset module state. */
+export function __resetKrakenWsForTest(): void {
+    stopKrakenFeed();
+    lastTickAt = 0;
+    socketOpenedAt = 0;
+    activeSymbols = [];
+    wsToOurSymbol = {};
+    symbolToPairId = {};
+    symbolsReady = false;
+    bookTracker = new StalenessTracker({ staleMs: config.feedKrakenBookStaleMs, ...trackerOpts() });
+    heartbeatTracker = new StalenessTracker({ staleMs: config.feedKrakenHeartbeatStaleMs, ...trackerOpts() });
+    backoff = new ReconnectBackoff(KRAKEN_BACKOFF);
 }
