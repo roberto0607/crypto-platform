@@ -170,7 +170,8 @@ All new indicators follow this pattern:
 | `JOB_MAX_CONCURRENCY` | no | `4` | Max background jobs in flight; clamped to `floor((DB_POOL_MAX - 3) / 2)` so jobs can never exhaust the pool |
 | `DB_POOL_ACQUIRE_TIMEOUT_MS` | no | `10000` | Max wait for a free pool client; past it pg throws (logged as `pg.pool_acquire_timeout`) instead of hanging. A job run that hits it is skipped and stays due |
 | `MARKET_COLLAR_BPS` | no | `25` | MARKET orders only fill internal resting orders within this many bps of the real Kraken best bid/ask (`trading/priceCollar.ts`) |
-| `MARKET_COLLAR_MAX_BOOK_AGE_MS` | no | `5000` | Kraken book older than this → MARKET orders reject with `stale_price_source` (TP/SL triggers re-arm instead of failing) |
+| `MARKET_COLLAR_MAX_BOOK_AGE_MS` | no | `5000` | Max Kraken book age for the MARKET reference (collar + system-fill price = best ask/bid). Older → falls back to the Kraken ticker |
+| `MARKET_TICKER_MAX_AGE_MS` | no | `10000` | Max Kraken ticker age for that fallback. Both stale → MARKET orders reject with `stale_price_source` (TP/SL triggers re-arm instead of failing); never priced off `trading_pairs.last_price` |
 | `AGENTS_ENABLED` | no | `false` in prod, `true` elsewhere | Master switch ANDed into every `*_AGENT_ENABLED` flag |
 | `MARKET_SYMBOLS` | no | `BTC-USD,ETH-USD,SOL-USD` | Only pairs whose candle/footprint history is written to Postgres |
 | `DB_SIZE_LIMIT_MB` | no (set in prod) | `0` (guardrail off) | Postgres volume size; warn at 70%, pause non-essential writes at 85%. See `docs/runbooks/db-recovery.md` |

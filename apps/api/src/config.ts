@@ -173,6 +173,9 @@ export const config = {
   // is older than the max age.
   marketCollarBps: numberEnv("MARKET_COLLAR_BPS", 25),
   marketCollarMaxBookAgeMs: numberEnv("MARKET_COLLAR_MAX_BOOK_AGE_MS", 5_000),
+  // Fallback reference when the Kraken book is stale: the Kraken ticker
+  // snapshot's bid/ask, if no older than this (matches snapshotStore's TTL).
+  marketTickerMaxAgeMs: numberEnv("MARKET_TICKER_MAX_AGE_MS", 10_000),
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
 

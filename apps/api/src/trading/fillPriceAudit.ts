@@ -4,17 +4,16 @@
  * Added for the 2026-10-01 bad-fill investigation; it never influences the
  * fill. phase6OrderService logs it as `order.fill_price_audit`.
  *
- * Why this exists: the fill path and the displayed book use different
- * sources. The displayed book is Kraken's L2 book (bookSnapshots, served by
- * /market/book/:symbol). The fill sweeps the INTERNAL resting book at the
- * resting orders' limit prices, then system-fills any remainder at
- * trading_pairs.last_price — which the sim step just overwrote with
- * computeMarketExecution(snapshot.last ± synthetic spread/slippage), where
- * snapshot is the Kraken ticker snapshot (<10s) or, if that's stale, the
- * previous trading_pairs.last_price. This record captures every input so a
- * bad fill can be attributed after the fact.
+ * Since B1 (2026-10) a MARKET order sweeps the internal resting book only
+ * within the collar of the real Kraken touch, then system-fills any remainder
+ * AT that touch — the fresh Kraken book, else the fresh Kraken ticker
+ * bid/ask (priceCollar.getMarketReference). `reference*` records which one
+ * priced the fill; the displayed book (bookSnapshots, served by
+ * /market/book/:symbol) is recorded alongside so any gap between what the
+ * user saw and what they got is attributable after the fact.
  */
 import type { Snapshot } from "../market/snapshotStore";
+import type { CollarReference } from "./priceCollar";
 
 export interface AuditFill {
     price: string;
@@ -40,7 +39,11 @@ export interface FillPriceAudit {
     /** now − snapshot.ts. NOTE: a "fallback" snapshot stamps ts = now, so it always reads ~0 here
      *  even though trading_pairs.last_price can be arbitrarily old. */
     snapshotTsAgeMs: number | null;
-    simExecPrice: string | null;
+    /** What priced the fill: live Kraken book / ticker, or a replay session's historical price. */
+    referenceSource: CollarReference["source"] | null;
+    referenceBid: string | null;
+    referenceAsk: string | null;
+    referenceAgeMs: number | null;
     fills: Array<{ price: string; qty: string; system: boolean }>;
     avgFillPrice: number | null;
     bookBestBid: number | null;
@@ -54,12 +57,12 @@ export interface FillPriceAudit {
 export function buildFillPriceAudit(input: {
     side: "BUY" | "SELL";
     snapshot: Snapshot;
-    simExecPrice: string | null;
+    reference: CollarReference | null;
     fills: AuditFill[];
     book: AuditBook | undefined;
     now: number;
 }): FillPriceAudit {
-    const { side, snapshot, simExecPrice, fills, book, now } = input;
+    const { side, snapshot, reference, fills, book, now } = input;
 
     let notional = 0;
     let qtySum = 0;
@@ -92,7 +95,10 @@ export function buildFillPriceAudit(input: {
         snapshotBid: snapshot.bid,
         snapshotAsk: snapshot.ask,
         snapshotTsAgeMs: Number.isFinite(snapTs) ? now - snapTs : null,
-        simExecPrice,
+        referenceSource: reference?.source ?? null,
+        referenceBid: reference?.bestBid.toString() ?? null,
+        referenceAsk: reference?.bestAsk.toString() ?? null,
+        referenceAgeMs: reference?.ageMs ?? null,
         fills: fills.map((f) => ({ price: f.price, qty: f.qty, system: f.is_system_fill })),
         avgFillPrice,
         bookBestBid,

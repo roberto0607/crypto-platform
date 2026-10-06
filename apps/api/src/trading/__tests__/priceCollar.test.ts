@@ -55,7 +55,7 @@ describe("getCollarReference", () => {
 });
 
 describe("collarBand — 25bps around the Kraken touch", () => {
-    const ref = { bestBid: D("80000"), bestAsk: D("80010"), ageMs: 0 };
+    const ref = { bestBid: D("80000"), bestAsk: D("80010"), ageMs: 0, source: "book" as const };
 
     it("taker BUY is banded around Kraken's best ask, inclusive at exactly ±25bps", () => {
         const band = collarBand(ref, "BUY", 25);

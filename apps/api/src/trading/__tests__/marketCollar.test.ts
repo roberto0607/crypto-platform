@@ -110,7 +110,7 @@ describe("prod fill #2 (84699.32, 2026-10-01 21:16:01 ET) — NOT prevented by t
 });
 
 describe("collar — general", () => {
-    it("rejects a MARKET order with stale_price_source when the Kraken book is older than 5s, touching nothing", async () => {
+    it("rejects a MARKET order with stale_price_source when the Kraken book is older than 5s and there is no fresh ticker, touching nothing", async () => {
         await setLastPrice("85000.00000000");
         const ask = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.50000000", "85010.00000000");
         seedReferenceBook(pairId, "85000", "85001", 5_001);

@@ -33,6 +33,7 @@ import { isAgentActionsEnabled } from "../system/systemFlagService";
 import { listOpenOrders } from "./orderRepo";
 import { bookSnapshots } from "../market/orderFlowFeatures";
 import { buildFillPriceAudit } from "./fillPriceAudit";
+import type { CollarReference } from "./priceCollar";
 
 export type PlaceOrderResult = {
     order: OrderRow;
@@ -140,7 +141,11 @@ export async function placeOrderWithSnapshot(
     // ── 2. Resolve snapshot (outside transaction) ──
     const snapshot = await resolveSnapshot(userId, body.pairId);
     // ── 2c. Simulation reads (MARKET only, outside transaction) ──
-    let simExecPrice: string | null = null;
+    // Live MARKET orders are priced by the matching engine from the real Kraken
+    // touch (priceCollar.getMarketReference); the sim model here only sizes the
+    // liquidity check. A solo replay session is the exception: its orders price
+    // off the historical candle via the sim model, passed down as `replayPricing`.
+    let replayPricing: CollarReference | undefined;
     if (body.type === "MARKET") {
         const simConfig = await resolveSimulationConfig(userId, body.pairId);
 
@@ -175,20 +180,15 @@ export async function placeOrderWithSnapshot(
             });
         }
 
-        simExecPrice = simResult.execPrice;
+        if (snapshot.source === "replay") {
+            const px = D(simResult.execPrice);
+            replayPricing = { bestBid: px, bestAsk: px, ageMs: 0, source: "replay" };
+        }
     }
 
     // ── 3–8. Single transaction: risk + matching + post-fill ──
     const { result, idempotencyRowCount } = await txWithEvents(async (client, pendingEvents) => {
         let idempRowCount = 1;
-
-        // ── Simulation UPDATE (inside transaction) ──
-        if (simExecPrice) {
-            await client.query(
-                `UPDATE trading_pairs SET last_price = $1 WHERE id = $2`,
-                [simExecPrice, body.pairId]
-            );
-        }
 
         // ── 4. Match (within caller's transaction) ──
         const matchResult = await placeOrderTx(
@@ -202,6 +202,7 @@ export async function placeOrderWithSnapshot(
             competitionId,
             resolvedMatchId,
             resolvedSource,
+            replayPricing,
         );
 
         // ── 5. Post-fill processing ──
@@ -475,7 +476,7 @@ export async function placeOrderWithSnapshot(
             const audit = buildFillPriceAudit({
                 side: body.side,
                 snapshot,
-                simExecPrice,
+                reference: result.reference,
                 fills: result.fills,
                 book: bookSnapshots.get(body.pairId),
                 now: Date.now(),

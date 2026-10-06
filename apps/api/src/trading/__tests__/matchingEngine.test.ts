@@ -159,12 +159,12 @@ describe("placeOrder", () => {
 
     it("creates system fill for remaining qty when book exhausted", async () => {
       await setFee(pair.id, 0);
-      // Empty book — all system fill at last_price
+      // Empty book — all system fill at the Kraken touch (seeded at 50000)
       const result = await placeOrder(buyer.id, pair.id, "BUY", "MARKET", "1.00000000");
 
       expect(result.fills).toHaveLength(1);
       expect(result.fills[0].is_system_fill).toBe(true);
-      expect(result.fills[0].price).toBe("50000.00000000"); // last_price from fixture
+      expect(result.fills[0].price).toBe("50000.00000000"); // seeded Kraken best ask
       expect(result.order.status).toBe("FILLED");
     });
 

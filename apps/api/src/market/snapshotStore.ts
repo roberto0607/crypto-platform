@@ -129,3 +129,8 @@ export async function getSnapshot(pairSymbol: string, staleTtlMs: number = DEFAU
 export async function peekSnapshot(pairSymbol: string): Promise<CachedSnapshot | null> {
     return getInstance().peekSnapshot(pairSymbol);
 }
+
+/** TEST-ONLY — drop the singleton so the next call starts from an empty store. */
+export function __resetSnapshotStoreForTest(): void {
+    _instance = null;
+}

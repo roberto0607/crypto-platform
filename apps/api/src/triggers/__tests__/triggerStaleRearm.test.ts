@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { pool } from "../../db/pool";
 import { resetTestData, ensureMigrations } from "../../testing/resetDb";
 import { createTestUser, createTestAssetAndPair, createTestWallets } from "../../testing/fixtures";
-import { seedReferenceBook, clearReferenceBooks } from "../../testing/referenceBook";
+import { seedReferenceBook, seedTicker, clearReferenceBooks } from "../../testing/referenceBook";
 import { createTriggerOrder } from "../triggerRepo";
 import { fireTrigger, evaluateTriggersForPair, STALE_REARM_BACKOFF_MS } from "../triggerEngine";
 
@@ -93,6 +93,22 @@ describe("trigger + stale Kraken book", () => {
         await new Promise((r) => setTimeout(r, STALE_REARM_BACKOFF_MS + 50));
         await evaluateTriggersForPair(pairId, { last: "48990" });
         expect((await statusOf(stop.id)).status).toBe("TRIGGERED");
+    });
+
+    it("with the book stale but the Kraken ticker fresh (B1 fallback), the stop fires instead of re-arming", async () => {
+        const stop = await createTriggerOrder({
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000",
+        });
+        seedReferenceBook(pairId, "48990", "49000", 6_000);
+        await seedTicker("BTC/USD", "48985", "48995");
+        await fireTrigger(stop, { last: "48990" });
+
+        const fired = await statusOf(stop.id);
+        expect(fired.status).toBe("TRIGGERED");
+        const { rows } = await pool.query<{ price: string }>(
+            `SELECT t.price::text FROM trades t WHERE t.sell_order_id = $1`, [fired.derived_order_id],
+        );
+        expect(rows.map((r) => r.price)).toEqual(["48985.00000000"]); // ticker best bid
     });
 
     it("other order failures still mark the trigger FAILED", async () => {

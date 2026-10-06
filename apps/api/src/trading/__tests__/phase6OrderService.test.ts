@@ -176,7 +176,7 @@ function setupDefaultMocks() {
   vi.mocked(getSnapshotForUser).mockResolvedValue(SNAPSHOT);
   vi.mocked(getIdempotencyKey).mockResolvedValue(null);
   vi.mocked(putIdempotencyKeyTx).mockResolvedValue(1);
-  vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL] });
+  vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL], reference: null });
   vi.mocked(findOrderById).mockResolvedValue(ORDER);
   vi.mocked(listTradesByOrderId).mockResolvedValue([FILL]);
   vi.mocked(findPairById).mockResolvedValue(PAIR as any);
@@ -316,6 +316,37 @@ describe("placeOrderWithSnapshot", () => {
         placeOrderWithSnapshot("user-1", marketBody),
       ).rejects.toMatchObject({ code: "insufficient_liquidity" });
     });
+
+    // B1: a live MARKET order is priced by the matching engine from the real
+    // Kraken touch. The sim's synthetic exec price no longer reaches the fill,
+    // and is never written into trading_pairs.last_price.
+    it("live MARKET: no pricing override and no synthetic last_price write", async () => {
+      const queries: string[] = [];
+      const base = vi.mocked(txWithEvents).getMockImplementation()!;
+      vi.mocked(txWithEvents).mockImplementation(async (fn: any) =>
+        base(async (client: any, events: any) => {
+          const orig = client.query;
+          client.query = vi.fn(async (sql: string, ...rest: any[]) => { queries.push(sql); return orig(sql, ...rest); });
+          return fn(client, events);
+        }),
+      );
+
+      await placeOrderWithSnapshot("user-1", { ...BODY, type: "MARKET" as const, limitPrice: undefined });
+
+      expect(vi.mocked(placeOrderTx).mock.calls[0]![10]).toBeUndefined();
+      expect(queries.some((q) => /UPDATE\s+trading_pairs\s+SET\s+last_price/i.test(q))).toBe(false);
+    });
+
+    it("replay-session MARKET: passes the sim's historical exec price down as the pricing override", async () => {
+      vi.mocked(getSnapshotForUser).mockResolvedValue({ ...SNAPSHOT, source: "replay" });
+
+      await placeOrderWithSnapshot("user-1", { ...BODY, type: "MARKET" as const, limitPrice: undefined });
+
+      const pricing = vi.mocked(placeOrderTx).mock.calls[0]![10]!;
+      expect(pricing.source).toBe("replay");
+      expect(pricing.bestAsk.toString()).toBe("50025");
+      expect(pricing.bestBid.toString()).toBe("50025");
+    });
   });
 
   /* ── post-fill processing ─────────────────────────────── */
@@ -324,7 +355,7 @@ describe("placeOrderWithSnapshot", () => {
 
     it("calls applyFillToPositionTx for each fill", async () => {
       const fill2 = { ...FILL, id: "trade-2", qty: "0.50000000" };
-      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2] });
+      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null });
 
       await placeOrderWithSnapshot("user-1", BODY);
 
@@ -358,7 +389,7 @@ describe("placeOrderWithSnapshot", () => {
 
     it("inserts TRADE_EXECUTED outbox event for each fill", async () => {
       const fill2 = { ...FILL, id: "trade-2" };
-      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2] });
+      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null });
 
       await placeOrderWithSnapshot("user-1", BODY);
 
@@ -420,6 +451,7 @@ describe("placeOrderWithSnapshot", () => {
       vi.mocked(placeOrderTx).mockResolvedValue({
         order: { ...ORDER, status: "OPEN", qty_filled: "0.00000000" },
         fills: [],
+        reference: null,
       });
     });
 
