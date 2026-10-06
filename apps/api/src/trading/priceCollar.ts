@@ -108,18 +108,26 @@ export function isOnMarket(
 }
 
 /**
- * Price band a taker may fill inside. Taker BUY sweeps resting asks, so the
- * band is centred on Kraken's best ask; taker SELL sweeps bids → best bid.
- * Inclusive on both ends.
+ * Price band a taker may fill resting orders inside. Inclusive on both ends.
+ *
+ * Taker BUY sweeps resting asks: never above Kraken's best ask (the system
+ * fill there is cheaper), and no more than the collar below it (a quote that
+ * far under market is stale, not a bargain). Taker SELL mirrors it on the bid:
+ * never below the best bid, at most the collar above it. So every MARKET fill
+ * is at the touch or better; MM quotes only trade with a taker when they have
+ * drifted to the taker's side of the touch.
  */
 export function collarBand(
     ref: CollarReference,
     takerSide: "BUY" | "SELL",
     collarBps: number = config.marketCollarBps,
 ): CollarBand {
-    const center = takerSide === "BUY" ? ref.bestAsk : ref.bestBid;
-    const offset = center.mul(collarBps).div(BPS_DIVISOR);
-    return { min: center.minus(offset), max: center.plus(offset) };
+    if (takerSide === "BUY") {
+        const offset = ref.bestAsk.mul(collarBps).div(BPS_DIVISOR);
+        return { min: ref.bestAsk.minus(offset), max: ref.bestAsk };
+    }
+    const offset = ref.bestBid.mul(collarBps).div(BPS_DIVISOR);
+    return { min: ref.bestBid, max: ref.bestBid.plus(offset) };
 }
 
 export function isWithinCollar(price: Decimal | string, band: CollarBand): boolean {

@@ -15,7 +15,8 @@
  *       MM quoted at 01:13:05Z, mid 84657.00 → 5bps ask 84699.32 (rounded down). At the fill,
  *       Kraken traded ~84611–84680 (01:15 bar: o 84638.1, h 84680.5) — the ask
  *       sat ~7bps above Kraken, i.e. the MM's own 5bps half-spread plus ~2bps
- *       of drift on a 3-minute-old quote.
+ *       of drift on a 3-minute-old quote. Within the 25bps collar, so #188 let
+ *       it fill; the sweep cap (asks only at or below the touch) now blocks it.
  *
  * Real Postgres; the Kraken book reference is seeded in-process.
  */
@@ -90,22 +91,21 @@ describe("prod fill #1 (84818.68, 2026-10-01 14:39:49 ET) — now impossible", (
     });
 });
 
-describe("prod fill #2 (84699.32, 2026-10-01 21:16:01 ET) — NOT prevented by the collar", () => {
-    it("the 84699.32 ask was ~7bps from Kraken, inside the 25bps collar, so it still fills", async () => {
-        // Characterization, deliberately not `it.fails`: this fill was the MM's
-        // normal 5bps half-spread on a 3-minute-old quote (mid had moved ~2bps,
-        // under the 10bps requote threshold too). Neither the collar nor the MM
-        // changes block it; making it impossible needs a tighter MM spread or
-        // a collar under ~5bps, which would also exclude the MM's tightest quotes.
+describe("prod fill #2 (84699.32, 2026-10-01 21:16:01 ET) — now prevented by the sweep cap", () => {
+    it("the 84699.32 ask sat ~7bps above Kraken's ask, so the BUY skips it and system-fills at the touch", async () => {
+        // #188's 25bps collar let this through (it was the MM's normal 5bps
+        // half-spread on a 3-minute-old quote). The sweep cap only lets a
+        // MARKET BUY lift asks at or below Kraken's best ask, so the remainder
+        // goes to the system fill at 84638.1 instead.
         await setLastPrice("84638.10000000");
-        await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.50000000", "84699.32000000");
+        const mmAsk = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.50000000", "84699.32000000");
         seedReferenceBook(pairId, "84638.0", "84638.1"); // Kraken 01:15 bar open
 
         const result = await placeOrder(taker.id, pairId, "BUY", "MARKET", "0.10000000");
 
         expect(result.fills).toHaveLength(1);
-        expect(result.fills[0].price).toBe("84699.32000000");
-        expect(result.fills[0].is_system_fill).toBe(false);
+        expect(result.fills[0]).toMatchObject({ price: "84638.10000000", is_system_fill: true });
+        expect(await restingOrder(mmAsk.order.id)).toEqual({ status: "OPEN", qty_filled: "0.00000000" });
     });
 });
 
@@ -129,31 +129,31 @@ describe("collar — general", () => {
 
     it("a MARKET BUY fills asks inside the band, skips asks outside it on both sides", async () => {
         await setLastPrice("80000.00000000");
-        seedReferenceBook(pairId, "79999", "80000"); // band 79800–80200
+        seedReferenceBook(pairId, "79999", "80000"); // band 79800–80000 (touch)
         const tooCheap = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "79799.00000000");
-        const inside = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "80150.00000000");
-        const tooRich = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "80201.00000000");
+        const inside = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "79950.00000000");
+        const tooRich = await placeOrder(maker.id, pairId, "SELL", "LIMIT", "0.10000000", "80000.01000000");
 
         const result = await placeOrder(taker.id, pairId, "BUY", "MARKET", "0.30000000");
 
         const book = result.fills.filter((f) => !f.is_system_fill);
-        expect(book.map((f) => f.price)).toEqual(["80150.00000000"]);
+        expect(book.map((f) => f.price)).toEqual(["79950.00000000"]);
         expect(result.fills.filter((f) => f.is_system_fill)).toHaveLength(1); // rest at market
         expect((await restingOrder(inside.order.id)).status).toBe("FILLED");
         expect((await restingOrder(tooCheap.order.id)).status).toBe("OPEN");
         expect((await restingOrder(tooRich.order.id)).status).toBe("OPEN");
     });
 
-    it("a MARKET SELL is banded around Kraken's best bid and skips a stale-high bid", async () => {
+    it("a MARKET SELL is banded from Kraken's best bid up and skips a stale-high bid", async () => {
         await setLastPrice("80000.00000000");
-        seedReferenceBook(pairId, "80000", "80001"); // band 79800–80200
+        seedReferenceBook(pairId, "80000", "80001"); // band 80000 (touch)–80200
         const staleHigh = await placeOrder(maker.id, pairId, "BUY", "LIMIT", "0.10000000", "80300.00000000");
-        const inside = await placeOrder(maker.id, pairId, "BUY", "LIMIT", "0.10000000", "79900.00000000");
+        const inside = await placeOrder(maker.id, pairId, "BUY", "LIMIT", "0.10000000", "80100.00000000");
 
         const result = await placeOrder(taker.id, pairId, "SELL", "MARKET", "0.10000000");
 
         expect(result.fills).toHaveLength(1);
-        expect(result.fills[0].price).toBe("79900.00000000");
+        expect(result.fills[0].price).toBe("80100.00000000");
         expect((await restingOrder(staleHigh.order.id)).status).toBe("OPEN");
         expect((await restingOrder(inside.order.id)).status).toBe("FILLED");
     });

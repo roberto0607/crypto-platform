@@ -54,33 +54,33 @@ describe("getCollarReference", () => {
     });
 });
 
-describe("collarBand — 25bps around the Kraken touch", () => {
+describe("collarBand — at the Kraken touch or better, at most 25bps better", () => {
     const ref = { bestBid: D("80000"), bestAsk: D("80010"), ageMs: 0, source: "book" as const };
 
-    it("taker BUY is banded around Kraken's best ask, inclusive at exactly ±25bps", () => {
+    it("taker BUY: capped at Kraken's best ask, down to 25bps below it, inclusive", () => {
         const band = collarBand(ref, "BUY", 25);
         // 80010 × 0.0025 = 200.025
         expect(band.min.toString()).toBe("79809.975");
-        expect(band.max.toString()).toBe("80210.025");
+        expect(band.max.toString()).toBe("80010");
         expect(isWithinCollar("79809.975", band)).toBe(true);
-        expect(isWithinCollar("80210.025", band)).toBe(true);
         expect(isWithinCollar("80010", band)).toBe(true);
+        expect(isWithinCollar("80005", band)).toBe(true);
     });
 
-    it("taker BUY skips asks just outside the band on either side", () => {
+    it("taker BUY skips any ask above the touch and a stale-low ask", () => {
         const band = collarBand(ref, "BUY", 25);
-        expect(isWithinCollar("80210.03", band)).toBe(false); // too expensive
+        expect(isWithinCollar("80010.01", band)).toBe(false); // above the touch — system fill is cheaper
         expect(isWithinCollar("79809.97", band)).toBe(false); // stale-low ask (prod fill #1 shape)
     });
 
-    it("taker SELL is banded around Kraken's best bid", () => {
+    it("taker SELL: capped at Kraken's best bid, up to 25bps above it, inclusive", () => {
         const band = collarBand(ref, "SELL", 25);
         // 80000 × 0.0025 = 200
-        expect(band.min.toString()).toBe("79800");
+        expect(band.min.toString()).toBe("80000");
         expect(band.max.toString()).toBe("80200");
-        expect(isWithinCollar("79800", band)).toBe(true);
+        expect(isWithinCollar("80000", band)).toBe(true);
         expect(isWithinCollar("80200", band)).toBe(true);
-        expect(isWithinCollar("79799.99", band)).toBe(false);
+        expect(isWithinCollar("79999.99", band)).toBe(false); // below the touch
         expect(isWithinCollar("80200.01", band)).toBe(false); // stale-high bid
     });
 });

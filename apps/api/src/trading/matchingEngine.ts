@@ -149,8 +149,9 @@ async function placeOrderInternal(
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
 
     // Market reference (MARKET only): the real Kraken touch — fresh book, else
-    // fresh ticker bid/ask. It collars which resting orders may be swept (so a
-    // stale quote can never fill) and prices the system-fill remainder. No
+    // fresh ticker bid/ask. It bands which resting orders may be swept (at the
+    // touch or better, never a stale quote far off market — see collarBand)
+    // and prices the system-fill remainder. No
     // fresh reference → reject; never fall back to trading_pairs.last_price.
     let reference: CollarReference | null = null;
     let collar: { min: string; max: string } | null = null;
@@ -214,6 +215,9 @@ async function placeOrderInternal(
     let systemFill: SystemFillPlan | null = null;
     if (type === "MARKET" && remaining.gt(0)) {
         // The real touch the taker crosses — no synthetic spread on top.
+        // Known limitation: the whole remainder fills at the touch whatever
+        // its size. There is no depth-based slippage (walking Kraken's book
+        // levels), so a large order gets top-of-book price for all of it.
         const sysPrice = systemFillPrice(reference!, side);
         const sysQuote = remaining.mul(sysPrice);
         const sysFee = sysQuote.mul(pair.fee_bps).div(BPS_DIVISOR);
