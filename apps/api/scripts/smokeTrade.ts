@@ -7,8 +7,10 @@
  * Logs in (email + hidden password, prompted on the terminal), reads the live
  * Kraken best bid/ask for BTC/USD from the API, places a ~$50 MARKET BUY, and
  * immediately closes it with a MARKET SELL of the filled qty. PASS when the
- * buy's average fill price is within 10bps of the best ask read just before
- * the order; exit 0 on PASS, 1 otherwise.
+ * buy's average fill price is within 5bps of the best ask read just before
+ * the order; exit 0 on PASS, 1 otherwise. Since #191 a market fill is never
+ * worse than the Kraken touch, so the 5bps only absorbs the market moving
+ * between reading the book and the fill.
  *
  * Credentials are only ever read interactively — never from argv or env — and
  * neither they nor the access token are printed. Uses the account's free-play
@@ -18,7 +20,7 @@
 const API = (process.env.SMOKE_API ?? "https://api.playtradr.com").replace(/\/+$/, "");
 const SYMBOL = "BTC/USD";
 const NOTIONAL_USD = 50;
-const MAX_DEVIATION_BPS = 10;
+const MAX_DEVIATION_BPS = 5;
 const CLOSE_ATTEMPTS = 5;
 const CLOSE_RETRY_MS = 3_000;
 
