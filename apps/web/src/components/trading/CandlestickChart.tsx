@@ -59,6 +59,7 @@ import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
 import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing, type DrawingPoint } from "@/stores/drawingStore";
+import { crosshairModeFor } from "@/lib/crosshairMode";
 import { createDrawingPrimitive } from "@/lib/drawings/createDrawingPrimitive";
 import type { BaseDrawingPrimitive } from "@/lib/drawings/baseDrawingPrimitive";
 import { PendingDrawingPreviewPrimitive } from "@/lib/drawings/pendingPreviewPrimitive";
@@ -682,6 +683,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 horzLines: { visible: false },
             },
             crosshair: {
+                // Free by default (Normal); Magnet only while the toolbar's
+                // magnet is on — kept in sync by the snapEnabled effect below.
+                mode: crosshairModeFor(useDrawingStore.getState().snapEnabled),
                 vertLine: { color: "rgba(0,255,65,0.16)", labelBackgroundColor: "#0d1a0d" },
                 horzLine: { color: "rgba(0,255,65,0.16)", labelBackgroundColor: "#0d1a0d" },
             },
@@ -1065,6 +1069,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             handleScale: !locked,
         });
     }, [activeTool, draggingAnchor, measureState]);
+
+    // Magnet toggle → crosshair mode, live (see crosshairModeFor). Drawing
+    // snapping reads the same flag in resolveDrawingPrice.
+    const snapEnabled = useDrawingStore((s) => s.snapEnabled);
+    useEffect(() => {
+        chartRef.current?.applyOptions({ crosshair: { mode: crosshairModeFor(snapEnabled) } });
+    }, [snapEnabled]);
 
     // Clear the placement preview immediately on commit/cancel (not just on
     // the next mousemove, which may not fire right after a click).

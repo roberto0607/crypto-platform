@@ -127,7 +127,7 @@ export function DrawingToolStrip() {
 
             <button
                 type="button"
-                title={`Magnet (snap to candle) — ${snapEnabled ? "on" : "off"}`}
+                title={`Magnet (snap crosshair & drawings to candle) — ${snapEnabled ? "on" : "off"}`}
                 aria-pressed={snapEnabled}
                 onClick={toggleSnap}
                 style={{
