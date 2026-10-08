@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { pool } from "../../db/pool";
 import { aggregateTick, seedOpenCandle, __resetCandleAggregatorForTest } from "../candleAggregator";
-import { bucketStartMs, getFormingCandle, seedOpenCandlesFromKrakenRest, TIMEFRAME_SECONDS } from "../formingCandle";
+import { bucketStartMs, getFormingCandle, getUnrolledBuckets, MAX_UNROLLED_BUCKETS, seedOpenCandlesFromKrakenRest, TIMEFRAME_SECONDS } from "../formingCandle";
 import { createCandleFixturePair, insertCandles, minuteRows, aggregate } from "../../testing/candleFixtures";
 import type { OHLCPage } from "../krakenRest";
 
@@ -126,6 +126,60 @@ describe.each(TIMEFRAMES)("getFormingCandle — %s", (tf) => {
         aggregateTick(fx.pairId, { price: "107", volume: "1", ts: B - 30_000 });
         aggregateTick(fx.pairId, { price: "108", volume: "1", ts: curMin + 1_000 });
         expect(Number((await getFormingCandle(fx.pairId, tf, now))!.open)).toBe(107);
+    });
+});
+
+describe.each(TIMEFRAMES)("getUnrolledBuckets — %s", (tf) => {
+    const tfMs = TIMEFRAME_SECONDS[tf]! * 1000;
+    const B = MONDAY + 7 * 86_400_000;   // current bucket
+    const now = B + 20_000;               // 20s into it: the previous minute may still be in memory
+    let fx: Awaited<ReturnType<typeof createCandleFixturePair>>;
+
+    beforeEach(async () => {
+        __resetCandleAggregatorForTest();
+        fx = await createCandleFixturePair(pool, "UB");
+    });
+    afterEach(async () => {
+        await fx.cleanup();
+    });
+
+    it("previous bucket from stored 1m + the finished minute still in memory; nothing once it's stored as a bar", async () => {
+        const stored = tf === "1m" ? [] : minuteRows(B - tfMs, B - 60_000);
+        await insertCandles(pool, fx.pairId, "1m", stored);
+        aggregateTick(fx.pairId, { price: "999", volume: "5", ts: B - 30_000 }); // last minute, not flushed
+
+        const rows = await getUnrolledBuckets(fx.pairId, tf, B - 2 * tfMs, now);
+        expect(rows.map((r) => new Date(r.ts).getTime())).toEqual([B - tfMs]);
+        const r = rows[0]!;
+        const a = stored.length ? aggregate(stored) : null;
+        expect(Number(r.open)).toBe(a ? a.open : 999);
+        expect(Number(r.high)).toBe(999);
+        expect(Number(r.close)).toBe(999);
+        expect(Number(r.volume)).toBe((a?.volume ?? 0) + 5);
+
+        // Once that bucket's bar is stored, there's nothing to fill.
+        expect(await getUnrolledBuckets(fx.pairId, tf, B - tfMs, now)).toEqual([]);
+    });
+
+    it("a stored last minute isn't counted twice", async () => {
+        const stored = minuteRows(B - tfMs, B);
+        await insertCandles(pool, fx.pairId, "1m", stored);
+        aggregateTick(fx.pairId, { price: "999", volume: "5", ts: B - 30_000 }); // same minute as the last stored row
+        const rows = await getUnrolledBuckets(fx.pairId, tf, B - 2 * tfMs, now);
+        if (tf === "1m") {
+            // 1m returns the in-memory minute itself (the route never has its stored row and memory at once).
+            expect(rows).toHaveLength(1);
+            return;
+        }
+        const a = aggregate(stored);
+        expect([rows[0]!.high, rows[0]!.close, rows[0]!.volume].map(Number)).toEqual([a.high, a.close, a.volume]);
+    });
+
+    it("fills at most MAX_UNROLLED_BUCKETS, never the current bucket", async () => {
+        await insertCandles(pool, fx.pairId, "1m", minuteRows(B - 4 * tfMs, now - 60_000 > B ? now - 60_000 : B));
+        const rows = await getUnrolledBuckets(fx.pairId, tf, null, now);
+        expect(rows.length).toBeLessThanOrEqual(MAX_UNROLLED_BUCKETS);
+        expect(rows.every((r) => new Date(r.ts).getTime() < B)).toBe(true);
     });
 });
 

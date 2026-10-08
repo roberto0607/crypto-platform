@@ -9,7 +9,7 @@ import { buildApp } from "../../../app";
 import { pool } from "../../../db/pool";
 import { ensureMigrations } from "../../../testing/resetDb";
 import { createCandleFixturePair, insertCandles, minuteRows, aggregate } from "../../../testing/candleFixtures";
-import { __resetCandleAggregatorForTest } from "../../../market/candleAggregator";
+import { aggregateTick, __resetCandleAggregatorForTest } from "../../../market/candleAggregator";
 import { bucketStartMs, TIMEFRAME_SECONDS } from "../../../market/formingCandle";
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d", "1w"] as const;
@@ -107,6 +107,23 @@ describe("GET /v1/pairs/:pairId/candles forming candle", () => {
             expect(Number(candles[2]!.open)).toBe(a.close); // forming opens at the filled bar's close
         },
     );
+
+    it("1m: the finished minute still in memory (stored on the next tick) is returned — no gap at :00", async () => {
+        const now = Date.now();
+        const B = bucketStartMs(now, "1m");
+        await insertCandles(pool, fx.pairId, "1m", [{ tsMs: B - 120_000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 1 }]);
+        // Minute B − 1m only in the aggregator: no tick in minute B has rolled it yet.
+        aggregateTick(fx.pairId, { price: "101", volume: "1", ts: B - 50_000 });
+        aggregateTick(fx.pairId, { price: "104", volume: "2", ts: B - 20_000 });
+
+        const res = await app.inject({ method: "GET", url: `/v1/pairs/${fx.pairId}/candles?timeframe=1m&limit=5`, headers });
+        const candles = res.json().candles as Array<{ ts: string; open: string; high: string; low: string; close: string; volume: string; partial?: boolean }>;
+        expect(candles.map((c) => new Date(c.ts).getTime())).toEqual([B - 120_000, B - 60_000, B]);
+        expect(candles[1]!.partial).toBeUndefined();
+        expect([candles[1]!.open, candles[1]!.high, candles[1]!.low, candles[1]!.close, candles[1]!.volume].map(Number)).toEqual([101, 104, 101, 104, 3]);
+        expect(candles[2]!.partial).toBe(true);
+        expect(Number(candles[2]!.open)).toBe(104);
+    });
 
     it("a `before` page has no forming candle", async () => {
         const now = Date.now();

@@ -161,8 +161,10 @@ export const MAX_UNROLLED_BUCKETS = 2;
  * page jumped from the bar before it straight to the forming one. Fills the
  * buckets in [after the last stored bar, current bucket), at most
  * MAX_UNROLLED_BUCKETS of them, from the stored 1m rows — same aggregation
- * as the job, so the row it later stores is identical. Not for 1m (stored
- * directly at minute close).
+ * as the job, so the row it later stores is identical. Also covers the
+ * aggregator's finished minute that isn't stored yet (it's stored on the
+ * first tick of the next minute, or by the 5s flush), for 1m and for the
+ * bucket it ends.
  */
 export async function getUnrolledBuckets(
     pairId: string,
@@ -171,15 +173,26 @@ export async function getUnrolledBuckets(
     nowMs: number = Date.now(),
     db: Pick<Pool, "query"> = defaultPool,
 ): Promise<Array<Omit<FormingCandle, "partial">>> {
-    if (timeframe === "1m") return [];
     const tfMs = TIMEFRAME_SECONDS[timeframe]! * 1000;
     const currentMs = bucketStartMs(nowMs, timeframe);
     const fromMs = Math.max(currentMs - MAX_UNROLLED_BUCKETS * tfMs, lastStoredMs === null ? -Infinity : lastStoredMs + tfMs);
     if (fromMs >= currentMs) return [];
     const offsetSec = timeframe === "1w" ? MONDAY_EPOCH_OFFSET_MS / 1000 : 0;
-    const { rows } = await db.query<Omit<FormingCandle, "partial">>(
+    type Row = Omit<FormingCandle, "partial">;
+    const pending = getOpenCandle(pairId);
+    const pendingMinute = pending && pending.minuteKey >= fromMs && pending.minuteKey < Math.floor(nowMs / 60_000) * 60_000
+        ? pending : null; // finished, in memory, maybe not stored yet
+    if (timeframe === "1m") {
+        if (!pendingMinute || pendingMinute.minuteKey >= currentMs) return [];
+        return [{
+            ts: new Date(pendingMinute.minuteKey).toISOString(),
+            open: pendingMinute.open, high: pendingMinute.high, low: pendingMinute.low, close: pendingMinute.close,
+            volume: pendingMinute.volume, buy_volume: pendingMinute.buyVolume, sell_volume: pendingMinute.sellVolume,
+        }];
+    }
+    const { rows } = await db.query<Row & { last_ms: string }>(
         `SELECT to_char(bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.000"Z"') AS ts,
-                open, high, low, close, volume, buy_volume, sell_volume
+                open, high, low, close, volume, buy_volume, sell_volume, last_ms
          FROM (
              SELECT to_timestamp(floor((extract(epoch FROM ts) + $4) / $3) * $3 - $4) AS bucket,
                     (array_agg(open ORDER BY ts ASC))[1]::text   AS open,
@@ -188,7 +201,8 @@ export async function getUnrolledBuckets(
                     (array_agg(close ORDER BY ts DESC))[1]::text AS close,
                     SUM(volume)::text                            AS volume,
                     SUM(buy_volume)::text                        AS buy_volume,
-                    SUM(sell_volume)::text                       AS sell_volume
+                    SUM(sell_volume)::text                       AS sell_volume,
+                    (extract(epoch FROM MAX(ts)) * 1000)::bigint::text AS last_ms
              FROM candles
              WHERE pair_id = $1 AND timeframe = '1m' AND ts >= $2 AND ts < $5
              GROUP BY 1
@@ -196,7 +210,28 @@ export async function getUnrolledBuckets(
          ORDER BY bucket`,
         [pairId, new Date(fromMs).toISOString(), tfMs / 1000, offsetSec, new Date(currentMs).toISOString()],
     );
-    return rows;
+    const out: Row[] = rows.map(({ last_ms: _l, ...r }) => r);
+    if (pendingMinute && pendingMinute.minuteKey < currentMs) {
+        const bucketIso = new Date(bucketStartMs(pendingMinute.minuteKey, timeframe)).toISOString();
+        const i = rows.findIndex((r) => r.ts === bucketIso);
+        const m = pendingMinute;
+        if (i === -1) {
+            out.push({ ts: bucketIso, open: m.open, high: m.high, low: m.low, close: m.close, volume: m.volume, buy_volume: m.buyVolume, sell_volume: m.sellVolume });
+            out.sort((a, b) => a.ts.localeCompare(b.ts));
+        } else if (Number(rows[i]!.last_ms) < m.minuteKey) {
+            const r = out[i]!;
+            out[i] = {
+                ...r,
+                high: String(Math.max(Number(r.high), Number(m.high))),
+                low: String(Math.min(Number(r.low), Number(m.low))),
+                close: m.close,
+                volume: String(Number(r.volume) + Number(m.volume)),
+                buy_volume: String(Number(r.buy_volume ?? 0) + Number(m.buyVolume)),
+                sell_volume: String(Number(r.sell_volume ?? 0) + Number(m.sellVolume)),
+            };
+        }
+    }
+    return out;
 }
 
 /**
