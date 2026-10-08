@@ -6,6 +6,7 @@ import { v1HandleError } from "../../http/v1Error";
 import { parseLimit } from "../../http/pagination";
 import { listActivePairsForDisplay } from "../../trading/pairRepo";
 import { getPublicTickers } from "../../market/publicTickers";
+import { bucketStartMs, getFormingCandle } from "../../market/formingCandle.js";
 import { pool } from "../../db/pool.js";
 
 const pairsQuery = z.object({
@@ -126,6 +127,9 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
                                     low: { type: "string" },
                                     close: { type: "string" },
                                     volume: { type: "string" },
+                                    // Only on the latest page's last row: the
+                                    // still-forming bucket (formingCandle.ts).
+                                    partial: { type: "boolean" },
                                 },
                             },
                         },
@@ -147,8 +151,17 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
                        WHERE pair_id = $1 AND timeframe = $2`;
             const params: (string | number)[] = [pairId, timeframe];
 
+            // Latest page (no `before`): `limit` finished candles, then the
+            // forming bucket appended as `partial: true`. Finished means
+            // older than the current bucket — a stored row for the current
+            // bucket is superseded by the forming one.
+            const nowMs = Date.now();
+            const latestPage = !query.before;
             if (query.before) {
                 params.push(query.before);
+                sql += ` AND ts < $${params.length}`;
+            } else {
+                params.push(new Date(bucketStartMs(nowMs, timeframe)).toISOString());
                 sql += ` AND ts < $${params.length}`;
             }
 
@@ -159,6 +172,11 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
 
             // Return in ascending order (oldest first) for charting
             rows.reverse();
+
+            if (latestPage) {
+                const forming = await getFormingCandle(pairId, timeframe, nowMs);
+                if (forming) rows.push(forming);
+            }
 
             return reply.send({ ok: true, candles: rows });
         } catch (err) {

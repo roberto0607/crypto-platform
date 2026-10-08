@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { loadActiveSymbols, type ActiveSymbol } from "../market/symbolRegistry.js";
 import { aggregateTick } from "../market/candleAggregator.js";
+import { candleSourceFor } from "../market/candleSource.js";
 import { logger } from "../observability/logContext.js";
 import { coinbaseTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 import { publish } from "../events/eventBus.js";
@@ -251,7 +252,11 @@ function handleMessage(batch: Batch, raw: WebSocket.Data): void {
                 // Coinbase sends "BUY" or "SELL" (taker side) — normalize.
                 const side = coinbaseTradeSide(trade);
 
-                aggregateTick(pairId, { price, volume, ts, side });
+                // Candles for Kraken-REST-synced symbols come from Kraken
+                // (candleSource.ts); Coinbase builds the rest.
+                if (candleSourceFor(ourSymbol) === "coinbase") {
+                    aggregateTick(pairId, { price, volume, ts, side });
+                }
 
                 // Pressure aggregator hook — runs AFTER aggregateTick so a
                 // failure here can never break the existing CVD/candle path.

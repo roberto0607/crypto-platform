@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// Both real feeds (krakenWs.ts + coinbaseWs.ts) on fake sockets: Kraken's
-// ticker handler must fall back to publishing price.tick per symbol, only for
-// symbols Coinbase has gone silent on.
+// Both real feeds (krakenWs.ts + coinbaseWs.ts) on fake sockets: each symbol's
+// 1m candles are built from exactly one exchange (candleSource.ts) — Kraken
+// for symbols Kraken REST syncs, Coinbase for the rest — and the Kraken feed
+// seeds the in-progress minute from Kraken REST once, on first connect.
 const sockets = vi.hoisted(() => [] as any[]);
 vi.mock("ws", async () => {
     const { EventEmitter } = await import("node:events");
@@ -27,15 +28,17 @@ vi.mock("ws", async () => {
 
 vi.mock("../../market/symbolRegistry.js", () => ({
     loadActiveSymbols: vi.fn(async (exchange: string) =>
-        ["BTC/USD", "SOL/USD"].map((s) => {
+        ["BTC/USD", "DOGE/USD"].map((s) => {
             const ws = exchange === "coinbase" ? s.replace("/", "-") : s;
             return { ourSymbol: s, wsSymbol: ws, restSymbol: ws, pairId: `pair-${s}` };
         }),
     ),
 }));
-vi.mock("../../market/candleAggregator.js", () => ({ aggregateTick: vi.fn(), flushDueCandles: vi.fn(async () => {}) }));
+const aggregateTick = vi.hoisted(() => vi.fn());
+vi.mock("../../market/candleAggregator.js", () => ({ aggregateTick, flushDueCandles: vi.fn(async () => {}) }));
 vi.mock("../../market/candleBackfill.js", () => ({ runBackfill: vi.fn(async () => ({})) }));
-vi.mock("../../market/formingCandle.js", () => ({ seedOpenCandlesFromKrakenRest: vi.fn(async () => 0) }));
+const seed = vi.hoisted(() => vi.fn(async (_pairs: Array<{ symbol: string; pairId: string }>) => 0));
+vi.mock("../../market/formingCandle.js", () => ({ seedOpenCandlesFromKrakenRest: seed }));
 vi.mock("../../market/snapshotStore", () => ({ setSnapshot: vi.fn(async () => {}) }));
 vi.mock("../../services/pressureAggregator.js", () => ({
     coinbaseTradeSide: () => "buy",
@@ -78,7 +81,7 @@ async function pump(seconds: number, coinbase: string[]) {
         }
         const k = krakenSocket();
         k.emit("message", msg({ channel: "heartbeat" }));
-        for (const s of ["BTC/USD", "SOL/USD"]) {
+        for (const s of ["BTC/USD", "DOGE/USD"]) {
             k.emit("message", msg({ channel: "book", type: "update", data: [{ symbol: s, bids: [], asks: [] }] }));
             k.emit("message", msg({ channel: "ticker", type: "update", data: [{ symbol: s, last: 101, bid: 100, ask: 102 }] }));
         }
@@ -86,13 +89,9 @@ async function pump(seconds: number, coinbase: string[]) {
     }
 }
 
-const priceTicks = (source: string) =>
-    publish.mock.calls
-        .map((c) => c[0])
-        .filter((e) => e.type === "price.tick" && e.data?.source === source)
-        .map((e) => e.data.symbol);
+const sourcesFor = (pairId: string) => aggregateTick.mock.calls.filter((c) => c[0] === pairId).length;
 
-describe("price.tick Kraken fallback is per-symbol", () => {
+describe("1m candles: one exchange per symbol", () => {
     beforeEach(async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_700_000_000_000);
@@ -102,6 +101,8 @@ describe("price.tick Kraken fallback is per-symbol", () => {
         __resetCoinbaseWsForTest();
         __resetFeedHealthForTest();
         sockets.length = 0;
+        aggregateTick.mockClear();
+        seed.mockClear();
 
         startCoinbaseFeed();
         startKrakenFeed();
@@ -118,23 +119,39 @@ describe("price.tick Kraken fallback is per-symbol", () => {
         vi.useRealTimers();
     });
 
-    it("SOL silent on Coinbase while BTC trades → Kraken publishes price.tick for SOL only", async () => {
-        await pump(5, ["BTC-USD", "SOL-USD"]);
-        expect(priceTicks("kraken")).toEqual([]); // Coinbase live on both → Kraken stays quiet
-        expect(new Set(priceTicks("coinbase"))).toEqual(new Set(["BTC/USD", "SOL/USD"]));
+    it("BTC/USD (Kraken REST-synced) aggregates Kraken ticker + trades only; DOGE/USD aggregates Coinbase trades only", async () => {
+        await pump(3, ["BTC-USD", "DOGE-USD"]); // Coinbase trades for both + Kraken tickers for both
+        for (const s of ["BTC/USD", "DOGE/USD"]) {
+            krakenSocket().emit("message", msg({
+                channel: "trade", type: "update",
+                data: [{ symbol: s, price: 100, qty: 0.5, side: "buy", timestamp: new Date().toISOString() }],
+            }));
+        }
+        await vi.advanceTimersByTimeAsync(0);
 
-        publish.mockClear();
-        await pump(20, ["BTC-USD"]); // SOL goes silent on Coinbase; BTC keeps trading
+        const btc = aggregateTick.mock.calls.filter((c) => c[0] === "pair-BTC/USD").map((c) => c[1]);
+        // 3 Kraken tickers (volume 0) + 1 Kraken trade; none of the 3 Coinbase trades.
+        expect(btc).toHaveLength(4);
+        expect(btc.filter((t) => t.volume === "1")).toEqual([]); // Coinbase fixture size is 1
+        expect(btc.filter((t) => t.volume === "0.5")).toHaveLength(1);
 
-        const kraken = priceTicks("kraken");
-        expect(kraken.length).toBeGreaterThan(0);
-        expect(new Set(kraken)).toEqual(new Set(["SOL/USD"]));
-        expect(new Set(priceTicks("coinbase"))).toEqual(new Set(["BTC/USD"]));
+        const doge = aggregateTick.mock.calls.filter((c) => c[0] === "pair-DOGE/USD").map((c) => c[1]);
+        // 3 Coinbase trades; no Kraken ticker or trade.
+        expect(doge).toHaveLength(3);
+        expect(doge.every((t) => t.volume === "1")).toBe(true);
+        expect(sourcesFor("pair-DOGE/USD")).toBe(3);
+    });
 
-        // SOL resumes on Coinbase → Kraken stops publishing it.
-        await pump(1, ["BTC-USD", "SOL-USD"]);
-        publish.mockClear();
-        await pump(3, ["BTC-USD", "SOL-USD"]);
-        expect(priceTicks("kraken")).toEqual([]);
+    it("seeds the in-progress minute from Kraken REST once, on the first Kraken connect", async () => {
+        expect(seed).toHaveBeenCalledTimes(1);
+        expect(seed.mock.calls[0]![0]).toEqual(expect.arrayContaining([
+            { symbol: "BTC/USD", pairId: "pair-BTC/USD" },
+            { symbol: "DOGE/USD", pairId: "pair-DOGE/USD" },
+        ]));
+        krakenSocket().emit("close", 1006, Buffer.from(""));
+        await vi.advanceTimersByTimeAsync(60_000);
+        const again = sockets.filter((s) => s.url.includes("kraken")).at(-1);
+        if (again && again.readyState === 0) await open(again);
+        expect(seed).toHaveBeenCalledTimes(1);
     });
 });
