@@ -37,7 +37,7 @@ vi.mock("../candleBackfill.js", () => ({ runBackfill: vi.fn(async () => ({})) })
 vi.mock("../snapshotStore", () => ({ setSnapshot: vi.fn(async () => {}) }));
 vi.mock("../../events/eventBus", () => ({ publish: vi.fn() }));
 vi.mock("../../db/pool.js", () => ({ pool: { query: vi.fn(async () => ({ rows: [] })) } }));
-vi.mock("../../feeds/coinbaseWs.js", () => ({ getCoinbaseLastTradeAt: () => Date.now() }));
+vi.mock("../../feeds/coinbaseWs.js", () => ({ isCoinbaseStaleFor: () => false }));
 const logger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 vi.mock("../../observability/logContext.js", () => ({ logger }));
 

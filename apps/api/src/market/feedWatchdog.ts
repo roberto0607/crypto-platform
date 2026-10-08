@@ -22,6 +22,11 @@
  * the cap delay (the shared Kraken reconnects-per-10-min budget).
  */
 
+/** Backoff shape for every exchange socket (each keeps its own ReconnectBackoff
+ *  instance): 1s doubling to a 60s cap, ±20% jitter, reset only after 60s of
+ *  real data — never on open. */
+export const FEED_BACKOFF = { baseMs: 1_000, maxMs: 60_000, jitter: 0.2, healthyResetMs: 60_000 } as const;
+
 export interface StaleEpisode {
     key: string;
     /** Time since the last message (or since grace started, if none yet). */
@@ -80,6 +85,11 @@ export class StalenessTracker {
 
     isStale(key: string): boolean {
         return this.stale.has(key);
+    }
+
+    /** When the key's current silence began: its last message, else when it was first expected. */
+    silentSince(key: string): number | null {
+        return this.lastAt.get(key) ?? this.expectedSince.get(key) ?? null;
     }
 
     /** New stale episodes among `keys` (each reported once until the key recovers). */

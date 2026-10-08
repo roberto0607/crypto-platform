@@ -197,6 +197,23 @@ export const config = {
   // How long after (re)connect a symbol may go without its first message.
   feedWatchdogGraceMs: numberEnv("FEED_WATCHDOG_GRACE_MS", 10_000),
 
+  // ── Coinbase feed watchdogs (wired in feeds/coinbaseWs.ts) ──
+  // Coinbase Advanced Trade `heartbeats` channel, subscribed on every batch
+  // socket. Silence → terminate + reconnect. A 10-min live sample (2026-10-08,
+  // our BTC/ETH/SOL market_trades subscription) got 599 heartbeats in 600s,
+  // max gap 1.35s, no heartbeat_counter skips — so 5s is ~3.7x the worst gap.
+  // FEED_COINBASE_HEARTBEAT_KILL_ENABLED=false is the escape hatch.
+  feedCoinbaseHeartbeatStaleMs: numberEnv("FEED_COINBASE_HEARTBEAT_STALE_MS", 5_000),
+  feedCoinbaseHeartbeatKillEnabled: booleanEnv("FEED_COINBASE_HEARTBEAT_KILL_ENABLED", true),
+  // Per-symbol cross-check: no Coinbase trade on a symbol for this long while
+  // Kraken trades it. Detection always runs; the kill is gated on its own
+  // flag (off → logs feed_watchdog_would_kill with exchange=coinbase).
+  // Same sample: per-symbol trade gaps p99 1.9s (BTC) / 4.2s (ETH) / 4.9s
+  // (SOL), max 7.9s, none over 10s — 60s leaves room for quiet overnight and
+  // weekend hours, which the US-morning sample doesn't cover.
+  feedCoinbaseSymbolStaleMs: numberEnv("FEED_COINBASE_SYMBOL_STALE_MS", 60_000),
+  feedCoinbaseSymbolKillEnabled: booleanEnv("FEED_COINBASE_SYMBOL_KILL_ENABLED", false),
+
   // ── DB recovery: market-data storage allowlist ──
   // Only these pairs ever get candle / footprint rows written. Every other
   // active pair still streams live (price.tick / candle.closed events,

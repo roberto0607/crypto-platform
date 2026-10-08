@@ -18,7 +18,7 @@ import { config } from "../../config";
 import { logger } from "../../observability/logContext";
 import { getFeedHealthSnapshot, getSymbolFeedHealth } from "../../observability/feedHealth";
 import { getKrakenWsHealth, __debugFaultKrakenSocket } from "../../market/krakenWs";
-import { getCoinbaseLastTradeAt, __debugFaultCoinbaseSockets } from "../../feeds/coinbaseWs";
+import { getCoinbaseWsHealth, isCoinbaseStaleFor, __debugFaultCoinbaseSockets } from "../../feeds/coinbaseWs";
 import { peekSnapshot } from "../../market/snapshotStore";
 import { bookSnapshots } from "../../market/orderFlowFeatures";
 import { findPairById } from "../../trading/pairRepo";
@@ -50,7 +50,7 @@ const v1FeedHealth: FastifyPluginAsync = async (app) => {
         try {
             const { pairId } = feedHealthQuery.parse(req.query);
             const now = Date.now();
-            const coinbaseLastTradeAt = getCoinbaseLastTradeAt();
+            const coinbaseWs = getCoinbaseWsHealth();
 
             let pair = null;
             if (pairId) {
@@ -87,10 +87,13 @@ const v1FeedHealth: FastifyPluginAsync = async (app) => {
                 ...getFeedHealthSnapshot(),
                 kraken: getKrakenWsHealth(),
                 coinbase: {
-                    lastTradeAgeMs: coinbaseLastTradeAt > 0 ? now - coinbaseLastTradeAt : null,
-                    // Mirrors krakenWs.ts COINBASE_STALE_THRESHOLD_MS: past this, Kraken
-                    // takes over publishing price.tick.
-                    krakenFallbackActive: now - coinbaseLastTradeAt > 15_000,
+                    ...coinbaseWs,
+                    lastTradeAgeMs: coinbaseWs.lastTradeAt > 0 ? now - coinbaseWs.lastTradeAt : null,
+                    // Per-symbol (krakenWs.ts publishes price.tick for a symbol once
+                    // Coinbase is silent on it): this pair's symbol, or any symbol.
+                    krakenFallbackActive: pair
+                        ? isCoinbaseStaleFor(pair.symbol, now)
+                        : Object.keys(coinbaseWs.symbols).some((s) => isCoinbaseStaleFor(s, now)),
                 },
                 pair,
             });

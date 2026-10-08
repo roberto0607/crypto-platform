@@ -5,6 +5,7 @@ import { getStats } from "../events/eventBus";
 import { getLeadershipStatus } from "../coordination/leaderElection";
 import { getRedis } from "../db/redis";
 import { getKrakenWsHealth } from "../market/krakenWs";
+import { getCoinbaseWsHealth } from "../feeds/coinbaseWs";
 
 type CheckStatus = "OK" | "DEGRADED" | "CRITICAL" | "WARNING" | "UNKNOWN";
 
@@ -34,7 +35,7 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
   const healthRateLimit = { config: { rateLimit: { max: 120, timeWindow: 60_000 } } };
 
   // Railway's healthcheckPath: always 200 — a stale exchange feed is reported
-  // in krakenWs.status / krakenWs.symbols, never as a failed liveness check
+  // in krakenWs/coinbaseWs .status / .symbols, never as a failed liveness check
   // (which would fail deploys during an exchange outage).
   const krakenWsSchema = {
     type: "object",
@@ -55,8 +56,29 @@ const healthRoutes: FastifyPluginAsync = async (app) => {
     },
   };
 
-  app.get("/health", { ...healthRateLimit, schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status (per-symbol book freshness + heartbeat).", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: krakenWsSchema } } } } }, async () => {
-    return { ok: true, service: "api", timestamp: new Date().toISOString(), krakenWs: getKrakenWsHealth() };
+  const coinbaseWsSchema = {
+    type: "object",
+    properties: {
+      connected: { type: "boolean" },
+      status: { type: "string" },
+      lastTradeAt: { type: "number" },
+      secondsSinceLastTrade: { type: "number" },
+      heartbeatAgeMs: { type: ["number", "null"] },
+      heartbeatKillEnabled: { type: "boolean" },
+      symbolKillEnabled: { type: "boolean" },
+      batches: { type: "number" },
+      symbols: {
+        type: "object",
+        additionalProperties: {
+          type: "object",
+          properties: { tradeAgeMs: { type: ["number", "null"] }, status: { type: "string" } },
+        },
+      },
+    },
+  };
+
+  app.get("/health", { ...healthRateLimit, schema: { tags: ["Health"], summary: "Health check", description: "Basic liveness check with Kraken WS status (per-symbol book freshness + heartbeat) and Coinbase WS status (heartbeat + per-symbol trade freshness).", response: { 200: { type: "object", properties: { ok: { type: "boolean" }, service: { type: "string" }, timestamp: { type: "string" }, krakenWs: krakenWsSchema, coinbaseWs: coinbaseWsSchema } } } } }, async () => {
+    return { ok: true, service: "api", timestamp: new Date().toISOString(), krakenWs: getKrakenWsHealth(), coinbaseWs: getCoinbaseWsHealth() };
   });
 
   app.get("/health/db", { schema: { tags: ["Health"], summary: "Database health", description: "Checks PostgreSQL connectivity.", response: { 200: { type: "object", properties: { ok: { type: "boolean" } } } } } }, async () => {
