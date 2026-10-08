@@ -17,6 +17,7 @@ import {
 } from "lightweight-charts";
 import type { Candle, Timeframe } from "@/api/endpoints/candles";
 import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/lib/datafeedAdapter";
+import { applyTick, bucketTime, planClosedCandle, reconcileForming, withForming, type Bar } from "@/lib/formingCandle";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
@@ -150,14 +151,24 @@ function formatDateTime12h(epochSec: number): string {
     return `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${time}`;
 }
 
-function candleToLW(c: Candle): CandlestickData<Time> {
+function candleToBar(c: Candle): Bar {
     return {
-        time: (new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC) as Time,
+        time: new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC,
         open: parseFloat(c.open),
         high: parseFloat(c.high),
         low: parseFloat(c.low),
         close: parseFloat(c.close),
     };
+}
+
+function lastBarOf(candles: Candle[]): Bar | null {
+    const last = candles[candles.length - 1];
+    return last ? candleToBar(last) : null;
+}
+
+// Bar times are already chart times (UTC epoch seconds + TZ offset).
+function toLW(bar: Bar): CandlestickData<Time> {
+    return bar as CandlestickData<Time>;
 }
 
 function apiCandleToIndicator(c: Candle): IndicatorCandle {
@@ -171,28 +182,6 @@ function apiCandleToIndicator(c: Candle): IndicatorCandle {
     };
 }
 
-// Unix epoch (1970-01-01T00:00:00Z) was a Thursday. Naive epoch-second
-// flooring by a 7-day interval therefore aligns to Thursdays, not the
-// ISO-8601 Monday-start week the backend's 1w candles use (date_trunc('week',
-// ts) in candleBackfill.ts / scripts/backfillCandles.ts, and the same
-// Monday-offset fix in candleRollupJob.ts). Without this offset the live
-// forming candle for "1w" would sit in a different bucket than the historical
-// weekly candles fetched from the API.
-const MONDAY_EPOCH_OFFSET_SEC = 3 * 24 * 60 * 60;
-
-/** Bucket an epoch-second timestamp to the start of its timeframe period. */
-function bucketTime(epochSec: number, tf: Timeframe): number {
-    switch (tf) {
-        case "1m":  return Math.floor(epochSec / 60) * 60;
-        case "5m":  return Math.floor(epochSec / 300) * 300;
-        case "15m": return Math.floor(epochSec / 900) * 900;
-        case "1h":  return Math.floor(epochSec / 3600) * 3600;
-        case "4h":  return Math.floor(epochSec / 14400) * 14400;
-        case "1d":  return Math.floor(epochSec / 86400) * 86400;
-        case "1w":  return Math.floor((epochSec + MONDAY_EPOCH_OFFSET_SEC) / 604800) * 604800 - MONDAY_EPOCH_OFFSET_SEC;
-        default:    return Math.floor(epochSec / 60) * 60;
-    }
-}
 
 /* ── Chart legend overlay CSS ──
    Injected once into <head>. Colour vars (--g, --red, …) cascade down
@@ -381,7 +370,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // price as a dashed reference line when scrolled off the live edge.
     const livePriceLineRef = useRef<IPriceLine | null>(null);
     const rawCandlesRef = useRef<Candle[]>([]);
-    const liveCandleRef = useRef<CandlestickData<Time> | null>(null);
+    // The forming bar (chart time). Reset ONLY on a pair/timeframe switch —
+    // overlay/indicator changes never touch it (see lib/formingCandle.ts).
+    const liveCandleRef = useRef<Bar | null>(null);
+    // False from a pair/timeframe switch until that switch's history is on
+    // the series: ticks meanwhile build liveCandleRef but don't draw onto the
+    // previous pair's bars.
+    const historyReadyRef = useRef(false);
     // One adapter instance per chart — its internal request-token counter is
     // shared across fetchCandles and the scroll-back pagination fetch below,
     // so a pair/timeframe switch invalidates BOTH in-flight requests, not
@@ -393,8 +388,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const fetchingOlderRef = useRef(false);
     const hasMoreRef = useRef(true);
     // The pair:timeframe the viewport was last fit to. Refit when this key
-    // changes (first load + every pair/timeframe switch); leave the viewport
-    // alone when only indicators toggle (same key → indicator-driven refetch).
+    // changes (first load + every pair/timeframe switch).
     const lastFitKey = useRef<string | null>(null);
     const liquidityPrimitiveRef = useRef<LiquidityZonesPrimitive | null>(null);
     const vpvrPrimitiveRef = useRef<VPVRPrimitive | null>(null);
@@ -1422,33 +1416,46 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         }
     }, [indicatorConfig, clearPriceLines, fundingRateHourly, addToast]);
 
-    // Fetch candles when pair or timeframe changes
+    // History fetching and the live handlers call renderOverlays through this
+    // ref, so an indicator toggle or a funding-rate update re-renders overlays
+    // (effect below) WITHOUT refetching candles or resetting the forming bar.
+    const renderOverlaysRef = useRef(renderOverlays);
+    useEffect(() => {
+        renderOverlaysRef.current = renderOverlays;
+    }, [renderOverlays]);
+
+    // Fetch candles when (and only when) pair or timeframe changes
     const fetchCandles = useCallback(async () => {
         if (!selectedPairId || !seriesRef.current) return;
 
         setLoading(true);
         hasMoreRef.current = true;
         fetchingOlderRef.current = false;
+        // A switch starts a fresh forming bar; ticks until history lands only
+        // accumulate into it (historyReadyRef gates drawing).
+        liveCandleRef.current = null;
+        historyReadyRef.current = false;
         try {
             const candles = await datafeedRef.current.getBars(selectedPairId, timeframe, { limit: 750 });
             if (candles === null) return; // superseded by a newer pair/timeframe switch
+            if (!seriesRef.current) return;
 
             rawCandlesRef.current = candles;
-            liveCandleRef.current = null;
-            const lwData = candles.map(candleToLW);
-            seriesRef.current.setData(lwData);
+            const { bars, live } = reconcileForming(candles.map(candleToBar), liveCandleRef.current);
+            liveCandleRef.current = live;
+            seriesRef.current.setData(bars.map(toLW));
+            historyReadyRef.current = true;
 
-            renderOverlays(candles);
+            renderOverlaysRef.current(candles);
 
-            // Fit the viewport on first load and on every pair/timeframe switch,
-            // but NOT on indicator-toggle refetches (which carry the same key and
-            // must not yank the viewport). Show a recent window (~120 bars) rather
+            // Fit the viewport on first load and on every pair/timeframe switch.
+            // Show a recent window (~120 bars) rather
             // than the entire loaded history, so the autoScale price axis fits
             // recent price action instead of the full dataset's extent. Scroll-back
             // lazy-loads older bars on the left edge (handler below).
             const fitKey = `${selectedPairId}:${timeframe}`;
             if (lastFitKey.current !== fitKey) {
-                const barCount = lwData.length;
+                const barCount = bars.length;
                 if (barCount > LIVE_VIEW_BARS) {
                     chartRef.current?.timeScale().setVisibleLogicalRange({
                         from: barCount - LIVE_VIEW_BARS,
@@ -1464,7 +1471,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         } finally {
             setLoading(false);
         }
-    }, [selectedPairId, timeframe, renderOverlays]);
+    }, [selectedPairId, timeframe]);
 
     useEffect(() => {
         fetchCandles();
@@ -1506,13 +1513,10 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     // Prepend to raw candles
                     rawCandlesRef.current = [...olderCandles, ...rawCandlesRef.current];
 
-                    // Rebuild full series data (setData preserves scroll position)
-                    const allLW = rawCandlesRef.current.map(candleToLW);
-                    // Re-append live candle if present
-                    if (liveCandleRef.current) {
-                        allLW.push(liveCandleRef.current);
-                    }
-                    seriesRef.current?.setData(allLW);
+                    // Rebuild full series data (setData preserves scroll position),
+                    // keeping the forming bar on the end.
+                    const allBars = withForming(rawCandlesRef.current.map(candleToBar), liveCandleRef.current);
+                    seriesRef.current?.setData(allBars.map(toLW));
 
                     if (olderCandles.length < 500) {
                         hasMoreRef.current = false;
@@ -1543,8 +1547,10 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
         const handler = () => {
             const range = chart.timeScale().getVisibleLogicalRange();
+            const lastRaw = lastBarOf(rawCandlesRef.current);
+            const live = liveCandleRef.current;
             const barCount =
-                rawCandlesRef.current.length + (liveCandleRef.current ? 1 : 0);
+                rawCandlesRef.current.length + (live && (!lastRaw || live.time > lastRaw.time) ? 1 : 0);
             setAtLiveEdge(isAtLiveEdge(range, barCount));
         };
 
@@ -1768,24 +1774,17 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
             const price = parseFloat(tick.last);
             const now = Math.floor(Date.now() / 1000);
-            const candleTime = (bucketTime(now, timeframe) + TZ_OFFSET_SEC) as Time;
+            const bucket = bucketTime(now, timeframe) + TZ_OFFSET_SEC;
 
-            const live = liveCandleRef.current;
-            if (live && live.time === candleTime) {
-                live.high = Math.max(live.high, price);
-                live.low = Math.min(live.low, price);
-                live.close = price;
-            } else {
-                liveCandleRef.current = {
-                    time: candleTime,
-                    open: price,
-                    high: price,
-                    low: price,
-                    close: price,
-                };
-            }
-
-            seriesRef.current.update(liveCandleRef.current!);
+            // Until this switch's history is on the series, accumulate into the
+            // forming bar only — fetchCandles lays it onto history when it lands.
+            const ready = historyReadyRef.current;
+            const lastRaw = ready ? lastBarOf(rawCandlesRef.current) : null;
+            const next = applyTick(liveCandleRef.current, lastRaw, bucket, price);
+            if (next) {
+                liveCandleRef.current = next;
+                if (ready) seriesRef.current.update(toLW(next));
+            } // else: bucket older than the series' last bar — leave the bars alone
 
             // Update PDH/PDL proximity, zone fills, and label data on each tick
             currentPriceRef.current = price;
@@ -1807,12 +1806,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     lastLiveIndicatorComputeRef.current = nowMs;
                     const live = liveCandleRef.current;
                     const liveInd: IndicatorCandle = {
-                        time: live.time as number,
+                        time: live.time,
                         open: live.open, high: live.high, low: live.low, close: live.close,
                         volume: 0,
                     };
                     // Build the forming-candle series ONCE, reuse for all three.
-                    const series = [...rawCandlesRef.current.map(apiCandleToIndicator), liveInd];
+                    const series = withForming(rawCandlesRef.current.map(apiCandleToIndicator), liveInd);
                     if (indicatorConfig.rsi && series.length >= 15) setRsiData(computeRSI(series, 14));
                     if (indicatorConfig.macd && series.length >= 35) setMacdData(computeMACD(series));
                     if (indicatorConfig.atr && series.length >= 15) setAtrData(computeATR(series, 14));
@@ -1852,17 +1851,26 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         };
 
         const handleCandleClosed = (candle: CandleClosedTick) => {
-            if (!seriesRef.current) return;
+            if (!seriesRef.current || !historyReadyRef.current) return;
 
-            seriesRef.current.update({
-                time: (candle.ts / 1000 + TZ_OFFSET_SEC) as Time,
+            const bar: Bar = {
+                time: candle.ts / 1000 + TZ_OFFSET_SEC,
                 open: parseFloat(candle.open),
                 high: parseFloat(candle.high),
                 low: parseFloat(candle.low),
                 close: parseFloat(candle.close),
-            });
+            };
+            const raw = rawCandlesRef.current;
+            const lastRaw = lastBarOf(raw);
+            const live = liveCandleRef.current;
+            // A closed bar older than the series' last bar never reaches
+            // series.update() ("Cannot update oldest data"), and the forming
+            // bar is never reset here — only adopted when it IS this bucket.
+            const plan = planClosedCandle(bar.time, lastRaw?.time ?? null, live?.time ?? null);
+            if (plan.history === "ignore") return;
 
-            liveCandleRef.current = null;
+            if (plan.updateSeries) seriesRef.current.update(toLW(bar));
+            if (plan.adoptAsLive) liveCandleRef.current = bar;
 
             const newCandle: Candle = {
                 ts: new Date(candle.ts).toISOString(),
@@ -1872,13 +1880,14 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 close: candle.close,
                 volume: candle.volume ?? "0",
             };
-            rawCandlesRef.current = [...rawCandlesRef.current, newCandle];
-            renderOverlays(rawCandlesRef.current);
+            rawCandlesRef.current =
+                plan.history === "replace" ? [...raw.slice(0, -1), newCandle] : [...raw, newCandle];
+            renderOverlaysRef.current(rawCandlesRef.current);
         };
 
         const handle = datafeedRef.current.subscribeBars(selectedPairId, timeframe, handlePriceTick, handleCandleClosed);
         return () => datafeedRef.current.unsubscribeBars(handle);
-    }, [selectedPairId, timeframe, renderOverlays, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
+    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
 
     // Liquidity zones: fetch on mount + 60s refresh
     useEffect(() => {
