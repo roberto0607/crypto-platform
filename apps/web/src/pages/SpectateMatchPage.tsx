@@ -12,6 +12,7 @@ import { getMatch, spectateMatch, unspectateMatch, type Match } from "@/api/endp
 import { listMatchChatMessages } from "@/api/endpoints/matchChat";
 import { waitForStreamId } from "@/api/sse";
 import { createDatafeedAdapter } from "@/lib/datafeedAdapter";
+import { applyTick, planClosedCandle, reconcileForming, type Bar } from "@/lib/formingCandle";
 import { useAppStore } from "@/stores/appStore";
 import type {
     MatchPnlUpdateEvent,
@@ -263,14 +264,29 @@ export default function SpectateMatchPage() {
         });
 
         let cancelled = false;
-        let liveCandle: { time: UTCTimestamp; open: number; high: number; low: number; close: number } | null = null;
+        // Same forming-bar rules as the trade chart (lib/formingCandle.ts):
+        // seeded from the API's partial row, extended by ticks, never rewound
+        // by a late candle.closed.
+        let lastClosed: Bar | null = null;
+        let liveCandle: Bar | null = null;
+        let ready = false;
+        const toBar = (c: { ts: string; open: string; high: string; low: string; close: string }): Bar => ({
+            time: sec(new Date(c.ts).getTime()),
+            open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close),
+        });
+        const toLW = (b: Bar) => ({ ...b, time: b.time as UTCTimestamp });
 
         datafeedRef.current.getBars(selectedPairId, TIMEFRAME, { limit: 300 }).then((candles) => {
             if (cancelled || !candles) return;
-            series.setData(candles.map((c) => ({
-                time: sec(new Date(c.ts).getTime()),
-                open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close),
-            })));
+            const last = candles[candles.length - 1];
+            const partial = last?.partial ? last : null;
+            const closed = (partial ? candles.slice(0, -1) : candles).map(toBar);
+            lastClosed = closed[closed.length - 1] ?? null;
+            const seeded = reconcileForming(closed, partial ? toBar(partial) : null);
+            const { bars, live } = reconcileForming(seeded.bars, liveCandle);
+            liveCandle = live ?? seeded.live;
+            series.setData(bars.map(toLW));
+            ready = true;
             chart.timeScale().fitContent();
         });
 
@@ -278,23 +294,23 @@ export default function SpectateMatchPage() {
             selectedPairId,
             TIMEFRAME,
             (tick) => {
-                const price = parseFloat(tick.last);
-                const bucketed = (Math.floor(Date.now() / 1000 / 300) * 300) as UTCTimestamp;
-                if (liveCandle && liveCandle.time === bucketed) {
-                    liveCandle.high = Math.max(liveCandle.high, price);
-                    liveCandle.low = Math.min(liveCandle.low, price);
-                    liveCandle.close = price;
-                } else {
-                    liveCandle = { time: bucketed, open: price, high: price, low: price, close: price };
-                }
-                series.update(liveCandle);
+                const bucket = Math.floor(Date.now() / 1000 / 300) * 300;
+                const next = applyTick(liveCandle, ready ? lastClosed : null, bucket, parseFloat(tick.last));
+                if (!next) return;
+                liveCandle = next;
+                if (ready) series.update(toLW(next));
             },
             (candle) => {
-                series.update({
+                if (!ready) return;
+                const bar: Bar = {
                     time: sec(candle.ts),
                     open: parseFloat(candle.open), high: parseFloat(candle.high), low: parseFloat(candle.low), close: parseFloat(candle.close),
-                });
-                liveCandle = null;
+                };
+                const plan = planClosedCandle(bar.time, lastClosed?.time ?? null, liveCandle?.time ?? null);
+                if (plan.history === "ignore") return;
+                lastClosed = bar;
+                if (plan.updateSeries) series.update(toLW(bar));
+                if (plan.adoptAsLive) liveCandle = bar;
             },
         );
 

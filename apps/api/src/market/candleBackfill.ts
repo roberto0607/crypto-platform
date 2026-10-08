@@ -55,20 +55,33 @@ export interface BackfillResult {
 }
 
 /**
- * True when the most recent candle for this (pair, timeframe) is recent
- * enough that a full 7-day re-walk would be wasted work — e.g. on every
- * boot once the curated universe is ~75 pairs. "Recent" allows a few candle
- * periods of slack, since backfill runs once at boot and the live feed's
- * candle aggregator may not have flushed the very latest bar yet.
+ * After a restart the live aggregator (every 1m at minute close) and
+ * krakenCandleSyncJob (the last 15 minutes of 1m every 60s) write the newest
+ * rows within the first minute — so "is the newest row recent?" was true even
+ * with a long gap right before them, and a pair whose backfill ran a minute
+ * after boot skipped its 1m backfill entirely. Recency is judged on the rows
+ * that ended before this window instead.
+ */
+const POST_BOOT_WRITE_WINDOW_MS = 15 * 60_000;
+
+/**
+ * True when this (pair, timeframe) has data reaching up to the post-boot
+ * write window — so a full 7-day re-walk would be wasted work (e.g. on every
+ * boot once the curated universe is ~75 pairs). "Reaching up" allows a few
+ * candle periods of slack.
  */
 async function hasRecentCandle(pairId: string, timeframe: string, candleSeconds: number): Promise<boolean> {
+    const cutoffMs = Date.now() - POST_BOOT_WRITE_WINDOW_MS;
     const { rows } = await pool.query<{ ts: string }>(
-        `SELECT ts FROM candles WHERE pair_id = $1 AND timeframe = $2 ORDER BY ts DESC LIMIT 1`,
-        [pairId, timeframe],
+        `SELECT ts FROM candles
+         WHERE pair_id = $1 AND timeframe = $2
+           AND ts + make_interval(secs => $3) <= to_timestamp($4 / 1000.0)
+         ORDER BY ts DESC LIMIT 1`,
+        [pairId, timeframe, candleSeconds, cutoffMs],
     );
     if (rows.length === 0) return false;
-    const ageSeconds = (Date.now() - new Date(rows[0]!.ts).getTime()) / 1000;
-    return ageSeconds < candleSeconds * 3;
+    const endMs = new Date(rows[0]!.ts).getTime() + candleSeconds * 1000;
+    return cutoffMs - endMs < candleSeconds * 3 * 1000;
 }
 
 export async function insertCandleBatch(
@@ -173,17 +186,20 @@ async function backfillPairTimeframe(
 }
 
 /**
- * Roll up 4h candles from 1h data for the last 7 days.
+ * Roll up 4h candles from 1h data, bounded to whole, finished buckets:
+ * [start of the 4h bucket holding now − 7d, start of the current 4h bucket).
+ * An unaligned start would roll a partial first bucket over a correct row;
+ * the current bucket is still forming (served by formingCandle.ts, stored by
+ * the rollup job once it closes). Buckets are epoch-aligned UTC, independent
+ * of the session TimeZone.
  */
-async function rollup4hFromHourly(pairId: string): Promise<number> {
-    const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS * 1000).toISOString();
-
+async function rollup4hFromHourly(pairId: string, nowMs: number = Date.now()): Promise<number> {
     const result = await pool.query(
         `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
          SELECT
              pair_id,
              '4h',
-             date_trunc('day', ts) + (FLOOR(EXTRACT(HOUR FROM ts) / 4) * INTERVAL '4 hours') AS bucket,
+             to_timestamp(floor(extract(epoch FROM ts) / 14400) * 14400) AS bucket,
              (ARRAY_AGG(open ORDER BY ts ASC))[1],
              MAX(high),
              MIN(low),
@@ -192,37 +208,36 @@ async function rollup4hFromHourly(pairId: string): Promise<number> {
          FROM candles
          WHERE pair_id = $1
            AND timeframe = '1h'
-           AND ts >= $2
+           AND ts >= to_timestamp(floor($2::double precision / 14400) * 14400)
+           AND ts <  to_timestamp(floor($3::double precision / 14400) * 14400)
          GROUP BY pair_id, bucket
-         HAVING COUNT(*) >= 3
+         HAVING COUNT(*) = 4  -- every hour present; never roll a gap over a good row
          ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
              open = EXCLUDED.open,
              high = EXCLUDED.high,
              low = EXCLUDED.low,
              close = EXCLUDED.close,
              volume = EXCLUDED.volume`,
-        [pairId, sevenDaysAgo],
+        [pairId, nowMs / 1000 - SEVEN_DAYS, nowMs / 1000],
     );
 
     return result.rowCount ?? 0;
 }
 
 /**
- * Roll up 1w candles from 1d data for the last 90 days. Weekly buckets use
- * Postgres's native date_trunc('week', ts) — ISO-8601, Monday 00:00 UTC —
- * matching weeklyUtils.ts's week convention and candleRollupJob.ts's
- * Monday-aligned 1w bucketing. A wider lookback than the 4h rollup's 7 days
- * since weekly buckets are much coarser and 1d history typically runs deeper.
+ * Roll up 1w candles from 1d data for the last 90 days, bounded the same way
+ * as the 4h rollup: whole ISO weeks (Monday 00:00 UTC — weeklyUtils.ts and
+ * candleRollupJob.ts use the same boundaries) from the week holding
+ * now − 90d up to, not including, the current week. A wider lookback than
+ * the 4h rollup's 7 days since weekly buckets are much coarser.
  */
-async function rollup1wFromDaily(pairId: string): Promise<number> {
-    const ninetyDaysAgo = new Date(Date.now() - NINETY_DAYS * 1000).toISOString();
-
+async function rollup1wFromDaily(pairId: string, nowMs: number = Date.now()): Promise<number> {
     const result = await pool.query(
         `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
          SELECT
              pair_id,
              '1w',
-             date_trunc('week', ts) AS bucket,
+             date_trunc('week', ts AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket,
              (ARRAY_AGG(open ORDER BY ts ASC))[1],
              MAX(high),
              MIN(low),
@@ -231,20 +246,24 @@ async function rollup1wFromDaily(pairId: string): Promise<number> {
          FROM candles
          WHERE pair_id = $1
            AND timeframe = '1d'
-           AND ts >= $2
+           AND ts >= date_trunc('week', to_timestamp($2::double precision) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+           AND ts <  date_trunc('week', to_timestamp($3::double precision) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
          GROUP BY pair_id, bucket
-         HAVING COUNT(*) >= 5
+         HAVING COUNT(*) = 7  -- every day present
          ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
              open = EXCLUDED.open,
              high = EXCLUDED.high,
              low = EXCLUDED.low,
              close = EXCLUDED.close,
              volume = EXCLUDED.volume`,
-        [pairId, ninetyDaysAgo],
+        [pairId, nowMs / 1000 - NINETY_DAYS, nowMs / 1000],
     );
 
     return result.rowCount ?? 0;
 }
+
+/** TEST-ONLY — the boot rollups, for running against a real database. */
+export const __bootRollupsForTest = { rollup4hFromHourly, rollup1wFromDaily };
 
 /**
  * Run the candle backfill for all active pairs and timeframes.

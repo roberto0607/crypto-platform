@@ -29,6 +29,9 @@ interface OpenCandle {
 const openCandles = new Map<string, OpenCandle>();
 // Newest minute a candle has been opened for, per pair. Never moves back.
 const latestMinute = new Map<string, number>();
+// The most recent finished minute per pair — the previous close for a
+// forming candle until that minute's row is readable from the DB.
+const lastClosed = new Map<string, { minuteKey: number; close: string }>();
 
 const lateTicksDropped = new client.Counter({
     name: "tradr_candle_late_ticks_dropped_total",
@@ -69,6 +72,13 @@ export function aggregateTick(pairId: string, tick: Tick): void {
     const sellVol = tick.side === "sell" ? vol : 0;
 
     if (!existing || existing.minuteKey !== minuteKey) {
+        // The previous minute is over the moment a newer one opens: store it
+        // NOW. (Waiting for the 5s flush lost it — the new candle replaced it
+        // in memory first, so most live minutes were never stored.)
+        if (existing) {
+            openCandles.delete(pairId);
+            void flushCandle(existing);
+        }
         // New candle for this minute
         latestMinute.set(pairId, minuteKey);
         openCandles.set(pairId, {
@@ -98,15 +108,69 @@ export function aggregateTick(pairId: string, tick: Tick): void {
 }
 
 /**
- * Flush all completed 1m candles (where the current minute has moved past them).
- * Called periodically by the Kraken feed interval.
+ * Store one finished 1m candle (MARKET_SYMBOLS pairs only) and publish
+ * candle.closed. The write REPLACES the row — every candle writer does
+ * (live, Kraken REST, Coinbase backfill, rollups), so a minute written twice
+ * holds the last writer's values instead of summed volume.
+ */
+async function flushCandle(candle: OpenCandle, storable?: Set<string>): Promise<void> {
+    const { pairId } = candle;
+    const ts = new Date(candle.minuteKey).toISOString();
+    const prev = lastClosed.get(pairId);
+    if (!prev || prev.minuteKey < candle.minuteKey) {
+        lastClosed.set(pairId, { minuteKey: candle.minuteKey, close: candle.close });
+    }
+
+    try {
+        // MARKET_SYMBOLS allowlist: only these pairs are persisted. Others still
+        // publish candle.closed below so their live charts keep updating.
+        const ids = storable ?? await getMarketDataPairIds();
+        if (ids.has(pairId)) {
+            await pool.query(
+                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
+                 VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
+                     open = EXCLUDED.open,
+                     high = EXCLUDED.high,
+                     low = EXCLUDED.low,
+                     close = EXCLUDED.close,
+                     volume = EXCLUDED.volume,
+                     buy_volume = EXCLUDED.buy_volume,
+                     sell_volume = EXCLUDED.sell_volume`,
+                [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.buyVolume, candle.sellVolume],
+            );
+        }
+
+        // Publish candle.closed event for live chart updates
+        publish(createEvent("candle.closed", {
+            pairId,
+            timeframe: "1m",
+            ts: candle.minuteKey,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+            buyVolume: candle.buyVolume,
+            sellVolume: candle.sellVolume,
+        }));
+
+        logger.debug(
+            { pairId, ts, close: candle.close, ticks: candle.tickCount },
+            "1m_candle_flushed",
+        );
+    } catch (err) {
+        logger.error({ err, pairId, ts }, "candle_flush_db_error");
+    }
+}
+
+/**
+ * Flush 1m candles whose minute ended without a newer tick to roll them
+ * (quiet markets). Called periodically by the Kraken feed interval.
  */
 export async function flushDueCandles(): Promise<void> {
-    const now = Date.now();
-    const currentMinute = minuteFloor(now);
+    const currentMinute = minuteFloor(Date.now());
 
-    // MARKET_SYMBOLS allowlist: only these pairs are persisted. Others still
-    // publish candle.closed below so their live charts keep updating.
     let storable: Set<string>;
     try {
         storable = await getMarketDataPairIds();
@@ -117,54 +181,53 @@ export async function flushDueCandles(): Promise<void> {
 
     for (const [pairId, candle] of openCandles) {
         if (candle.minuteKey >= currentMinute) continue; // Still open
-
-        // This candle's minute is complete — flush to DB
-        const ts = new Date(candle.minuteKey).toISOString();
-
-        try {
-            if (storable.has(pairId)) {
-                await pool.query(
-                    `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume, buy_volume, sell_volume)
-                     VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9)
-                     ON CONFLICT (pair_id, timeframe, ts) DO UPDATE SET
-                         open = EXCLUDED.open,
-                         high = GREATEST(candles.high, EXCLUDED.high),
-                         low = LEAST(candles.low, EXCLUDED.low),
-                         close = EXCLUDED.close,
-                         volume = candles.volume + EXCLUDED.volume,
-                         buy_volume = candles.buy_volume + EXCLUDED.buy_volume,
-                         sell_volume = candles.sell_volume + EXCLUDED.sell_volume`,
-                    [pairId, ts, candle.open, candle.high, candle.low, candle.close, candle.volume, candle.buyVolume, candle.sellVolume],
-                );
-            }
-
-            // Publish candle.closed event for live chart updates
-            publish(createEvent("candle.closed", {
-                pairId,
-                timeframe: "1m",
-                ts: candle.minuteKey,
-                open: candle.open,
-                high: candle.high,
-                low: candle.low,
-                close: candle.close,
-                volume: candle.volume,
-                buyVolume: candle.buyVolume,
-                sellVolume: candle.sellVolume,
-            }));
-
-            logger.debug(
-                { pairId, ts, close: candle.close, ticks: candle.tickCount },
-                "1m_candle_flushed",
-            );
-        } catch (err) {
-            logger.error({ err, pairId, ts }, "candle_flush_db_error");
-        }
-
-        // Remove flushed candle (current minute's candle, if any, stays)
-        if (candle.minuteKey < currentMinute) {
-            openCandles.delete(pairId);
-        }
+        openCandles.delete(pairId);
+        await flushCandle(candle, storable);
     }
+}
+
+/**
+ * Seed the pair's in-progress minute from an exchange snapshot (Kraken
+ * REST's in-progress OHLC entry at boot), so the minute the server came up
+ * in keeps its real open/high/low instead of starting at the first tick.
+ * Marks the minute as the pair's newest, so replayed trades for older
+ * minutes are dropped. A snapshot for a minute older than the newest one is
+ * ignored; for the open minute it merges (snapshot open, combined range,
+ * live close, larger volume).
+ */
+export function seedOpenCandle(
+    pairId: string,
+    snap: { minuteKey: number; open: string; high: string; low: string; close: string; volume: string },
+): void {
+    const newest = latestMinute.get(pairId);
+    if (newest !== undefined && snap.minuteKey < newest) return;
+    const existing = openCandles.get(pairId);
+    if (existing && existing.minuteKey === snap.minuteKey) {
+        existing.open = snap.open;
+        if (parseFloat(snap.high) > parseFloat(existing.high)) existing.high = snap.high;
+        if (parseFloat(snap.low) < parseFloat(existing.low)) existing.low = snap.low;
+        if (parseFloat(snap.volume) > parseFloat(existing.volume)) existing.volume = snap.volume;
+        return;
+    }
+    if (newest !== undefined && snap.minuteKey === newest) return; // already flushed
+    latestMinute.set(pairId, snap.minuteKey);
+    openCandles.set(pairId, {
+        pairId,
+        minuteKey: snap.minuteKey,
+        open: snap.open,
+        high: snap.high,
+        low: snap.low,
+        close: snap.close,
+        volume: snap.volume,
+        buyVolume: "0",
+        sellVolume: "0",
+        tickCount: 0,
+    });
+}
+
+/** The most recent finished minute's close for a pair, if one closed since boot. */
+export function getLastClosed(pairId: string): { minuteKey: number; close: string } | undefined {
+    return lastClosed.get(pairId);
 }
 
 /** For testing: get current open candle state */
@@ -176,5 +239,6 @@ export function getOpenCandle(pairId: string): OpenCandle | undefined {
 export function __resetCandleAggregatorForTest(): void {
     openCandles.clear();
     latestMinute.clear();
+    lastClosed.clear();
     lateTicksDropped.reset();
 }

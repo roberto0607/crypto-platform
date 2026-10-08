@@ -38,6 +38,9 @@ vi.mock("../../events/eventBus.js", () => ({ publish }));
 const query = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ rows: [] })));
 vi.mock("../../db/pool.js", () => ({ pool: { query } }));
 vi.mock("../../market/marketSymbols.js", () => ({ getMarketDataPairIds: async () => new Set(["pair-btc"]) }));
+// BTC/USD candles are Kraken-sourced in production (candleSource.ts); these
+// tests exercise the Coinbase → aggregator path every Coinbase-sourced symbol uses.
+vi.mock("../../market/candleSource.js", () => ({ candleSourceFor: () => "coinbase" }));
 vi.mock("../../observability/logContext.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 import { startCoinbaseFeed, __resetCoinbaseWsForTest } from "../coinbaseWs";

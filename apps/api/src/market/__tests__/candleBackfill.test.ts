@@ -23,6 +23,7 @@ describe("runBackfill recency skip", () => {
     let quoteAssetId: string;
     let originalFetch: typeof fetch;
     let fetchCallCount: number;
+    let fetchedUrls: string[] = [];
 
     beforeEach(async () => {
         uid = Math.random().toString(36).slice(2, 8);
@@ -53,10 +54,12 @@ describe("runBackfill recency skip", () => {
         );
 
         fetchCallCount = 0;
+        fetchedUrls = [];
         originalFetch = global.fetch;
         global.fetch = (async (url: string | URL | Request) => {
             fetchCallCount++;
             const href = url.toString();
+            fetchedUrls.push(href);
             if (href.includes("coinbase.com")) {
                 return new Response(JSON.stringify({ candles: [] }), { status: 200 });
             }
@@ -71,13 +74,18 @@ describe("runBackfill recency skip", () => {
         await pool.query(`DELETE FROM assets WHERE id = ANY($1)`, [[baseAssetId, quoteAssetId]]);
     });
 
+    // A row that ended just before the post-boot write window (the last
+    // 15 min, which live/REST fill right after a restart): data reaching up
+    // to the restart.
+    const uptoBoot = (tf: string, seconds: number) => pool.query(
+        `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+         VALUES ($1, $2, now() - make_interval(secs => $3) - interval '16 minutes', 100, 100, 100, 100, 1)`,
+        [pairId, tf, seconds],
+    );
+
     it("skips a timeframe with a recent candle and fetches ones that are missing/stale", async () => {
-        // Fresh 1m candle (now) → should be skipped.
-        await pool.query(
-            `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-             VALUES ($1, '1m', now(), 100, 100, 100, 100, 1)`,
-            [pairId],
-        );
+        // 1m data up to the restart → should be skipped.
+        await uptoBoot("1m", 60);
         // Stale 1h candle (10 days old) → should NOT be skipped.
         await pool.query(
             `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
@@ -99,18 +107,34 @@ describe("runBackfill recency skip", () => {
     });
 
     it("skips every timeframe (including the 4h and 1w rollups) once all are recent", async () => {
-        for (const tf of ["1m", "5m", "15m", "1h", "1d", "4h", "1w"]) {
-            await pool.query(
-                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-                 VALUES ($1, $2, now(), 100, 100, 100, 100, 1)`,
-                [pairId, tf],
-            );
-        }
+        const secs: Record<string, number> = { "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400, "4h": 14400, "1w": 604800 };
+        for (const [tf, s] of Object.entries(secs)) await uptoBoot(tf, s);
 
         const result = await runBackfill({ marketSymbols: new Set([`CB${uid.toUpperCase()}/USD`]) });
 
         expect(result.totalSkipped).toBe(7); // 5 fetch timeframes + the 4h rollup check + the 1w rollup check
         expect(fetchCallCount).toBe(0);
+        expect(result.totalErrors).toBe(0);
+    });
+
+    it("a gap hidden behind fresh post-boot rows is still backfilled", async () => {
+        // Live/REST wrote the minutes since boot; the newest row before them is an hour old.
+        for (const ago of ["1 minute", "2 minutes", "10 minutes"]) {
+            await pool.query(
+                `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+                 VALUES ($1, '1m', date_trunc('minute', now()) - $2::interval, 100, 100, 100, 100, 1)`,
+                [pairId, ago],
+            );
+        }
+        await pool.query(
+            `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
+             VALUES ($1, '1m', now() - interval '60 minutes', 100, 100, 100, 100, 1)`,
+            [pairId],
+        );
+
+        const result = await runBackfill({ marketSymbols: new Set([`CB${uid.toUpperCase()}/USD`]) });
+        const oneMinuteFetches = fetchedUrls.filter((u) => u.includes("ONE_MINUTE"));
+        expect(oneMinuteFetches.length).toBeGreaterThan(0);
         expect(result.totalErrors).toBe(0);
     });
 });

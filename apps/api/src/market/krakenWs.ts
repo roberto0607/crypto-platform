@@ -6,6 +6,8 @@ import { loadActiveSymbols, type ActiveSymbol } from "./symbolRegistry.js";
 import { pool } from "../db/pool.js";
 import { config } from "../config.js";
 import { aggregateTick, flushDueCandles } from "./candleAggregator.js";
+import { candleSourceFor } from "./candleSource.js";
+import { seedOpenCandlesFromKrakenRest } from "./formingCandle.js";
 import { runBackfill } from "./candleBackfill.js";
 import { logger } from "../observability/logContext.js";
 import {
@@ -68,6 +70,7 @@ let stopped = false;
 let flushInterval: ReturnType<typeof setInterval> | null = null;
 let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let backfillDone = false;
+let formingSeedDone = false;
 
 // KRAKEN_BACKOFF + the combined 10-min reconnect budget are shared with
 // footprintAggregator.ts's socket (krakenReconnectTracker.ts).
@@ -203,7 +206,10 @@ async function handleTickerMessage(data: any[]): Promise<void> {
         if (pairId) {
             // Feed ticker into candle aggregator as safety net.
             // Volume "0" = synthetic tick — ensures candles form even with no trades.
-            aggregateTick(pairId, { price: last, volume: "0", ts: Date.now() });
+            // Only for Kraken-sourced symbols (see candleSource.ts).
+            if (candleSourceFor(ourSymbol) === "kraken") {
+                aggregateTick(pairId, { price: last, volume: "0", ts: Date.now() });
+            }
 
             // Fallback price.tick publish — Coinbase is the primary source
             // (coinbaseWs.ts's trade handler) as of Gate 1. Only publish here
@@ -262,7 +268,9 @@ function handleTradeMessage(data: any[]): void {
         const side = krakenTradeSide(trade);
         recordFeedTick("kraken_trade", ourSymbol, trade.timestamp ? ts : null);
 
-        aggregateTick(pairId, { price, volume, ts, side });
+        if (candleSourceFor(ourSymbol) === "kraken") {
+            aggregateTick(pairId, { price, volume, ts, side });
+        }
 
         // Pressure aggregator hook — runs AFTER aggregateTick so a failure
         // here can never break the existing CVD/candle path.
@@ -414,6 +422,16 @@ function connect(): void {
                     logger.error({ err }, "kraken_ws_symbol_reconcile_failed");
                 });
             }, SYMBOL_REFRESH_INTERVAL_MS);
+        }
+
+        // One-time: seed each Kraken-sourced pair's in-progress minute from
+        // Kraken REST, so the boot minute keeps its real open (fire-and-forget).
+        if (!formingSeedDone) {
+            formingSeedDone = true;
+            const pairs = Object.entries(symbolToPairId).map(([symbol, pairId]) => ({ symbol, pairId }));
+            seedOpenCandlesFromKrakenRest(pairs)
+                .then((seeded) => logger.info({ seeded }, "forming_candle_seed_complete"))
+                .catch((e) => logger.error({ err: e }, "forming_candle_seed_failed"));
         }
 
         // One-time candle backfill on first connect (fire-and-forget)
@@ -615,6 +633,7 @@ export function __resetKrakenWsForTest(): void {
     wsToOurSymbol = {};
     symbolToPairId = {};
     symbolsReady = false;
+    formingSeedDone = false;
     bookTracker = new StalenessTracker({ staleMs: config.feedKrakenBookStaleMs, ...trackerOpts() });
     heartbeatTracker = new StalenessTracker({ staleMs: config.feedKrakenHeartbeatStaleMs, ...trackerOpts() });
     backoff = new ReconnectBackoff(KRAKEN_BACKOFF);

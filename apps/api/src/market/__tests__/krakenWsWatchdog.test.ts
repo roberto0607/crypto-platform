@@ -34,6 +34,7 @@ vi.mock("../symbolRegistry.js", () => ({
 }));
 vi.mock("../candleAggregator.js", () => ({ aggregateTick: vi.fn(), flushDueCandles: vi.fn(async () => {}) }));
 vi.mock("../candleBackfill.js", () => ({ runBackfill: vi.fn(async () => ({})) }));
+vi.mock("../formingCandle.js", () => ({ seedOpenCandlesFromKrakenRest: vi.fn(async () => 0) }));
 vi.mock("../snapshotStore", () => ({ setSnapshot: vi.fn(async () => {}) }));
 vi.mock("../../events/eventBus", () => ({ publish: vi.fn() }));
 vi.mock("../../db/pool.js", () => ({ pool: { query: vi.fn(async () => ({ rows: [] })) } }));

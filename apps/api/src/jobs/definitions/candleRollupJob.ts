@@ -6,16 +6,24 @@ import { filterMarketDataPairs } from "../../market/marketSymbols.js";
 /**
  * Rollup 1m candles into higher timeframes.
  *
- * Strategy: For each (pair, target_timeframe), find the latest candle
- * in that timeframe, then aggregate 1m candles since that point.
+ * Strategy: For each (pair, target_timeframe), re-aggregate from the earlier
+ * of (a) the latest candle in that timeframe and (b) the start of the bucket
+ * containing now − 15 min. (b) matters because finished 1m rows keep
+ * changing for 15 minutes: the live aggregator writes each minute when it
+ * closes, then krakenCandleSyncJob replaces the last 15 minutes with Kraken's
+ * values every 60s. Starting only from (a) froze a bucket at whatever its 1m
+ * rows held at its first rollup.
  */
 
-interface RollupConfig {
+/** Kraken REST re-syncs this much 1m history every run (krakenCandleSyncJob). */
+export const ROLLUP_LOOKBACK_MS = 15 * 60_000;
+
+export interface RollupConfig {
     timeframe: string;
     minutes: number;
 }
 
-const ROLLUPS: RollupConfig[] = [
+export const ROLLUPS: RollupConfig[] = [
     { timeframe: "5m", minutes: 5 },
     { timeframe: "15m", minutes: 15 },
     { timeframe: "1h", minutes: 60 },
@@ -45,14 +53,20 @@ function bucketOffsetMs(intervalMinutes: number): number {
     return intervalMinutes === WEEK_MINUTES ? MONDAY_EPOCH_OFFSET_MS : 0;
 }
 
-function floorToInterval(ts: Date, intervalMinutes: number): Date {
+export function floorToInterval(ts: Date, intervalMinutes: number): Date {
     const ms = ts.getTime();
     const intervalMs = intervalMinutes * 60_000;
     const offset = bucketOffsetMs(intervalMinutes);
     return new Date(Math.floor((ms + offset) / intervalMs) * intervalMs - offset);
 }
 
-async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void> {
+/** Where a rollup run starts: never later than the bucket holding now − 15 min. */
+export function rollupSince(latestTs: Date | null, now: Date, intervalMinutes: number): Date {
+    const lookback = floorToInterval(new Date(now.getTime() - ROLLUP_LOOKBACK_MS), intervalMinutes);
+    return latestTs && latestTs.getTime() < lookback.getTime() ? latestTs : lookback;
+}
+
+export async function rollupForPair(pairId: string, rollup: RollupConfig, now: Date = new Date()): Promise<void> {
     // Find the latest candle for this timeframe
     const { rows: latest } = await pool.query<{ ts: string }>(
         `SELECT ts FROM candles
@@ -61,10 +75,11 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
         [pairId, rollup.timeframe],
     );
 
-    // Start from latest existing candle, or from the oldest 1m candle
+    // Start from the latest existing candle (or the lookback bucket, if
+    // earlier), or from the oldest 1m candle
     let since: Date;
     if (latest.length > 0) {
-        since = new Date(latest[0].ts);
+        since = rollupSince(new Date(latest[0].ts), now, rollup.minutes);
     } else {
         const { rows: oldest } = await pool.query<{ ts: string }>(
             `SELECT ts FROM candles
@@ -119,7 +134,6 @@ async function rollupForPair(pairId: string, rollup: RollupConfig): Promise<void
     );
 
     // Skip the last bucket (may still be in progress)
-    const now = new Date();
     const currentBucket = floorToInterval(now, rollup.minutes);
 
     for (const row of rows) {

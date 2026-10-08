@@ -51,7 +51,9 @@ export function bucketTime(epochSec: number, tf: Timeframe): number {
  * - Same bucket as the forming bar → extend it.
  * - Same bucket as the last history bar (no newer forming bar) → extend that
  *   bar instead of replacing it with a one-tick bar.
- * - Otherwise a new bucket starts at this price.
+ * - Otherwise a new bucket opens at the previous bar's close (so consecutive
+ *   bars connect, same as the API's forming candle), or at this price when
+ *   there is no previous bar.
  *
  * Never mutates its inputs; returns the new forming bar.
  */
@@ -77,7 +79,9 @@ export function applyTick(
             close: price,
         };
     }
-    return { time: bucket, open: price, high: price, low: price, close: price };
+    const prev = live && lastHistory ? (live.time > lastHistory.time ? live : lastHistory) : live ?? lastHistory;
+    const open = prev ? prev.close : price;
+    return { time: bucket, open, high: Math.max(open, price), low: Math.min(open, price), close: price };
 }
 
 export interface ClosedPlan {
