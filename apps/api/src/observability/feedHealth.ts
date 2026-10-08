@@ -10,6 +10,9 @@
  *   - WS reconnects per exchange, with the cause and close code/reason
  *   - event-loop lag (perf_hooks.monitorEventLoopDelay), rolled every 10s
  *
+ *   - feed watchdog trips (kill / would_kill), per-symbol stale state and
+ *     the current reconnect backoff (market/feedWatchdog.ts via krakenWs.ts)
+ *
  * Exposed both as Prometheus metrics (default registry, scraped via
  * /metrics) and as a JSON snapshot for GET /v1/market/feed-health, which
  * backs the browser's ?debug=1 overlay.
@@ -19,7 +22,13 @@ import client from "prom-client";
 
 export type FeedName = "kraken_ticker" | "kraken_trade" | "kraken_book" | "coinbase_trade";
 export type FeedExchange = "kraken" | "coinbase";
-export type ReconnectCause = "watchdog_stale" | "socket_error" | "socket_close";
+export type ReconnectCause =
+    | "watchdog_stale" // the 30s whole-socket ticker safety net
+    | "watchdog_heartbeat_stale"
+    | "watchdog_book_stale"
+    | "socket_error"
+    | "socket_close";
+export type WatchdogAction = "kill" | "would_kill";
 
 interface TickStat {
     lastReceivedAt: number;
@@ -85,6 +94,34 @@ export function recordFeedReconnect(
     });
     if (entry.recent.length > RECENT_RECONNECTS) entry.recent.shift();
     feedReconnectsTotal.inc({ exchange, cause });
+}
+
+// ── Feed watchdog ──
+
+// "exchange|channel|symbol" → stale (1) / fresh (0)
+const staleState = new Map<string, { exchange: FeedExchange; channel: string; symbol: string; stale: boolean }>();
+const backoffSeconds = new Map<FeedExchange, number>();
+
+export function recordWatchdogTrip(
+    exchange: FeedExchange,
+    cause: ReconnectCause,
+    symbol: string,
+    action: WatchdogAction,
+): void {
+    feedWatchdogTripsTotal.inc({ exchange, cause, symbol, action });
+}
+
+export function setFeedStale(exchange: FeedExchange, channel: string, symbol: string, stale: boolean): void {
+    staleState.set(`${exchange}|${channel}|${symbol}`, { exchange, channel, symbol, stale });
+}
+
+/** Drop all stale-state series for an exchange (on disconnect, before the next socket's first check). */
+export function clearFeedStale(exchange: FeedExchange): void {
+    for (const [key, v] of staleState) if (v.exchange === exchange) staleState.delete(key);
+}
+
+export function setReconnectBackoff(exchange: FeedExchange, delayMs: number): void {
+    backoffSeconds.set(exchange, delayMs / 1000);
 }
 
 // ── Event-loop lag ──
@@ -199,6 +236,9 @@ const ALL_FEEDS: FeedName[] = ["kraken_ticker", "kraken_trade", "kraken_book", "
 export function __resetFeedHealthForTest(): void {
     ticks.clear();
     reconnects.clear();
+    staleState.clear();
+    backoffSeconds.clear();
+    feedWatchdogTripsTotal.reset();
     loopWindow = null;
     loopMaxSinceBootMs = 0;
     feedReconnectsTotal.reset();
@@ -215,6 +255,34 @@ const feedReconnectsTotal = new client.Counter({
     name: "tradr_feed_ws_reconnects_total",
     help: "Exchange WS reconnects scheduled, by exchange and cause",
     labelNames: ["exchange", "cause"] as const,
+});
+
+const feedWatchdogTripsTotal = new client.Counter({
+    name: "tradr_feed_watchdog_trips_total",
+    help: "Feed watchdog stale episodes, by exchange, cause, symbol (\"_connection\" for heartbeat/safety net) and action (kill, or would_kill while the kill is disabled)",
+    labelNames: ["exchange", "cause", "symbol", "action"] as const,
+});
+
+new client.Gauge({
+    name: "tradr_feed_symbol_stale",
+    help: "1 while the feed watchdog considers a symbol's channel stale on the current connection, else 0",
+    labelNames: ["exchange", "channel", "symbol"] as const,
+    collect() {
+        this.reset();
+        for (const v of staleState.values()) {
+            this.set({ exchange: v.exchange, channel: v.channel, symbol: v.symbol }, v.stale ? 1 : 0);
+        }
+    },
+});
+
+new client.Gauge({
+    name: "tradr_feed_reconnect_backoff_seconds",
+    help: "Delay chosen for the most recently scheduled reconnect, per exchange",
+    labelNames: ["exchange"] as const,
+    collect() {
+        this.reset();
+        for (const [exchange, s] of backoffSeconds) this.set({ exchange }, s);
+    },
 });
 
 new client.Gauge({
