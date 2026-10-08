@@ -55,20 +55,33 @@ export interface BackfillResult {
 }
 
 /**
- * True when the most recent candle for this (pair, timeframe) is recent
- * enough that a full 7-day re-walk would be wasted work — e.g. on every
- * boot once the curated universe is ~75 pairs. "Recent" allows a few candle
- * periods of slack, since backfill runs once at boot and the live feed's
- * candle aggregator may not have flushed the very latest bar yet.
+ * After a restart the live aggregator (every 1m at minute close) and
+ * krakenCandleSyncJob (the last 15 minutes of 1m every 60s) write the newest
+ * rows within the first minute — so "is the newest row recent?" was true even
+ * with a long gap right before them, and a pair whose backfill ran a minute
+ * after boot skipped its 1m backfill entirely. Recency is judged on the rows
+ * that ended before this window instead.
+ */
+const POST_BOOT_WRITE_WINDOW_MS = 15 * 60_000;
+
+/**
+ * True when this (pair, timeframe) has data reaching up to the post-boot
+ * write window — so a full 7-day re-walk would be wasted work (e.g. on every
+ * boot once the curated universe is ~75 pairs). "Reaching up" allows a few
+ * candle periods of slack.
  */
 async function hasRecentCandle(pairId: string, timeframe: string, candleSeconds: number): Promise<boolean> {
+    const cutoffMs = Date.now() - POST_BOOT_WRITE_WINDOW_MS;
     const { rows } = await pool.query<{ ts: string }>(
-        `SELECT ts FROM candles WHERE pair_id = $1 AND timeframe = $2 ORDER BY ts DESC LIMIT 1`,
-        [pairId, timeframe],
+        `SELECT ts FROM candles
+         WHERE pair_id = $1 AND timeframe = $2
+           AND ts + make_interval(secs => $3) <= to_timestamp($4 / 1000.0)
+         ORDER BY ts DESC LIMIT 1`,
+        [pairId, timeframe, candleSeconds, cutoffMs],
     );
     if (rows.length === 0) return false;
-    const ageSeconds = (Date.now() - new Date(rows[0]!.ts).getTime()) / 1000;
-    return ageSeconds < candleSeconds * 3;
+    const endMs = new Date(rows[0]!.ts).getTime() + candleSeconds * 1000;
+    return cutoffMs - endMs < candleSeconds * 3 * 1000;
 }
 
 export async function insertCandleBatch(
