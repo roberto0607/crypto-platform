@@ -53,12 +53,18 @@ describe.each(TIMEFRAMES)("forming bar rules — %s", (tf, sec) => {
             let live = applyTick(null, history, bucketTime(t1 + 1, tf), 106)!;
             live = applyTick(live, history, bucketTime(t1 + sec / 2, tf), 120)!;
             live = applyTick(live, history, bucketTime(t1 + sec - 1, tf), 95)!;
-            expect(live).toEqual(bar(t1, 106, 120, 95, 95));
+            // Opened at history's close (105), not the first tick.
+            expect(live).toEqual(bar(t1, 105, 120, 95, 95));
         });
 
-        it("opens a new bar when the bucket rolls", () => {
+        it("a new bucket opens at the previous bar's close, range includes it", () => {
             const live = bar(t1, 106, 120, 95, 101);
-            expect(applyTick(live, history, bucketTime(t2, tf), 102)).toEqual(bar(t2, 102, 102, 102, 102));
+            expect(applyTick(live, history, bucketTime(t2, tf), 102)).toEqual(bar(t2, 101, 102, 101, 102));
+            expect(applyTick(live, history, bucketTime(t2, tf), 99)).toEqual(bar(t2, 101, 101, 99, 99));
+        });
+
+        it("with no previous bar at all, a new bucket opens at the tick", () => {
+            expect(applyTick(null, null, t1, 77)).toEqual(bar(t1, 77, 77, 77, 77));
         });
 
         it("ignores a tick for a bucket older than the series' last bar", () => {
@@ -121,6 +127,19 @@ describe.each(TIMEFRAMES)("forming bar rules — %s", (tf, sec) => {
         it("appends a newer forming bar", () => {
             const live = bar(t1, 106, 107, 105, 106);
             expect(reconcileForming([history], live)).toEqual({ bars: [history, live], live });
+        });
+
+        it("seeds from the API's partial row, then merges ticks seen during the fetch", () => {
+            // CandlestickChart: reconcile(closed, partial) then reconcile(that, ticks).
+            const partial = bar(t1, 105, 118, 97, 110); // open = previous close
+            const seeded = reconcileForming([history], partial);
+            expect(seeded).toEqual({ bars: [history, partial], live: partial });
+            const ticks = bar(t1, 111, 121, 109, 112);
+            const merged = bar(t1, 105, 121, 97, 112);
+            expect(reconcileForming(seeded.bars, ticks)).toEqual({ bars: [history, merged], live: merged });
+            // A tick for the next bucket during the fetch is appended after the partial bar.
+            const next = bar(t2, 110, 113, 110, 113);
+            expect(reconcileForming(seeded.bars, next)).toEqual({ bars: [history, partial, next], live: next });
         });
 
         it("merges a forming bar of the same bucket into history's bar", () => {

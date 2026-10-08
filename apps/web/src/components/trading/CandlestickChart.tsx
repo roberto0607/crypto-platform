@@ -1440,13 +1440,20 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             if (candles === null) return; // superseded by a newer pair/timeframe switch
             if (!seriesRef.current) return;
 
-            rawCandlesRef.current = candles;
-            const { bars, live } = reconcileForming(candles.map(candleToBar), liveCandleRef.current);
-            liveCandleRef.current = live;
+            // The API ends the latest page with the forming bucket (`partial`):
+            // it seeds the forming bar (real open = previous close, range so
+            // far); ticks that arrived during the fetch merge into it.
+            const last = candles[candles.length - 1];
+            const partial = last?.partial ? last : null;
+            const closed = partial ? candles.slice(0, -1) : candles;
+            rawCandlesRef.current = closed;
+            const seeded = reconcileForming(closed.map(candleToBar), partial ? candleToBar(partial) : null);
+            const { bars, live } = reconcileForming(seeded.bars, liveCandleRef.current);
+            liveCandleRef.current = live ?? seeded.live;
             seriesRef.current.setData(bars.map(toLW));
             historyReadyRef.current = true;
 
-            renderOverlaysRef.current(candles);
+            renderOverlaysRef.current(closed);
 
             // Fit the viewport on first load and on every pair/timeframe switch.
             // Show a recent window (~120 bars) rather
