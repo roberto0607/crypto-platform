@@ -1,15 +1,20 @@
 /**
  * rerollCandles.ts — one-time: re-derive frozen 5m/15m/1h/4h/1d/1w buckets
- * from the stored 1m rows and replace the ones that differ. Logic + safety
- * notes in market/rerollCandles.ts; runbook in docs/runbooks/reroll-candles.md.
+ * from the stored 1m rows. Logic + safety notes in market/rerollCandles.ts;
+ * runbook in docs/runbooks/reroll-candles.md.
+ *
+ * SAFE BY DEFAULT: rewrites only buckets whose OHLC differs from the re-roll
+ * AND whose 1m coverage is complete. Volume-only differences, incomplete
+ * buckets and missing rows are reported, never written, unless opted in.
  *
  * Run AFTER the rollup lookback fix is deployed (otherwise new buckets keep
  * freezing). Usage (from apps/api, DATABASE_URL pointing at the target DB):
  *
- *   pnpm candles:reroll                         # DRY-RUN (default): per TF/symbol counts + samples
+ *   pnpm candles:reroll                         # DRY-RUN (default): counts per TF/symbol + samples
  *   pnpm candles:reroll --tf 5m,1h --symbols BTC/USD   # narrow it
- *   pnpm candles:reroll --ohlc-only             # leave volume-only differences alone
- *   pnpm candles:reroll --commit                # snapshot old rows to JSON, then apply (one transaction)
+ *   pnpm candles:reroll --commit                # snapshot old rows to JSON, then apply OHLC fixes (one transaction)
+ *   pnpm candles:reroll --commit --include-volume   # also rewrite volume-only differences
+ *   pnpm candles:reroll --commit --include-missing  # also insert missing rows (complete 1m coverage)
  *   pnpm candles:reroll --revert <snapshot.json>  # undo a --commit
  *
  * --commit writes candle-reroll-<timestamp>.json (every row it replaces,
@@ -43,21 +48,25 @@ async function main(): Promise<void> {
     const commit = process.argv.includes("--commit");
     const symbols = arg("symbols")?.split(",") ?? tradableSymbols(config.marketSymbols);
     const timeframes = arg("tf")?.split(",");
-    const ohlcOnly = process.argv.includes("--ohlc-only");
-    const plan = await planReroll({ pool, symbols, timeframes, ohlcOnly });
+    const includeVolume = process.argv.includes("--include-volume");
+    const includeMissing = process.argv.includes("--include-missing");
+    const plan = await planReroll({ pool, symbols, timeframes, includeVolume, includeMissing });
+    const skipped = (on: boolean) => (on ? "(fixed)" : "(skipped)");
 
     console.log(`\n=== rerollCandles [${commit ? "COMMIT" : "DRY-RUN"}] at ${plan.nowIso} ===`);
-    console.log(`symbols: ${symbols.join(", ")}${ohlcOnly ? "   (--ohlc-only: volume-only differences left alone)" : ""}`);
-    console.log(`\n  ${"symbol".padEnd(10)}${"tf".padEnd(5)}${"checked".padStart(8)}${"incomplete".padStart(11)}`
-        + `${"unchanged".padStart(10)}${"ohlc".padStart(7)}${"vol-only".padStart(10)}${"missing".padStart(9)}`);
+    console.log(`symbols: ${symbols.join(", ")}`);
+    console.log(`mode:    OHLC fixes only${includeVolume ? " + volume-only" : ""}${includeMissing ? " + missing rows" : ""}`
+        + `${includeVolume || includeMissing ? "" : " (safe default)"}`);
+    const h = ["ohlc fixes", `vol-only ${skipped(includeVolume)}`, "incomplete (skipped)", `missing ${skipped(includeMissing)}`, "unchanged"];
+    console.log(`\n  ${"symbol".padEnd(10)}${"tf".padEnd(5)}${h.map((x) => x.padStart(x.length + 3)).join("")}`);
     for (const s of plan.series) {
-        console.log(`  ${s.symbol.padEnd(10)}${s.timeframe.padEnd(5)}${String(s.bucketsChecked).padStart(8)}`
-            + `${String(s.incomplete).padStart(11)}${String(s.unchanged).padStart(10)}`
-            + `${String(s.changed).padStart(7)}${String(s.volumeOnly).padStart(10)}${String(s.missing).padStart(9)}`);
+        const v = [s.ohlcFixes, s.volumeOnly, s.incomplete, s.missing, s.unchanged];
+        console.log(`  ${s.symbol.padEnd(10)}${s.timeframe.padEnd(5)}${v.map((n, i) => String(n).padStart(h[i]!.length + 3)).join("")}`);
     }
-    console.log(`\n"incomplete" = 1m history doesn't cover every minute of the bucket (left alone).`);
-    console.log(`"ohlc"       = stored open/high/low/close differ from the 1m re-roll (frozen buckets look like this).`);
+    console.log(`\n"ohlc fixes" = stored open/high/low/close differ from the 1m re-roll (frozen buckets) — rewritten.`);
     console.log(`"vol-only"   = only volume differs — typical of exchange-native rows vs the sum of their 1m rows.`);
+    console.log(`"incomplete" = 1m history doesn't cover every minute of the bucket — never touched.`);
+    console.log(`"missing"    = complete 1m coverage but no stored row.`);
 
     const changed = plan.changes.filter((c) => c.old);
     const ohlcChanged = plan.changes.filter((c) => c.kind === "ohlc");

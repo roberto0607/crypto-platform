@@ -10,9 +10,11 @@
  * rows they were rolled from.
  *
  * This re-derives every 5m/15m/1h/4h/1d/1w bucket from the stored 1m rows,
- * with exactly candleRollupJob's bucketing and aggregation, and replaces the
- * stored row where it differs (or inserts one that's missing). Only buckets
- * that are safe to judge are touched:
+ * with exactly candleRollupJob's bucketing and aggregation. By default
+ * (safe mode) it rewrites ONLY buckets whose stored OHLC differs from the
+ * re-roll; volume-only differences and missing rows are reported, not
+ * written (includeVolume / includeMissing opt in). Only buckets that are
+ * safe to judge are ever touched:
  *   - finished, and ended at least ROLLUP_LOOKBACK_MS ago (younger buckets
  *     are still being re-rolled by the job itself);
  *   - FULLY covered by 1m rows (one per minute) — a bucket whose 1m history
@@ -51,9 +53,9 @@ export interface RerollSeriesSummary {
     bucketsChecked: number;   // finished, settled buckets with any 1m data
     incomplete: number;       // skipped: 1m doesn't cover every minute
     unchanged: number;
-    changed: number;          // stored OHLC differs → replace
-    volumeOnly: number;       // only volume differs → replace (skipped with ohlcOnly)
-    missing: number;          // no stored row → insert
+    ohlcFixes: number;        // stored OHLC differs → rewritten
+    volumeOnly: number;       // only volume differs → reported; rewritten only with includeVolume
+    missing: number;          // no stored row → reported; inserted only with includeMissing
 }
 
 export interface RerollPlan {
@@ -68,11 +70,13 @@ export interface RerollOptions {
     timeframes?: string[];        // default: every rollup timeframe
     nowMs?: number;
     /**
-     * Leave volume-only differences alone. Exchange-native rows (Coinbase
-     * backfill) often differ from the sum of their 1m rows in volume only;
-     * frozen buckets usually differ in OHLC too.
+     * Also rewrite volume-only differences. Off by default: exchange-native
+     * rows (Coinbase backfill) often differ from the sum of their 1m rows in
+     * volume only — that's not a frozen bucket.
      */
-    ohlcOnly?: boolean;
+    includeVolume?: boolean;
+    /** Also insert buckets with complete 1m coverage but no stored row. Off by default. */
+    includeMissing?: boolean;
 }
 
 export async function planReroll(opts: RerollOptions): Promise<RerollPlan> {
@@ -140,7 +144,7 @@ export async function planReroll(opts: RerollOptions): Promise<RerollPlan> {
 
             const summary: RerollSeriesSummary = {
                 symbol: pair.symbol, timeframe: r.timeframe,
-                bucketsChecked: rows.length, incomplete: 0, unchanged: 0, changed: 0, volumeOnly: 0, missing: 0,
+                bucketsChecked: rows.length, incomplete: 0, unchanged: 0, ohlcFixes: 0, volumeOnly: 0, missing: 0,
             };
             for (const row of rows as Array<typeof rows[number] & { ohlc_same: boolean; volume_same: boolean | null }>) {
                 if (Number(row.n) !== r.minutes) { summary.incomplete++; continue; }
@@ -153,11 +157,13 @@ export async function planReroll(opts: RerollOptions): Promise<RerollPlan> {
                     ? { open: row.s_open!, high: row.s_high!, low: row.s_low!, close: row.s_close!, volume: row.s_volume!, buy_volume: row.s_buy, sell_volume: row.s_sell }
                     : null;
                 const kind = !old ? "insert" : row.ohlc_same ? "volume" : "ohlc";
-                if (kind === "insert") summary.missing++;
-                else if (kind === "ohlc") summary.changed++;
-                else {
+                if (kind === "ohlc") summary.ohlcFixes++;
+                else if (kind === "volume") {
                     summary.volumeOnly++;
-                    if (opts.ohlcOnly) continue;
+                    if (!opts.includeVolume) continue;
+                } else {
+                    summary.missing++;
+                    if (!opts.includeMissing) continue;
                 }
                 plan.changes.push({ pairId: pair.id, symbol: pair.symbol, timeframe: r.timeframe, ts: new Date(row.bucket).toISOString(), kind, old, new: next });
             }

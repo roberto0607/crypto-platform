@@ -7,17 +7,31 @@ close, then Kraken REST replaces the last 15 minutes every 60s. This hit 5m most
 whenever the boot rollup had stored the in-progress bucket.
 
 `pnpm candles:reroll` re-derives every bucket from the stored 1m rows, using exactly the job's
-bucketing and aggregation, and replaces the rows that differ. It is one-time, and reversible from
-its snapshot. Logic and safety notes are in `apps/api/src/market/rerollCandles.ts`.
+bucketing and aggregation. It is one-time, and reversible from its snapshot. Logic and safety notes
+are in `apps/api/src/market/rerollCandles.ts`.
 
-What it touches:
-- Only **finished** buckets that ended **≥ 15 min ago**. Younger ones are still being re-rolled by
-  the job itself.
-- Only buckets **fully covered** by 1m rows (one per minute). Anything older than 1m retention
-  (30 days) or with a 1m gap is reported as `incomplete` and left alone.
-- Only the MARKET_SYMBOLS pairs (BTC/USD, ETH/USD, SOL/USD) by default.
-- `changed` rows are replaced. `missing` rows (complete 1m history, no stored row) are inserted.
-  Nothing is deleted.
+## Safe by default
+
+With no flags, `--commit` rewrites a bucket **only if both** of these hold:
+- its stored **open/high/low/close differ** from the 1m re-roll (a frozen bucket), and
+- its 1m coverage is **complete** (one 1m row per minute of the bucket).
+
+Everything else is reported in the dry run and **left untouched**:
+
+| Column | Meaning | Written? |
+|---|---|---|
+| `ohlc fixes` | stored OHLC differs from the re-roll (frozen bucket) | **yes** |
+| `vol-only (skipped)` | only volume differs. Typical of exchange-native rows (Coinbase backfill) vs the sum of their 1m rows; not a frozen bucket. | only with `--include-volume` |
+| `incomplete (skipped)` | 1m history doesn't cover every minute of the bucket (older than 1m retention, or a 1m gap) | **never** |
+| `missing (skipped)` | complete 1m coverage, but no stored row | only with `--include-missing` |
+| `unchanged` | already matches | no |
+
+Also never touched:
+- Buckets that ended less than 15 min ago. The job is still re-rolling those.
+- The current bucket.
+- Pairs outside MARKET_SYMBOLS (default BTC/USD, ETH/USD, SOL/USD).
+
+Nothing is ever deleted.
 
 ## Order
 
@@ -37,10 +51,10 @@ What it touches:
    Check the output:
    - `symbols:` lists BTC/USD, ETH/USD, SOL/USD. A local `.env` `MARKET_SYMBOLS` would override it;
      `--symbols BTC/USD,ETH/USD` narrows it explicitly.
-   - One row per symbol × timeframe: `checked`, `incomplete`, `unchanged`, `changed`, `missing`.
-     Expect most `changed` on 5m. Only buckets with 1m data are checked at all (1m reaches back
-     ~30 days), so a few 1d/1w buckets at the edge of that window show as `incomplete`.
-   - The sample lines show `stored → re-rolled` OHLCV for a few changed buckets per series. Spot-check
+   - `mode: OHLC fixes only (safe default)`.
+   - There is one row per symbol × timeframe with the columns above. Expect most `ohlc fixes` on
+     5m. `vol-only` will likely be the biggest column. It's informational.
+   - The sample lines show `stored → re-rolled` OHLCV for a few OHLC fixes per series. Spot-check
      one against an exchange chart if anything looks large.
    - To narrow the run: `--tf 5m,15m` and/or `--symbols BTC/USD`.
 3. **Commit.**
@@ -50,14 +64,22 @@ What it touches:
    ```
 
    It writes `candle-reroll-<timestamp>.json` (gitignored) **before** writing anything. The file
-   holds every row it will replace (old and new values) and every row it will insert. It then
-   applies everything in **one transaction**, so either everything is written or nothing is, and
-   prints the undo command. Keep the file.
+   holds every row it will replace (old and new values). It then applies the OHLC fixes in **one
+   transaction**, so either everything is written or nothing is, and prints the undo command. Keep
+   the file.
 
    The live rollup job may write the same recent buckets concurrently. Both derive from the same
    1m rows, so they write the same values.
-4. **Verify:** a dry-run again shows `changed 0` and `missing 0`. Buckets that finished since the
-   commit belong to the rollup job.
+4. **Verify:** a dry-run again shows `ohlc fixes 0` everywhere. The `vol-only`, `incomplete` and
+   `missing` counts stay as they were, because they're reported, not fixed.
+
+## Opt-ins (not needed for the frozen-bucket repair)
+
+- `--include-volume`: also rewrite volume-only differences, so every timeframe's volume equals the
+  sum of its 1m rows.
+- `--include-missing`: also insert buckets that have complete 1m coverage but no stored row.
+
+Both go into the same snapshot and are undone by `--revert`.
 
 ## Undo
 
