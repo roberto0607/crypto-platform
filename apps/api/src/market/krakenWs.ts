@@ -16,7 +16,7 @@ import {
 } from "./orderFlowFeatures.js";
 import { krakenTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 import { eventsPublishedTotal } from "../metrics.js";
-import { getCoinbaseLastTradeAt } from "../feeds/coinbaseWs.js";
+import { isCoinbaseStaleFor } from "../feeds/coinbaseWs.js";
 import { recordKrakenReconnectAttempt, isKrakenReconnectBudgetExceeded, KRAKEN_BACKOFF } from "./krakenReconnectTracker.js";
 import {
     recordFeedTick,
@@ -28,18 +28,6 @@ import {
     type ReconnectCause,
 } from "../observability/feedHealth.js";
 import { StalenessTracker, ReconnectBackoff, type StaleEpisode } from "./feedWatchdog.js";
-
-// Coinbase is the primary price.tick source as of Gate 1 (2026-07-25) — see
-// docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md. Kraken's
-// ticker handler only publishes price.tick as a fallback, gated on this
-// threshold, because coinbaseWs.ts has no equivalent app-level staleness
-// watchdog of its own (unlike WATCHDOG_TIMEOUT_MS below, which is Kraken's
-// own reconnect trigger). 15s of zero trades across Coinbase's entire
-// ~75-pair subscription is a strong "something's actually wrong" signal —
-// well under Kraken's own 30s reconnect threshold — without false-triggering
-// on a single pair's normal quiet lulls (recon observed single-pair gaps up
-// to ~18s even while Coinbase overall was healthy).
-const COINBASE_STALE_THRESHOLD_MS = 15_000;
 
 // Debounce: track last DB write time per pair to avoid write storms
 const lastSyncTime = new Map<string, number>();
@@ -219,10 +207,12 @@ async function handleTickerMessage(data: any[]): Promise<void> {
 
             // Fallback price.tick publish — Coinbase is the primary source
             // (coinbaseWs.ts's trade handler) as of Gate 1. Only publish here
-            // if Coinbase looks stale, to avoid the two sources ticking
-            // concurrently (recon found a persistent small Kraken/Coinbase
-            // price divergence that would otherwise flicker the hero price).
-            if (Date.now() - getCoinbaseLastTradeAt() > COINBASE_STALE_THRESHOLD_MS) {
+            // if Coinbase is stale on THIS symbol, to avoid the two sources
+            // ticking concurrently (recon found a persistent small
+            // Kraken/Coinbase price divergence that would otherwise flicker
+            // the hero price). Per-symbol: a global "any Coinbase trade"
+            // clock let one busy symbol mask another symbol's dead feed.
+            if (isCoinbaseStaleFor(ourSymbol)) {
                 try {
                     publish(createEvent("price.tick", {
                         pairId,

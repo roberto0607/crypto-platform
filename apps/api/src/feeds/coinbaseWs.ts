@@ -6,7 +6,18 @@ import { coinbaseTradeSide, addSample as addPressureSample } from "../services/p
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { eventsPublishedTotal } from "../metrics.js";
-import { recordFeedTick, recordFeedReconnect } from "../observability/feedHealth.js";
+import { config } from "../config.js";
+import {
+    recordFeedTick,
+    recordFeedReconnect,
+    recordWatchdogTrip,
+    setFeedStale,
+    clearFeedStale,
+    setReconnectBackoff,
+    getLastFeedTickAt,
+    type ReconnectCause,
+} from "../observability/feedHealth.js";
+import { StalenessTracker, ReconnectBackoff, FEED_BACKOFF, type StaleEpisode } from "../market/feedWatchdog.js";
 
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
@@ -26,39 +37,92 @@ const COINBASE_WS_BATCH_SIZE = 150;
 
 const SYMBOL_REFRESH_INTERVAL_MS = 5 * 60_000;
 const PAIR_CACHE_RETRY_MS = 60_000;
-const MAX_RECONNECT_DELAY = 30_000;
+
+// Coinbase is the primary price.tick source (Gate 1, 2026-07-25 — see
+// docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md); krakenWs.ts's
+// ticker handler publishes price.tick for a symbol only once Coinbase has
+// had no trade on THAT symbol for this long (isCoinbaseStaleFor). Per-symbol,
+// so one silent symbol falls back to Kraken while the rest stay on Coinbase.
+const COINBASE_STALE_THRESHOLD_MS = 15_000;
 
 // our symbol → pair UUID, keyed off Coinbase product_id (== wsSymbol here).
 let productIdToPairId: Record<string, string> = {};
 let productIdToOurSymbol: Record<string, string> = {};
 let symbolRefreshInterval: ReturnType<typeof setInterval> | null = null;
 let pairCacheRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let watchdogInterval: ReturnType<typeof setInterval> | null = null;
 let stopped = false;
 let tradeCount = 0;
 
-// Global (not per-pair) liveness signal — mirrors krakenWs.ts's own
-// lastTickAt watchdog pattern. krakenWs.ts's ticker handler reads this via
-// getCoinbaseLastTradeAt() to decide whether to fall back to publishing
-// price.tick itself, since this feed (unlike Kraken's) has no app-level
-// staleness watchdog of its own — see docs/designs/2026-07-25-price-tick-
-// coinbase-source-gate1.md section 2.
+// Last live trade (not the subscribe-time snapshot), overall and per our symbol.
 let lastTradeAt = 0;
+const lastTradeAtBySymbol = new Map<string, number>();
 
 export function getCoinbaseLastTradeAt(): number {
     return lastTradeAt;
 }
 
+/** True when Kraken should publish price.tick for `symbol` (Coinbase silent on it). */
+export function isCoinbaseStaleFor(symbol: string, now: number = Date.now()): boolean {
+    return now - (lastTradeAtBySymbol.get(symbol) ?? 0) > COINBASE_STALE_THRESHOLD_MS;
+}
+
+// ── Watchdogs (checked every WATCHDOG_CHECK_MS, per batch socket) ──
+//  1. Heartbeat: the `heartbeats` channel (1/s, subscribed on every batch)
+//     silent for feedCoinbaseHeartbeatStaleMs → kill. Catches a dead or
+//     half-open socket. Also keeps quiet subscriptions open — Coinbase closes
+//     channels that send nothing for 60-90s unless heartbeats is subscribed.
+//  2. Per-symbol cross-check: no Coinbase trade on a symbol for
+//     feedCoinbaseSymbolStaleMs AND Kraken traded that symbol during the
+//     silence → kill only if FEED_COINBASE_SYMBOL_KILL_ENABLED, else log
+//     feed_watchdog_would_kill. A quiet market is quiet on both exchanges;
+//     Coinbase alone going quiet is a dead subscription.
+// "Kill" is always terminate() — see krakenWs.ts.
+const WATCHDOG_CHECK_MS = 1_000;
+const HEARTBEAT_KEY = "heartbeat";
+
 interface Batch {
     index: number;
     productIds: string[];
     ws: WebSocket | null;
+    connected: boolean;
     reconnectTimer: ReturnType<typeof setTimeout> | null;
-    reconnectDelay: number;
+    backoff: ReconnectBackoff;
+    heartbeat: StalenessTracker;
+    trades: StalenessTracker;
+    /** Symbols whose current silence the cross-check has already reported. */
+    crossTripped: Set<string>;
 }
 
 const batches = new Map<number, Batch>();
-// batch index → last socket error message, consumed by the close handler (diagnostic only).
-const lastErrorByBatch = new Map<number, string>();
+
+/** feed_watchdog / tradr_feed_symbol_stale label for a batch's connection-level checks. */
+const connectionKey = (batch: Batch) => (batch.index === 0 ? "_connection" : `_connection_${batch.index}`);
+
+function newBatch(index: number, productIds: string[]): Batch {
+    const maxCheckGapMs = 3 * WATCHDOG_CHECK_MS;
+    return {
+        index,
+        productIds,
+        ws: null,
+        connected: false,
+        reconnectTimer: null,
+        backoff: new ReconnectBackoff(FEED_BACKOFF),
+        heartbeat: new StalenessTracker({ staleMs: config.feedCoinbaseHeartbeatStaleMs, graceMs: config.feedWatchdogGraceMs, maxCheckGapMs }),
+        // A symbol with no trade yet gets the full stale window, not the short connect grace.
+        trades: new StalenessTracker({ staleMs: config.feedCoinbaseSymbolStaleMs, graceMs: config.feedCoinbaseSymbolStaleMs, maxCheckGapMs }),
+        crossTripped: new Set(),
+    };
+}
+
+function batchSymbols(batch: Batch): string[] {
+    const out: string[] = [];
+    for (const p of batch.productIds) {
+        const s = productIdToOurSymbol[p];
+        if (s) out.push(s);
+    }
+    return out;
+}
 
 function chunk<T>(arr: T[], size: number): T[][] {
     const out: T[][] = [];
@@ -94,9 +158,13 @@ function subscribeMessage(type: "subscribe" | "unsubscribe", productIds: string[
     return JSON.stringify({ type, product_ids: productIds, channel: "market_trades" });
 }
 
-function handleMessage(raw: WebSocket.Data): void {
+function handleMessage(batch: Batch, raw: WebSocket.Data): void {
     try {
         const msg = JSON.parse(raw.toString());
+        if (msg.channel === "heartbeats") {
+            batch.heartbeat.record(HEARTBEAT_KEY, Date.now());
+            return;
+        }
         if (msg.channel !== "market_trades") return;
 
         const events: any[] = msg.events;
@@ -105,6 +173,10 @@ function handleMessage(raw: WebSocket.Data): void {
         for (const event of events) {
             const trades: any[] = event.trades;
             if (!trades) continue;
+            // The subscribe-time snapshot replays recent trades: it proves the
+            // subscription exists, not that trades are flowing, so it doesn't
+            // count as liveness.
+            const live = event.type !== "snapshot";
 
             for (const trade of trades) {
                 const productId: string = trade.product_id;
@@ -138,7 +210,14 @@ function handleMessage(raw: WebSocket.Data): void {
                     }
                 }
 
-                lastTradeAt = Date.now();
+                if (live) {
+                    const now = Date.now();
+                    lastTradeAt = now;
+                    lastTradeAtBySymbol.set(ourSymbol, now);
+                    batch.trades.record(ourSymbol, now);
+                    batch.crossTripped.delete(ourSymbol);
+                    batch.backoff.onHealthy(now);
+                }
                 recordFeedTick("coinbase_trade", ourSymbol, trade.time ? ts : null);
 
                 // Primary price.tick source (Gate 1, 2026-07-25) — Coinbase's
@@ -168,59 +247,172 @@ function handleMessage(raw: WebSocket.Data): void {
             }
         }
     } catch {
-        // Ignore unparseable messages (heartbeats, subscriptions, etc.)
+        // Ignore unparseable messages (subscription acks, etc.)
     }
 }
 
 function connectBatch(batch: Batch): void {
     if (stopped) return;
 
-    batch.ws = new WebSocket(COINBASE_WS_URL);
+    const socket = new WebSocket(COINBASE_WS_URL);
+    batch.ws = socket;
 
-    batch.ws.on("open", () => {
+    socket.on("open", () => {
         console.log(`[coinbaseWs] batch ${batch.index} connected (${batch.productIds.length} products)`);
-        batch.reconnectDelay = 1000;
-        batch.ws!.send(subscribeMessage("subscribe", batch.productIds));
+        const now = Date.now();
+        batch.connected = true;
+        batch.backoff.onOpen(now);
+        batch.heartbeat.reset(now);
+        batch.trades.reset(now);
+        batch.crossTripped.clear();
+        socket.send(subscribeMessage("subscribe", batch.productIds));
+        socket.send(JSON.stringify({ type: "subscribe", channel: "heartbeats" }));
     });
 
-    batch.ws.on("message", handleMessage);
+    socket.on("message", (raw: WebSocket.Data) => handleMessage(batch, raw));
 
-    batch.ws.on("close", (code: number, reason: Buffer) => {
-        // Diagnostic only: an error closes via the handler below, so the
-        // error message (if any) is the better cause than a bare close.
-        const errDetail = lastErrorByBatch.get(batch.index) ?? null;
-        lastErrorByBatch.delete(batch.index);
-        if (!stopped) {
-            recordFeedReconnect("coinbase", errDetail ? "socket_error" : "socket_close", {
-                closeCode: code,
-                closeReason: reason.toString(),
-                detail: errDetail ? `batch ${batch.index}: ${errDetail}` : `batch ${batch.index}`,
-            });
-            logger.info(
-                { batch: batch.index, closeCode: code, closeReason: reason.toString(), error: errDetail, delay: batch.reconnectDelay },
-                "coinbase_ws_reconnect_scheduled",
-            );
-        }
-        scheduleBatchReconnect(batch);
+    socket.on("close", (code: number, reason: Buffer) => {
+        dropBatchSocket(batch, socket, "socket_close", null, code, reason.toString());
     });
 
-    batch.ws.on("error", (err) => {
+    socket.on("error", (err) => {
         console.error(`[coinbaseWs] batch ${batch.index} error`, err.message);
-        lastErrorByBatch.set(batch.index, err.message);
-        batch.ws?.close();
+        dropBatchSocket(batch, socket, "socket_error", err.message);
     });
 }
 
-function scheduleBatchReconnect(batch: Batch): void {
+function runWatchdogs(): void {
+    const now = Date.now();
+    for (const batch of batches.values()) {
+        if (!batch.ws || !batch.connected) continue;
+        const conn = connectionKey(batch);
+
+        // 1. Heartbeat.
+        let killed = false;
+        for (const ep of batch.heartbeat.check([HEARTBEAT_KEY], now)) {
+            setFeedStale("coinbase", "heartbeat", conn, true);
+            killed = killBatch(batch, "watchdog_heartbeat_stale", conn, ep.silentMs, batch.heartbeat.staleMs,
+                config.feedCoinbaseHeartbeatKillEnabled, describe("heartbeat", ep));
+        }
+        if (killed) continue;
+        if (!batch.heartbeat.isStale(HEARTBEAT_KEY)) setFeedStale("coinbase", "heartbeat", conn, false);
+
+        // 2. Per-symbol cross-check against Kraken's trade feed.
+        const symbols = batchSymbols(batch);
+        batch.trades.check(symbols, now);
+        for (const symbol of symbols) {
+            if (batch.crossTripped.has(symbol)) continue;
+            const since = batch.trades.silentSince(symbol);
+            const krakenAt = getLastFeedTickAt("kraken_trade", symbol);
+            if (!batch.trades.isStale(symbol) || since === null || krakenAt === null || krakenAt <= since) {
+                setFeedStale("coinbase", "trades", symbol, false);
+                continue;
+            }
+            batch.crossTripped.add(symbol);
+            setFeedStale("coinbase", "trades", symbol, true);
+            const silentMs = now - since;
+            const what = batch.trades.ageOf(symbol, now) !== null
+                ? `no trades for ${symbol} for ${silentMs}ms`
+                : `no trades for ${symbol} within ${silentMs}ms of connect`;
+            if (killBatch(batch, "watchdog_cross_check_stale", symbol, silentMs, batch.trades.staleMs,
+                config.feedCoinbaseSymbolKillEnabled, `${what} while Kraken traded it ${now - krakenAt}ms ago`)) break;
+        }
+    }
+}
+
+/** e.g. "no heartbeat for 5400ms", "no heartbeat within 11000ms of connect". */
+function describe(channel: string, ep: StaleEpisode): string {
+    return ep.seenSinceConnect
+        ? `no ${channel} for ${ep.silentMs}ms`
+        : `no ${channel} within ${ep.silentMs}ms of connect`;
+}
+
+/**
+ * One stale episode on a batch. With `enabled` the batch's socket is
+ * terminated and a reconnect scheduled (returns true); otherwise only
+ * feed_watchdog_would_kill is logged.
+ */
+function killBatch(
+    batch: Batch,
+    cause: ReconnectCause,
+    symbol: string,
+    silentMs: number,
+    thresholdMs: number,
+    enabled: boolean,
+    detail: string,
+): boolean {
+    const action = enabled ? "kill" : "would_kill";
+    recordWatchdogTrip("coinbase", cause, symbol, action);
+    logger.warn(
+        { exchange: "coinbase", batch: batch.index, cause, symbol, silentMs, thresholdMs, attempt: batch.backoff.attempts },
+        enabled ? "feed_watchdog_kill" : "feed_watchdog_would_kill",
+    );
+    if (!enabled || !batch.ws) return false;
+    dropBatchSocket(batch, batch.ws, cause, detail);
+    return true;
+}
+
+/**
+ * Stop watching the batch's current socket and terminate it. Listeners are
+ * removed first so its late close/error events can never schedule a second
+ * reconnect or touch the next socket's state; a no-op error listener stays
+ * because terminate() on a CONNECTING socket emits one.
+ */
+function releaseSocket(batch: Batch): void {
+    const socket = batch.ws;
+    batch.ws = null;
+    batch.connected = false;
+    batch.heartbeat.disconnect();
+    batch.trades.disconnect();
+    batch.crossTripped.clear();
+    clearFeedStale("coinbase", [connectionKey(batch), ...batchSymbols(batch)]);
+    if (!socket) return;
+    socket.removeAllListeners();
+    socket.on("error", () => {});
+    if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+}
+
+/** Tear down `socket` (if it is still the batch's current one) and schedule exactly one reconnect. */
+function dropBatchSocket(
+    batch: Batch,
+    socket: WebSocket,
+    cause: ReconnectCause,
+    detail: string | null,
+    closeCode?: number,
+    closeReason?: string,
+): void {
+    if (batch.ws !== socket) return;
+    releaseSocket(batch);
+    scheduleBatchReconnect(batch, cause, detail, closeCode, closeReason);
+}
+
+function scheduleBatchReconnect(
+    batch: Batch,
+    cause: ReconnectCause,
+    detail: string | null,
+    closeCode?: number,
+    closeReason?: string,
+): void {
     if (stopped) return;
     if (batch.reconnectTimer) return;
+    if (batches.get(batch.index) !== batch) return; // torn down (universe shrank)
 
-    console.log(`[coinbaseWs] batch ${batch.index} reconnecting in ${batch.reconnectDelay}ms`);
+    const delay = batch.backoff.nextDelay();
+    setReconnectBackoff("coinbase", delay);
+    recordFeedReconnect("coinbase", cause, {
+        closeCode,
+        closeReason,
+        detail: detail ? `batch ${batch.index}: ${detail}` : `batch ${batch.index}`,
+    });
+    logger.info(
+        { batch: batch.index, closeCode, closeReason, cause, detail, delay, attempt: batch.backoff.attempts },
+        "coinbase_ws_reconnect_scheduled",
+    );
+    console.log(`[coinbaseWs] batch ${batch.index} reconnecting in ${delay}ms (attempt ${batch.backoff.attempts})`);
     batch.reconnectTimer = setTimeout(() => {
         batch.reconnectTimer = null;
         connectBatch(batch);
-        batch.reconnectDelay = Math.min(batch.reconnectDelay * 2, MAX_RECONNECT_DELAY);
-    }, batch.reconnectDelay);
+    }, delay);
 }
 
 function teardownBatch(batch: Batch): void {
@@ -228,10 +420,7 @@ function teardownBatch(batch: Batch): void {
         clearTimeout(batch.reconnectTimer);
         batch.reconnectTimer = null;
     }
-    if (batch.ws) {
-        batch.ws.close();
-        batch.ws = null;
-    }
+    releaseSocket(batch);
 }
 
 /**
@@ -251,7 +440,7 @@ async function reconcileBatches(): Promise<void> {
         const existing = batches.get(i);
 
         if (!existing) {
-            const batch: Batch = { index: i, productIds: newProductIds, ws: null, reconnectTimer: null, reconnectDelay: 1000 };
+            const batch = newBatch(i, newProductIds);
             batches.set(i, batch);
             connectBatch(batch);
             continue;
@@ -273,10 +462,69 @@ async function reconcileBatches(): Promise<void> {
     // Tear down batches beyond the current chunk count (universe shrank).
     for (const [index, batch] of batches) {
         if (index >= chunks.length) {
-            teardownBatch(batch);
             batches.delete(index);
+            teardownBatch(batch);
         }
     }
+}
+
+export type CoinbaseSymbolHealth = {
+    tradeAgeMs: number | null;
+    /** quiet = no trade for feedCoinbaseSymbolStaleMs but Kraken is quiet on it too (a normal lull);
+     *  stale = the cross-check tripped (Coinbase silent while Kraken trades it). */
+    status: "ok" | "quiet" | "stale" | "waiting" | "disconnected";
+};
+
+export function getCoinbaseWsHealth(): {
+    connected: boolean;
+    status: "connected" | "stale" | "disconnected";
+    lastTradeAt: number;
+    secondsSinceLastTrade: number;
+    heartbeatAgeMs: number | null;
+    heartbeatKillEnabled: boolean;
+    symbolKillEnabled: boolean;
+    batches: number;
+    symbols: Record<string, CoinbaseSymbolHealth>;
+} {
+    const now = Date.now();
+    let connected = batches.size > 0;
+    let anyStale = false;
+    let heartbeatAgeMs: number | null = null;
+    const symbols: Record<string, CoinbaseSymbolHealth> = {};
+
+    for (const batch of batches.values()) {
+        connected &&= batch.connected;
+        if (batch.connected) {
+            const age = batch.heartbeat.ageOf(HEARTBEAT_KEY, now);
+            if (age !== null && (heartbeatAgeMs === null || age > heartbeatAgeMs)) heartbeatAgeMs = age;
+            anyStale ||= batch.heartbeat.isStale(HEARTBEAT_KEY) || batch.crossTripped.size > 0;
+        }
+        for (const symbol of batchSymbols(batch)) {
+            const last = lastTradeAtBySymbol.get(symbol);
+            const status = !batch.connected
+                ? "disconnected"
+                : batch.crossTripped.has(symbol)
+                    ? "stale"
+                    : batch.trades.isStale(symbol)
+                        ? "quiet"
+                        : batch.trades.ageOf(symbol, now) === null
+                            ? "waiting"
+                            : "ok";
+            symbols[symbol] = { tradeAgeMs: last === undefined ? null : now - last, status };
+        }
+    }
+
+    return {
+        connected,
+        status: !connected ? "disconnected" : anyStale ? "stale" : "connected",
+        lastTradeAt,
+        secondsSinceLastTrade: lastTradeAt > 0 ? Math.round((now - lastTradeAt) / 1000) : -1,
+        heartbeatAgeMs,
+        heartbeatKillEnabled: config.feedCoinbaseHeartbeatKillEnabled,
+        symbolKillEnabled: config.feedCoinbaseSymbolKillEnabled,
+        batches: batches.size,
+        symbols,
+    };
 }
 
 export function startCoinbaseFeed(): void {
@@ -292,6 +540,10 @@ export function startCoinbaseFeed(): void {
             });
         }, SYMBOL_REFRESH_INTERVAL_MS);
     }
+
+    if (!watchdogInterval) {
+        watchdogInterval = setInterval(runWatchdogs, WATCHDOG_CHECK_MS);
+    }
 }
 
 export function stopCoinbaseFeed(): void {
@@ -299,6 +551,10 @@ export function stopCoinbaseFeed(): void {
     if (symbolRefreshInterval) {
         clearInterval(symbolRefreshInterval);
         symbolRefreshInterval = null;
+    }
+    if (watchdogInterval) {
+        clearInterval(watchdogInterval);
+        watchdogInterval = null;
     }
     if (pairCacheRetryTimer) {
         clearTimeout(pairCacheRetryTimer);
@@ -310,8 +566,10 @@ export function stopCoinbaseFeed(): void {
 
 /**
  * DEV-ONLY fault injection — see krakenWs.ts's __debugFaultKrakenSocket.
- * Note there is no Coinbase staleness watchdog, so a "stall" here is never
- * recovered automatically; only Kraken's fallback publish masks it.
+ * A "stall" stops reading every batch socket without closing it; the
+ * heartbeat watchdog terminates and reconnects within
+ * feedCoinbaseHeartbeatStaleMs (Kraken's per-symbol fallback publish covers
+ * price.tick meanwhile).
  */
 export function __debugFaultCoinbaseSockets(mode: "close" | "stall" | "resume"): number {
     let n = 0;
@@ -323,4 +581,14 @@ export function __debugFaultCoinbaseSockets(mode: "close" | "stall" | "resume"):
         n++;
     }
     return n;
+}
+
+/** TEST-ONLY — reset module state (batches and their trackers are rebuilt from current config on the next start). */
+export function __resetCoinbaseWsForTest(): void {
+    stopCoinbaseFeed();
+    productIdToPairId = {};
+    productIdToOurSymbol = {};
+    lastTradeAt = 0;
+    lastTradeAtBySymbol.clear();
+    tradeCount = 0;
 }

@@ -11,7 +11,13 @@
  *   - event-loop lag (perf_hooks.monitorEventLoopDelay), rolled every 10s
  *
  *   - feed watchdog trips (kill / would_kill), per-symbol stale state and
- *     the current reconnect backoff (market/feedWatchdog.ts via krakenWs.ts)
+ *     the current reconnect backoff (market/feedWatchdog.ts via krakenWs.ts
+ *     and coinbaseWs.ts)
+ *
+ * One read feeds back into behavior: coinbaseWs.ts's per-symbol cross-check
+ * asks getLastFeedTickAt("kraken_trade", symbol) whether Kraken is still
+ * trading a symbol Coinbase has gone silent on (this module is the one place
+ * both feeds already report to, so neither feed has to import the other).
  *
  * Exposed both as Prometheus metrics (default registry, scraped via
  * /metrics) and as a JSON snapshot for GET /v1/market/feed-health, which
@@ -26,6 +32,7 @@ export type ReconnectCause =
     | "watchdog_stale" // the 30s whole-socket ticker safety net
     | "watchdog_heartbeat_stale"
     | "watchdog_book_stale"
+    | "watchdog_cross_check_stale" // Coinbase silent on a symbol while Kraken trades it
     | "socket_error"
     | "socket_close";
 export type WatchdogAction = "kill" | "would_kill";
@@ -115,9 +122,16 @@ export function setFeedStale(exchange: FeedExchange, channel: string, symbol: st
     staleState.set(`${exchange}|${channel}|${symbol}`, { exchange, channel, symbol, stale });
 }
 
-/** Drop all stale-state series for an exchange (on disconnect, before the next socket's first check). */
-export function clearFeedStale(exchange: FeedExchange): void {
-    for (const [key, v] of staleState) if (v.exchange === exchange) staleState.delete(key);
+/**
+ * Drop stale-state series for an exchange (on disconnect, before the next
+ * socket's first check) — all of them, or only those for `symbols` when one
+ * of several sockets (a Coinbase batch) drops.
+ */
+export function clearFeedStale(exchange: FeedExchange, symbols?: readonly string[]): void {
+    const only = symbols ? new Set(symbols) : null;
+    for (const [key, v] of staleState) {
+        if (v.exchange === exchange && (!only || only.has(v.symbol))) staleState.delete(key);
+    }
 }
 
 export function setReconnectBackoff(exchange: FeedExchange, delayMs: number): void {
@@ -178,6 +192,11 @@ export interface FeedSummary {
     /** Symbols whose last tick is older than 30s — a permanently-stale symbol shows up here
      *  even while the feed as a whole (and its global watchdog) looks healthy. */
     staleSymbols: Array<{ symbol: string; ageMs: number }>;
+}
+
+/** Receive time of the last message on `feed` for `symbol`, or null if none yet. */
+export function getLastFeedTickAt(feed: FeedName, symbol: string): number | null {
+    return ticks.get(feed)?.get(symbol)?.lastReceivedAt ?? null;
 }
 
 export function getSymbolFeedHealth(symbol: string): Record<string, FeedSymbolHealth | null> {
@@ -259,7 +278,7 @@ const feedReconnectsTotal = new client.Counter({
 
 const feedWatchdogTripsTotal = new client.Counter({
     name: "tradr_feed_watchdog_trips_total",
-    help: "Feed watchdog stale episodes, by exchange, cause, symbol (\"_connection\" for heartbeat/safety net) and action (kill, or would_kill while the kill is disabled)",
+    help: "Feed watchdog stale episodes, by exchange, cause, symbol (\"_connection\"[_N] for heartbeat/safety net) and action (kill, or would_kill while the kill is disabled)",
     labelNames: ["exchange", "cause", "symbol", "action"] as const,
 });
 

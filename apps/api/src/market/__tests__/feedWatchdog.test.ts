@@ -27,6 +27,17 @@ function run(t: StalenessTracker, from: number, to: number, alive: string[]) {
 }
 
 describe("StalenessTracker", () => {
+    it("silentSince is the last message, else when the key was first expected, else null", () => {
+        const t = tracker();
+        expect(t.silentSince("BTC/USD")).toBeNull();
+        t.check(["BTC/USD"], T0 + 1_000); // first check: BTC expected since connect
+        expect(t.silentSince("BTC/USD")).toBe(T0);
+        t.record("BTC/USD", T0 + 2_500);
+        expect(t.silentSince("BTC/USD")).toBe(T0 + 2_500);
+        t.disconnect();
+        expect(t.silentSince("BTC/USD")).toBeNull();
+    });
+
     it.each(SYMBOLS)("flags only %s when it alone goes silent", (silent) => {
         const t = tracker();
         run(t, T0, T0 + 3_000, SYMBOLS);

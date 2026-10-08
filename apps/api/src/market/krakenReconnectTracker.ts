@@ -1,3 +1,5 @@
+import { FEED_BACKOFF } from "./feedWatchdog.js";
+
 // Combined reconnect-attempt counter across BOTH independent Kraken WS
 // connections (krakenWs.ts + footprintAggregator.ts). Added as a diagnostic
 // for the theory in docs/followups.md (2026-08-13, Kraken WS instability)
@@ -9,10 +11,8 @@
 const WINDOW_MS = 10 * 60_000;
 export const KRAKEN_RECONNECT_BUDGET_10M = 20;
 
-// Backoff shape for both Kraken sockets (each keeps its own ReconnectBackoff
-// instance): 1s doubling to a 60s cap, ±20% jitter, reset only after 60s of
-// real data — never on open.
-export const KRAKEN_BACKOFF = { baseMs: 1_000, maxMs: 60_000, jitter: 0.2, healthyResetMs: 60_000 } as const;
+// Backoff shape for both Kraken sockets — the shared feed shape (feedWatchdog.ts).
+export const KRAKEN_BACKOFF = FEED_BACKOFF;
 const attempts: number[] = [];
 
 /** Record one attempt; returns the combined count over the last 10 minutes. */
