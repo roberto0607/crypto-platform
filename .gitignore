@@ -34,3 +34,5 @@ pr*.png
 
 # one-time pair restriction snapshots (pnpm pairs:restrict --commit)
 pair-restriction-*.json
+# one-time candle re-roll snapshots (pnpm candles:reroll --commit)
+candle-reroll-*.json

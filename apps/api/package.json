@@ -37,6 +37,7 @@
     "candles:backfill": "tsx scripts/backfill-candles.ts",
     "backfill:history": "tsx src/scripts/backfillMarketHistory.ts",
     "pairs:restrict": "tsx src/scripts/restrictPairs.ts",
+    "candles:reroll": "tsx src/scripts/rerollCandles.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],
