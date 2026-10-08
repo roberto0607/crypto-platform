@@ -8,7 +8,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../../app";
 import { pool } from "../../../db/pool";
 import { ensureMigrations } from "../../../testing/resetDb";
-import { createCandleFixturePair, insertCandles, minuteRows } from "../../../testing/candleFixtures";
+import { createCandleFixturePair, insertCandles, minuteRows, aggregate } from "../../../testing/candleFixtures";
 import { __resetCandleAggregatorForTest } from "../../../market/candleAggregator";
 import { bucketStartMs, TIMEFRAME_SECONDS } from "../../../market/formingCandle";
 
@@ -84,6 +84,29 @@ describe("GET /v1/pairs/:pairId/candles forming candle", () => {
             expect([forming.high, forming.low, forming.close].map(Number)).toEqual([42, 42, 42]);
         }
     });
+
+    it.each(TIMEFRAMES.filter((t) => t !== "1m"))(
+        "%s: a just-finished bucket the rollup hasn't stored yet is filled from 1m — no missing bar",
+        async (tf) => {
+            const tfMs = TIMEFRAME_SECONDS[tf]! * 1000;
+            const now = Date.now();
+            const B = bucketStartMs(now, tf);
+            // Stored bars stop two buckets back; the previous bucket only has 1m rows.
+            await insertCandles(pool, fx.pairId, tf, [{ tsMs: B - 2 * tfMs, open: 1, high: 2, low: 0.5, close: 1.5, volume: 1 }]);
+            const prev1m = minuteRows(B - tfMs, B);
+            await insertCandles(pool, fx.pairId, "1m", prev1m);
+
+            const res = await app.inject({ method: "GET", url: `/v1/pairs/${fx.pairId}/candles?timeframe=${tf}&limit=5`, headers });
+            const candles = res.json().candles as Array<{ ts: string; open: string; high: string; low: string; close: string; volume: string; partial?: boolean }>;
+            expect(candles.map((c) => new Date(c.ts).getTime())).toEqual([B - 2 * tfMs, B - tfMs, B]);
+            const filled = candles[1]!;
+            const a = aggregate(prev1m);
+            expect(filled.partial).toBeUndefined();
+            expect([filled.open, filled.high, filled.low, filled.close, filled.volume].map(Number)).toEqual([a.open, a.high, a.low, a.close, a.volume]);
+            expect(candles[2]!.partial).toBe(true);
+            expect(Number(candles[2]!.open)).toBe(a.close); // forming opens at the filled bar's close
+        },
+    );
 
     it("a `before` page has no forming candle", async () => {
         const now = Date.now();

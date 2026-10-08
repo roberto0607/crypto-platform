@@ -152,6 +152,53 @@ export async function getFormingCandle(
     };
 }
 
+/** How many just-finished buckets the latest page may fill from 1m (see getUnrolledBuckets). */
+export const MAX_UNROLLED_BUCKETS = 2;
+
+/**
+ * Finished buckets the rollup job hasn't stored yet. It runs every 60s, so
+ * for up to a minute after a bucket ends its row is missing and the latest
+ * page jumped from the bar before it straight to the forming one. Fills the
+ * buckets in [after the last stored bar, current bucket), at most
+ * MAX_UNROLLED_BUCKETS of them, from the stored 1m rows — same aggregation
+ * as the job, so the row it later stores is identical. Not for 1m (stored
+ * directly at minute close).
+ */
+export async function getUnrolledBuckets(
+    pairId: string,
+    timeframe: string,
+    lastStoredMs: number | null,
+    nowMs: number = Date.now(),
+    db: Pick<Pool, "query"> = defaultPool,
+): Promise<Array<Omit<FormingCandle, "partial">>> {
+    if (timeframe === "1m") return [];
+    const tfMs = TIMEFRAME_SECONDS[timeframe]! * 1000;
+    const currentMs = bucketStartMs(nowMs, timeframe);
+    const fromMs = Math.max(currentMs - MAX_UNROLLED_BUCKETS * tfMs, lastStoredMs === null ? -Infinity : lastStoredMs + tfMs);
+    if (fromMs >= currentMs) return [];
+    const offsetSec = timeframe === "1w" ? MONDAY_EPOCH_OFFSET_MS / 1000 : 0;
+    const { rows } = await db.query<Omit<FormingCandle, "partial">>(
+        `SELECT to_char(bucket AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.000"Z"') AS ts,
+                open, high, low, close, volume, buy_volume, sell_volume
+         FROM (
+             SELECT to_timestamp(floor((extract(epoch FROM ts) + $4) / $3) * $3 - $4) AS bucket,
+                    (array_agg(open ORDER BY ts ASC))[1]::text   AS open,
+                    MAX(high)::text                              AS high,
+                    MIN(low)::text                               AS low,
+                    (array_agg(close ORDER BY ts DESC))[1]::text AS close,
+                    SUM(volume)::text                            AS volume,
+                    SUM(buy_volume)::text                        AS buy_volume,
+                    SUM(sell_volume)::text                       AS sell_volume
+             FROM candles
+             WHERE pair_id = $1 AND timeframe = '1m' AND ts >= $2 AND ts < $5
+             GROUP BY 1
+         ) b
+         ORDER BY bucket`,
+        [pairId, new Date(fromMs).toISOString(), tfMs / 1000, offsetSec, new Date(currentMs).toISOString()],
+    );
+    return rows;
+}
+
 /**
  * Boot: seed each Kraken-sourced pair's in-progress minute from Kraken REST's
  * last OHLC entry (the in-progress minute), so the minute the server boots in

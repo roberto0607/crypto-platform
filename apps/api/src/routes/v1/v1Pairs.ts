@@ -6,7 +6,7 @@ import { v1HandleError } from "../../http/v1Error";
 import { parseLimit } from "../../http/pagination";
 import { listActivePairsForDisplay } from "../../trading/pairRepo";
 import { getPublicTickers } from "../../market/publicTickers";
-import { bucketStartMs, getFormingCandle } from "../../market/formingCandle.js";
+import { bucketStartMs, getFormingCandle, getUnrolledBuckets } from "../../market/formingCandle.js";
 import { pool } from "../../db/pool.js";
 
 const pairsQuery = z.object({
@@ -174,6 +174,11 @@ const v1Pairs: FastifyPluginAsync = async (app) => {
             rows.reverse();
 
             if (latestPage) {
+                // Just-finished buckets the 60s rollup hasn't stored yet, then
+                // the forming one — no missing bar between them.
+                const last = rows[rows.length - 1] as { ts: Date | string } | undefined;
+                const lastMs = last ? new Date(last.ts).getTime() : null;
+                rows.push(...await getUnrolledBuckets(pairId, timeframe, lastMs, nowMs));
                 const forming = await getFormingCandle(pairId, timeframe, nowMs);
                 if (forming) rows.push(forming);
             }
