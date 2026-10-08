@@ -57,11 +57,12 @@ const saved = {
 
 const msg = (o: unknown) => Buffer.from(JSON.stringify(o));
 let hbCounter = 0;
+let tradeIdSeq = 1_000_000;
 const heartbeat = () => msg({ channel: "heartbeats", events: [{ heartbeat_counter: ++hbCounter }] });
 const trade = (product: string, type: "update" | "snapshot" = "update") =>
     msg({
         channel: "market_trades",
-        events: [{ type, trades: [{ product_id: product, price: "100", size: "1", side: "BUY", time: new Date().toISOString() }] }],
+        events: [{ type, trades: [{ trade_id: String(++tradeIdSeq), product_id: product, price: "100", size: "1", side: "BUY", time: new Date().toISOString() }] }],
     });
 
 const current = () => sockets[sockets.length - 1] as EventEmitter & Record<string, any>;
