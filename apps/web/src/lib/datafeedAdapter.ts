@@ -13,7 +13,7 @@
 import { getCandles, type Candle, type Timeframe } from "@/api/endpoints/candles";
 import { searchPairs } from "@/api/endpoints/trading";
 import { subscribeStream } from "@/api/endpoints/events";
-import { waitForStreamId } from "@/api/sse";
+import { waitForStreamId, onStreamReady } from "@/api/sse";
 import type { TradingPair } from "@/types/api";
 
 export type { Candle, Timeframe };
@@ -40,6 +40,39 @@ export interface CandleClosedTick {
 export interface BarSubscriptionHandle {
   pairId: string;
   _cleanup: () => void;
+}
+
+// ── Stream interest set ──
+// The server keeps each SSE stream's price.tick interest set in memory and
+// starts every new stream (each reconnect gets a new streamId) EMPTY. So the
+// desired set is re-sent on every stream.ready, not just on chart
+// mount/pair switch — otherwise a reconnect silently stops all live ticks
+// until the user switches pairs.
+//
+// Sends are serialized and latest-wins (module-wide: only one chart is open
+// at a time), so a pair switch's unsubscribe([]) can never land after the
+// new pair's subscribe([B]) and blank the stream.
+let interestChain: Promise<void> = Promise.resolve();
+let interestSeq = 0;
+
+function sendInterestSet(pairIds: string[]): void {
+  const seq = ++interestSeq;
+  interestChain = interestChain
+    .then(async () => {
+      if (seq !== interestSeq) return; // superseded before it was sent
+      const streamId = await waitForStreamId();
+      if (seq !== interestSeq) return;
+      await subscribeStream(streamId, pairIds);
+    })
+    .catch(() => {
+      // Best-effort: a failed send (e.g. the stream died mid-request) is
+      // retried by the next stream.ready.
+    });
+}
+
+/** TEST-ONLY — wait for queued interest-set sends to settle. */
+export function __interestSetSettled(): Promise<void> {
+  return interestChain;
 }
 
 export function createDatafeedAdapter() {
@@ -91,27 +124,23 @@ export function createDatafeedAdapter() {
     window.addEventListener("sse:price.tick", handlePriceTick);
     window.addEventListener("sse:candle.closed", handleCandleClosed);
 
-    waitForStreamId()
-      .then((streamId) => subscribeStream(streamId, [pairId]))
-      .catch(() => {
-        // Best-effort — a missed subscribe just means no live ticks until
-        // the next pair switch (or reconnect) retries.
-      });
+    sendInterestSet([pairId]);
+    // Every later stream (reconnect, token refresh) starts empty — re-send.
+    const stopResubscribing = onStreamReady(() => sendInterestSet([pairId]));
 
     return {
       pairId,
       _cleanup: () => {
         window.removeEventListener("sse:price.tick", handlePriceTick);
         window.removeEventListener("sse:candle.closed", handleCandleClosed);
+        stopResubscribing();
       },
     };
   }
 
   function unsubscribeBars(handle: BarSubscriptionHandle): void {
     handle._cleanup();
-    waitForStreamId()
-      .then((streamId) => subscribeStream(streamId, []))
-      .catch(() => {});
+    sendInterestSet([]);
   }
 
   async function searchSymbols(query: string): Promise<TradingPair[]> {

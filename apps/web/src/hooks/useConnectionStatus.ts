@@ -1,6 +1,28 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 
+// No SSE message at all (ticks or the server's 5s ping) for this long → the
+// connection itself is silent. Two pings can be lost before it trips.
+export const CONNECTION_SILENT_MS = 12_000;
+// The server's freshest price for the watched pair is older than this →
+// prices are genuinely delayed, even though the connection is healthy.
+export const PRICE_DELAYED_MS = 15_000;
+const CHECK_MS = 1_000;
+
+type StaleInputs = { sseConnected: boolean; lastPriceTickAt: number; priceFreshAt: number | null };
+
+/**
+ * True when the price on screen is really delayed: connected, but either
+ * nothing has arrived for CONNECTION_SILENT_MS, or the server reports its own
+ * price for the subscribed pair is older than PRICE_DELAYED_MS. A quiet
+ * symbol is not delayed — its ping reports a fresh (book-based) price age.
+ */
+export function computePriceStale(s: StaleInputs, now: number): boolean {
+  if (!s.sseConnected) return false;
+  if (s.lastPriceTickAt > 0 && now - s.lastPriceTickAt > CONNECTION_SILENT_MS) return true;
+  return s.priceFreshAt !== null && now - s.priceFreshAt > PRICE_DELAYED_MS;
+}
+
 // Derives MarketStatusBadge's display state (priceStale, isHardOffline) from
 // the global SSE connection state. Reads sseConnected/sseConnectionState
 // straight off appStore rather than calling useSSE() — useSSE() owns the
@@ -12,17 +34,29 @@ import { useAppStore } from "@/stores/appStore";
 export function useConnectionStatus() {
   const sseConnected = useAppStore((s) => s.sseConnected);
   const sseConnectionState = useAppStore((s) => s.sseConnectionState);
-  const lastPriceTickAt = useAppStore((s) => s.lastPriceTickAt);
 
-  const [priceStale, setPriceStale] = useState(false);
+  // Re-evaluated on a steady 1s clock (so a gap is noticed), on every store
+  // change (so the first fresh message clears it immediately), and when the
+  // tab becomes visible again (timers are throttled in background tabs).
+  // The store is read via getState(), never as an effect dependency: making
+  // the timestamp a dependency restarted the check on every tick, so under a
+  // busy feed it never ran and a stale flag latched on.
+  const [priceStale, setPriceStale] = useState(() => computePriceStale(useAppStore.getState(), Date.now()));
   useEffect(() => {
-    if (!sseConnected) { setPriceStale(false); return; }
-    const id = setInterval(() => {
-      const stale = lastPriceTickAt > 0 && Date.now() - lastPriceTickAt > 10_000;
-      setPriceStale(stale);
-    }, 3_000);
-    return () => clearInterval(id);
-  }, [sseConnected, lastPriceTickAt]);
+    const check = () => setPriceStale(computePriceStale(useAppStore.getState(), Date.now()));
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    check();
+    const id = setInterval(check, CHECK_MS);
+    const unsubscribe = useAppStore.subscribe(check);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   // If "reconnecting" persists > 60s, surface OFFLINE + a refresh CTA so the
   // user isn't stuck staring at a spinner.

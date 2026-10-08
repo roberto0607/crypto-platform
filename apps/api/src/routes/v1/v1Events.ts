@@ -2,7 +2,8 @@
  * v1Events.ts — GET /v1/events (Server-Sent Events stream).
  *
  * Streams typed events to authenticated clients via SSE.
- * Requires Bearer token. Sends heartbeat every 20s.
+ * Requires Bearer token. Sends a typed `ping` every 5s carrying
+ * `priceAgeMs` (see buildPingPayload) and an SSE comment heartbeat every 15s.
  */
 
 import type { FastifyPluginAsync } from "fastify";
@@ -13,6 +14,7 @@ import type { AppEvent } from "../../events/eventTypes";
 import { v1HandleError } from "../../http/v1Error";
 import { AppError } from "../../errors/AppError";
 import { leaveMatchSpectatorRoom } from "../../competitions/matchSpectatorSession";
+import { bookSnapshots } from "../../market/orderFlowFeatures";
 import { logger as rootLogger } from "../../observability/logContext";
 import {
   eventConnectionsActive,
@@ -22,7 +24,9 @@ import {
 const logger = rootLogger.child({ module: "v1Events" });
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const PING_INTERVAL_MS = 15_000;
+// The browser treats 12s with no message as a dead connection, so pings must
+// come well inside that (5s → two can be lost before the banner shows).
+const PING_INTERVAL_MS = 5_000;
 
 /**
  * Per-connection interest set — gates which pairIds a stream's price.tick/
@@ -74,6 +78,31 @@ export function formatSseFrame(event: AppEvent, now: number = Date.now()): strin
 }
 
 /**
+ * Ping payload. `priceAgeMs` is how old the freshest price data the server
+ * holds for this stream's subscribed pairs is: per pair, the newer of the
+ * Kraken book (updates sub-second even when nobody trades) and the last
+ * price.tick written to this stream; across pairs, the oldest. The browser's
+ * "PRICE DELAYED" banner keys off this, so a quiet symbol (no trades, live
+ * book) is never "delayed", while a genuinely stale server-side feed is —
+ * even though the SSE connection itself is healthy. null = nothing
+ * subscribed, or no price data yet for any subscribed pair (unknown).
+ */
+export function buildPingPayload(
+  interestSet: ReadonlySet<string>,
+  lastTickWrittenAt: ReadonlyMap<string, number>,
+  now: number = Date.now(),
+): { ts: number; priceAgeMs: number | null } {
+  let priceAgeMs: number | null = null;
+  for (const pairId of interestSet) {
+    const freshest = Math.max(bookSnapshots.get(pairId)?.ts ?? 0, lastTickWrittenAt.get(pairId) ?? 0);
+    if (freshest === 0) continue;
+    const age = Math.max(0, now - freshest);
+    if (priceAgeMs === null || age > priceAgeMs) priceAgeMs = age;
+  }
+  return { ts: now, priceAgeMs };
+}
+
+/**
  * TEST-ONLY — do not call from production code paths.
  *
  * Lets route-level tests pre-populate a stream entry (as if a real SSE
@@ -122,7 +151,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
     schema: {
       tags: ["Events"],
       summary: "Server-Sent Events stream",
-      description: "Real-time event stream. Events: order.updated, trade.created, wallet.updated, price.tick, replay.tick, trigger.fired, trigger.canceled. Sends heartbeat every 20s.",
+      description: "Real-time event stream. Events: order.updated, trade.created, wallet.updated, price.tick, replay.tick, trigger.fired, trigger.canceled. Sends a ping (with priceAgeMs for the subscribed pairs) every 5s.",
       security: [{ bearerAuth: [] }],
       response: {
         200: {
@@ -158,6 +187,10 @@ const v1Events: FastifyPluginAsync = async (app) => {
     const streamId = randomUUID();
     reply.raw.write(`event: stream.ready\ndata: ${JSON.stringify({ streamId })}\n\n`);
 
+    // pairId → when this stream was last sent a price.tick for it (feeds the
+    // ping's priceAgeMs).
+    const lastTickWrittenAt = new Map<string, number>();
+
     // Event handler — writes SSE frames to the response. price.tick/
     // candle.closed are filtered to this stream's interest set; every other
     // event type always delivers.
@@ -166,7 +199,9 @@ const v1Events: FastifyPluginAsync = async (app) => {
       const interestSet = streamInterestSets.get(streamId)?.interestSet ?? new Set<string>();
       if (!shouldDeliverToStream(event, interestSet)) return;
       try {
-        reply.raw.write(formatSseFrame(event));
+        const now = Date.now();
+        reply.raw.write(formatSseFrame(event, now));
+        if (event.type === "price.tick") lastTickWrittenAt.set((event.data as { pairId: string }).pairId, now);
       } catch {
         eventsDeliveryFailuresTotal.inc();
       }
@@ -191,7 +226,8 @@ const v1Events: FastifyPluginAsync = async (app) => {
     const ping = setInterval(() => {
       if (closed) return;
       try {
-        const frame = `event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
+        const interestSet = streamInterestSets.get(streamId)?.interestSet ?? new Set<string>();
+        const frame = `event: ping\ndata: ${JSON.stringify(buildPingPayload(interestSet, lastTickWrittenAt))}\n\n`;
         reply.raw.write(frame);
       } catch {
         cleanup();

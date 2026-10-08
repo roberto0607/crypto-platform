@@ -15,7 +15,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../../app";
 import { createEvent } from "../../../events/eventTypes";
+import { bookSnapshots } from "../../../market/orderFlowFeatures";
 import {
+  buildPingPayload,
   formatSseFrame,
   shouldDeliverToStream,
   __setStreamForTest,
@@ -37,6 +39,37 @@ describe("formatSseFrame", () => {
 
     const other = createEvent("notification.created", { notificationId: "n", kind: "k", title: "t", body: "b" } as never);
     expect(JSON.parse(formatSseFrame(other, 1234).split("data: ")[1]!)).not.toHaveProperty("sentAt");
+  });
+});
+
+describe("buildPingPayload (priceAgeMs for the PRICE DELAYED banner)", () => {
+  const NOW = 1_700_000_000_000;
+  afterEach(() => bookSnapshots.clear());
+
+  it("is null with nothing subscribed (unknown, not delayed)", () => {
+    bookSnapshots.set(PAIR_A, { bids: [], asks: [], ts: NOW - 100 });
+    expect(buildPingPayload(new Set(), new Map(), NOW)).toEqual({ ts: NOW, priceAgeMs: null });
+  });
+
+  it("is null when a subscribed pair has no price data yet", () => {
+    expect(buildPingPayload(new Set([PAIR_A]), new Map(), NOW).priceAgeMs).toBeNull();
+  });
+
+  it("a quiet symbol with a live book is fresh even with no ticks for minutes", () => {
+    bookSnapshots.set(PAIR_A, { bids: [], asks: [], ts: NOW - 400 });
+    const ticks = new Map([[PAIR_A, NOW - 180_000]]);
+    expect(buildPingPayload(new Set([PAIR_A]), ticks, NOW).priceAgeMs).toBe(400);
+  });
+
+  it("a recent tick keeps the pair fresh while the Kraken book is stale", () => {
+    bookSnapshots.set(PAIR_A, { bids: [], asks: [], ts: NOW - 60_000 });
+    expect(buildPingPayload(new Set([PAIR_A]), new Map([[PAIR_A, NOW - 1_200]]), NOW).priceAgeMs).toBe(1_200);
+  });
+
+  it("reports the stalest subscribed pair, and real staleness when both sources are old", () => {
+    bookSnapshots.set(PAIR_A, { bids: [], asks: [], ts: NOW - 300 });
+    bookSnapshots.set(PAIR_B, { bids: [], asks: [], ts: NOW - 42_000 });
+    expect(buildPingPayload(new Set([PAIR_A, PAIR_B]), new Map(), NOW).priceAgeMs).toBe(42_000);
   });
 });
 

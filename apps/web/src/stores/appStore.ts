@@ -25,7 +25,12 @@ interface AppState {
   serverOffline: boolean;
   sseConnected: boolean;
   sseConnectionState: SseConnectionState;
+  /** Browser time of the last SSE liveness message (price.tick or ping). */
   lastPriceTickAt: number;
+  /** Browser-clock estimate of when the server's freshest price for the
+   *  subscribed pair was produced: now on a price.tick, now − priceAgeMs on a
+   *  ping. null = unknown (nothing subscribed yet / new stream). */
+  priceFreshAt: number | null;
   setInitialized: (initialized: boolean) => void;
   setServerOffline: (offline: boolean) => void;
   setSystemStatus: (status: SystemStatus) => void;
@@ -38,6 +43,7 @@ interface AppState {
   setSseConnected: (connected: boolean) => void;
   setSseConnectionState: (state: SseConnectionState) => void;
   setLastPriceTickAt: (ts: number) => void;
+  setPriceFreshAt: (ts: number | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -56,6 +62,7 @@ export const useAppStore = create<AppState>((set) => ({
   // The badge must never show OFFLINE until at least one successful connection.
   sseConnectionState: "initializing" as SseConnectionState,
   lastPriceTickAt: 0,
+  priceFreshAt: null,
   setInitialized: (initialized) => set({ initialized }),
   setServerOffline: (serverOffline) => set({ serverOffline }),
   setSystemStatus: (systemStatus) => set({ systemStatus }),
@@ -71,4 +78,5 @@ export const useAppStore = create<AppState>((set) => ({
   setSseConnected: (sseConnected) => set({ sseConnected }),
   setSseConnectionState: (sseConnectionState) => set({ sseConnectionState }),
   setLastPriceTickAt: (lastPriceTickAt) => set({ lastPriceTickAt }),
+  setPriceFreshAt: (priceFreshAt) => set({ priceFreshAt }),
 }));

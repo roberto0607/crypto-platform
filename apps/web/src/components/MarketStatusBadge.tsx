@@ -3,7 +3,7 @@ import type { SseConnectionState } from "@/api/sse";
 interface MarketStatusBadgeProps {
   /** Current SSE connection lifecycle state. */
   status: SseConnectionState;
-  /** True when connected but no price tick has arrived recently (>10s). */
+  /** True when connected but prices are really delayed (see useConnectionStatus.computePriceStale). */
   priceStale: boolean;
   /** True when a reconnect has been failing long enough (>60s) to give up on. */
   isHardOffline: boolean;
@@ -26,9 +26,9 @@ interface BadgeView {
  *
  * "RECONNECTING..." (amber) is reserved for a genuinely dropped connection
  * actively retrying (`status === "reconnecting"`). `connected` + `priceStale`
- * is a distinct, less urgent case — the SSE stream never dropped, there's
- * just been no fresh price tick/ping in the last 10s (e.g. a brief upstream
- * feed gap, or a Railway redeploy blip that already recovered) — so it gets
+ * is a distinct, less urgent case — the SSE stream never dropped, but either
+ * nothing has arrived for 12s or the server says its own price for the
+ * watched pair is over 15s old (a real upstream feed gap) — so it gets
  * its own "PRICE DELAYED..." label in the same cyan as "CONNECTING...",
  * signaling "transitional, nothing actually broke" rather than "reconnecting
  * from a real drop".
