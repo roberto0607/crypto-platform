@@ -1,3 +1,4 @@
+import client from "prom-client";
 import { pool } from "../db/pool.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
@@ -26,6 +27,13 @@ interface OpenCandle {
 
 // Map<pairId, OpenCandle>
 const openCandles = new Map<string, OpenCandle>();
+// Newest minute a candle has been opened for, per pair. Never moves back.
+const latestMinute = new Map<string, number>();
+
+const lateTicksDropped = new client.Counter({
+    name: "tradr_candle_late_ticks_dropped_total",
+    help: "Ticks for a minute older than the pair's current 1m candle, dropped instead of reopening (and later re-flushing over) that minute",
+});
 
 function minuteFloor(tsMs: number): number {
     return Math.floor(tsMs / 60_000) * 60_000;
@@ -34,16 +42,35 @@ function minuteFloor(tsMs: number): number {
 /**
  * Ingest a single price tick. Updates the open 1m candle in memory.
  * If the tick belongs to a new minute, the previous candle is marked for flushing.
+ *
+ * A tick for a minute OLDER than the pair's newest candle is dropped. It
+ * used to replace the open candle with a fresh one for that past minute,
+ * which threw away the current minute's data and, at the next flush,
+ * re-wrote the stored past candle via ON CONFLICT DO UPDATE (open/close
+ * replaced by the late tick's price, its volume added on top). The same
+ * goes for a tick for the newest minute after that minute was flushed.
+ * Sources:
+ * trades replayed after a Coinbase reconnect, and exchange-timestamped
+ * trades that land just after Kraken's ticker (stamped with receive time)
+ * has already rolled the minute.
  */
 export function aggregateTick(pairId: string, tick: Tick): void {
     const minuteKey = minuteFloor(tick.ts);
+    const newest = latestMinute.get(pairId);
     const existing = openCandles.get(pairId);
+    // Older than the newest minute, or the newest minute itself once its
+    // candle has been flushed (flush only removes minutes that are over).
+    if (newest !== undefined && (minuteKey < newest || (minuteKey === newest && !existing))) {
+        lateTicksDropped.inc();
+        return;
+    }
     const vol = parseFloat(tick.volume);
     const buyVol = tick.side === "buy" ? vol : 0;
     const sellVol = tick.side === "sell" ? vol : 0;
 
     if (!existing || existing.minuteKey !== minuteKey) {
         // New candle for this minute
+        latestMinute.set(pairId, minuteKey);
         openCandles.set(pairId, {
             pairId,
             minuteKey,
@@ -143,4 +170,11 @@ export async function flushDueCandles(): Promise<void> {
 /** For testing: get current open candle state */
 export function getOpenCandle(pairId: string): OpenCandle | undefined {
     return openCandles.get(pairId);
+}
+
+/** TEST-ONLY — forget all open candles and minute history. */
+export function __resetCandleAggregatorForTest(): void {
+    openCandles.clear();
+    latestMinute.clear();
+    lateTicksDropped.reset();
 }

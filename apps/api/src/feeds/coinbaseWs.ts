@@ -158,6 +158,59 @@ function subscribeMessage(type: "subscribe" | "unsubscribe", productIds: string[
     return JSON.stringify({ type, product_ids: productIds, channel: "market_trades" });
 }
 
+// product_id → trade_id of the newest trade processed. Survives reconnects
+// (module state, not per-socket) so a reconnect's snapshot can be cut to
+// exactly the trades missed while disconnected. Coinbase trade_ids are
+// per-product increasing integers (~1.1e9 — safe as JS numbers).
+const lastTradeIdByProduct = new Map<string, number>();
+
+interface ParsedTrade {
+    raw: any;
+    productId: string;
+    /** null if the trade had no usable trade_id (never seen in practice). */
+    tradeId: number | null;
+}
+
+/**
+ * The trades of one market_trades event worth processing, oldest → newest.
+ *
+ * Coinbase sends every batch newest-first — the subscribe-time snapshot (100
+ * trades per product) AND multi-trade live updates (live sample 2026-10-08:
+ * 22/22 multi-trade updates newest-first). Processed in arrival order, the
+ * last price.tick and the candle's close landed on the OLDEST trade.
+ *
+ * Only trades newer than the last one processed for their product pass:
+ *   - live update: guards against any redelivery double-counting volume/CVD;
+ *   - snapshot after a reconnect: exactly the trades missed while
+ *     disconnected (the rest were already ingested live);
+ *   - snapshot on cold start (no trade processed yet for that product):
+ *     nothing — those trades predate this process and would only replay
+ *     old prices over the current one.
+ */
+function tradesToProcess(event: any): ParsedTrade[] {
+    const trades: any[] = Array.isArray(event.trades) ? event.trades : [];
+    const snapshot = event.type === "snapshot";
+    const withId: Array<ParsedTrade & { tradeId: number }> = [];
+    const withoutId: ParsedTrade[] = [];
+    for (const raw of trades) {
+        const productId: string = raw.product_id;
+        const tradeId = raw.trade_id == null ? NaN : Number(raw.trade_id);
+        if (!Number.isFinite(tradeId)) {
+            // Can't be deduped or placed against other trades. A live one is
+            // still a real trade — never silently starve the feed over a
+            // format change; a snapshot one can't be told apart from history.
+            if (!snapshot) withoutId.push({ raw, productId, tradeId: null });
+            continue;
+        }
+        const last = lastTradeIdByProduct.get(productId);
+        if (last === undefined ? snapshot : tradeId <= last) continue;
+        withId.push({ raw, productId, tradeId });
+    }
+    withId.sort((a, b) => a.tradeId - b.tradeId);
+    // Arrival order is newest-first, so reversed is oldest-first.
+    return [...withId, ...withoutId.reverse()];
+}
+
 function handleMessage(batch: Batch, raw: WebSocket.Data): void {
     try {
         const msg = JSON.parse(raw.toString());
@@ -171,20 +224,24 @@ function handleMessage(batch: Batch, raw: WebSocket.Data): void {
         if (!events) return;
 
         for (const event of events) {
-            const trades: any[] = event.trades;
-            if (!trades) continue;
-            // The subscribe-time snapshot replays recent trades: it proves the
-            // subscription exists, not that trades are flowing, so it doesn't
-            // count as liveness.
+            // A snapshot's gap trades are real, missed trades — they fill
+            // candles/CVD/pressure — but they arrive all at once on
+            // reconnect: they're not proof that trades are flowing NOW (so
+            // no liveness), and only the newest one per product becomes a
+            // price.tick (no burst of already-superseded prices).
             const live = event.type !== "snapshot";
+            const trades = tradesToProcess(event);
+            const newestIndexByProduct = new Map<string, number>();
+            trades.forEach((t, i) => newestIndexByProduct.set(t.productId, i));
 
-            for (const trade of trades) {
-                const productId: string = trade.product_id;
+            trades.forEach(({ raw: trade, productId, tradeId }, i) => {
+                if (tradeId !== null) lastTradeIdByProduct.set(productId, tradeId);
+
                 const ourSymbol = productIdToOurSymbol[productId];
-                if (!ourSymbol) continue;
+                if (!ourSymbol) return;
 
                 const pairId = productIdToPairId[productId];
-                if (!pairId) continue;
+                if (!pairId) return;
 
                 const price = String(trade.price);
                 const volume = String(trade.size);
@@ -226,25 +283,27 @@ function handleMessage(batch: Batch, raw: WebSocket.Data): void {
                 // is a trade print, not a quote, and this feed isn't
                 // subscribed to a Coinbase order-book/ticker channel. See
                 // docs/designs/2026-07-25-price-tick-coinbase-source-gate1.md.
-                try {
-                    publish(createEvent("price.tick", {
-                        pairId,
-                        symbol: ourSymbol,
-                        bid: null,
-                        ask: null,
-                        last: price,
-                        source: "coinbase",
-                    }));
-                    eventsPublishedTotal.inc({ type: "price.tick" });
-                } catch {
-                    // Events must never break the trade feed.
+                if (live || newestIndexByProduct.get(productId) === i) {
+                    try {
+                        publish(createEvent("price.tick", {
+                            pairId,
+                            symbol: ourSymbol,
+                            bid: null,
+                            ask: null,
+                            last: price,
+                            source: "coinbase",
+                        }));
+                        eventsPublishedTotal.inc({ type: "price.tick" });
+                    } catch {
+                        // Events must never break the trade feed.
+                    }
                 }
 
                 tradeCount++;
                 if (tradeCount % 50 === 0) {
                     console.log(`[coinbaseWs] ${tradeCount} trades ingested (latest: ${ourSymbol} ${price} ${side ?? "?"})`);
                 }
-            }
+            });
         }
     } catch {
         // Ignore unparseable messages (subscription acks, etc.)
@@ -590,5 +649,6 @@ export function __resetCoinbaseWsForTest(): void {
     productIdToOurSymbol = {};
     lastTradeAt = 0;
     lastTradeAtBySymbol.clear();
+    lastTradeIdByProduct.clear();
     tradeCount = 0;
 }

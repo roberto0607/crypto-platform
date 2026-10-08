@@ -54,6 +54,7 @@ import { __resetFeedHealthForTest } from "../../observability/feedHealth";
 
 const saved = { backfill: config.candleBackfillOnBoot, enabled: config.krakenWsEnabled };
 const msg = (o: unknown) => Buffer.from(JSON.stringify(o));
+let tradeIdSeq = 1_000_000;
 const krakenSocket = () => sockets.find((s) => s.url.includes("kraken"));
 const coinbaseSocket = () => sockets.find((s) => s.url.includes("coinbase"));
 
@@ -71,7 +72,7 @@ async function pump(seconds: number, coinbase: string[]) {
         for (const p of coinbase) {
             cb.emit("message", msg({
                 channel: "market_trades",
-                events: [{ type: "update", trades: [{ product_id: p, price: "100", size: "1", side: "BUY", time: new Date().toISOString() }] }],
+                events: [{ type: "update", trades: [{ trade_id: String(++tradeIdSeq), product_id: p, price: "100", size: "1", side: "BUY", time: new Date().toISOString() }] }],
             }));
         }
         const k = krakenSocket();
