@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import { useConnectionStatus } from "@/hooks/useConnectionStatus";
+import { useConnectionStatus, CONNECTION_SILENT_MS, PRICE_DELAYED_MS } from "@/hooks/useConnectionStatus";
 import { feedDiag, ticksInLast } from "@/lib/feedDiagnostics";
 import { getFeedHealth, type FeedHealthResponse } from "@/api/endpoints/events";
 
@@ -47,6 +47,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export function FeedDebugOverlay() {
   const sseConnectionState = useAppStore((s) => s.sseConnectionState);
   const lastPriceTickAt = useAppStore((s) => s.lastPriceTickAt);
+  const priceFreshAt = useAppStore((s) => s.priceFreshAt);
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const { priceStale } = useConnectionStatus();
 
@@ -59,7 +60,7 @@ export function FeedDebugOverlay() {
 
   // 1s repaint + timer-drift probe: how late does a 1s interval actually fire?
   // Large drift = background-tab / Safari timer throttling (which also delays
-  // the banner's own 3s staleness check and the 30s SSE heartbeat timer).
+  // the banner's own 1s staleness check and the 30s SSE heartbeat timer).
   const lastBeat = useRef(Date.now());
   const drifts = useRef<number[]>([]);
   const [visibility, setVisibility] = useState(document.visibilityState);
@@ -146,7 +147,8 @@ export function FeedDebugOverlay() {
       <Section title="BANNER (client)">
         <Row k="sse state" v={sseConnectionState} bad={sseConnectionState !== "connected"} />
         <Row k="priceStale (banner)" v={String(priceStale)} bad={priceStale} />
-        <Row k="lastPriceTickAt age" v={since(lastPriceTickAt, now)} bad={now - lastPriceTickAt > 10_000} />
+        <Row k="last SSE message age" v={since(lastPriceTickAt, now)} bad={now - lastPriceTickAt > CONNECTION_SILENT_MS} />
+        <Row k="server price age" v={priceFreshAt === null ? "unknown" : since(priceFreshAt, now)} bad={priceFreshAt !== null && now - priceFreshAt > PRICE_DELAYED_MS} />
         <Row k="last price.tick" v={`${since(feedDiag.lastTickAt, now)} (${feedDiag.lastTickSource ?? "?"})`} />
         <Row k="ticks / 10s" v={String(ticksInLast(10_000, now))} bad={ticksInLast(10_000, now) === 0} />
         <Row k="last ping" v={since(feedDiag.lastPingAt, now)} />

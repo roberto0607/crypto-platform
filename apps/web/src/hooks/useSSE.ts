@@ -77,7 +77,11 @@ export function useSSE() {
           // doesn't storm the book endpoint.
           useTradingStore.getState().refreshBookThrottled();
         }
-        useAppStore.getState().setLastPriceTickAt(Date.now());
+        const now = Date.now();
+        useAppStore.getState().setLastPriceTickAt(now);
+        // Only subscribed pairs' ticks reach this stream, so any tick is
+        // fresh price data for the chart being watched.
+        useAppStore.getState().setPriceFreshAt(now);
         // Live price lives in pairPricesStore, decoupled from `pairs` so a tick
         // re-renders only that pair's subscribers — not every consumer of `pairs`.
         usePairPricesStore.getState().setPairPrice(d.pairId, parseFloat(d.last));
@@ -204,14 +208,21 @@ export function useSSE() {
         );
       },
 
-      // Ping keeps lastPriceTickAt fresh even when no price ticks are flowing
-      onPing: (ts) => {
+      // Ping (every 5s) proves the connection is alive even when no price
+      // ticks flow, and carries the server's own price age for the
+      // subscribed pair — so a quiet symbol with a live book isn't "delayed".
+      onPing: ({ ts, priceAgeMs }) => {
         recordPing(ts);
-        useAppStore.getState().setLastPriceTickAt(Date.now());
+        const now = Date.now();
+        useAppStore.getState().setLastPriceTickAt(now);
+        useAppStore.getState().setPriceFreshAt(priceAgeMs === null ? null : now - priceAgeMs);
       },
 
-      // On reconnect, dispatch event so pages can re-fetch missed state
+      // On reconnect (any new stream after the first), dispatch so pages can
+      // re-fetch missed state. The previous stream's price age no longer
+      // applies; the new stream's first ping/tick re-establishes it.
       onReconnected: () => {
+        useAppStore.getState().setPriceFreshAt(null);
         window.dispatchEvent(new CustomEvent("sse:reconnected"));
       },
     };

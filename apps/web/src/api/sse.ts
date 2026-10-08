@@ -9,7 +9,7 @@ const SSE_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/events`;
 // Exponential backoff: 1s → 2s → 4s → 8s → 30s cap
 const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
 
-// If no message (including pings) received for this long, treat connection as dead
+// If no message (including pings, every 5s) received for this long, treat connection as dead
 const HEARTBEAT_TIMEOUT_MS = 30_000;
 
 // Cold-load display grace: hold "initializing" (neutral) this long before
@@ -52,7 +52,9 @@ export interface SSEHandlers {
   onFriendRequestReceived?: (event: Extract<SSEEvent, { type: "friend_request.received" }>) => void;
   onFriendRequestAccepted?: (event: Extract<SSEEvent, { type: "friend_request.accepted" }>) => void;
   onMessageReceived?: (event: Extract<SSEEvent, { type: "message.received" }>) => void;
-  onPing?: (ts: number) => void;
+  /** priceAgeMs: server-side age of the freshest price for this stream's
+   *  subscribed pairs (null = nothing subscribed / unknown). */
+  onPing?: (ping: { ts: number; priceAgeMs: number | null }) => void;
   onReconnected?: () => void;
 }
 
@@ -76,10 +78,22 @@ let lastHandlers: SSEHandlers | null = null;
 // (see v1Events.ts). Used by lib/datafeedAdapter.ts to address
 // POST /v1/events/subscribe at this specific connection. Not part of the
 // SSEEvent union — like `ping`, it's a raw, non-enveloped backend frame.
+//
+// Cleared the moment a connection drops (not just on the next stream.ready):
+// the server forgets a stream — and its price.tick interest set — when the
+// socket closes, so handing out the old id would subscribe a dead stream.
 let currentStreamId: string | null = null;
 let streamIdWaiters: Array<(id: string) => void> = [];
+// Notified on EVERY new stream (first connect, library retry, forced
+// reconnect, token-refresh reconnect) so per-stream server state — the
+// price.tick interest set — can be re-sent. See lib/datafeedAdapter.ts.
+const streamReadyListeners = new Set<(id: string) => void>();
+// Whether a stream already opened in this login session. A later
+// stream.ready is a reconnect → onReconnected. Reset only by an explicit
+// disconnectSSE() (logout), not by a reconnect's internal teardown.
+let sessionHadStream = false;
 
-/** Current streamId, or null if the connection hasn't handshaked yet. */
+/** Current streamId, or null if the connection hasn't handshaked yet (or just dropped). */
 export function getStreamId(): string | null {
   return currentStreamId;
 }
@@ -91,6 +105,18 @@ export function waitForStreamId(): Promise<string> {
   return new Promise((resolve) => {
     streamIdWaiters.push(resolve);
   });
+}
+
+/** Call `listener` with each new streamId from now on. Returns an unsubscribe. */
+export function onStreamReady(listener: (id: string) => void): () => void {
+  streamReadyListeners.add(listener);
+  return () => {
+    streamReadyListeners.delete(listener);
+  };
+}
+
+function streamDropped(): void {
+  currentStreamId = null;
 }
 
 function setSseState(state: SseConnectionState): void {
@@ -133,10 +159,10 @@ export function connectSSE(
   handlers: SSEHandlers,
   opts: { reconnect?: boolean } = {},
 ): () => void {
-  // Disconnect any existing connection first. This synchronously sets state to
+  // Tear down any existing connection first. This synchronously sets state to
   // "disconnected", but the override below runs in the same tick (Zustand is
   // synchronous, React batches) so no red OFFLINE ever renders.
-  disconnectSSE();
+  teardown();
 
   abortController = new AbortController();
   wasConnected = false;
@@ -168,18 +194,13 @@ export function connectSSE(
 
     async onopen(response) {
       if (response.ok && response.headers.get("content-type")?.includes(EventStreamContentType)) {
-        const isReconnect = wasConnected;
         reconnectAttempt = 0;
         wasConnected = true;
         clearInitialConnectTimers();
         setSseState("connected");
         resetHeartbeatTimer();
-
-        // On reconnect, notify so callers can re-fetch missed state
-        if (isReconnect) {
-          handlers.onReconnected?.();
-          window.dispatchEvent(new CustomEvent("sse:reconnected"));
-        }
+        // Reconnect notification waits for stream.ready (below): that's when
+        // the new stream can actually be addressed.
         return;
       }
       // Attach status so onerror can branch on HTTP code.
@@ -197,8 +218,8 @@ export function connectSSE(
       // Handle ping (not in SSEEvent union — raw from backend)
       if (msg.event === "ping") {
         try {
-          const data = JSON.parse(msg.data) as { ts: number };
-          handlers.onPing?.(data.ts);
+          const data = JSON.parse(msg.data) as { ts: number; priceAgeMs?: number | null };
+          handlers.onPing?.({ ts: data.ts, priceAgeMs: typeof data.priceAgeMs === "number" ? data.priceAgeMs : null });
         } catch { /* ignore */ }
         return;
       }
@@ -213,6 +234,14 @@ export function connectSSE(
           const waiters = streamIdWaiters;
           streamIdWaiters = [];
           waiters.forEach((resolve) => resolve(data.streamId));
+          streamReadyListeners.forEach((listener) => {
+            try { listener(data.streamId); } catch { /* a listener must not break the stream */ }
+          });
+          // Any stream after the session's first is a reconnect — notify once
+          // so pages re-fetch missed state (covers library retries AND forced
+          // reconnects, which start a fresh connectSSE loop).
+          if (sessionHadStream) handlers.onReconnected?.();
+          sessionHadStream = true;
         } catch { /* ignore */ }
         return;
       }
@@ -284,6 +313,7 @@ export function connectSSE(
 
     onclose() {
       clearHeartbeatTimer();
+      streamDropped();
       // A close before the first successful connect must not flash red OFFLINE —
       // let the cold-load timers govern. After a successful connect, a server
       // close surfaces "disconnected" (the library then retries with backoff).
@@ -292,6 +322,7 @@ export function connectSSE(
 
     onerror(err) {
       clearHeartbeatTimer();
+      streamDropped();
       const status = (err as Error & { status?: number }).status;
       console.error("[sse] onerror:", { message: (err as Error)?.message, status, reconnectAttempt });
 
@@ -333,7 +364,10 @@ export function connectSSE(
     openWhenHidden: true,
   });
 
-  return () => disconnectSSE();
+  // Teardown, not disconnectSSE(): the caller re-running connectSSE (e.g.
+  // useSSE on an access-token refresh) is still the same session, so the next
+  // stream counts as a reconnect. Logout calls disconnectSSE() explicitly.
+  return () => teardown();
 }
 
 /** Force a reconnect — tears down and re-establishes the SSE connection.
@@ -363,7 +397,8 @@ export function forceReconnectSSE(): void {
   connectSSE(token, handlers, { reconnect: true });
 }
 
-export function disconnectSSE(): void {
+/** Close the current connection (if any) without ending the session. */
+function teardown(): void {
   clearHeartbeatTimer();
   clearInitialConnectTimers();
   if (abortController) {
@@ -374,6 +409,18 @@ export function disconnectSSE(): void {
   wasConnected = false;
   lastToken = null;
   lastHandlers = null;
-  currentStreamId = null;
+  streamDropped();
   setSseState("disconnected");
+}
+
+export function disconnectSSE(): void {
+  teardown();
+  sessionHadStream = false;
+}
+
+/** TEST-ONLY — forget session state between tests. */
+export function __resetSseForTest(): void {
+  disconnectSSE();
+  streamIdWaiters = [];
+  streamReadyListeners.clear();
 }

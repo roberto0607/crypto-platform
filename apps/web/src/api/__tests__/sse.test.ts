@@ -8,7 +8,7 @@ vi.mock("@microsoft/fetch-event-source", () => ({
   EventStreamContentType: "text/event-stream",
 }));
 
-import { connectSSE, disconnectSSE, forceReconnectSSE } from "@/api/sse";
+import { connectSSE, disconnectSSE, forceReconnectSSE, getStreamId, waitForStreamId, onStreamReady, __resetSseForTest } from "@/api/sse";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -93,5 +93,105 @@ describe("sse connection lifecycle", () => {
     // No grace→connecting sequence on a re-established session.
     vi.advanceTimersByTime(GRACE_MS);
     expect(state()).toBe("reconnecting");
+  });
+});
+
+describe("sse stream identity across reconnects", () => {
+  const streamReady = (id: string) => capturedOpts().onmessage({ event: "stream.ready", data: JSON.stringify({ streamId: id }) });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetchEventSourceMock.mockReset();
+    __resetSseForTest();
+    useAuthStore.setState({ isAuthenticated: true, accessToken: "tok" });
+  });
+
+  afterEach(() => {
+    __resetSseForTest();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("forgets the streamId the moment the connection drops, so a dead stream is never addressed", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    streamReady("s1");
+    expect(getStreamId()).toBe("s1");
+
+    capturedOpts().onerror(new Error("network"));
+    expect(getStreamId()).toBeNull();
+
+    let resolved: string | null = null;
+    void waitForStreamId().then((id) => { resolved = id; });
+    await Promise.resolve();
+    expect(resolved).toBeNull(); // waits for the NEW stream instead of returning s1
+
+    await capturedOpts().onopen(okResponse());
+    streamReady("s2");
+    await Promise.resolve();
+    expect(resolved).toBe("s2");
+  });
+
+  it("notifies stream-ready listeners on every new stream, including forced reconnects", async () => {
+    const seen: string[] = [];
+    onStreamReady((id) => seen.push(id));
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    streamReady("s1");
+
+    capturedOpts().onerror(new Error("network")); // library-internal retry
+    await capturedOpts().onopen(okResponse());
+    streamReady("s2");
+
+    forceReconnectSSE(); // heartbeat timeout / tab resume path: a fresh connectSSE loop
+    await capturedOpts().onopen(okResponse());
+    streamReady("s3");
+
+    expect(seen).toEqual(["s1", "s2", "s3"]);
+  });
+
+  it("fires onReconnected exactly once per later stream (library retry AND forced reconnect), never on the first", async () => {
+    const onReconnected = vi.fn();
+    connectSSE("tok", { onReconnected });
+    await capturedOpts().onopen(okResponse());
+    streamReady("s1");
+    expect(onReconnected).not.toHaveBeenCalled();
+
+    capturedOpts().onerror(new Error("network"));
+    await capturedOpts().onopen(okResponse());
+    expect(onReconnected).not.toHaveBeenCalled(); // waits for the new stream to be addressable
+    streamReady("s2");
+    expect(onReconnected).toHaveBeenCalledTimes(1);
+
+    forceReconnectSSE();
+    await capturedOpts().onopen(okResponse());
+    streamReady("s3");
+    expect(onReconnected).toHaveBeenCalledTimes(2);
+  });
+
+  it("a logout (disconnectSSE) ends the session: the next login's first stream is not a reconnect", async () => {
+    const onReconnected = vi.fn();
+    connectSSE("tok", { onReconnected });
+    await capturedOpts().onopen(okResponse());
+    streamReady("s1");
+    disconnectSSE();
+
+    connectSSE("tok", { onReconnected });
+    await capturedOpts().onopen(okResponse());
+    streamReady("s2");
+    expect(onReconnected).not.toHaveBeenCalled();
+  });
+
+  it("passes the ping's priceAgeMs through (null when absent)", () => {
+    const onPing = vi.fn();
+    connectSSE("tok", { onPing });
+    capturedOpts().onmessage({ event: "ping", data: JSON.stringify({ ts: 5, priceAgeMs: 420 }) });
+    capturedOpts().onmessage({ event: "ping", data: JSON.stringify({ ts: 6, priceAgeMs: null }) });
+    capturedOpts().onmessage({ event: "ping", data: JSON.stringify({ ts: 7 }) });
+    expect(onPing.mock.calls.map((c) => c[0])).toEqual([
+      { ts: 5, priceAgeMs: 420 },
+      { ts: 6, priceAgeMs: null },
+      { ts: 7, priceAgeMs: null },
+    ]);
   });
 });
