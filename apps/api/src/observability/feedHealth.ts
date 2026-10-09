@@ -33,6 +33,8 @@ export type ReconnectCause =
     | "watchdog_heartbeat_stale"
     | "watchdog_book_stale"
     | "watchdog_cross_check_stale" // Coinbase silent on a symbol while Kraken trades it
+    | "book_checksum_mass_mismatch" // many symbols' Kraken book checksums failed at once
+    | "book_resync_timeout" // a resubscribed Kraken book never sent its fresh snapshot
     | "socket_error"
     | "socket_close";
 export type WatchdogAction = "kill" | "would_kill";
@@ -136,6 +138,31 @@ export function clearFeedStale(exchange: FeedExchange, symbols?: readonly string
 
 export function setReconnectBackoff(exchange: FeedExchange, delayMs: number): void {
     backoffSeconds.set(exchange, delayMs / 1000);
+}
+
+// ── Kraken book checksum (krakenWs.ts + market/krakenBook.ts) ──
+
+export type BookChecksumResult = "ok" | "mismatch" | "unverified_no_precision" | "unverified_no_checksum";
+export type BookResyncOutcome = "requested" | "recovered";
+
+// symbols whose book is currently dropped pending a fresh snapshot (enforce mode)
+const invalidBooks = new Set<string>();
+
+export function recordBookChecksum(symbol: string, result: BookChecksumResult): void {
+    bookChecksumTotal.inc({ symbol, result });
+}
+
+export function recordBookResync(symbol: string, outcome: BookResyncOutcome): void {
+    bookResyncsTotal.inc({ symbol, outcome });
+}
+
+export function setBookInvalid(symbol: string, invalid: boolean): void {
+    if (invalid) invalidBooks.add(symbol);
+    else invalidBooks.delete(symbol);
+}
+
+export function clearBookInvalid(): void {
+    invalidBooks.clear();
 }
 
 // ── Event-loop lag ──
@@ -261,6 +288,9 @@ export function __resetFeedHealthForTest(): void {
     loopWindow = null;
     loopMaxSinceBootMs = 0;
     feedReconnectsTotal.reset();
+    bookChecksumTotal.reset();
+    bookResyncsTotal.reset();
+    invalidBooks.clear();
 }
 
 /** TEST-ONLY — force an event-loop window roll. */
@@ -328,5 +358,27 @@ new client.Gauge({
         this.set({ stat: "p50" }, loopWindow.p50Ms);
         this.set({ stat: "p99" }, loopWindow.p99Ms);
         this.set({ stat: "max" }, loopWindow.maxMs);
+    },
+});
+
+const bookChecksumTotal = new client.Counter({
+    name: "tradr_kraken_book_checksum_total",
+    help: "Kraken book messages checked against Kraken's CRC32, by symbol and result (ok, mismatch, unverified_no_precision, unverified_no_checksum)",
+    labelNames: ["symbol", "result"] as const,
+});
+
+const bookResyncsTotal = new client.Counter({
+    name: "tradr_kraken_book_resyncs_total",
+    help: "Per-symbol Kraken book resubscribes after a checksum mismatch (requested), and fresh snapshots that ended one (recovered)",
+    labelNames: ["symbol", "outcome"] as const,
+});
+
+new client.Gauge({
+    name: "tradr_kraken_book_invalid",
+    help: "1 while a symbol's Kraken book is dropped after a checksum mismatch, pending a fresh snapshot (KRAKEN_BOOK_CHECKSUM_ENFORCE only)",
+    labelNames: ["symbol"] as const,
+    collect() {
+        this.reset();
+        for (const symbol of invalidBooks) this.set({ symbol }, 1);
     },
 });
