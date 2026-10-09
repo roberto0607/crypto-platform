@@ -14,7 +14,6 @@ import {
     computeOrderFlowFeatures,
     bookSnapshots,
     orderFlowCache,
-    type BookLevel,
 } from "./orderFlowFeatures.js";
 import { krakenTradeSide, addSample as addPressureSample } from "../services/pressureAggregator.js";
 import { eventsPublishedTotal } from "../metrics.js";
@@ -27,9 +26,14 @@ import {
     setFeedStale,
     clearFeedStale,
     setReconnectBackoff,
+    recordBookChecksum,
+    recordBookResync,
+    setBookInvalid,
+    clearBookInvalid,
     type ReconnectCause,
 } from "../observability/feedHealth.js";
 import { StalenessTracker, ReconnectBackoff, type StaleEpisode } from "./feedWatchdog.js";
+import { KrakenBook, quoteBookNumbers, type KrakenPrecision, type RawBookLevel } from "./krakenBook.js";
 
 // Debounce: track last DB write time per pair to avoid write storms
 const lastSyncTime = new Map<string, number>();
@@ -151,10 +155,17 @@ function sendSubscription(socket: WebSocket, method: "subscribe" | "unsubscribe"
 
     socket.send(JSON.stringify({ method, params: { channel: "ticker", symbol: symbols } }));
     socket.send(JSON.stringify({ method, params: { channel: "trade", symbol: symbols, snapshot: false } }));
-    socket.send(JSON.stringify({ method, params: { channel: "book", depth: 25, symbol: symbols, snapshot: true } }));
+    sendBookSubscription(socket, method, symbols);
+}
+
+function sendBookSubscription(socket: WebSocket, method: "subscribe" | "unsubscribe", symbols: string[]): void {
+    socket.send(JSON.stringify({ method, params: { channel: "book", depth: BOOK_DEPTH, symbol: symbols, snapshot: true } }));
 }
 
 function subscribe(socket: WebSocket): void {
+    // Instrument first: its snapshot carries every pair's price/qty precision,
+    // which the book checksum needs (a book seen before it is accepted unverified).
+    socket.send(JSON.stringify({ method: "subscribe", params: { channel: "instrument", snapshot: true } }));
     sendSubscription(socket, "subscribe", activeSymbols.map((s) => s.wsSymbol));
 }
 
@@ -168,7 +179,8 @@ function subscribe(socket: WebSocket): void {
 async function reconcileSubscriptions(): Promise<void> {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    const before = new Set(activeSymbols.map((s) => s.wsSymbol));
+    const beforeSymbols = activeSymbols;
+    const before = new Set(beforeSymbols.map((s) => s.wsSymbol));
     const after = await refreshSymbols();
     const afterSet = new Set(after.map((s) => s.wsSymbol));
 
@@ -179,6 +191,9 @@ async function reconcileSubscriptions(): Promise<void> {
 
     sendSubscription(ws, "subscribe", added);
     sendSubscription(ws, "unsubscribe", removed);
+    for (const s of beforeSymbols) {
+        if (!afterSet.has(s.wsSymbol)) forgetBookState(s.ourSymbol);
+    }
     logger.info({ added, removed }, "kraken_ws_subscriptions_reconciled");
 }
 
@@ -290,59 +305,203 @@ function handleTradeMessage(data: any[]): void {
 
 const BOOK_DEPTH = 25;
 
-function handleBookSnapshot(pairId: string, rawBids: any[], rawAsks: any[]): void {
-    const bids: BookLevel[] = rawBids.map((b: any) => ({
-        price: parseFloat(b.price),
-        qty: parseFloat(b.qty),
-    }));
-    const asks: BookLevel[] = rawAsks.map((a: any) => ({
-        price: parseFloat(a.price),
-        qty: parseFloat(a.qty),
-    }));
-    bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
-    const features = computeOrderFlowFeatures(bids, asks);
-    orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+// ── Book checksum ──
+// Every book message is checked against Kraken's CRC32 (krakenBook.ts).
+// Observe mode (default): mismatches are logged + counted, the book is kept.
+// KRAKEN_BOOK_CHECKSUM_ENFORCE: a mismatched symbol's book is dropped (the
+// collar falls back to the ticker, else rejects stale_price_source), its
+// updates are ignored, and only its book is resubscribed for a fresh snapshot
+// — at most once per cooldown, socket reconnect if the snapshot never comes
+// or if many symbols mismatch at once.
+const MISMATCH_LOG_INTERVAL_MS = 10_000;
+// wsSymbol → precision, from the instrument channel. Kept across reconnects.
+let precisions = new Map<string, KrakenPrecision>();
+// ourSymbol → exact book. Absent = no snapshot yet, or dropped pending resync.
+const books = new Map<string, KrakenBook>();
+// ourSymbol → open resync (enforce mode): requestedAt null until the
+// resubscribe is actually sent (it may wait out the cooldown).
+const resyncs = new Map<string, { requestedAt: number | null }>();
+// ourSymbol → last resubscribe sent; survives the episode so the cooldown spans episodes.
+const lastResyncSentAt = new Map<string, number>();
+// ourSymbol → last mismatch time, for the mass-mismatch window.
+const recentMismatchAt = new Map<string, number>();
+// ourSymbol → open mismatch episode's log throttle (closed by the next matching checksum).
+const mismatchLog = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+
+function handleInstrumentMessage(data: any): void {
+    for (const p of data?.pairs ?? []) {
+        const price = Number(p?.price_precision);
+        const qty = Number(p?.qty_precision);
+        if (typeof p?.symbol === "string" && Number.isInteger(price) && Number.isInteger(qty)) {
+            precisions.set(p.symbol, { price, qty });
+        }
+    }
 }
 
-function applyBookUpdate(pairId: string, rawBids: any[], rawAsks: any[]): void {
-    const existing = bookSnapshots.get(pairId);
-    if (!existing) return; // No snapshot yet, skip incremental
-
-    // Apply bid updates
-    const bidMap = new Map(existing.bids.map((b) => [b.price, b.qty]));
-    for (const b of rawBids) {
-        const price = parseFloat(b.price);
-        const qty = parseFloat(b.qty);
-        if (qty === 0) bidMap.delete(price);
-        else bidMap.set(price, qty);
-    }
-    // Sort bids descending, truncate to depth
-    const bids = Array.from(bidMap.entries())
-        .map(([price, qty]) => ({ price, qty }))
-        .sort((a, b) => b.price - a.price)
-        .slice(0, BOOK_DEPTH);
-
-    // Apply ask updates
-    const askMap = new Map(existing.asks.map((a) => [a.price, a.qty]));
-    for (const a of rawAsks) {
-        const price = parseFloat(a.price);
-        const qty = parseFloat(a.qty);
-        if (qty === 0) askMap.delete(price);
-        else askMap.set(price, qty);
-    }
-    // Sort asks ascending, truncate to depth
-    const asks = Array.from(askMap.entries())
-        .map(([price, qty]) => ({ price, qty }))
-        .sort((a, b) => a.price - b.price)
-        .slice(0, BOOK_DEPTH);
-
-    bookSnapshots.set(pairId, { bids, asks, ts: Date.now() });
+function publishBook(pairId: string, book: KrakenBook): void {
+    const { bids, asks } = book.toLevels();
+    const ts = Date.now();
+    bookSnapshots.set(pairId, { bids, asks, ts });
     const features = computeOrderFlowFeatures(bids, asks);
-    orderFlowCache.set(pairId, { ...features, ts: Date.now() });
+    orderFlowCache.set(pairId, { ...features, ts });
+}
+
+function applyBookEntry(entry: any, type: string, ourSymbol: string, pairId: string, now: number): void {
+    const rawBids: RawBookLevel[] = entry.bids || [];
+    const rawAsks: RawBookLevel[] = entry.asks || [];
+
+    let book = books.get(ourSymbol);
+    try {
+        if (type === "snapshot") {
+            book = new KrakenBook(BOOK_DEPTH);
+            book.applySnapshot(rawBids, rawAsks);
+            books.set(ourSymbol, book);
+            if (resyncs.delete(ourSymbol)) {
+                setBookInvalid(ourSymbol, false);
+                recordBookResync(ourSymbol, "recovered");
+                logger.info({ exchange: "kraken", symbol: ourSymbol }, "kraken_book_resync_recovered");
+            }
+        } else {
+            if (!book) return; // no snapshot yet, or dropped pending a resync snapshot
+            book.applyUpdate(rawBids, rawAsks);
+        }
+    } catch (err) {
+        // A malformed level: the book can no longer be trusted — same path as a mismatch.
+        onChecksumMismatch(ourSymbol, pairId, type, entry.checksum ?? null, null, book ?? null, now, err);
+        return;
+    }
+
+    const expected = typeof entry.checksum === "number" ? entry.checksum >>> 0 : null;
+    const precision = precisions.get(entry.symbol);
+    if (expected === null || !precision) {
+        // Accepted unverified (e.g. the book snapshot beat the instrument snapshot).
+        recordBookChecksum(ourSymbol, expected === null ? "unverified_no_checksum" : "unverified_no_precision");
+        publishBook(pairId, book);
+        return;
+    }
+
+    const computed = book.checksum(precision);
+    if (computed === expected) {
+        recordBookChecksum(ourSymbol, "ok");
+        mismatchLog.delete(ourSymbol);
+        publishBook(pairId, book);
+        return;
+    }
+    onChecksumMismatch(ourSymbol, pairId, type, expected, computed, book, now, null);
+}
+
+function onChecksumMismatch(
+    ourSymbol: string,
+    pairId: string,
+    type: string,
+    expected: number | null,
+    computed: number | null,
+    book: KrakenBook | null,
+    now: number,
+    err: unknown,
+): void {
+    const enforce = config.krakenBookChecksumEnforce;
+    recordBookChecksum(ourSymbol, "mismatch");
+
+    // Every mismatch is counted; the log is throttled within one episode (in
+    // observe mode a drifted book mismatches on every update until it heals).
+    const ep = mismatchLog.get(ourSymbol);
+    if (ep && now - ep.lastLoggedAt < MISMATCH_LOG_INTERVAL_MS) {
+        ep.suppressed++;
+    } else {
+        logger.warn(
+            {
+                exchange: "kraken", symbol: ourSymbol, messageType: type, expected, computed, enforce,
+                top: book?.top() ?? null, suppressedSinceLastLog: ep?.suppressed ?? 0,
+                ...(err ? { err: err instanceof Error ? err.message : String(err) } : {}),
+            },
+            "kraken_book_checksum_mismatch",
+        );
+        mismatchLog.set(ourSymbol, { lastLoggedAt: now, suppressed: 0 });
+    }
+
+    if (!enforce) {
+        if (book) publishBook(pairId, book); // observe only: behavior unchanged
+        return;
+    }
+
+    // Enforce: nothing may read this book until a fresh snapshot verifies.
+    books.delete(ourSymbol);
+    bookSnapshots.delete(pairId);
+    orderFlowCache.delete(pairId);
+    setBookInvalid(ourSymbol, true);
+    resyncs.set(ourSymbol, { requestedAt: null });
+
+    recentMismatchAt.set(ourSymbol, now);
+    for (const [s, t] of recentMismatchAt) {
+        if (now - t > config.krakenBookMassMismatchWindowMs) recentMismatchAt.delete(s);
+    }
+    if (recentMismatchAt.size >= config.krakenBookMassMismatchSymbols) {
+        const symbols = [...recentMismatchAt.keys()];
+        killSocket("book_checksum_mass_mismatch", CONNECTION_SYMBOL, 0, config.krakenBookMassMismatchWindowMs, true,
+            `${symbols.length} symbols' book checksums failed within ${config.krakenBookMassMismatchWindowMs}ms: ${symbols.join(",")}`);
+        return;
+    }
+    requestBookResync(ourSymbol, now);
+}
+
+/** Book-only unsubscribe + subscribe for one symbol, unless inside its cooldown (the watchdog retries). */
+function requestBookResync(ourSymbol: string, now: number): void {
+    const r = resyncs.get(ourSymbol);
+    if (!r || r.requestedAt !== null || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const last = lastResyncSentAt.get(ourSymbol);
+    if (last !== undefined && now - last < config.krakenBookResyncCooldownMs) return;
+    const wsSymbol = activeSymbols.find((s) => s.ourSymbol === ourSymbol)?.wsSymbol;
+    if (!wsSymbol) {
+        forgetBookState(ourSymbol); // delisted meanwhile
+        return;
+    }
+    r.requestedAt = now;
+    lastResyncSentAt.set(ourSymbol, now);
+    sendBookSubscription(ws, "unsubscribe", [wsSymbol]);
+    sendBookSubscription(ws, "subscribe", [wsSymbol]);
+    recordBookResync(ourSymbol, "requested");
+    logger.warn({ exchange: "kraken", symbol: ourSymbol }, "kraken_book_resync_requested");
+}
+
+/** Watchdog step 4: send cooldown-delayed resyncs; reconnect if a snapshot never arrives. Returns true if it killed the socket. */
+function checkBookResyncs(now: number): boolean {
+    for (const [symbol, r] of resyncs) {
+        if (r.requestedAt === null) {
+            requestBookResync(symbol, now);
+        } else if (now - r.requestedAt > config.krakenBookResyncTimeoutMs) {
+            const waitedMs = now - r.requestedAt;
+            if (killSocket("book_resync_timeout", symbol, waitedMs, config.krakenBookResyncTimeoutMs, true,
+                `no fresh book snapshot for ${symbol} ${waitedMs}ms after resubscribe`)) return true;
+        }
+    }
+    return false;
+}
+
+/** Drop one symbol's checksum/resync state (delisted). */
+function forgetBookState(ourSymbol: string): void {
+    books.delete(ourSymbol);
+    resyncs.delete(ourSymbol);
+    lastResyncSentAt.delete(ourSymbol);
+    recentMismatchAt.delete(ourSymbol);
+    mismatchLog.delete(ourSymbol);
+    setBookInvalid(ourSymbol, false);
+}
+
+/** Per-connection book state: every book is rebuilt from the next socket's snapshots. */
+function resetBookState(): void {
+    books.clear();
+    resyncs.clear();
+    lastResyncSentAt.clear();
+    recentMismatchAt.clear();
+    mismatchLog.clear();
+    clearBookInvalid();
 }
 
 function handleBookMessage(data: any[], type: string): void {
+    const socket = ws;
     for (const entry of data) {
+        if (ws !== socket) return; // a mass-mismatch kill dropped the socket mid-frame
         const krakenSymbol = entry.symbol;
         if (!krakenSymbol) continue;
 
@@ -356,20 +515,15 @@ function handleBookMessage(data: any[], type: string): void {
         bookTracker.record(ourSymbol, now);
         backoff.onHealthy(now);
 
-        const rawBids: any[] = entry.bids || [];
-        const rawAsks: any[] = entry.asks || [];
-
-        if (type === "snapshot") {
-            handleBookSnapshot(pairId, rawBids, rawAsks);
-        } else {
-            applyBookUpdate(pairId, rawBids, rawAsks);
-        }
+        applyBookEntry(entry, type, ourSymbol, pairId, now);
     }
 }
 
 async function handleMessage(raw: WebSocket.Data): Promise<void> {
     try {
-        const msg = JSON.parse(raw.toString());
+        const text = raw.toString();
+        // Book frames: quote price/qty first so they parse as exact decimal text.
+        const msg = JSON.parse(text.includes('"channel":"book"') ? quoteBookNumbers(text) : text);
         if (msg.channel === "heartbeat") {
             heartbeatTracker.record(HEARTBEAT_KEY, Date.now());
             return;
@@ -383,6 +537,8 @@ async function handleMessage(raw: WebSocket.Data): Promise<void> {
             handleTradeMessage(msg.data);
         } else if (msg.channel === "book") {
             handleBookMessage(msg.data, msg.type);
+        } else if (msg.channel === "instrument") {
+            handleInstrumentMessage(msg.data);
         }
     } catch {
         // Ignore unparseable messages (heartbeats, etc.)
@@ -490,6 +646,9 @@ function runWatchdogs(): void {
     for (const symbol of symbols) {
         if (!bookTracker.isStale(symbol)) setFeedStale("kraken", "book", symbol, false);
     }
+
+    // 4. Book checksum resyncs (only ever populated with enforcement on).
+    checkBookResyncs(now);
 }
 
 /** e.g. "no book for SOL/USD for 10400ms", "no heartbeat within 11000ms of connect". */
@@ -542,6 +701,7 @@ function dropSocket(
     bookTracker.disconnect();
     heartbeatTracker.disconnect();
     clearFeedStale("kraken");
+    resetBookState();
     socket.removeAllListeners();
     socket.on("error", () => {});
     if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
@@ -602,6 +762,7 @@ export function stopKrakenFeed(): void {
     bookTracker.disconnect();
     heartbeatTracker.disconnect();
     clearFeedStale("kraken");
+    resetBookState();
     if (ws) {
         ws.close();
         ws = null;
@@ -634,6 +795,8 @@ export function __resetKrakenWsForTest(): void {
     symbolToPairId = {};
     symbolsReady = false;
     formingSeedDone = false;
+    precisions = new Map();
+    resetBookState();
     bookTracker = new StalenessTracker({ staleMs: config.feedKrakenBookStaleMs, ...trackerOpts() });
     heartbeatTracker = new StalenessTracker({ staleMs: config.feedKrakenHeartbeatStaleMs, ...trackerOpts() });
     backoff = new ReconnectBackoff(KRAKEN_BACKOFF);

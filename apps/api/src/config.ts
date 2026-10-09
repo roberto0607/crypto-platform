@@ -197,6 +197,21 @@ export const config = {
   // How long after (re)connect a symbol may go without its first message.
   feedWatchdogGraceMs: numberEnv("FEED_WATCHDOG_GRACE_MS", 10_000),
 
+  // ── Kraken book checksum (market/krakenBook.ts, wired in krakenWs.ts) ──
+  // Every book message is verified against Kraken's CRC32 regardless. Off →
+  // mismatches are logged (kraken_book_checksum_mismatch) + counted only.
+  // On → a mismatched symbol's book is dropped (collar falls back to the
+  // ticker / rejects stale) and only that symbol's book is resubscribed.
+  krakenBookChecksumEnforce: booleanEnv("KRAKEN_BOOK_CHECKSUM_ENFORCE", false),
+  // Min gap between book resubscribes for one symbol.
+  krakenBookResyncCooldownMs: numberEnv("KRAKEN_BOOK_RESYNC_COOLDOWN_MS", 5_000),
+  // A resubscribed symbol with no fresh snapshot after this → socket reconnect.
+  krakenBookResyncTimeoutMs: numberEnv("KRAKEN_BOOK_RESYNC_TIMEOUT_MS", 10_000),
+  // This many distinct symbols mismatching inside the window → one socket
+  // reconnect instead of N resubscribes (a socket-wide problem, not a symbol's).
+  krakenBookMassMismatchSymbols: numberEnv("KRAKEN_BOOK_MASS_MISMATCH_SYMBOLS", 5),
+  krakenBookMassMismatchWindowMs: numberEnv("KRAKEN_BOOK_MASS_MISMATCH_WINDOW_MS", 10_000),
+
   // ── Coinbase feed watchdogs (wired in feeds/coinbaseWs.ts) ──
   // Coinbase Advanced Trade `heartbeats` channel, subscribed on every batch
   // socket. Silence → terminate + reconnect. A 10-min live sample (2026-10-08,
