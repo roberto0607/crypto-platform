@@ -10,6 +10,7 @@ export type PairRow = {
     symbol: string;
     is_active: boolean;
     last_price: string | null;
+    /** @deprecated never read — see trading/feeCalc.ts. */
     fee_bps: number;
     maker_fee_bps: number;
     taker_fee_bps: number;
@@ -23,17 +24,20 @@ export async function createPair(params: {
     baseAssetId: string;
     quoteAssetId: string;
     symbol: string;
-    feeBps: number;
     makerFeeBps?: number;
     takerFeeBps?: number;
 }): Promise<PairRow> {
+    // fee_bps is deprecated (feeCalc.ts is the only fee source and never
+    // reads it). It's mirrored from the taker rate so the column can't
+    // contradict the real fee until a migration drops it.
+    const takerFeeBps = params.takerFeeBps ?? 5;
     const result = await pool.query<PairRow>(
         `
         INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, fee_bps, maker_fee_bps, taker_fee_bps)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $4)
         RETURNING ${PAIR_COLUMNS}
         `,
-        [params.baseAssetId, params.quoteAssetId, params.symbol, params.feeBps, params.makerFeeBps ?? 2, params.takerFeeBps ?? 5]
+        [params.baseAssetId, params.quoteAssetId, params.symbol, takerFeeBps, params.makerFeeBps ?? 2]
     );
 
     return result.rows[0];

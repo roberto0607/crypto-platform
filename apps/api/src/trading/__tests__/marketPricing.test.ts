@@ -29,7 +29,7 @@ async function lastPrice(): Promise<string> {
 }
 
 async function setLastPrice(price: string) {
-    await pool.query(`UPDATE trading_pairs SET last_price = $1, fee_bps = 0 WHERE id = $2`, [price, pairId]);
+    await pool.query(`UPDATE trading_pairs SET last_price = $1, maker_fee_bps = 0, taker_fee_bps = 0 WHERE id = $2`, [price, pairId]);
 }
 
 /** Pretend `ms` pass: ages every seeded book and ticker. */

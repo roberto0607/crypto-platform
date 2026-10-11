@@ -215,13 +215,10 @@ export async function placeOrderWithSnapshot(
                     const quoteAmount = fill.quote_amount;
                     const executedAtMs = new Date(fill.executed_at).getTime();
 
-                    const takerFee = computeFee(
-                        quoteAmount,
-                        "TAKER",
-                        pair.maker_fee_bps,
-                        pair.taker_fee_bps,
-                        pair.quote_asset_id
-                    );
+                    // Same function + same rounded quote amount the matching
+                    // engine charged the wallet with — positions, journal and
+                    // ledger can't diverge.
+                    const takerFee = computeFee(quoteAmount, "TAKER", pair, userId);
 
                     // Apply fill to taker's position
                     await applyFillToPositionTx(client, {
@@ -283,13 +280,7 @@ export async function placeOrderWithSnapshot(
 
                         if (makerUserId) {
                             const makerSide = body.side === "BUY" ? "SELL" : "BUY";
-                            const makerFee = computeFee(
-                                quoteAmount,
-                                "MAKER",
-                                pair.maker_fee_bps,
-                                pair.taker_fee_bps,
-                                pair.quote_asset_id
-                            );
+                            const makerFee = computeFee(quoteAmount, "MAKER", pair, makerUserId);
 
                             await applyFillToPositionTx(client, {
                                 userId: makerUserId,

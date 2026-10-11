@@ -82,7 +82,7 @@ export default function AdminAssetsPage() {
         baseAssetId: pairBase,
         quoteAssetId: pairQuote,
         symbol: pairSymbol,
-        feeBps: pairFees ? parseInt(pairFees, 10) : undefined,
+        takerFeeBps: pairFees ? parseInt(pairFees, 10) : undefined,
       });
       const res = await listPairs();
       setPairs(seedAndStripPairs(res.data.pairs as TradingPairWire[]));
@@ -247,9 +247,9 @@ export default function AdminAssetsPage() {
               onChange={(e) => setPairSymbol(e.target.value)}
             />
             <Input
-              label="Fee (bps)"
+              label="Taker fee (bps)"
               type="number"
-              placeholder="30"
+              placeholder="5"
               value={pairFees}
               onChange={(e) => setPairFees(e.target.value)}
             />

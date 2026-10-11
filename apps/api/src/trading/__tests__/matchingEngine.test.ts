@@ -62,8 +62,12 @@ async function getLastPrice(pairId: string) {
   return rows[0].last_price;
 }
 
+/** Sets both maker and taker rates (the fixture default is maker 2 / taker 5). */
 async function setFee(pairId: string, bps: number) {
-  await pool.query(`UPDATE trading_pairs SET fee_bps = $1 WHERE id = $2`, [bps, pairId]);
+  await pool.query(
+    `UPDATE trading_pairs SET maker_fee_bps = $1, taker_fee_bps = $1 WHERE id = $2`,
+    [bps, pairId],
+  );
 }
 
 /* ── shared state (reset each test) ───────────────────── */
@@ -264,17 +268,17 @@ describe("placeOrder", () => {
     });
 
     it("releases excess reserved funds on maker side after fill", async () => {
-      // fee_bps = 30 (default) → reserve includes fee buffer
-      // reserve = 1 * 50000 * (10000 + 30) / 10000 = 50150
+      // taker 5 / maker 2 (fixture) → reserve at the higher rate:
+      // reserve = 1 * 50000 * (10000 + 5) / 10000 = 50025
       await placeOrder(buyer.id, pair.id, "BUY", "LIMIT", "1.00000000", "50000.00000000");
 
       const walletBefore = await getWallet(buyerUsd.id);
-      expect(parseFloat(walletBefore.reserved)).toBeCloseTo(50150, 4);
+      expect(parseFloat(walletBefore.reserved)).toBeCloseTo(50025, 4);
 
       // Seller market sells into it → buyer's LIMIT BUY fully filled
       await placeOrder(seller.id, pair.id, "SELL", "MARKET", "1.00000000");
 
-      // Excess fee buffer (150 USD) should be released
+      // Maker paid 2 bps (10 USD); the rest of the 25 USD buffer is released
       const walletAfter = await getWallet(buyerUsd.id);
       expect(walletAfter.reserved).toBe("0.00000000");
     });
@@ -308,10 +312,10 @@ describe("placeOrder", () => {
     });
 
     it("reserves funds on placement (qty * limitPrice + fees)", async () => {
-      // fee_bps = 30 → reserve = 1 * 50000 * (10000 + 30) / 10000 = 50150
+      // max(maker 2, taker 5) = 5 → reserve = 1 * 50000 * (10000 + 5) / 10000 = 50025
       const result = await placeOrder(buyer.id, pair.id, "BUY", "LIMIT", "1.00000000", "50000.00000000");
 
-      const expected = 1 * 50000 * (10000 + 30) / 10000; // 50150
+      const expected = 1 * 50000 * (10000 + 5) / 10000; // 50025
       expect(parseFloat(result.order.reserved_amount)).toBeCloseTo(expected, 4);
 
       const wallet = await getWallet(buyerUsd.id);
@@ -411,14 +415,14 @@ describe("placeOrder", () => {
     });
 
     it("correct fee calculation for each fill (taker + maker)", async () => {
-      // fee_bps = 30 (default)
+      // taker 5 bps (fixture)
       await placeOrder(seller.id, pair.id, "SELL", "LIMIT", "1.00000000", "50000.00000000");
 
       const result = await placeOrder(buyer.id, pair.id, "BUY", "MARKET", "1.00000000");
 
       const fill = result.fills[0];
-      // fee = quoteAmt * fee_bps / 10000 = 50000 * 30 / 10000 = 150
-      expect(fill.fee_amount).toBe("150.00000000");
+      // trades.fee_amount is the taker's fee = 50000 * 5 / 10000 = 25
+      expect(fill.fee_amount).toBe("25.00000000");
       expect(fill.fee_asset_id).toBe(usdAsset.id);
     });
 

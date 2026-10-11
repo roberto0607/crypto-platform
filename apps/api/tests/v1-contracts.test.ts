@@ -57,7 +57,7 @@ beforeAll(async () => {
         method: "POST",
         url: "/admin/pairs",
         headers: { authorization: `Bearer ${adminToken}` },
-        payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`X${uid}/USD`), feeBps: 0 },
+        payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`X${uid}/USD`), makerFeeBps: 0, takerFeeBps: 0 },
     });
     pairId = pairRes.json().pair.id;
 

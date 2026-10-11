@@ -68,7 +68,7 @@ async function createPair(): Promise<PairCtx> {
   const pairRes = await app.inject({
     method: "POST", url: "/admin/pairs",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { baseAssetId: baseId, quoteAssetId: quoteId, symbol: allowSymbolForTest(`P${uid}/USD`), feeBps: 0 },
+    payload: { baseAssetId: baseId, quoteAssetId: quoteId, symbol: allowSymbolForTest(`P${uid}/USD`), makerFeeBps: 0, takerFeeBps: 0 },
   });
   const pairId = pairRes.json().pair.id;
 

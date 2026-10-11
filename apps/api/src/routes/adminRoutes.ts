@@ -34,7 +34,6 @@ const createPairBody = z.object({
   baseAssetId: z.string().uuid(),
   quoteAssetId: z.string().uuid(),
   symbol: z.string().min(1).max(20),
-  feeBps: z.number().int().min(0).max(10000).default(30),
   makerFeeBps: z.number().int().min(0).max(10000).default(2),
   takerFeeBps: z.number().int().min(0).max(10000).default(5),
 });
@@ -219,7 +218,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /admin/pairs
-  app.post("/pairs", { schema: { tags: ["Admin"], summary: "Create a trading pair", description: "Creates a new trading pair from base and quote assets. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["baseAssetId", "quoteAssetId", "symbol"], properties: { baseAssetId: { type: "string", format: "uuid" }, quoteAssetId: { type: "string", format: "uuid" }, symbol: { type: "string" }, feeBps: { type: "integer", default: 30 }, makerFeeBps: { type: "integer", default: 2 }, takerFeeBps: { type: "integer", default: 5 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, pair: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
+  app.post("/pairs", { schema: { tags: ["Admin"], summary: "Create a trading pair", description: "Creates a new trading pair from base and quote assets. Requires ADMIN role.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["baseAssetId", "quoteAssetId", "symbol"], properties: { baseAssetId: { type: "string", format: "uuid" }, quoteAssetId: { type: "string", format: "uuid" }, symbol: { type: "string" }, makerFeeBps: { type: "integer", default: 2 }, takerFeeBps: { type: "integer", default: 5 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, pair: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 409: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: [requireUser, requireRole("ADMIN")] }, async (req, reply) => {
     const parsed = createPairBody.safeParse(req.body);
     if (!parsed.success) {
         return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -240,7 +239,6 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             baseAssetId: parsed.data.baseAssetId,
             quoteAssetId: parsed.data.quoteAssetId,
             symbol: parsed.data.symbol,
-            feeBps: parsed.data.feeBps,
             makerFeeBps: parsed.data.makerFeeBps,
             takerFeeBps: parsed.data.takerFeeBps,
         });
@@ -254,7 +252,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             requestId: req.id,
             ip: req.ip,
             userAgent: req.headers["user-agent"] ?? null,
-            metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, feeBps: parsed.data.feeBps, makerFeeBps: parsed.data.makerFeeBps, takerFeeBps: parsed.data.takerFeeBps },
+            metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, makerFeeBps: parsed.data.makerFeeBps, takerFeeBps: parsed.data.takerFeeBps },
         });
 
         return reply.code(201).send({ ok: true, pair });
