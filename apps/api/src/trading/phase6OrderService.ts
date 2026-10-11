@@ -14,6 +14,12 @@ import { getLatestSimCandle } from "../sim/simCandleRepo";
 import { D, toFixed8 } from "../utils/decimal";
 import { AppError } from "../errors/AppError";
 import { createEvent } from "../events/eventTypes";
+import {
+    closedTriggerSide,
+    cancelTriggersForClosedPositionTx,
+    triggerCanceledEvent,
+    POSITION_CLOSED_REASON,
+} from "../triggers/positionCloseTriggers";
 import { buildLogContext, logger } from "../observability/logContext";
 import {
   marketFillOffBookTotal,
@@ -209,6 +215,15 @@ export async function placeOrderWithSnapshot(
         if (matchResult.fills.length > 0) {
             const pair = await findPairById(body.pairId);
             if (pair) {
+                // Positions this order closed (taker or maker side), keyed
+                // user:triggerSide — their protective triggers are canceled
+                // after all fills are applied (see positionCloseTriggers.ts).
+                const closedPositions = new Map<string, { userId: string; triggerSide: "BUY" | "SELL" }>();
+                const noteClose = (uid: string, fillSide: "BUY" | "SELL", qty: string, afterQty: string) => {
+                    const triggerSide = closedTriggerSide(fillSide, qty, afterQty);
+                    if (triggerSide) closedPositions.set(`${uid}:${triggerSide}`, { userId: uid, triggerSide });
+                };
+
                 for (const fill of matchResult.fills) {
                     const fillPrice = fill.price;
                     const fillQty = fill.qty;
@@ -221,7 +236,7 @@ export async function placeOrderWithSnapshot(
                     const takerFee = computeFee(quoteAmount, "TAKER", pair, userId);
 
                     // Apply fill to taker's position
-                    await applyFillToPositionTx(client, {
+                    const takerPos = await applyFillToPositionTx(client, {
                         userId,
                         pairId: body.pairId,
                         side: body.side,
@@ -232,6 +247,7 @@ export async function placeOrderWithSnapshot(
                         competitionId,
                         matchId: resolvedMatchId,
                     });
+                    noteClose(userId, body.side, fillQty, takerPos.base_qty);
 
                     // Journal: record taker fill for FIFO P&L.
                     // NOTE: open_lots / closed_trades don't have match_id
@@ -282,7 +298,7 @@ export async function placeOrderWithSnapshot(
                             const makerSide = body.side === "BUY" ? "SELL" : "BUY";
                             const makerFee = computeFee(quoteAmount, "MAKER", pair, makerUserId);
 
-                            await applyFillToPositionTx(client, {
+                            const makerPos = await applyFillToPositionTx(client, {
                                 userId: makerUserId,
                                 pairId: body.pairId,
                                 side: makerSide as "BUY" | "SELL",
@@ -293,6 +309,7 @@ export async function placeOrderWithSnapshot(
                                 competitionId: makerCompetitionId,
                                 matchId: makerMatchId,
                             });
+                            noteClose(makerUserId, makerSide as "BUY" | "SELL", fillQty, makerPos.base_qty);
 
                             // Journal maker fill — same journal-scope caveat
                             // as the taker journal call above.
@@ -309,6 +326,12 @@ export async function placeOrderWithSnapshot(
                             });
                         }
                     }
+                }
+
+                // ── Cancel triggers protecting positions this order closed ──
+                for (const { userId: closedUserId, triggerSide } of closedPositions.values()) {
+                    const canceled = await cancelTriggersForClosedPositionTx(client, closedUserId, body.pairId, triggerSide);
+                    for (const row of canceled) pendingEvents.push(triggerCanceledEvent(row, POSITION_CLOSED_REASON));
                 }
 
                 // ── Idempotency key ──

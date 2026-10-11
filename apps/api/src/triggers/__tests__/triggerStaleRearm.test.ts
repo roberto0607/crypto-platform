@@ -49,6 +49,13 @@ beforeEach(async () => {
     const assets = await createTestAssetAndPair(pool);
     pairId = assets.pair.id;
     await createTestWallets(pool, userId, assets.btcAsset.id, assets.usdAsset.id, "1.00000000", "100000.00000000");
+    // The SELL stops below protect a 0.1 BTC free-play long. Triggers are
+    // reduce-only at fire time, so without a position they'd be canceled
+    // (no_position) instead of placing an order.
+    await pool.query(
+        `INSERT INTO positions (user_id, pair_id, base_qty, avg_entry_price) VALUES ($1, $2, '0.10000000', '50000')`,
+        [userId, pairId],
+    );
 });
 
 describe("trigger + stale Kraken book", () => {

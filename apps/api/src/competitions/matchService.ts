@@ -1,4 +1,10 @@
 import type { PoolClient } from "pg";
+import type { TriggerOrderRow } from "../triggers/triggerTypes.js";
+import {
+    cancelTriggersForClosedPositionTx,
+    triggerCanceledEvent,
+    POSITION_CLOSED_REASON,
+} from "../triggers/positionCloseTriggers.js";
 import { pool, acquireClient } from "../db/pool.js";
 import {
     resolveMatchElo,
@@ -289,7 +295,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         // realized PnL into the match stats. Without this the forfeiter
         // could escape a losing open position by forfeiting — now the loss
         // sticks and shows up in challenger_pnl_pct / opponent_pnl_pct.
-        await closeMatchScopedPositions(matchId, client);
+        const { canceledTriggers } = await closeMatchScopedPositions(matchId, client);
 
         const capital = parseFloat(match.starting_capital);
         const challengerStats = await calculatePlayerStats(matchId, match.challenger_id, capital, client);
@@ -331,6 +337,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         }
 
         await client.query("COMMIT");
+        publishTriggersCanceled(canceledTriggers);
 
         // Push the verdict to both players so the opponent's screen flips
         // instantly (forfeiter already has it from this request's response).
@@ -366,7 +373,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         // Force-close any open match-scoped positions at current market price.
         // Books realized PnL into positions.realized_pnl_quote so the next
         // calculatePlayerStats call picks it up.
-        await closeMatchScopedPositions(matchId, client);
+        const { canceledTriggers } = await closeMatchScopedPositions(matchId, client);
 
         // Calculate stats for each player
         const challengerStats = await calculatePlayerStats(matchId, match.challenger_id, capital, client);
@@ -418,6 +425,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         }
 
         await client.query("COMMIT");
+        publishTriggersCanceled(canceledTriggers);
 
         // Timer-expiry completion — push the verdict to both players.
         await publishMatchEnded(updated[0], "timeout", eloResult);
@@ -941,7 +949,7 @@ export function calculateNuancedScore(
 async function closeMatchScopedPositions(
     matchId: string,
     client: PoolClient,
-): Promise<{ closedCount: number; totalPnlRealized: string }> {
+): Promise<{ closedCount: number; totalPnlRealized: string; canceledTriggers: TriggerOrderRow[] }> {
     // Lock match-scoped, non-flat position rows for the duration of the txn.
     const { rows: openPositions } = await client.query<{
         user_id: string;
@@ -959,6 +967,7 @@ async function closeMatchScopedPositions(
 
     let closedCount = 0;
     let totalPnl = D("0");
+    const canceledTriggers: TriggerOrderRow[] = [];
 
     for (const pos of openPositions) {
         // Exit-price fallback chain: live snapshot (<60s) → trading_pairs.last_price → avg_entry_price.
@@ -1078,6 +1087,12 @@ async function closeMatchScopedPositions(
             "match_scoped_position_closed",
         );
 
+        // The position is gone — cancel the TP/SL/trailing triggers that
+        // protected it (closingSide is also the side those triggers carry).
+        canceledTriggers.push(
+            ...await cancelTriggersForClosedPositionTx(client, pos.user_id, pos.pair_id, closingSide),
+        );
+
         closedCount++;
         totalPnl = totalPnl.plus(pnl);
     }
@@ -1085,6 +1100,18 @@ async function closeMatchScopedPositions(
     return {
         closedCount,
         totalPnlRealized: toFixed8(totalPnl),
+        canceledTriggers,
     };
+}
+
+/** After COMMIT: tell each player's UI their protective triggers are gone. */
+function publishTriggersCanceled(rows: TriggerOrderRow[]): void {
+    for (const row of rows) {
+        try {
+            publish(triggerCanceledEvent(row, POSITION_CLOSED_REASON));
+        } catch {
+            // Events must never break match completion
+        }
+    }
 }
 
