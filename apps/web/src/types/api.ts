@@ -81,6 +81,7 @@ export interface TradingPair {
   base_asset_id: UUID;
   quote_asset_id: UUID;
   is_active: boolean;
+  /** @deprecated never used for fees — the API charges maker_fee_bps / taker_fee_bps. */
   fee_bps: number;
   maker_fee_bps: number;
   taker_fee_bps: number;

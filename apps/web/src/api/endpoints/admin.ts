@@ -35,7 +35,7 @@ export function createAsset(params: { symbol: string; name: string; decimals: nu
   return client.post<{ ok: true; asset: { id: UUID } }>("/admin/assets", params);
 }
 
-export function createPair(params: { baseAssetId: UUID; quoteAssetId: UUID; symbol: string; feeBps?: number; makerFeeBps?: number; takerFeeBps?: number }) {
+export function createPair(params: { baseAssetId: UUID; quoteAssetId: UUID; symbol: string; makerFeeBps?: number; takerFeeBps?: number }) {
   return client.post<{ ok: true; pair: { id: UUID } }>("/admin/pairs", params);
 }
 

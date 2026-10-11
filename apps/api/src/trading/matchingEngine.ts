@@ -94,13 +94,17 @@ import {
 import type { WalletRow } from "../wallets/walletRepo";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
+import { computeFee, maxFeeBps } from "./feeCalc";
 
 type FillPlan = {
     resting: OrderRow;
     fillQty: Decimal;
     fillPrice: Decimal;
     quoteAmt: Decimal;
+    /** Taker fee (the incoming order). */
     feeAmt: Decimal;
+    /** Maker fee (the resting order's owner). */
+    makerFeeAmt: Decimal;
     counterBaseId: string;
     counterQuoteId: string;
 };
@@ -195,10 +199,14 @@ async function placeOrderInternal(
             if (remaining.lte(0)) break;
             const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
             const fillPrice = D(resting.limit_price!);
-            const quoteAmt = fillQty.mul(fillPrice);
-            const feeAmt = quoteAmt.mul(D(pair.fee_bps)).div(BPS_DIVISOR);
+            // Fees derive from the rounded quote amount — the same input
+            // the post-fill pipeline (positions, journal) feeds computeFee.
+            const quoteStr = toFixed8(fillQty.mul(fillPrice));
+            const quoteAmt = D(quoteStr);
+            const feeAmt = D(computeFee(quoteStr, "TAKER", pair, userId).feeAmount);
+            const makerFeeAmt = D(computeFee(quoteStr, "MAKER", pair, resting.user_id).feeAmount);
             plan.push({
-                resting, fillQty, fillPrice, quoteAmt, feeAmt,
+                resting, fillQty, fillPrice, quoteAmt, feeAmt, makerFeeAmt,
                 counterBaseId: "", counterQuoteId: "",
             });
             remaining = remaining.minus(fillQty);
@@ -219,8 +227,9 @@ async function placeOrderInternal(
         // its size. There is no depth-based slippage (walking Kraken's book
         // levels), so a large order gets top-of-book price for all of it.
         const sysPrice = systemFillPrice(reference!, side);
-        const sysQuote = remaining.mul(sysPrice);
-        const sysFee = sysQuote.mul(pair.fee_bps).div(BPS_DIVISOR);
+        const sysQuoteStr = toFixed8(remaining.mul(sysPrice));
+        const sysQuote = D(sysQuoteStr);
+        const sysFee = D(computeFee(sysQuoteStr, "TAKER", pair, userId).feeAmount);
         systemFill = { fillQty: remaining, fillPrice: sysPrice, quoteAmt: sysQuote, feeAmt: sysFee };
         remaining = ZERO;
     }
@@ -247,14 +256,15 @@ async function placeOrderInternal(
     let reserveWalletId: string | null = null;
     if (type === "LIMIT") {
         if (side === "BUY") {
-            reserveAmount = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(pair.fee_bps))).div(BPS_DIVISOR);
+            // Reserve at the higher of maker/taker: the order may fill as either.
+            reserveAmount = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(maxFeeBps(pair)))).div(BPS_DIVISOR);
             const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
             if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
             reserveWalletId = quoteWallet.id;
         } else {
             // Short sell LIMIT: check USD margin affordability, but reserve base.
             // Base will be minted (margin loan) in Phase G2 before the reserve.
-            const notional = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(pair.fee_bps))).div(BPS_DIVISOR);
+            const notional = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(maxFeeBps(pair)))).div(BPS_DIVISOR);
             const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
             if (available.lt(notional)) throw new Error("insufficient_balance");
             reserveAmount = D(qty);
@@ -339,13 +349,14 @@ async function placeOrderInternal(
     let lastFillPrice: Decimal | null = null;
 
     for (const entry of plan) {
-        const { resting, fillQty, fillPrice, quoteAmt, feeAmt } = entry;
+        const { resting, fillQty, fillPrice, quoteAmt, feeAmt, makerFeeAmt } = entry;
 
         // Pre-round financial amounts so derived values (debit = credit + fee)
         // are computed from rounded operands, guaranteeing exact ledger balance.
         const qtyStr = toFixed8(fillQty);
         const quoteStr = toFixed8(quoteAmt);
         const feeStr = toFixed8(feeAmt);
+        const makerFeeStr = toFixed8(makerFeeAmt);
 
         const buyOrderId = side === "BUY" ? order.id : resting.id;
         const sellOrderId = side === "SELL" ? order.id : resting.id;
@@ -367,20 +378,20 @@ async function placeOrderInternal(
             const costPlusFee = toFixed8(D(quoteStr).plus(D(feeStr)));
             if (type === "MARKET") {
                 await debitAvailableTx(client, quoteWallet.id, costPlusFee,
-                    "TRADE_BUY", trade.id, "TRADE", { fee: feeStr });
+                    "TRADE_BUY", trade.id, "TRADE", { fee: feeStr, feeRole: "TAKER" });
             } else{
                 await consumeReservedAndDebitTx(client, quoteWallet.id, costPlusFee,
-                    "TRADE_BUY", trade.id, "TRADE", { fee: feeStr });
+                    "TRADE_BUY", trade.id, "TRADE", { fee: feeStr, feeRole: "TAKER" });
                 reservedConsumed = reservedConsumed.plus(D(costPlusFee));
             }
             await creditWalletTx(client, baseWallet.id, qtyStr,
                 "TRADE_BUY", trade.id, "TRADE");
 
-            //Maker (seller): consume reserved base, credit quote
+            //Maker (seller): consume reserved base, credit quote minus maker fee
             await consumeReservedAndDebitTx(client, entry.counterBaseId, qtyStr,
                 "TRADE_SELL", trade.id, "TRADE");
-            await creditWalletTx(client, entry.counterQuoteId, quoteStr,
-                "TRADE_SELL", trade.id, "TRADE");
+            await creditWalletTx(client, entry.counterQuoteId, toFixed8(D(quoteStr).minus(D(makerFeeStr))),
+                "TRADE_SELL", trade.id, "TRADE", { fee: makerFeeStr, feeRole: "MAKER" });
 
             //update maker order (SELL maker: reserved in base, consumed = fillQty)
             const newMakerFilled = D(resting.qty_filled).plus(fillQty);
@@ -404,21 +415,23 @@ async function placeOrderInternal(
                 reservedConsumed = reservedConsumed.plus(D(qtyStr));
             }
             await creditWalletTx(client, quoteWallet.id, costMinusFee,
-                "TRADE_SELL", trade.id, "TRADE", { fee: feeStr });
+                "TRADE_SELL", trade.id, "TRADE", { fee: feeStr, feeRole: "TAKER" });
 
-            //Maker (buyer): consume reserved quote, credit base
-            await consumeReservedAndDebitTx(client, entry.counterQuoteId, quoteStr,
-                "TRADE_BUY", trade.id, "TRADE");
+            //Maker (buyer): consume reserved quote (cost + maker fee), credit base.
+            //The reserve was sized at maxFeeBps, so it always covers the fee.
+            const makerCostPlusFee = toFixed8(D(quoteStr).plus(D(makerFeeStr)));
+            await consumeReservedAndDebitTx(client, entry.counterQuoteId, makerCostPlusFee,
+                "TRADE_BUY", trade.id, "TRADE", { fee: makerFeeStr, feeRole: "MAKER" });
             await creditWalletTx(client, entry.counterBaseId, qtyStr,
                 "TRADE_BUY", trade.id, "TRADE");
 
-            //Update maker order (BUY maker: reserved in quote, consumed = quoteAmt)
+            //Update maker order (BUY maker: reserved in quote, consumed = cost + maker fee)
             const newMakerFilled = D(resting.qty_filled).plus(fillQty);
             const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
-            await updateOrderFill(client, resting.id, qtyStr, quoteStr, makerStatus);
+            await updateOrderFill(client, resting.id, qtyStr, makerCostPlusFee, makerStatus);
 
             if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                const newConsumed = D(resting.reserved_consumed).plus(D(quoteStr));
+                const newConsumed = D(resting.reserved_consumed).plus(D(makerCostPlusFee));
                 const excess = D(resting.reserved_amount).minus(newConsumed);
                 if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
             }
@@ -452,7 +465,7 @@ async function placeOrderInternal(
         if (side === "BUY") {
             const sysCostPlusFee = toFixed8(D(sysQuoteStr).plus(D(sysFeeStr)));
             await debitAvailableTx(client, quoteWallet.id, sysCostPlusFee,
-                "TRADE_BUY", trade.id, "TRADE", { fee: sysFeeStr });
+                "TRADE_BUY", trade.id, "TRADE", { fee: sysFeeStr, feeRole: "TAKER" });
             await creditWalletTx(client, baseWallet.id, sysQtyStr,
                 "TRADE_BUY", trade.id, "TRADE");
         } else {
@@ -460,7 +473,7 @@ async function placeOrderInternal(
             await debitUnconstrainedTx(client, baseWallet.id, sysQtyStr,
                 "TRADE_SELL", trade.id, "TRADE");
             await creditWalletTx(client, quoteWallet.id, sysCostMinusFee,
-                "TRADE_SELL", trade.id, "TRADE", { fee: sysFeeStr });
+                "TRADE_SELL", trade.id, "TRADE", { fee: sysFeeStr, feeRole: "TAKER" });
         }
 
         fills.push(trade);

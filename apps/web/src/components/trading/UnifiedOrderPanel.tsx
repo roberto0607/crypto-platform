@@ -38,6 +38,12 @@ function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** Fees on small orders are fractions of a cent — show 4 dp so the
+ *  estimate matches what the ledger charges (e.g. $0.0250, not $0.03). */
+function fmtFee(n: number): string {
+    return n >= 1 ? fmtUsd(n) : "$" + n.toFixed(4);
+}
+
 /**
  * Quick-amount (#15): a fraction of the quote balance, floored to whole cents.
  * Non-positive balance or fraction → 0 (so 25/50/75/MAX never set NaN).
@@ -184,8 +190,13 @@ export function UnifiedOrderPanel({
     const baseQty = effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
     const baseQtyStr = baseQty > 0 ? baseQty.toFixed(8) : "";
 
-    // Fee calculation (on effective size)
+    // Fee estimate (on effective size). A MARKET order is always the taker.
+    // A LIMIT order pays the taker rate if it crosses now and the maker rate
+    // if it rests, so estimate at the taker rate (the higher one) and label both.
     const estFee = effectiveUsd > 0 ? (effectiveUsd * (pair.taker_fee_bps / 10000)) : 0;
+    const feeLabel = orderType === "LIMIT"
+        ? `FEE (${pair.taker_fee_bps} bps taker / ${pair.maker_fee_bps} maker)`
+        : `FEE (${pair.taker_fee_bps} bps)`;
 
     // Position info
     const posQty = position ? parseFloat(position.base_qty) : 0;
@@ -644,8 +655,8 @@ export function UnifiedOrderPanel({
                     <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`}>FEE ({pair.taker_fee_bps} bps)</span>
-                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtUsd(estFee) : lastOrderFee ? fmtUsd(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
+                    <span className={`${p}-sum-lbl`}>{feeLabel}</span>
+                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtFee(estFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>

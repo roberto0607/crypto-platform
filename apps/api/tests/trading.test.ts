@@ -65,7 +65,7 @@ beforeAll(async () => {
     method: "POST",
     url: "/admin/pairs",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`P${uid}/USD`), feeBps: 0 },
+    payload: { baseAssetId, quoteAssetId, symbol: allowSymbolForTest(`P${uid}/USD`), makerFeeBps: 0, takerFeeBps: 0 },
   });
   pairId = pairRes.json().pair.id;
 
@@ -267,7 +267,7 @@ describe("Price-time priority — deterministic matching", () => {
       method: "POST",
       url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: ptBaseId, quoteAssetId: ptQuoteId, symbol: allowSymbolForTest(`T${ptUid}/USD`), feeBps: 0 },
+      payload: { baseAssetId: ptBaseId, quoteAssetId: ptQuoteId, symbol: allowSymbolForTest(`T${ptUid}/USD`), makerFeeBps: 0, takerFeeBps: 0 },
     });
     ptPairId = pairRes.json().pair.id;
 
@@ -481,7 +481,7 @@ describe("Self-trade prevention", () => {
     const pairRes = await app.inject({
       method: "POST", url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: stpBaseId, quoteAssetId: stpQuoteId, symbol: allowSymbolForTest(`Q${stpUid}/USD`), feeBps: 0 },
+      payload: { baseAssetId: stpBaseId, quoteAssetId: stpQuoteId, symbol: allowSymbolForTest(`Q${stpUid}/USD`), makerFeeBps: 0, takerFeeBps: 0 },
     });
     stpPairId = pairRes.json().pair.id;
 
@@ -585,7 +585,7 @@ describe("Self-trade prevention", () => {
 });
 
 describe("Financial integrity — precision & invariants", () => {
-  // Uses a pair with real fees (30 bps) to exercise invariant checks
+  // Uses a pair with real fees (maker 2 / taker 5 bps) to exercise invariant checks
   let makerToken: string;
   let takerToken: string;
   let fiPairId: string;
@@ -624,11 +624,11 @@ describe("Financial integrity — precision & invariants", () => {
     });
     fiQuoteId = usdRes.json().asset.id;
 
-    // Pair with 30 bps fee
+    // Pair with maker 2 / taker 5 bps
     const pairRes = await app.inject({
       method: "POST", url: "/admin/pairs",
       headers: { authorization: `Bearer ${adminToken}` },
-      payload: { baseAssetId: fiBaseId, quoteAssetId: fiQuoteId, symbol: allowSymbolForTest(`H${fiUid}/USD`), feeBps: 30 },
+      payload: { baseAssetId: fiBaseId, quoteAssetId: fiQuoteId, symbol: allowSymbolForTest(`H${fiUid}/USD`), makerFeeBps: 2, takerFeeBps: 5 },
     });
     fiPairId = pairRes.json().pair.id;
 
@@ -698,7 +698,7 @@ describe("Financial integrity — precision & invariants", () => {
     const takerBaseBefore = await walletFor(takerToken, fiBaseId);
     const takerQuoteBefore = await walletFor(takerToken, fiQuoteId);
 
-    // Maker SELL: 10 BTC @ $50000 (quote = 500,000; fee = 500,000 * 30/10000 = 1500)
+    // Maker SELL: 10 BTC @ $50000 (quote = 500,000; maker fee = 500,000 * 2/10000 = 100)
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${makerToken}` },
@@ -723,7 +723,8 @@ describe("Financial integrity — precision & invariants", () => {
     expect(fill.qty).toBe("10.00000000");
     expect(fill.price).toBe("50000.00000000");
     expect(fill.quote_amount).toBe("500000.00000000");
-    expect(fill.fee_amount).toBe("1500.00000000");
+    // Taker BUY pays 500,000 * 5/10000 = 250 (trades.fee_amount is the taker fee)
+    expect(fill.fee_amount).toBe("250.00000000");
 
     // Verify balance changes
     const makerBaseAfter = await walletFor(makerToken, fiBaseId);
@@ -731,21 +732,21 @@ describe("Financial integrity — precision & invariants", () => {
     const takerBaseAfter = await walletFor(takerToken, fiBaseId);
     const takerQuoteAfter = await walletFor(takerToken, fiQuoteId);
 
-    // Maker (seller): -10 base, +500000 quote
+    // Maker (seller): -10 base, +(500000 - 100) quote
     const makerBaseDelta = parseFloat(makerBaseAfter.balance) - parseFloat(makerBaseBefore.balance);
     const makerQuoteDelta = parseFloat(makerQuoteAfter.balance) - parseFloat(makerQuoteBefore.balance);
     expect(makerBaseDelta).toBeCloseTo(-10, 8);
-    expect(makerQuoteDelta).toBeCloseTo(500000, 2);
+    expect(makerQuoteDelta).toBeCloseTo(499900, 2);
 
-    // Taker (buyer): +10 base, -(500000 + 1500) quote
+    // Taker (buyer): +10 base, -(500000 + 250) quote
     const takerBaseDelta = parseFloat(takerBaseAfter.balance) - parseFloat(takerBaseBefore.balance);
     const takerQuoteDelta = parseFloat(takerQuoteAfter.balance) - parseFloat(takerQuoteBefore.balance);
     expect(takerBaseDelta).toBeCloseTo(10, 8);
-    expect(takerQuoteDelta).toBeCloseTo(-501500, 2);
+    expect(takerQuoteDelta).toBeCloseTo(-500250, 2);
 
-    // System-wide: base net = 0, quote net = -fee
+    // System-wide: base net = 0, quote net = -(maker fee + taker fee)
     expect(makerBaseDelta + takerBaseDelta).toBeCloseTo(0, 8);
-    expect(makerQuoteDelta + takerQuoteDelta).toBeCloseTo(-1500, 2);
+    expect(makerQuoteDelta + takerQuoteDelta).toBeCloseTo(-350, 2);
 
     // All wallets non-negative
     for (const w of [makerBaseAfter, makerQuoteAfter, takerBaseAfter, takerQuoteAfter]) {
