@@ -36,3 +36,5 @@ pr*.png
 pair-restriction-*.json
 # one-time candle re-roll snapshots (pnpm candles:reroll --commit)
 candle-reroll-*.json
+# one-time fee refund snapshots (pnpm fees:refund-overcharge --commit)
+fee-refund-*.json

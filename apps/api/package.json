@@ -38,6 +38,7 @@
     "backfill:history": "tsx src/scripts/backfillMarketHistory.ts",
     "pairs:restrict": "tsx src/scripts/restrictPairs.ts",
     "candles:reroll": "tsx src/scripts/rerollCandles.ts",
+    "fees:refund-overcharge": "tsx src/scripts/refundFeeOvercharge.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],
