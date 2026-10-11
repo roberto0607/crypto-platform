@@ -21,6 +21,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   order_not_cancelable: "This order cannot be canceled.",
   insufficient_liquidity: "Market liquidity insufficient for requested size.",
   trigger_not_cancelable: "This trigger order cannot be canceled.",
+  trigger_not_editable: "Only an active trigger order can be edited.",
   alert_not_cancelable: "This alert cannot be canceled.",
   alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
   cannot_friend_self: "You can't send a friend request to yourself.",

@@ -16,7 +16,7 @@ import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { placeOrder } from "@/api/endpoints/trading";
-import { createTrigger, createOco, listTriggers, cancelTrigger } from "@/api/endpoints/triggers";
+import { createTrigger, createOco } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
@@ -140,23 +140,25 @@ export function UnifiedOrderPanel({
     const [lastOrderUsd, setLastOrderUsd] = useState<number | null>(null);
     const [lastOrderFee, setLastOrderFee] = useState<number | null>(null);
 
-    // Active triggers for position card display
-    const [activeTriggers, setActiveTriggers] = useState<TriggerOrder[]>([]);
+    // Active triggers (shared with the Open Orders dock via the store)
+    const activeTriggers = useTradingStore((s) => s.activeTriggers);
+    const fetchTriggers = useTradingStore((s) => s.refreshTriggers);
+    const updateTrigger = useTradingStore((s) => s.updateTrigger);
     const [editingTp, setEditingTp] = useState(false);
     const [editingSl, setEditingSl] = useState(false);
     const [editTpVal, setEditTpVal] = useState("");
     const [editSlVal, setEditSlVal] = useState("");
 
-    // Fetch triggers for current pair
-    const fetchTriggers = useCallback(async () => {
-        if (!selectedPairId) return;
-        try {
-            const res = await listTriggers({ pairId: selectedPairId, status: "ACTIVE" });
-            setActiveTriggers(res.data.data ?? []);
-        } catch { /* non-fatal */ }
-    }, [selectedPairId]);
-
-    useEffect(() => { fetchTriggers(); }, [fetchTriggers]);
+    // Fetch triggers for the current pair, and re-fetch whenever the server
+    // fires or cancels one (e.g. canceled because the position closed) or a
+    // fill lands that may have closed a position.
+    useEffect(() => { fetchTriggers(); }, [selectedPairId, fetchTriggers]);
+    useEffect(() => {
+        const refetch = () => { fetchTriggers(); };
+        const events = ["sse:trigger.fired", "sse:trigger.canceled", "sse:trade.created", "sse:reconnected"];
+        for (const e of events) window.addEventListener(e, refetch);
+        return () => { for (const e of events) window.removeEventListener(e, refetch); };
+    }, [fetchTriggers]);
 
     // Reset on pair change
     useEffect(() => {
@@ -425,33 +427,16 @@ export function UnifiedOrderPanel({
     };
 
     const handleEditTrigger = async (oldTrigger: TriggerOrder, newPrice: string) => {
-        // Editing a trigger is cancel-then-create. Track which step failed:
-        // a failed cancel leaves the old trigger intact (nothing lost), but a
-        // failed create AFTER a successful cancel leaves the position with no
-        // protective trigger at all — the user must be told explicitly.
+        // One atomic PATCH: the trigger keeps its id and OCO link (the old
+        // cancel-then-create orphaned the other leg). On failure the old
+        // trigger is untouched, so just say so and keep the edit open.
         try {
-            await cancelTrigger(oldTrigger.id);
+            await updateTrigger(oldTrigger.id, { triggerPrice: newPrice });
         } catch (err: any) {
             const msg = err?.response?.data?.message;
-            addToast("error", msg ?? "Couldn't update trigger. Try again.");
-            return; // old trigger still active — leave the edit panel open
+            addToast("error", msg ?? "Couldn't update trigger — the old one is still active. Try again.");
+            return;
         }
-        try {
-            await createTrigger({
-                pairId: oldTrigger.pair_id,
-                kind: oldTrigger.kind,
-                side: oldTrigger.side,
-                triggerPrice: newPrice,
-                qty: oldTrigger.qty,
-            });
-        } catch {
-            addToast(
-                "error",
-                "Trigger update failed — your old trigger is gone. Set a new one immediately.",
-            );
-            return; // keep the edit panel open so the user can retry now
-        }
-        fetchTriggers();
         setEditingTp(false);
         setEditingSl(false);
     };
@@ -740,7 +725,7 @@ export function UnifiedOrderPanel({
                                 <span style={smallLabel}>TP</span>
                                 {editingTp && tpTrigger ? (
                                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                        <input type="number" value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
+                                        <input type="number" autoFocus value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
                                             style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
                                         <span style={{ cursor: "pointer", color: "#00ff41", fontSize: 10 }} onClick={() => handleEditTrigger(tpTrigger, editTpVal)}>OK</span>
                                         <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingTp(false)}>X</span>
@@ -758,7 +743,7 @@ export function UnifiedOrderPanel({
                                 <span style={smallLabel}>SL</span>
                                 {editingSl && slTrigger ? (
                                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                        <input type="number" value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
+                                        <input type="number" autoFocus value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
                                             style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
                                         <span style={{ cursor: "pointer", color: "#ff3b3b", fontSize: 10 }} onClick={() => handleEditTrigger(slTrigger, editSlVal)}>OK</span>
                                         <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingSl(false)}>X</span>

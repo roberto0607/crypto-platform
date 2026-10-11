@@ -4,6 +4,7 @@ import type {
   Snapshot,
   Order,
   Fill,
+  TriggerOrder,
   OrderSide,
   OrderType,
   DecimalString,
@@ -17,6 +18,11 @@ import {
   placeOrder,
   cancelOrder as cancelOrderApi,
 } from "@/api/endpoints/trading";
+import {
+  listTriggers,
+  cancelTrigger as cancelTriggerApi,
+  updateTrigger as updateTriggerApi,
+} from "@/api/endpoints/triggers";
 import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
 import { createThrottle } from "@/lib/throttle";
@@ -106,6 +112,8 @@ interface TradingState {
   orderBook: OrderBook | null;
   snapshot: Snapshot | null;
   openOrders: Order[];
+  /** ACTIVE TP/SL/trailing triggers for the selected pair (Open Orders dock + position card). */
+  activeTriggers: TriggerOrder[];
   recentTrades: RecentTrade[];
 
   // Order form state
@@ -144,6 +152,10 @@ interface TradingState {
   refreshBookThrottled: () => void;
   refreshSnapshot: () => Promise<void>;
   refreshOpenOrders: () => Promise<void>;
+  refreshTriggers: () => Promise<void>;
+  cancelTrigger: (triggerId: string) => Promise<void>;
+  /** Edit in place (PATCH) — keeps the trigger's id and OCO link. */
+  updateTrigger: (triggerId: string, patch: { triggerPrice?: string; trailingOffset?: string }) => Promise<void>;
   submitOrder: () => Promise<{ order: Order; fills: Fill[] }>;
   cancelOrder: (orderId: string) => Promise<void>;
 
@@ -160,6 +172,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   orderBook: null,
   snapshot: null,
   openOrders: [],
+  activeTriggers: [],
   recentTrades: [],
 
   orderSide: "BUY",
@@ -191,11 +204,12 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({ activeCompetitionId: id });
 
     // Refresh all trading data for the new context
-    const { selectedPairId, refreshBook, refreshSnapshot, refreshOpenOrders } = get();
+    const { selectedPairId, refreshBook, refreshSnapshot, refreshOpenOrders, refreshTriggers } = get();
     if (selectedPairId) {
       refreshBook();
       refreshSnapshot();
       refreshOpenOrders();
+      refreshTriggers();
     }
   },
 
@@ -208,6 +222,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       orderBook: null,
       snapshot: null,
       openOrders: [],
+      activeTriggers: [],
       recentTrades: [],
       qty: "",
       limitPrice: "",
@@ -221,6 +236,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     state.refreshBook();
     state.refreshSnapshot();
     state.refreshOpenOrders();
+    state.refreshTriggers();
   },
 
   setOrderSide: (orderSide) => set({ orderSide }),
@@ -298,6 +314,35 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         });
       }
     }
+  },
+
+  refreshTriggers: async () => {
+    const pairId = get().selectedPairId;
+    if (!pairId) return;
+    try {
+      const res = await listTriggers({ pairId, status: "ACTIVE" });
+      if (get().selectedPairId === pairId) set({ activeTriggers: res.data.data ?? [] });
+    } catch (err) {
+      console.error("[tradingStore] refreshTriggers failed:", err);
+    }
+  },
+
+  cancelTrigger: async (triggerId: string) => {
+    // Optimistic removal, like cancelOrder. Canceling one OCO leg leaves the
+    // other in place — that's the user's explicit choice.
+    const prev = get().activeTriggers;
+    set({ activeTriggers: prev.filter((t) => t.id !== triggerId) });
+    try {
+      await cancelTriggerApi(triggerId);
+    } catch {
+      set({ activeTriggers: prev });
+      throw new Error("Failed to cancel trigger");
+    }
+  },
+
+  updateTrigger: async (triggerId, patch) => {
+    const res = await updateTriggerApi(triggerId, patch);
+    set({ activeTriggers: get().activeTriggers.map((t) => (t.id === triggerId ? res.data : t)) });
   },
 
   submitOrder: async () => {

@@ -9,6 +9,7 @@ import {
     createTriggerOrder,
     listTriggersByUser,
     cancelTriggerByUser,
+    updateTriggerByUser,
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
 import { assertTradablePairId } from "../../market/marketSymbols";
@@ -46,6 +47,19 @@ const createTriggerBody = z
                 "limitPrice required for *_LIMIT kinds; trailingOffset required for TRAILING_STOP_MARKET",
         }
     );
+
+// Exactly one field: triggerPrice for STOP/TP kinds, trailingOffset for a
+// trailing stop (the repo enforces which one matches the trigger's kind).
+const positiveDecimal = decimalStr.refine((v) => Number(v) > 0, "must be > 0");
+const updateTriggerBody = z
+    .object({
+        triggerPrice: positiveDecimal.optional(),
+        trailingOffset: positiveDecimal.optional(),
+    })
+    .strict()
+    .refine((d) => (d.triggerPrice === undefined) !== (d.trailingOffset === undefined), {
+        message: "Provide exactly one of triggerPrice or trailingOffset",
+    });
 
 const listTriggersQuery = z.object({
     pairId: z.string().uuid().optional(),
@@ -227,6 +241,54 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
 
                 const trigger = await cancelTriggerByUser(actor.id, id);
 
+                return reply.send(trigger);
+            } catch (err) {
+                return v1HandleError(reply, err);
+            }
+        }
+    );
+
+    // PATCH /v1/triggers/:id — edit an ACTIVE trigger in place. Keeps the
+    // trigger's id and oco_group_id, so editing one leg of an OCO pair no
+    // longer orphans the other (the old UI did cancel-then-create).
+    app.patch(
+        "/triggers/:id",
+        {
+            schema: {
+                tags: ["Triggers"],
+                summary: "Edit a trigger order",
+                description: "Changes an ACTIVE trigger's triggerPrice (stop / take-profit) or trailingOffset (trailing stop) in place. OCO links are preserved.",
+                security: [{ bearerAuth: [] }],
+                params: {
+                    type: "object",
+                    required: ["id"],
+                    properties: { id: { type: "string", format: "uuid" } },
+                },
+                body: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        triggerPrice: { type: "string" },
+                        trailingOffset: { type: "string" },
+                    },
+                },
+                response: {
+                    200: { type: "object", additionalProperties: true },
+                    400: { type: "object", additionalProperties: true },
+                    404: { type: "object", additionalProperties: true },
+                },
+            },
+            preHandler: requireUser,
+        },
+        async (req, reply) => {
+            try {
+                const actor = req.user!;
+                const { id } = req.params as { id: string };
+                const parsed = updateTriggerBody.safeParse(req.body ?? {});
+                if (!parsed.success) {
+                    throw new AppError("invalid_input", parsed.error.flatten());
+                }
+                const trigger = await updateTriggerByUser(actor.id, id, parsed.data);
                 return reply.send(trigger);
             } catch (err) {
                 return v1HandleError(reply, err);

@@ -35,6 +35,14 @@ export function cancelTrigger(triggerId: UUID) {
   return client.delete<TriggerOrder>(`/v1/triggers/${triggerId}`);
 }
 
+/** Edit an ACTIVE trigger in place: triggerPrice (stop/TP) or trailingOffset (trailing stop). Keeps its OCO link. */
+export function updateTrigger(
+  triggerId: UUID,
+  patch: { triggerPrice?: DecimalString; trailingOffset?: DecimalString },
+) {
+  return client.patch<TriggerOrder>(`/v1/triggers/${triggerId}`, patch);
+}
+
 export function createOco(params: {
   pairId: UUID;
   legA: {

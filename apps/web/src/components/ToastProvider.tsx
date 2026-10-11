@@ -30,6 +30,20 @@ export function useToast() {
   return ctx;
 }
 
+/** Server cancel reasons → user copy (see triggers/positionCloseTriggers.ts, triggerEngine). */
+export function triggerCanceledMessage(reason: string | undefined, triggerId: string | undefined): string {
+  switch (reason) {
+    case "position_closed":
+      return "Position closed — its take-profit / stop-loss was canceled.";
+    case "no_position":
+      return "A stop / take-profit fired with no position left to close — canceled, no order placed.";
+    case "oco_sibling_triggered":
+      return "The other side of your TP/SL pair fired — this one was canceled.";
+    default:
+      return `Trigger canceled: ${triggerId?.slice(0, 8) ?? "order"}`;
+  }
+}
+
 export default function ToastProvider({
   children,
 }: {
@@ -74,7 +88,7 @@ export default function ToastProvider({
 
     function onTriggerCanceled(e: Event) {
       const d = (e as CustomEvent).detail;
-      addToast("info", `Trigger canceled: ${d.triggerId?.slice(0, 8) ?? "order"}`);
+      addToast("info", triggerCanceledMessage(d?.reason, d?.triggerId));
     }
 
     window.addEventListener("sse:trade.created", onTradeCreated);
