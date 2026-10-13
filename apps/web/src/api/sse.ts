@@ -37,6 +37,7 @@ export interface SSEHandlers {
   onTradeCreated?: (event: Extract<SSEEvent, { type: "trade.created" }>) => void;
   onWalletUpdated?: (event: Extract<SSEEvent, { type: "wallet.updated" }>) => void;
   onPriceTick?: (event: Extract<SSEEvent, { type: "price.tick" }>) => void;
+  onBookSnapshot?: (event: Extract<SSEEvent, { type: "book.snapshot" }>) => void;
   onReplayTick?: (event: Extract<SSEEvent, { type: "replay.tick" }>) => void;
   onTriggerFired?: (event: Extract<SSEEvent, { type: "trigger.fired" }>) => void;
   onTriggerCanceled?: (event: Extract<SSEEvent, { type: "trigger.canceled" }>) => void;
@@ -265,6 +266,9 @@ export function connectSSE(
           break;
         case "price.tick":
           handlers.onPriceTick?.(event);
+          break;
+        case "book.snapshot":
+          handlers.onBookSnapshot?.(event);
           break;
         case "replay.tick":
           handlers.onReplayTick?.(event);

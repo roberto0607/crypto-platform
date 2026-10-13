@@ -752,11 +752,9 @@ export interface PreparedBook {
  *   legible even when a far (clipped) level is huge.
  * - Empty / one-sided book → empty arrays and zeroed metrics (never throws).
  */
-// Staleness floor for the order book. The book is normally refreshed by live
-// price ticks (useSSE.onPriceTick → refreshBookThrottled, ~500ms). This slow
-// interval is the fallback for a silent tick feed: if ticks stop entirely, the
-// book still refreshes at least this often. Kept slow so it doesn't double up
-// with the tick-driven throttle.
+// Backup for the order book. It normally arrives over SSE (book.snapshot,
+// useSSE.onBookSnapshot); this interval only fetches over HTTP when no book
+// event has landed for BOOK_EVENT_STALE_MS (tradingStore.refreshBookIfStale).
 const STALENESS_FLOOR_MS = 5_000;
 
 export function prepareBook(
@@ -935,19 +933,15 @@ export function OrderBookPanel({
   const spreadRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
 
-  // Staleness floor: while the book is mounted for a selected pair, refresh at
-  // least every STALENESS_FLOOR_MS in case the price-tick feed (the primary
-  // driver, via refreshBookThrottled) goes silent. Normal updates come from
-  // ticks, not this timer.
+  // Backup poll: every STALENESS_FLOOR_MS, fetch over HTTP only if no
+  // book.snapshot SSE event arrived recently. Normal updates are pushed.
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
-  const refreshBook = useTradingStore((s) => s.refreshBook);
+  const refreshBookIfStale = useTradingStore((s) => s.refreshBookIfStale);
   useEffect(() => {
     if (!selectedPairId) return;
-    const id = setInterval(() => {
-      refreshBook();
-    }, STALENESS_FLOOR_MS);
+    const id = setInterval(refreshBookIfStale, STALENESS_FLOOR_MS);
     return () => clearInterval(id);
-  }, [selectedPairId, refreshBook]);
+  }, [selectedPairId, refreshBookIfStale]);
 
   // Stable: reads live DOM each call, delegates the offset math to the pure
   // helper (which returns null when already centered → no scroll thrash).

@@ -509,6 +509,13 @@ export interface SignalNewEvent {
   targetReason?: string;
 }
 
+/** Full Kraken top-of-book for one pair, pushed ≤2/s while it changes. */
+export interface BookSnapshotEvent extends OrderBook {
+  pairId: UUID;
+  /** Server-side book update time (ms). */
+  bookTs: number;
+}
+
 export interface AgentDecisionEvent {
   agentName: string;
   pairId: UUID | null;
@@ -523,6 +530,7 @@ export type SSEEvent =
   | EventEnvelope<"trade.created", TradeCreatedEvent>
   | EventEnvelope<"wallet.updated", WalletUpdatedEvent>
   | EventEnvelope<"price.tick", PriceTickEvent>
+  | EventEnvelope<"book.snapshot", BookSnapshotEvent>
   | EventEnvelope<"replay.tick", ReplayTickEvent>
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
