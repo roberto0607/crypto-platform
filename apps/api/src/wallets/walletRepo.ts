@@ -14,7 +14,33 @@ export type WalletRow = {
     reserved: string;
     created_at: string;
     updated_at: string;
+    /** Set on a match's wallets (migration 095); null for free-play / competition. */
+    match_id?: string | null;
+    /** Set when the match ended: final balances kept, no more orders. */
+    closed_at?: string | null;
 };
+
+/**
+ * Which account a wallet belongs to. Exactly one applies:
+ *   matchId set       → that 1v1 match's wallets (funded at accept, closed at end)
+ *   competitionId set → that competition's wallets
+ *   both null         → free-play
+ * Free-play and competition lookups always add `match_id IS NULL`, so a
+ * match's wallets never leak into them.
+ */
+export type WalletScope = { competitionId?: string | null; matchId?: string | null };
+
+/** SQL predicate + params for `scope`, numbering params from `$${first}`. */
+export function walletScopeFilter(scope: WalletScope, first: number, alias = ""): { sql: string; params: string[] } {
+    const col = (c: string) => (alias ? `${alias}.${c}` : c);
+    if (scope.matchId) return { sql: `${col("match_id")} = $${first}`, params: [scope.matchId] };
+    if (scope.competitionId) {
+        return { sql: `${col("competition_id")} = $${first} AND ${col("match_id")} IS NULL`, params: [scope.competitionId] };
+    }
+    return { sql: `${col("competition_id")} IS NULL AND ${col("match_id")} IS NULL`, params: [] };
+}
+
+const WALLET_COLUMNS = `id, user_id, asset_id, balance, reserved, created_at, updated_at, match_id, closed_at`;
 
 export type WalletWithAsset = WalletRow & {
     symbol: string;
@@ -40,24 +66,31 @@ export async function listWalletsByUserId(
     userId: string,
     competitionId?: string | null,
 ): Promise<WalletWithAsset[]> {
-    const compId = competitionId ?? null;
+    const f = walletScopeFilter({ competitionId }, 2, "w");
     const result = await pool.query<WalletWithAsset>(
-        compId === null
-            ? `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
-                      a.symbol, a.name
-               FROM wallets w
-               JOIN assets a ON a.id = w.asset_id
-               WHERE w.user_id = $1 AND w.competition_id IS NULL
-               ORDER BY a.symbol`
-            : `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
-                      a.symbol, a.name
-               FROM wallets w
-               JOIN assets a ON a.id = w.asset_id
-               WHERE w.user_id = $1 AND w.competition_id = $2
-               ORDER BY a.symbol`,
-        compId === null ? [userId] : [userId, compId]
+        `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
+                a.symbol, a.name
+         FROM wallets w
+         JOIN assets a ON a.id = w.asset_id
+         WHERE w.user_id = $1 AND ${f.sql}
+         ORDER BY a.symbol`,
+        [userId, ...f.params],
     );
 
+    return result.rows;
+}
+
+/** One player's wallets in a match (open or closed), with asset symbols. */
+export async function listMatchWalletsForUser(userId: string, matchId: string): Promise<(WalletWithAsset & { match_id: string; closed_at: string | null })[]> {
+    const result = await pool.query<WalletWithAsset & { match_id: string; closed_at: string | null }>(
+        `SELECT w.id, w.user_id, w.asset_id, w.balance, w.reserved, w.created_at, w.updated_at,
+                w.match_id, w.closed_at, a.symbol, a.name
+         FROM wallets w
+         JOIN assets a ON a.id = w.asset_id
+         WHERE w.user_id = $1 AND w.match_id = $2
+         ORDER BY a.symbol`,
+        [userId, matchId],
+    );
     return result.rows;
 }
 
@@ -217,25 +250,30 @@ export async function findWalletByUserAndAsset(
     client: PoolClient,
     userId: string,
     assetId: string,
-    competitionId?: string | null,
+    scope: WalletScope = {},
 ): Promise<WalletRow | null> {
-    const compId = competitionId ?? null;
+    const f = walletScopeFilter(scope, 3);
     const result = await timedQuery<WalletRow>(
         client,
         "walletRepo.findWalletByUserAndAsset",
-        compId === null
-            ? `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-               FROM wallets
-               WHERE user_id = $1 AND asset_id = $2 AND competition_id IS NULL
-               LIMIT 1`
-            : `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-               FROM wallets
-               WHERE user_id = $1 AND asset_id = $2 AND competition_id = $3
-               LIMIT 1`,
-        compId === null ? [userId, assetId] : [userId, assetId, compId]
+        `SELECT ${WALLET_COLUMNS}
+         FROM wallets
+         WHERE user_id = $1 AND asset_id = $2 AND ${f.sql}
+         LIMIT 1`,
+        [userId, assetId, ...f.params],
     );
 
     return result.rows[0] ?? null;
+}
+
+/** Every wallet the user holds in `scope`. */
+export async function listScopeWalletIds(client: PoolClient, userId: string, scope: WalletScope): Promise<string[]> {
+    const f = walletScopeFilter(scope, 2);
+    const { rows } = await timedQuery<{ id: string }>(client, "walletRepo.listScopeWalletIds",
+        `SELECT id FROM wallets WHERE user_id = $1 AND ${f.sql}`,
+        [userId, ...f.params],
+    );
+    return rows.map((r) => r.id);
 }
 
 export async function lockWalletsForUpdate(
@@ -245,7 +283,7 @@ export async function lockWalletsForUpdate(
     const sorted = [...walletIds].sort();
     const result = await timedQuery<WalletRow>(client, "walletRepo.lockWalletsForUpdate",
         `
-        SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+        SELECT ${WALLET_COLUMNS}
         FROM wallets
         WHERE id = ANY($1)
         ORDER BY id

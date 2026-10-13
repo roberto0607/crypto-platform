@@ -16,6 +16,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   // 400
   invalid_input: "The request input is invalid.",
   insufficient_balance: "Insufficient wallet balance.",
+  match_ended: "This match has ended — its wallets are closed.",
+  match_wallets_missing: "This match has no wallets for this account.",
   no_price_available: "No market price is currently available.",
   stale_price_source: "Live market price is temporarily unavailable — market orders are paused until the price feed recovers.",
   order_not_cancelable: "This order cannot be canceled.",

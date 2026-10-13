@@ -14,7 +14,6 @@ import {
 } from "./eloService.js";
 import type { MatchEloResult } from "./eloService.js";
 import { getUserTier } from "./tierRepo.js";
-import { getSnapshot } from "../market/snapshotStore.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
@@ -22,6 +21,15 @@ import { publishMatchEvent } from "../events/matchEvents.js";
 import { createTrade } from "../trading/tradeRepo.js";
 import { D, toFixed8 } from "../utils/decimal.js";
 import { createMatchConversationTx } from "../chat/conversationRepo.js";
+import {
+    ClosePrices,
+    cancelMatchOrdersTx,
+    closeMatchWalletsTx,
+    fundMatchWalletsTx,
+    lockMatchWalletsTx,
+    settleMatchWalletsTx,
+} from "./matchWallets.js";
+import type { AppEvent } from "../events/eventTypes.js";
 import { deleteMatchConversation } from "../chat/chatService.js";
 
 const logger = rootLogger.child({ module: "matchService" });
@@ -234,6 +242,10 @@ export async function acceptMatch(matchId: string, acceptingUserId: string): Pro
             throw new Error("match_update_failed");
         }
 
+        // Match wallets: each player's own account for this match, funded
+        // with starting_capital (new money, not taken from free-play).
+        await fundMatchWalletsTx(client, matchId, [match.challenger_id, match.opponent_id], match.starting_capital);
+
         // Match Chat: created atomically with the match going ACTIVE (not
         // best-effort like the SSE push below) — a failure here rolls back
         // the whole accept rather than leaving a match with no chat and no
@@ -292,7 +304,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         // realized PnL into the match stats. Without this the forfeiter
         // could escape a losing open position by forfeiting — now the loss
         // sticks and shows up in challenger_pnl_pct / opponent_pnl_pct.
-        await closeMatchScopedPositions(matchId, client);
+        const accountEvents = await settleMatchAccountsTx(matchId, client);
         const canceledTriggers = await cancelMatchTriggersTx(client, matchId, MATCH_ENDED_REASON);
 
         const capital = parseFloat(match.starting_capital);
@@ -336,6 +348,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
 
         await client.query("COMMIT");
         publishTriggersCanceled(canceledTriggers);
+        publishAll(accountEvents);
 
         // Push the verdict to both players so the opponent's screen flips
         // instantly (forfeiter already has it from this request's response).
@@ -371,7 +384,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         // Force-close any open match-scoped positions at current market price.
         // Books realized PnL into positions.realized_pnl_quote so the next
         // calculatePlayerStats call picks it up.
-        await closeMatchScopedPositions(matchId, client);
+        const accountEvents = await settleMatchAccountsTx(matchId, client);
         const canceledTriggers = await cancelMatchTriggersTx(client, matchId, MATCH_ENDED_REASON);
 
         // Calculate stats for each player
@@ -425,6 +438,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
 
         await client.query("COMMIT");
         publishTriggersCanceled(canceledTriggers);
+        publishAll(accountEvents);
 
         // Timer-expiry completion — push the verdict to both players.
         await publishMatchEnded(updated[0], "timeout", eloResult);
@@ -549,10 +563,12 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
             );
         }
 
+        const accountEvents = await settleMatchAccountsTx(matchId, client);
         const canceledTriggers = await cancelMatchTriggersTx(client, matchId, MATCH_ENDED_REASON);
 
         await client.query("COMMIT");
         publishTriggersCanceled(canceledTriggers);
+        publishAll(accountEvents);
         logger.info({ matchId }, "match_mutual_forfeited");
 
         // No winner — both players see DRAW. Push so both screens flip instantly.
@@ -696,10 +712,13 @@ export async function cancelActiveMatch(userId: string): Promise<MatchRow> {
              RETURNING *`,
             [match.id],
         );
+        // A PENDING match has no wallets or orders — this is then a no-op.
+        const accountEvents = await settleMatchAccountsTx(match.id, client);
         const canceledTriggers = await cancelMatchTriggersTx(client, match.id, MATCH_ENDED_REASON);
 
         await client.query("COMMIT");
         publishTriggersCanceled(canceledTriggers);
+        publishAll(accountEvents);
 
         logger.info({ matchId: match.id, userId, oldStatus: match.status }, "match_cancelled_by_user");
         return updated[0];
@@ -939,6 +958,40 @@ export function calculateNuancedScore(
 }
 
 /**
+ * End a match's accounts, inside the caller's match-end transaction (all 4
+ * paths: complete, forfeit, mutual forfeit, cancel):
+ *   1. cancel the match's open orders (holds released)
+ *   2. lock the match wallets — before positions, the same order trading
+ *      takes them in (pair → wallets → positions), so an in-flight match fill
+ *      waits and then hits closed wallets (match_ended) instead of deadlocking
+ *   3. force-close positions (score) and settle the wallets to USD at the
+ *      same fair price (closing a long at the bid, a short at the ask)
+ *   4. close the wallets — final balances kept, nothing moves to free-play
+ * Returns the events to publish after COMMIT.
+ */
+async function settleMatchAccountsTx(matchId: string, client: PoolClient): Promise<AppEvent[]> {
+    const events = await cancelMatchOrdersTx(client, matchId);
+    await lockMatchWalletsTx(client, matchId);
+    const prices = new ClosePrices();
+    await closeMatchScopedPositions(matchId, client, prices);
+    await settleMatchWalletsTx(client, matchId, prices);
+    // wallet.updated for every wallet's final state (released holds included).
+    const closed = await closeMatchWalletsTx(client, matchId);
+    return [...events, ...closed];
+}
+
+/** After COMMIT: publish events (never let a publish break match end). */
+function publishAll(events: AppEvent[]): void {
+    for (const e of events) {
+        try {
+            publish(e);
+        } catch {
+            // Events must never break match completion
+        }
+    }
+}
+
+/**
  * Synthetically close every match-scoped row in `positions` (the live
  * aggregate table) for this match. Books the unrealized PnL into
  * realized_pnl_quote, zeroes base_qty, and writes a synthetic trade row
@@ -953,6 +1006,7 @@ export function calculateNuancedScore(
 async function closeMatchScopedPositions(
     matchId: string,
     client: PoolClient,
+    prices: ClosePrices,
 ): Promise<{ closedCount: number; totalPnlRealized: string }> {
     // Lock match-scoped, non-flat position rows for the duration of the txn.
     const { rows: openPositions } = await client.query<{
@@ -972,48 +1026,18 @@ async function closeMatchScopedPositions(
     let closedCount = 0;
     let totalPnl = D("0");
     for (const pos of openPositions) {
-        // Exit-price fallback chain: live snapshot (<60s) → trading_pairs.last_price → avg_entry_price.
-        const { rows: pairRows } = await client.query<{
-            symbol: string;
-            last_price: string | null;
-            quote_asset_id: string;
-        }>(
-            `SELECT symbol, last_price, quote_asset_id
-             FROM trading_pairs WHERE id = $1`,
+        // Fair close price (matchWallets.ClosePrices): closing a long sells at
+        // the bid, a short buys at the ask — the same price the wallet
+        // settlement uses, so the score and the match wallets agree.
+        const { rows: pairRows } = await client.query<{ quote_asset_id: string }>(
+            `SELECT quote_asset_id FROM trading_pairs WHERE id = $1`,
             [pos.pair_id],
         );
-        const pair = pairRows[0];
-        const symbol = pair?.symbol;
-        const lastPriceStr = pair?.last_price ?? null;
-        const quoteAssetId = pair?.quote_asset_id ?? null;
-
-        let exitPrice: number | null = null;
-        let fallbackSource: "snapshot" | "trading_pairs.last_price" | "avg_entry_price" = "avg_entry_price";
-
-        // 1. Live snapshot (<60s old)
-        if (symbol) {
-            const snap = await getSnapshot(symbol, 60_000);
-            if (snap) {
-                const snapPrice = parseFloat(snap.last);
-                if (Number.isFinite(snapPrice) && snapPrice > 0) {
-                    exitPrice = snapPrice;
-                    fallbackSource = "snapshot";
-                }
-            }
-        }
-
-        // 2. trading_pairs.last_price
-        if (exitPrice === null && lastPriceStr !== null) {
-            const lp = parseFloat(lastPriceStr);
-            if (Number.isFinite(lp) && lp > 0) {
-                exitPrice = lp;
-                fallbackSource = "trading_pairs.last_price";
-            }
-        }
-
-        // 3. avg_entry_price (flat close — log a warning)
-        if (exitPrice === null) {
-            exitPrice = parseFloat(pos.avg_entry_price);
+        const quoteAssetId = pairRows[0]?.quote_asset_id ?? null;
+        const close = await prices.get(client, pos.pair_id, D(pos.base_qty).isPositive(), pos.avg_entry_price);
+        const exitPrice = close.price.toNumber();
+        const fallbackSource = close.source;
+        if (fallbackSource === "avg_entry_price") {
             logger.warn(
                 { matchId, userId: pos.user_id, pairId: pos.pair_id },
                 "close_match_position_used_entry_price_fallback",
@@ -1024,8 +1048,8 @@ async function closeMatchScopedPositions(
         // (base_qty < 0): pnl = base_qty * (exit - entry). Shared with the
         // live in-match PnL push via computeUnrealizedRowPnl.
         const baseQty = D(pos.base_qty);
-        const exitD = D(exitPrice);
-        const pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitPrice));
+        const exitD = close.price;
+        const pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitD.toString()));
 
         await client.query(
             `UPDATE positions

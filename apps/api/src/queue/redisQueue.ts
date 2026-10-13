@@ -10,7 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 import { config } from "../config";
-import { AppError } from "../errors/AppError";
+import { AppError, toAppError } from "../errors/AppError";
 import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
 import type { PlaceOrderResult } from "../trading/phase6OrderService";
 import {
@@ -424,7 +424,11 @@ async function processJob(
     await redis.publish(`cp:results:${job.instanceId}`, JSON.stringify({
       correlationId: job.correlationId,
       error: {
-        code: err instanceof AppError ? err.message : "queue_processing_error",
+        // The matching engine throws plain `new Error("insufficient_balance")`
+        // / "match_ended" / "stale_price_source"; map known codes the same way
+        // the in-memory path's route handler does (toAppError), or every
+        // engine rejection reaches the client as a 500 queue_processing_error.
+        code: toAppError(err)?.code ?? "queue_processing_error",
       },
     }));
   }

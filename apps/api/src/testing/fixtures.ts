@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { hashPassword } from "../auth/password";
+import { fundMatchWalletsTx } from "../competitions/matchWallets";
 
 const DEFAULT_PASSWORD = "TestPass1234";
 
@@ -106,6 +107,32 @@ export async function seedTestOrder(
     [userId, pairId, side, type, qty, limitPrice ?? null, status],
   );
   return rows[0];
+}
+
+/* ── Match wallets ─────────────────────────────────────── */
+
+/**
+ * Fund match wallets the way acceptMatch does (migration 095) — for tests that
+ * insert an ACTIVE match row directly instead of going through acceptMatch.
+ * Match orders trade these, never free-play.
+ */
+export async function fundTestMatchWallets(
+  pool: Pool,
+  matchId: string,
+  userIds: string[],
+  startingCapital = "50000",
+) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await fundMatchWalletsTx(client, matchId, userIds, startingCapital);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* ── Risk limits (widen so tests aren't blocked) ──────── */

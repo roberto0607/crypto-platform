@@ -343,6 +343,8 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
         // Trading
         insufficient_balance: "Not enough available balance",
+        match_ended: "This match has ended — its wallets are closed",
+        match_wallets_missing: "This match has no wallets for this account",
         risk_check_failed: "Order rejected by risk engine",
         governance_check_failed: "Order rejected by governance check",
         pair_queue_overloaded: "Order queue full, try again shortly",

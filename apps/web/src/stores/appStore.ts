@@ -9,6 +9,7 @@ import type {
 } from "@/types/api";
 import type { SseConnectionState } from "@/api/sse";
 import { listWallets } from "@/api/endpoints/wallets";
+import { getMatchWallets } from "@/api/endpoints/matches";
 
 interface AppState {
   systemStatus: SystemStatus | null;
@@ -40,7 +41,14 @@ interface AppState {
   setPairs: (pairs: TradingPair[]) => void;
   setAssets: (assets: Asset[]) => void;
   setWallets: (wallets: Wallet[]) => void;
-  /** Patch one wallet from a `wallet.updated` SSE event. */
+  /**
+   * The user's wallets in their active match (migration 095): a match order
+   * trades these, never free-play. Null outside a match.
+   */
+  matchWallets: { matchId: string; wallets: Wallet[] } | null;
+  /** Load (or with null, clear) the active match's wallets. */
+  loadMatchWallets: (matchId: string | null) => Promise<void>;
+  /** Patch one wallet (free-play or match — whichever set holds it) from `wallet.updated`. */
   applyWalletUpdate: (u: { walletId: string; balance: string; reserved: string }) => void;
   /** Re-fetch every wallet (after an SSE reconnect — events may have been missed). */
   refreshWallets: () => Promise<void>;
@@ -51,7 +59,7 @@ interface AppState {
   setPriceFreshAt: (ts: number | null) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   systemStatus: null,
   userStatus: null,
   riskStatus: null,
@@ -59,6 +67,7 @@ export const useAppStore = create<AppState>((set) => ({
   pairsLoaded: false,
   assets: [],
   wallets: [],
+  matchWallets: null,
   selectedPairId: null,
   initialized: false,
   serverOffline: false,
@@ -79,10 +88,28 @@ export const useAppStore = create<AppState>((set) => ({
   setPairs: (pairs) => set({ pairs, pairsLoaded: true }),
   setAssets: (assets) => set({ assets }),
   setWallets: (wallets) => set({ wallets }),
+  loadMatchWallets: async (matchId) => {
+    if (!matchId) {
+      set({ matchWallets: null });
+      return;
+    }
+    try {
+      const res = await getMatchWallets(matchId);
+      set({ matchWallets: { matchId, wallets: res.data.wallets } });
+    } catch {
+      // Keep whatever was loaded; the next reconnect or match change retries.
+    }
+  },
   applyWalletUpdate: ({ walletId, balance, reserved }) =>
-    set((s) => ({
-      wallets: s.wallets.map((w) => (w.id === walletId ? { ...w, balance, reserved } : w)),
-    })),
+    set((s) => {
+      const patch = (w: Wallet) => (w.id === walletId ? { ...w, balance, reserved } : w);
+      return {
+        wallets: s.wallets.map(patch),
+        matchWallets: s.matchWallets
+          ? { ...s.matchWallets, wallets: s.matchWallets.wallets.map(patch) }
+          : null,
+      };
+    }),
   refreshWallets: async () => {
     try {
       const res = await listWallets();
@@ -90,6 +117,8 @@ export const useAppStore = create<AppState>((set) => ({
     } catch {
       // Keep the last known balances; the next wallet.updated or reconnect retries.
     }
+    const match = get().matchWallets;
+    if (match) await get().loadMatchWallets(match.matchId);
   },
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
   setSseConnected: (sseConnected) => set({ sseConnected }),

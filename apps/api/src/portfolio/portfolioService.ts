@@ -7,6 +7,7 @@ import { getSnapshotForUser } from "../replay/replayEngine";
 import { logger } from "../observability/logContext";
 import type { PortfolioSummary, PortfolioSnapshot, PerformanceSummary } from "./portfolioTypes";
 import type { EquityEntry } from "./performance";
+import { walletScopeFilter } from "../wallets/walletRepo";
 import {
     computeTotalReturn,
     computeMaxDrawdown,
@@ -41,17 +42,12 @@ export async function getPortfolioSummary(
     const quoteAssetIds = await getQuoteAssetIds();
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
-        const compFilter = compId === null
-            ? `AND competition_id IS NULL`
-            : `AND competition_id = $3`;
-        const params = compId === null
-            ? [userId, quoteAssetIds]
-            : [userId, quoteAssetIds, compId];
+        const f = walletScopeFilter({ competitionId: compId }, 3);
         const { rows } = await pool.query<{ total: string }>(
             `SELECT COALESCE(SUM(balance), 0) AS total
              FROM wallets
-             WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
-            params,
+             WHERE user_id = $1 AND asset_id = ANY($2) AND ${f.sql}`,
+            [userId, quoteAssetIds, ...f.params],
         );
         cashQuote = D(rows[0].total);
     }
@@ -224,16 +220,11 @@ export async function writePortfolioSnapshot(
     // 2. Cash
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
-        const compFilter = compId === null
-            ? `AND competition_id IS NULL`
-            : `AND competition_id = $3`;
-        const params = compId === null
-            ? [userId, quoteAssetIds]
-            : [userId, quoteAssetIds, compId];
+        const f = walletScopeFilter({ competitionId: compId }, 3);
         const { rows } = await pool.query<{ total: string }>(
             `SELECT COALESCE(SUM(balance), 0) AS total
-             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
-            params,
+             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) AND ${f.sql}`,
+            [userId, quoteAssetIds, ...f.params],
         );
         cashQuote = D(rows[0].total);
     }
@@ -350,22 +341,15 @@ export async function writePortfolioSnapshotTx(
     );
     const quoteAssetIds = qaRows.map((r) => r.quote_asset_id);
 
-    // 2. Cash. Wallets are NOT match-scoped in the current design (Phase 4
-    // only scopes positions + equity_snapshots by match). Cash always reads
-    // from the competition-scope wallet — typically the free-play USD
-    // wallet in the common case.
+    // 2. Cash from this scope's wallets: a match order's snapshot reads that
+    // match's own wallets (migration 095), free-play/competition never do.
     let cashQuote = ZERO;
     if (quoteAssetIds.length > 0) {
-        const compFilter = compId === null
-            ? `AND competition_id IS NULL`
-            : `AND competition_id = $3`;
-        const params = compId === null
-            ? [userId, quoteAssetIds]
-            : [userId, quoteAssetIds, compId];
+        const f = walletScopeFilter({ competitionId: compId, matchId: matchScope }, 3);
         const { rows } = await timedQuery<{ total: string }>(client, "portfolioService.writePortfolioSnapshotTx.cash",
             `SELECT COALESCE(SUM(balance), 0) AS total
-             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) ${compFilter}`,
-            params,
+             FROM wallets WHERE user_id = $1 AND asset_id = ANY($2) AND ${f.sql}`,
+            [userId, quoteAssetIds, ...f.params],
         );
         cashQuote = D(rows[0].total);
     }
