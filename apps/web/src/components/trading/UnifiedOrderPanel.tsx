@@ -54,6 +54,23 @@ export function computeQuickAmount(balance: number, frac: number): number {
 }
 
 /**
+ * Trailing-stop offset validation. The offset is a USD *price* distance (the
+ * server's stop = high-water mark ∓ offset), so it is bounded by the price,
+ * not by the position's notional: 0 < offset < current price. The server
+ * enforces the same rule (api triggers/trailingOffset.ts). It must also sit
+ * inside the stop-loss distance when an SL is set. Empty input = no trailing
+ * stop. Returns the error message, or null.
+ */
+export function trailingOffsetError(offsetInput: string, currentPrice: number, slDistance: number): string | null {
+    if (offsetInput.trim() === "") return null;
+    const offset = parseFloat(offsetInput);
+    if (!(offset > 0)) return "Trailing stop offset must be greater than 0";
+    if (currentPrice > 0 && offset >= currentPrice) return "Trailing stop offset must be less than the current price";
+    if (slDistance > 0 && offset >= slDistance) return "Trailing stop offset must be less than your stop loss distance";
+    return null;
+}
+
+/**
  * Leverage risk escalation (#16). Maps a leverage multiple to a visual tier:
  *   1,2 (and any non-risky value) → neutral accent
  *   3,5 → warn amber (5x a touch stronger than 3x)
@@ -264,15 +281,7 @@ export function UnifiedOrderPanel({
     const slError = slNum > 0 && !slValid
         ? (activeMode === "LONG" ? "Stop loss must be below entry for a long position" : "Stop loss must be above entry for a short position")
         : null;
-    const tslError = tslNum > 0
-        ? (tslNum <= 0
-            ? "Trailing stop offset must be greater than 0"
-            : tslNum >= effectiveUsd
-                ? "Trailing stop offset must be less than your position size"
-                : slDistance > 0 && tslNum >= slDistance
-                    ? "Trailing stop offset must be less than your stop loss distance"
-                    : null)
-        : null;
+    const tslError = trailingOffsetError(tslOffset, currentPrice, slDistance);
     const hasValidationError = !!(tpError || slError || tslError);
 
     const limitWarn = orderType === "LIMIT" && limitPrice
