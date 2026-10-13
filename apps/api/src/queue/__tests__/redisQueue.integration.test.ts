@@ -167,6 +167,23 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
     expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][ARG_MATCH_ID]).toBeNull();
   });
 
+  // Engine rejections are plain `new Error("<code>")` — they must reach the
+  // client with their code across Redis, not as a 500 queue_processing_error
+  // (the in-memory path always preserved them via the route's toAppError).
+  it("preserves the code of a plain engine error (insufficient_balance, match_ended) across Redis", async () => {
+    for (const code of ["insufficient_balance", "match_ended"]) {
+      vi.mocked(placeOrderWithSnapshot).mockRejectedValueOnce(new Error(code));
+      await expect(
+        enqueueRedis(PAIR_ID, "u-err", payload(PAIR_ID), undefined, `req-err-${code}`, undefined, undefined, null),
+      ).rejects.toMatchObject({ code, statusCode: code === "match_ended" ? 409 : 400 });
+    }
+    // An unknown failure still maps to the generic code.
+    vi.mocked(placeOrderWithSnapshot).mockRejectedValueOnce(new Error("boom"));
+    await expect(
+      enqueueRedis(PAIR_ID, "u-err", payload(PAIR_ID), undefined, "req-err-unknown", undefined, undefined, null),
+    ).rejects.toMatchObject({ code: "queue_processing_error" });
+  });
+
   // Assertion 4 — backward-compat: a pre-fix job with matchId="" must not crash
   // and must dequeue as null (the defensive ""→null mapping).
   it('backward-compat: a pre-fix queued job with matchId="" dequeues as null, not a crash', async () => {
