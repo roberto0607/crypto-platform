@@ -1,5 +1,8 @@
 import { pool } from "../db/pool";
-import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx, updateTrailingHwm } from "./triggerRepo";
+import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx, updateTrailingHwm, reducibleQty } from "./triggerRepo";
+import { triggerCanceledEvent } from "./positionCloseTriggers";
+import Decimal from "decimal.js";
+import { D, toFixed8 } from "../utils/decimal";
 import type { TriggerOrderRow } from "./triggerTypes";
 import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
 import { subscribeGlobal, unsubscribe, publish } from "../events/eventBus";
@@ -151,6 +154,21 @@ export async function fireTrigger(
     // simpler and handles "user exited the match" cleanly.
     const triggerMatchId = await getActiveMatchIdForUser(trigger.user_id);
 
+    // Reduce-only: a TP/SL/trailing trigger only ever closes the position it
+    // protects. Clamp its qty to what's left of that position in the scope the
+    // derived order lands in; if nothing is left (closed manually, by the
+    // other OCO leg, or partially closed down to zero) cancel instead of
+    // placing an order that would open — or flip into — a new position.
+    const reducible = D(await reducibleQty(trigger.user_id, trigger.pair_id, trigger.side, {
+        competitionId: null,             // derived orders are free-play or match scoped, never competition
+        matchId: triggerMatchId,
+    }));
+    const orderQty = Decimal.min(D(trigger.qty), reducible);
+    if (orderQty.lte(0)) {
+        await cancelForNoPosition(trigger, canceledSibling);
+        return; // not fired: no order, no trigger.fired event, no notification
+    }
+
     try {
         const result = await placeOrderWithSnapshot(
             trigger.user_id,
@@ -158,7 +176,7 @@ export async function fireTrigger(
                 pairId: trigger.pair_id,
                 side: trigger.side,
                 type: derivedType,
-                qty: trigger.qty,
+                qty: toFixed8(orderQty),
                 limitPrice: derivedLimitPrice,
             },
             undefined,           // idempotencyKey
@@ -240,6 +258,36 @@ export async function fireTrigger(
         } catch {
             // Events must never break trigger engine
         }
+    }
+}
+
+export const NO_POSITION_REASON = "no_position";
+
+/**
+ * A reduce-only trigger fired with nothing left to reduce: record it as
+ * CANCELED (reason no_position) rather than TRIGGERED/FAILED. The OCO sibling
+ * this firing canceled stays canceled — it protected the same, now absent,
+ * position. Only touches the row while it's still in the state fireTrigger
+ * left it in.
+ */
+async function cancelForNoPosition(trigger: TriggerOrderRow, canceledSibling: TriggerOrderRow | null): Promise<void> {
+    try {
+        const { rows } = await pool.query<TriggerOrderRow>(
+            `UPDATE trigger_orders SET status = 'CANCELED', fail_reason = $2
+             WHERE id = $1 AND status = 'TRIGGERED' AND derived_order_id IS NULL
+             RETURNING id, user_id, pair_id`,
+            [trigger.id, NO_POSITION_REASON],
+        );
+        logger.info({ triggerId: trigger.id, userId: trigger.user_id, pairId: trigger.pair_id }, "trigger_canceled_no_position");
+        for (const row of [...rows, ...(canceledSibling ? [canceledSibling] : [])]) {
+            try {
+                publish(triggerCanceledEvent(row, NO_POSITION_REASON));
+            } catch {
+                // Events must never break trigger engine
+            }
+        }
+    } catch (err) {
+        logger.error({ triggerId: trigger.id, err }, "trigger_no_position_cancel_error");
     }
 }
 

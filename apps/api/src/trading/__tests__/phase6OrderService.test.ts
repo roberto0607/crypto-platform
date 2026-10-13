@@ -181,7 +181,9 @@ function setupDefaultMocks() {
   vi.mocked(listTradesByOrderId).mockResolvedValue([FILL]);
   vi.mocked(findPairById).mockResolvedValue(PAIR as any);
   vi.mocked(computeFee).mockReturnValue({ feeAmount: "25.00000000", feeAssetId: "usd-id", role: "TAKER" });
-  vi.mocked(applyFillToPositionTx).mockResolvedValue({} as any);
+  // A position that stays open (no close → no trigger cleanup); the close
+  // hook itself is covered against real Postgres in triggers/__tests__.
+  vi.mocked(applyFillToPositionTx).mockResolvedValue({ base_qty: "5.00000000" } as any);
   vi.mocked(insertOutboxEventTx).mockResolvedValue(undefined);
   vi.mocked(writePortfolioSnapshotTx).mockResolvedValue(undefined);
   vi.mocked(resolveSimulationConfig).mockResolvedValue(SIM_CONFIG);

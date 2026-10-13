@@ -15,6 +15,7 @@ const ERROR_STATUS: Record<string, number> = {
   order_not_cancelable: 400,
   insufficient_liquidity: 400,
   trigger_not_cancelable: 400,
+  trigger_not_editable: 400,
   alert_not_cancelable: 400,
   alert_limit_exceeded: 400,
   invite_required: 400,

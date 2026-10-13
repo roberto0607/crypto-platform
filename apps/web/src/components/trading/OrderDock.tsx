@@ -31,7 +31,10 @@ interface DockTab {
 
 export default function OrderDock() {
   const openOrders = useTradingStore((s) => s.openOrders);
-  const orderCount = openOrders.length;
+  const triggerCount = useTradingStore((s) => s.activeTriggers.length);
+  // Active TP/SL/trailing triggers count as open orders: they can still trade,
+  // so the dock must open for them too.
+  const orderCount = openOrders.length + triggerCount;
 
   // Tab seam — append entries here to add Positions / History / Trades later.
   // (Single tab today, so the whole bar toggles the dock rather than switching

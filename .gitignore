@@ -38,3 +38,5 @@ pair-restriction-*.json
 candle-reroll-*.json
 # one-time fee refund snapshots (pnpm fees:refund-overcharge --commit)
 fee-refund-*.json
+# one-time orphaned-trigger cleanup snapshots (pnpm triggers:cancel-orphans --commit)
+orphan-triggers-*.json

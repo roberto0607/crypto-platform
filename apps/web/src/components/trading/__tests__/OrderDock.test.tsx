@@ -40,7 +40,7 @@ function order(overrides: Partial<Order> = {}): Order {
 beforeEach(() => {
   cancelOrderApi.mockReset().mockResolvedValue({ data: { ok: true } });
   localStorage.clear();
-  useTradingStore.setState({ openOrders: [] });
+  useTradingStore.setState({ openOrders: [], activeTriggers: [] });
 });
 
 describe("OrderDock", () => {
@@ -61,7 +61,7 @@ describe("OrderDock", () => {
   });
 
   it("shows the thin strip (no table) with a non-toggleable bar when there are 0 open orders", () => {
-    useTradingStore.setState({ openOrders: [] });
+    useTradingStore.setState({ openOrders: [], activeTriggers: [] });
     render(<OrderDock />);
 
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -75,7 +75,7 @@ describe("OrderDock", () => {
   it("auto-expands when orders appear (0→N), overriding a stored collapsed pref", async () => {
     // Reproduces Issue 1: a prior manual collapse left "collapsed" in localStorage.
     localStorage.setItem("tradr_order_dock", "collapsed");
-    useTradingStore.setState({ openOrders: [] });
+    useTradingStore.setState({ openOrders: [], activeTriggers: [] });
     render(<OrderDock />);
     expect(screen.queryByRole("table")).not.toBeInTheDocument(); // 0 orders → thin
 

@@ -252,3 +252,122 @@ export async function cancelTriggerByUser(
     if (row.status === "CANCELED") return row;
     throw new Error("trigger_not_cancelable");
 }
+
+/**
+ * Every trigger kind (STOP / TAKE_PROFIT / TRAILING) protects a position, so a
+ * trigger on `side` exists to reduce the position that side closes:
+ * SELL triggers reduce a long (base_qty > 0), BUY triggers reduce a short.
+ */
+export function reducedDirectionSql(side: "BUY" | "SELL"): string {
+    return side === "SELL" ? "base_qty > 0" : "base_qty < 0";
+}
+
+/**
+ * Cancel a user's ACTIVE `side` triggers on a pair once nothing is left for
+ * them to reduce — i.e. the user holds no position in that direction on the
+ * pair in ANY scope (free-play, competition or match). Triggers aren't scoped,
+ * so closing a match position must not kill the free-play stop next to it.
+ *
+ * Runs inside the caller's transaction. `reason` is stored in fail_reason
+ * (the trigger's status-reason column). Returns the canceled rows.
+ */
+export async function cancelReducingTriggersTx(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    side: "BUY" | "SELL",
+    reason: string,
+): Promise<TriggerOrderRow[]> {
+    const result = await client.query<TriggerOrderRow>(
+        `
+        UPDATE trigger_orders
+        SET status = 'CANCELED', fail_reason = $4
+        WHERE user_id = $1 AND pair_id = $2 AND side = $3 AND status = 'ACTIVE'
+          AND NOT EXISTS (
+              SELECT 1 FROM positions
+              WHERE user_id = $1 AND pair_id = $2 AND ${reducedDirectionSql(side)}
+          )
+        RETURNING ${TRIGGER_COLUMNS}
+        `,
+        [userId, pairId, side, reason],
+    );
+    return result.rows;
+}
+
+/**
+ * How much a `side` trigger may reduce right now: the size of the user's
+ * position in the direction it closes, in the scope its derived order will
+ * land in (free-play / competition / match). 0 = nothing to reduce.
+ */
+export async function reducibleQty(
+    userId: string,
+    pairId: string,
+    side: "BUY" | "SELL",
+    scope: { competitionId: string | null; matchId: string | null },
+): Promise<string> {
+    const { rows } = await pool.query<{ qty: string }>(
+        `
+        SELECT GREATEST(${side === "SELL" ? "base_qty" : "-base_qty"}, 0)::text AS qty
+        FROM positions
+        WHERE user_id = $1 AND pair_id = $2
+          AND COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid)
+              = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+          AND COALESCE(match_id, '00000000-0000-0000-0000-000000000000'::uuid)
+              = COALESCE($4::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+        `,
+        [userId, pairId, scope.competitionId, scope.matchId],
+    );
+    return rows[0]?.qty ?? "0";
+}
+
+/**
+ * Edit an ACTIVE trigger in place (TP/SL price, or a trailing stop's offset).
+ * The row keeps its id and oco_group_id, so an OCO pair stays linked — unlike
+ * cancel-then-create, which orphaned the sibling.
+ *
+ * For a trailing stop the effective trigger price is re-derived from the
+ * current high-water mark: hwm - offset (SELL) / hwm + offset (BUY).
+ */
+export async function updateTriggerByUser(
+    userId: string,
+    triggerId: string,
+    patch: { triggerPrice?: string; trailingOffset?: string },
+): Promise<TriggerOrderRow> {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        const lock = await client.query<TriggerOrderRow>(
+            `SELECT ${TRIGGER_COLUMNS} FROM trigger_orders WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+            [triggerId, userId],
+        );
+        const row = lock.rows[0];
+        if (!row) throw new Error("trigger_not_found");
+        if (row.status !== "ACTIVE") throw new Error("trigger_not_editable");
+
+        let triggerPrice: string;
+        let trailingOffset: string | null = row.trailing_offset;
+        if (row.kind === "TRAILING_STOP_MARKET") {
+            if (!patch.trailingOffset || patch.triggerPrice) throw new Error("invalid_input");
+            trailingOffset = patch.trailingOffset;
+            const hwm = Number(row.trailing_high_water_mark ?? row.trigger_price);
+            const offset = Number(trailingOffset);
+            triggerPrice = Math.max(0, row.side === "SELL" ? hwm - offset : hwm + offset).toFixed(8);
+        } else {
+            if (!patch.triggerPrice || patch.trailingOffset) throw new Error("invalid_input");
+            triggerPrice = patch.triggerPrice;
+        }
+
+        const result = await client.query<TriggerOrderRow>(
+            `UPDATE trigger_orders SET trigger_price = $2, trailing_offset = $3
+             WHERE id = $1 RETURNING ${TRIGGER_COLUMNS}`,
+            [triggerId, triggerPrice, trailingOffset],
+        );
+        await client.query("COMMIT");
+        return result.rows[0];
+    } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+    } finally {
+        client.release();
+    }
+}
