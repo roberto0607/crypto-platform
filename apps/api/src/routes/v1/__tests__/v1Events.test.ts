@@ -90,6 +90,13 @@ describe("shouldDeliverToStream", () => {
     expect(shouldDeliverToStream(event, new Set([PAIR_B]))).toBe(false);
   });
 
+  it("delivers book.snapshot only when its pairId is in the interest set", () => {
+    const event = createEvent("book.snapshot", { pairId: PAIR_A, bids: [], asks: [], bookTs: Date.now() });
+    expect(shouldDeliverToStream(event, new Set([PAIR_A]))).toBe(true);
+    expect(shouldDeliverToStream(event, new Set([PAIR_B]))).toBe(false);
+    expect(shouldDeliverToStream(event, new Set())).toBe(false);
+  });
+
   it("always delivers non-pair-scoped events regardless of interest set", () => {
     const event = createEvent("order.updated", {
       orderId: "o1", pairId: PAIR_A, side: "BUY", type: "MARKET", status: "FILLED", qty: "1", filledQty: "1",

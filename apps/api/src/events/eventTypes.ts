@@ -72,6 +72,28 @@ export interface PriceTickData {
   source?: "coinbase" | "kraken";
 }
 
+/** One price level, as GET /market/book returns it. */
+export interface BookLevelWire {
+  price: string;
+  qty: string;
+  count: string;
+}
+
+/**
+ * Full top-of-book snapshot for one pair (same shape as GET
+ * /market/book/:symbol), pushed at most twice a second per pair while the
+ * Kraken book is changing. Pair-scoped like price.tick: only streams whose
+ * interest set holds `pairId` get it. Replaces the client's tick-driven book
+ * polling (QA 2026-10-11: ~125 GET /market/book per minute per /trade tab).
+ */
+export interface BookSnapshotData {
+  pairId: string;
+  bids: BookLevelWire[];
+  asks: BookLevelWire[];
+  /** When the server's book was last updated (ms). */
+  bookTs: number;
+}
+
 export interface TriggerFiredData {
   triggerId: string;
   pairId: string;
@@ -328,6 +350,7 @@ export type AppEvent =
   | EventEnvelope<"wallet.updated", WalletUpdatedData>
   | EventEnvelope<"replay.tick", ReplayTickData>
   | EventEnvelope<"price.tick", PriceTickData>
+  | EventEnvelope<"book.snapshot", BookSnapshotData>
   | EventEnvelope<"trigger.fired", TriggerFiredData>
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
   | EventEnvelope<"alert.updated", AlertUpdatedData>

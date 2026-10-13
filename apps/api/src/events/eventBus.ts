@@ -181,6 +181,15 @@ export function publish(event: AppEvent): void {
 }
 
 /**
+ * Deliver to this instance's subscribers only — no Redis fan-out. For
+ * high-rate data that only this instance holds (book.snapshot mirrors
+ * GET /market/book, which also serves this instance's in-memory book).
+ */
+export function publishLocal(event: AppEvent): void {
+  deliverLocally(event);
+}
+
+/**
  * Subscribe a global handler (receives ALL events).
  */
 export function subscribeGlobal(handler: EventHandler): void {

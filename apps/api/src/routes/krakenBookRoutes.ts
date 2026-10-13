@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { bookSnapshots } from "../market/orderFlowFeatures.js";
 import { symbolToPairId } from "../market/krakenWs.js";
+import { toWireLevels } from "../market/bookStream.js";
 
 const krakenBookRoutes: FastifyPluginAsync = async (app) => {
     app.get<{ Params: { symbol: string } }>("/market/book/:symbol", {
@@ -62,19 +63,7 @@ const krakenBookRoutes: FastifyPluginAsync = async (app) => {
             return reply.send({ ok: true, book: { bids: [], asks: [] } });
         }
 
-        const bids = snap.bids.map((l) => ({
-            price: String(l.price),
-            qty: String(l.qty),
-            count: "1",
-        }));
-
-        const asks = snap.asks.map((l) => ({
-            price: String(l.price),
-            qty: String(l.qty),
-            count: "1",
-        }));
-
-        return reply.send({ ok: true, book: { bids, asks } });
+        return reply.send({ ok: true, book: { bids: toWireLevels(snap.bids), asks: toWireLevels(snap.asks) } });
     });
 };
 

@@ -30,14 +30,14 @@ const PING_INTERVAL_MS = 5_000;
 
 /**
  * Per-connection interest set — gates which pairIds a stream's price.tick/
- * candle.closed events are filtered to. Populated on connect (empty — no
+ * candle.closed/book.snapshot events are filtered to. Populated on connect (empty — no
  * symbol ticks until the client explicitly subscribes) and replaced wholesale
  * by POST /v1/events/subscribe. Every other event type (order/wallet/
  * trigger/notification/match/etc.) bypasses this filter entirely — only
  * symbol-scoped market-data events are gated. See docs/designs/2026-07-22-
  * multi-asset-datafeed-gate1.md section 3.
  */
-const PAIR_SCOPED_EVENT_TYPES = new Set(["price.tick", "candle.closed"]);
+const PAIR_SCOPED_EVENT_TYPES = new Set(["price.tick", "candle.closed", "book.snapshot"]);
 
 interface StreamEntry {
   userId: string;
@@ -151,7 +151,7 @@ const v1Events: FastifyPluginAsync = async (app) => {
     schema: {
       tags: ["Events"],
       summary: "Server-Sent Events stream",
-      description: "Real-time event stream. Events: order.updated, trade.created, wallet.updated, price.tick, replay.tick, trigger.fired, trigger.canceled. Sends a ping (with priceAgeMs for the subscribed pairs) every 5s.",
+      description: "Real-time event stream. Events: order.updated, trade.created, wallet.updated, price.tick, book.snapshot, replay.tick, trigger.fired, trigger.canceled. Sends a ping (with priceAgeMs for the subscribed pairs) every 5s.",
       security: [{ bearerAuth: [] }],
       response: {
         200: {
@@ -262,13 +262,13 @@ const v1Events: FastifyPluginAsync = async (app) => {
 
   // POST /events/subscribe — replace a stream's symbol interest set.
   // SSE is one-way, so a chart switching pairs calls this to tell the
-  // server which pairIds it wants price.tick/candle.closed for. Replaces
+  // server which pairIds it wants price.tick/candle.closed/book.snapshot for. Replaces
   // (not merges) the set — the caller always sends its full desired set.
   app.post("/events/subscribe", {
     schema: {
       tags: ["Events"],
       summary: "Update an SSE stream's symbol interest set",
-      description: "Replaces the pairIds this stream receives price.tick/candle.closed events for. streamId comes from the stream.ready frame sent on connect.",
+      description: "Replaces the pairIds this stream receives price.tick/candle.closed/book.snapshot events for. streamId comes from the stream.ready frame sent on connect.",
       security: [{ bearerAuth: [] }],
       body: {
         type: "object",
