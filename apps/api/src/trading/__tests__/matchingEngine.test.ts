@@ -259,11 +259,13 @@ describe("placeOrder", () => {
       expect(result.order.status).toBe("FILLED");
     });
 
-    it("rejects when seller has insufficient base balance", async () => {
+    it("rejects a sell that flips into a short beyond buying power", async () => {
       await setFee(pair.id, 0);
-      // Seller has 10 BTC, try to sell 11
+      // Seller has 10 BTC + $500k. Selling 31 closes the long and opens a
+      // 21 BTC short: buying power after = 500k + 1.55M − 2×21×50k = −50k.
+      // (Selling 11 — a 1 BTC short — is within buying power and allowed.)
       await expect(
-        placeOrder(seller.id, pair.id, "SELL", "MARKET", "11.00000000"),
+        placeOrder(seller.id, pair.id, "SELL", "MARKET", "31.00000000"),
       ).rejects.toThrow("insufficient_balance");
     });
 

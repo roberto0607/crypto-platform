@@ -20,6 +20,7 @@ import { createTrigger, createOco } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
+import { useBuyingPower } from "@/hooks/useBuyingPower";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -51,6 +52,23 @@ function fmtFee(n: number): string {
 export function computeQuickAmount(balance: number, frac: number): number {
     if (!(balance > 0) || !(frac > 0)) return 0;
     return Math.floor(balance * frac * 100) / 100;
+}
+
+/**
+ * Trailing-stop offset validation. The offset is a USD *price* distance (the
+ * server's stop = high-water mark ∓ offset), so it is bounded by the price,
+ * not by the position's notional: 0 < offset < current price. The server
+ * enforces the same rule (api triggers/trailingOffset.ts). It must also sit
+ * inside the stop-loss distance when an SL is set. Empty input = no trailing
+ * stop. Returns the error message, or null.
+ */
+export function trailingOffsetError(offsetInput: string, currentPrice: number, slDistance: number): string | null {
+    if (offsetInput.trim() === "") return null;
+    const offset = parseFloat(offsetInput);
+    if (!(offset > 0)) return "Trailing stop offset must be greater than 0";
+    if (currentPrice > 0 && offset >= currentPrice) return "Trailing stop offset must be less than the current price";
+    if (slDistance > 0 && offset >= slDistance) return "Trailing stop offset must be less than your stop loss distance";
+    return null;
 }
 
 /**
@@ -97,7 +115,6 @@ export function openButtonLabel(args: {
 interface UnifiedOrderPanelProps {
     pair: TradingPair;
     position: Position | null;
-    quoteBalance: number;
     onOrderFilled: () => void;
     classPrefix?: string;
 }
@@ -105,7 +122,6 @@ interface UnifiedOrderPanelProps {
 export function UnifiedOrderPanel({
     pair,
     position,
-    quoteBalance,
     onOrderFilled,
     classPrefix = "tr",
 }: UnifiedOrderPanelProps) {
@@ -124,6 +140,11 @@ export function UnifiedOrderPanel({
     const snapshot = useTradingStore((s) => s.snapshot);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const pairPrice = usePairPricesStore((s) => s.prices[pair.id]);
+    // AVAILABLE = buying power (2× rule, lib/buyingPower.ts): cash minus what
+    // open shorts hold, live with wallet.updated and prices. Null = a shorted
+    // asset has no price yet. MAX/quick amounts never go below 0.
+    const available = useBuyingPower(pair.quote_asset_id);
+    const quoteBalance = Math.max(0, available ?? 0);
     const { addToast } = useToast();
 
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
@@ -264,15 +285,7 @@ export function UnifiedOrderPanel({
     const slError = slNum > 0 && !slValid
         ? (activeMode === "LONG" ? "Stop loss must be below entry for a long position" : "Stop loss must be above entry for a short position")
         : null;
-    const tslError = tslNum > 0
-        ? (tslNum <= 0
-            ? "Trailing stop offset must be greater than 0"
-            : tslNum >= effectiveUsd
-                ? "Trailing stop offset must be less than your position size"
-                : slDistance > 0 && tslNum >= slDistance
-                    ? "Trailing stop offset must be less than your stop loss distance"
-                    : null)
-        : null;
+    const tslError = trailingOffsetError(tslOffset, currentPrice, slDistance);
     const hasValidationError = !!(tpError || slError || tslError);
 
     const limitWarn = orderType === "LIMIT" && limitPrice
@@ -645,7 +658,9 @@ export function UnifiedOrderPanel({
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
-                    <span className={`${p}-sum-val`} style={{ color: "#fff" }}>${formatDecimal(quoteBalance.toString(), 2)} USD</span>
+                    <span className={`${p}-sum-val`} style={{ color: available !== null && available < 0 ? "#ff3b3b" : "#fff" }} title="Cash minus what open shorts hold (2× their value)">
+                        {available === null ? "—" : `${available < 0 ? "-" : ""}$${formatDecimal(Math.abs(available).toString(), 2)} USD`}
+                    </span>
                 </div>
             </div>
 

@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
 import { allowSymbolForTest } from "../src/market/marketSymbols";
 import { createTriggerOrder } from "../src/triggers/triggerRepo";
+import { seedReferenceBook, clearReferenceBooks } from "../src/testing/referenceBook";
 
 let app: FastifyInstance;
 let token: string;
@@ -128,5 +129,64 @@ describe("trigger scope (match_id) over HTTP", () => {
         const res = await patch(tp.id, { triggerPrice: "111", matchId: randomUUID(), match_id: randomUUID() });
         expect(res.statusCode).toBe(200);
         expect(res.json()).toMatchObject({ trigger_price: "111.00000000", match_id: null });
+    });
+});
+
+// QA F6 (2026-10-11): a trailing offset is a USD price distance, so the
+// server accepts 0 < offset < the live price, the same rule as the order panel.
+describe("trailing-stop offset validation (pair at 100)", () => {
+    const post = (url: string, body: object) =>
+        app.inject({ method: "POST", url, headers: { authorization: `Bearer ${token}` }, payload: body });
+    const trailing = (trailingOffset: string) =>
+        ({ kind: "TRAILING_STOP_MARKET", side: "SELL", triggerPrice: "95", qty: "1", trailingOffset });
+
+    beforeAll(() => seedReferenceBook(pairId, "100", "100"));
+    afterAll(() => clearReferenceBooks());
+
+    it("POST /v1/triggers: 400 for an offset of 0 or >= price, 201 inside it", async () => {
+        for (const offset of ["0", "100", "150"]) {
+            const res = await post("/v1/triggers", { pairId, ...trailing(offset) });
+            expect(res.statusCode, `offset ${offset}`).toBe(400);
+            expect(res.json().code).toBe("invalid_input");
+        }
+        expect((await post("/v1/triggers", { pairId, ...trailing("5") })).statusCode).toBe(201);
+    });
+
+    it("POST /v1/oco: a trailing leg with an offset >= price is rejected, and neither leg is created", async () => {
+        const { rows: [before] } = await getPool().query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM trigger_orders WHERE pair_id = $1`, [pairId]);
+        const res = await post("/v1/oco", {
+            pairId,
+            legA: { kind: "TAKE_PROFIT_MARKET", side: "SELL", triggerPrice: "110", qty: "1" },
+            legB: trailing("100"),
+        });
+        expect(res.statusCode).toBe(400);
+        const { rows: [after] } = await getPool().query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM trigger_orders WHERE pair_id = $1`, [pairId]);
+        expect(after!.n).toBe(before!.n);
+    });
+
+    it("PATCH: 400 for an offset >= price, and the trigger is unchanged; 200 inside it", async () => {
+        const tsl = await createTriggerOrder({ userId, pairId, kind: "TRAILING_STOP_MARKET", side: "SELL", triggerPrice: "95", qty: "1", trailingOffset: "5", trailingHighWaterMark: "100", matchId: null });
+
+        const bad = await patch(tsl.id, { trailingOffset: "100" });
+        expect(bad.statusCode).toBe(400);
+        const { rows: [row] } = await getPool().query<{ trailing_offset: string }>(
+            `SELECT trailing_offset::text FROM trigger_orders WHERE id = $1`, [tsl.id]);
+        expect(row!.trailing_offset).toBe("5.00000000");
+
+        const ok = await patch(tsl.id, { trailingOffset: "10" });
+        expect(ok.statusCode).toBe(200);
+        expect(ok.json()).toMatchObject({ trailing_offset: "10.00000000", trigger_price: "90.00000000" });
+    });
+
+    it("503 stale_price_source with no live price", async () => {
+        clearReferenceBooks();
+        try {
+            const res = await post("/v1/triggers", { pairId, ...trailing("5") });
+            expect(res.statusCode).toBe(503);
+        } finally {
+            seedReferenceBook(pairId, "100", "100");
+        }
     });
 });

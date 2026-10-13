@@ -2,7 +2,7 @@ import { pool, acquireClient } from "../db/pool";
 import type { PoolClient } from "pg";
 import { D, toFixed8 } from "../utils/decimal";
 import { publish } from "../events/eventBus";
-import { createEvent } from "../events/eventTypes";
+import { createEvent, type AppEvent } from "../events/eventTypes";
 import { eventsPublishedTotal } from "../metrics";
 import { timedQuery } from "../observability/dbTiming";
 
@@ -412,3 +412,33 @@ export async function consumeReservedAndDebitTx(
 
 
 
+
+/**
+ * `wallet.updated` events for wallets the caller's transaction changed, to
+ * publish after COMMIT (txWithEvents). Reads the in-transaction rows — the
+ * caller holds them FOR UPDATE, so this is exactly the state that commits.
+ *
+ * Trading mutates wallets through the *Tx helpers above, which publish
+ * nothing; without this the client's AVAILABLE never saw a fill, a limit
+ * hold, or a cancel release until a reload.
+ */
+export async function walletUpdatedEventsTx(
+    client: PoolClient,
+    walletIds: Iterable<string>,
+    entryType: string,
+): Promise<AppEvent[]> {
+    const ids = [...new Set(walletIds)];
+    if (ids.length === 0) return [];
+    const { rows } = await timedQuery<WalletRow>(client, "walletRepo.walletUpdatedEventsTx",
+        `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
+         FROM wallets WHERE id = ANY($1::uuid[])`,
+        [ids],
+    );
+    return rows.map((w) => createEvent("wallet.updated", {
+        walletId: w.id,
+        assetId: w.asset_id,
+        balance: w.balance,
+        reserved: w.reserved,
+        entryType,
+    }, { userId: w.user_id }));
+}

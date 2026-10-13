@@ -355,6 +355,15 @@ export async function reducibleQty(
     return rows[0]?.qty ?? "0";
 }
 
+/** The pair of a trigger the user owns, or null. */
+export async function findTriggerPairIdForUser(userId: string, triggerId: string): Promise<string | null> {
+    const { rows } = await pool.query<{ pair_id: string }>(
+        `SELECT pair_id FROM trigger_orders WHERE id = $1 AND user_id = $2`,
+        [triggerId, userId],
+    );
+    return rows[0]?.pair_id ?? null;
+}
+
 /**
  * Edit an ACTIVE trigger in place (TP/SL price, or a trailing stop's offset).
  * The row keeps its id and oco_group_id, so an OCO pair stays linked — unlike

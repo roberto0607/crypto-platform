@@ -10,11 +10,13 @@ import {
     listTriggersByUser,
     cancelTriggerByUser,
     updateTriggerByUser,
+    findTriggerPairIdForUser,
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
 import { assertTradablePairId } from "../../market/marketSymbols";
 import { getActiveMatchIdForUser } from "../../competitions/matchService";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
+import { assertTrailingOffset } from "../../triggers/trailingOffset";
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
 
@@ -141,6 +143,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             }
             const b = parsed.data;
             await assertTradablePairId(b.pairId);
+            if (b.kind === "TRAILING_STOP_MARKET") await assertTrailingOffset(b.pairId, b.trailingOffset!);
             // Scope fixed at creation: the account this trigger acts on.
             const matchId = await getActiveMatchIdForUser(actor.id);
 
@@ -292,6 +295,11 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 if (!parsed.success) {
                     throw new AppError("invalid_input", parsed.error.flatten());
                 }
+                if (parsed.data.trailingOffset !== undefined) {
+                    // Unknown / not-owned ids fall through to updateTriggerByUser's 404.
+                    const pairIdOfTrigger = await findTriggerPairIdForUser(actor.id, id);
+                    if (pairIdOfTrigger) await assertTrailingOffset(pairIdOfTrigger, parsed.data.trailingOffset);
+                }
                 const trigger = await updateTriggerByUser(actor.id, id, parsed.data);
                 return reply.send(trigger);
             } catch (err) {
@@ -338,6 +346,9 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             }
             const b = parsed.data;
             await assertTradablePairId(b.pairId);
+            for (const leg of [b.legA, b.legB]) {
+                if (leg.kind === "TRAILING_STOP_MARKET") await assertTrailingOffset(b.pairId, leg.trailingOffset!);
+            }
 
             const ocoGroupId = crypto.randomUUID();
             // Both legs share one scope, resolved once at creation.
