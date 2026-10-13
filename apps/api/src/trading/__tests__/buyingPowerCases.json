@@ -1,18 +1,181 @@
 {
-  "_comment": "Shared by apps/api buyingPower.test.ts and apps/web lib/__tests__/buyingPower.test.ts so the server check and the AVAILABLE display can't drift. Prices: BTC 50000, ETH 2500; SOL has no price.",
+  "_comment": "Kept identical in apps/api/src/trading/__tests__/ and apps/web/src/lib/__tests__/ (each Docker build sees only its own app; buyingPower.test.ts in the API fails if the copies differ), so the server check and the AVAILABLE display can't drift. Prices: BTC 50000, ETH 2500; SOL has no price.",
   "quoteAssetId": "USD",
-  "prices": { "BTC": "50000", "ETH": "2500" },
+  "prices": {
+    "BTC": "50000",
+    "ETH": "2500"
+  },
   "cases": [
-    { "name": "cash only", "wallets": [["USD", "100000", "0"]], "expected": "100000" },
-    { "name": "open-order hold is not spendable", "wallets": [["USD", "100000", "10000"]], "expected": "90000" },
-    { "name": "$50 long: cash spent, the long costs nothing more", "wallets": [["USD", "99950", "0"], ["BTC", "0.001", "0"]], "expected": "99950" },
-    { "name": "$50 short: proceeds in, 2x the short out (same as the $50 long)", "wallets": [["USD", "100050", "0"], ["BTC", "-0.001", "0"]], "expected": "99950" },
-    { "name": "resting short sell counts 1x until it fills", "wallets": [["USD", "100000", "0"], ["BTC", "0", "1"]], "expected": "50000" },
-    { "name": "resting TP sell against a long is not a short", "wallets": [["USD", "50000", "0"], ["BTC", "1", "1"]], "expected": "50000" },
-    { "name": "resting sell larger than the long: only the excess counts", "wallets": [["USD", "50000", "0"], ["BTC", "1", "1.5"]], "expected": "25000" },
-    { "name": "shorts across assets", "wallets": [["USD", "225000", "0"], ["BTC", "-1", "0"], ["ETH", "-10", "0"]], "expected": "75000" },
-    { "name": "can go negative after a losing short", "wallets": [["USD", "175000", "0"], ["BTC", "-2", "0"]], "expected": "-25000" },
-    { "name": "unpriced asset with no exposure is ignored", "wallets": [["USD", "100000", "0"], ["SOL", "5", "0"]], "expected": "100000" },
-    { "name": "unpriced asset with a short makes buying power unknown", "wallets": [["USD", "100000", "0"], ["SOL", "-5", "0"]], "expected": null }
+    {
+      "name": "cash only",
+      "wallets": [
+        [
+          "USD",
+          "100000",
+          "0"
+        ]
+      ],
+      "expected": "100000"
+    },
+    {
+      "name": "open-order hold is not spendable",
+      "wallets": [
+        [
+          "USD",
+          "100000",
+          "10000"
+        ]
+      ],
+      "expected": "90000"
+    },
+    {
+      "name": "$50 long: cash spent, the long costs nothing more",
+      "wallets": [
+        [
+          "USD",
+          "99950",
+          "0"
+        ],
+        [
+          "BTC",
+          "0.001",
+          "0"
+        ]
+      ],
+      "expected": "99950"
+    },
+    {
+      "name": "$50 short: proceeds in, 2x the short out (same as the $50 long)",
+      "wallets": [
+        [
+          "USD",
+          "100050",
+          "0"
+        ],
+        [
+          "BTC",
+          "-0.001",
+          "0"
+        ]
+      ],
+      "expected": "99950"
+    },
+    {
+      "name": "resting short sell counts 1x until it fills",
+      "wallets": [
+        [
+          "USD",
+          "100000",
+          "0"
+        ],
+        [
+          "BTC",
+          "0",
+          "1"
+        ]
+      ],
+      "expected": "50000"
+    },
+    {
+      "name": "resting TP sell against a long is not a short",
+      "wallets": [
+        [
+          "USD",
+          "50000",
+          "0"
+        ],
+        [
+          "BTC",
+          "1",
+          "1"
+        ]
+      ],
+      "expected": "50000"
+    },
+    {
+      "name": "resting sell larger than the long: only the excess counts",
+      "wallets": [
+        [
+          "USD",
+          "50000",
+          "0"
+        ],
+        [
+          "BTC",
+          "1",
+          "1.5"
+        ]
+      ],
+      "expected": "25000"
+    },
+    {
+      "name": "shorts across assets",
+      "wallets": [
+        [
+          "USD",
+          "225000",
+          "0"
+        ],
+        [
+          "BTC",
+          "-1",
+          "0"
+        ],
+        [
+          "ETH",
+          "-10",
+          "0"
+        ]
+      ],
+      "expected": "75000"
+    },
+    {
+      "name": "can go negative after a losing short",
+      "wallets": [
+        [
+          "USD",
+          "175000",
+          "0"
+        ],
+        [
+          "BTC",
+          "-2",
+          "0"
+        ]
+      ],
+      "expected": "-25000"
+    },
+    {
+      "name": "unpriced asset with no exposure is ignored",
+      "wallets": [
+        [
+          "USD",
+          "100000",
+          "0"
+        ],
+        [
+          "SOL",
+          "5",
+          "0"
+        ]
+      ],
+      "expected": "100000"
+    },
+    {
+      "name": "unpriced asset with a short makes buying power unknown",
+      "wallets": [
+        [
+          "USD",
+          "100000",
+          "0"
+        ],
+        [
+          "SOL",
+          "-5",
+          "0"
+        ]
+      ],
+      "expected": null
+    }
   ]
 }

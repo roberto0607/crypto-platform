@@ -3,6 +3,8 @@
  * buyingPowerCases.json, which the web AVAILABLE display is tested on too.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { buyingPower, exposureQty, isReduceOnly } from "../buyingPower";
 import { D } from "../../utils/decimal";
 import cases from "./buyingPowerCases.json";
@@ -21,6 +23,14 @@ describe("buyingPower (shared cases)", () => {
         );
         if (expected === null) expect(bp).toBeNull();
         else expect(bp!.toString()).toBe(D(expected).toString());
+    });
+});
+
+describe("shared case table", () => {
+    it("the web copy is identical, so AVAILABLE and the order check can't drift", () => {
+        const read = (p: string) => readFileSync(resolve(__dirname, p), "utf8");
+        expect(read("../../../../web/src/lib/__tests__/buyingPowerCases.json"))
+            .toBe(read("./buyingPowerCases.json"));
     });
 });
 

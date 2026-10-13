@@ -4,7 +4,9 @@
  */
 import { describe, it, expect } from "vitest";
 import { buyingPower } from "@/lib/buyingPower";
-import cases from "../../../../api/src/trading/__tests__/buyingPowerCases.json";
+// A copy of the API's case table: the web Docker build only sees apps/web.
+// The API test fails if the two copies differ.
+import cases from "./buyingPowerCases.json";
 
 const prices = cases.prices as Record<string, string>;
 
