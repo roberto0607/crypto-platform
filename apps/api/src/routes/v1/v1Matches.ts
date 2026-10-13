@@ -19,6 +19,7 @@ import { getSpectatorCount } from "../../competitions/matchSpectatorStore.js";
 import { joinMatchSpectatorRoom, leaveMatchSpectatorRoom } from "../../competitions/matchSpectatorSession.js";
 import { getStreamHandler, setStreamSpectatingMatch, getStreamSpectatingMatch } from "./v1Events.js";
 import { pool } from "../../db/pool.js";
+import { listMatchWalletsForUser } from "../../wallets/walletRepo.js";
 import { parseIntParam } from "../../http/pagination.js";
 
 const challengeBody = z.object({
@@ -164,6 +165,38 @@ const v1Matches: FastifyPluginAsync = async (app) => {
                 return reply.code(403).send({ ok: false, error: "forbidden" });
             }
             return reply.send({ ok: true, match, viewerRole });
+        } catch (err) {
+            return v1HandleError(reply, err);
+        }
+    });
+
+    // GET /v1/matches/:id/wallets — the caller's own wallets in this match
+    // (migration 095). Participants only: a spectator or the opponent never
+    // sees another player's balances. Closed wallets (ended match) are
+    // returned with their final balances and closed_at.
+    app.get("/matches/:id/wallets", {
+        schema: {
+            tags: ["Matches"],
+            summary: "Your wallets in a match",
+            security: [{ bearerAuth: [] }],
+            params: {
+                type: "object",
+                required: ["id"],
+                properties: { id: { type: "string", format: "uuid" } },
+            },
+        },
+        preHandler: requireUser,
+    }, async (req, reply) => {
+        try {
+            const { id } = req.params as { id: string };
+            const match = await getMatchById(id);
+            if (!match) throw new Error("match_not_found");
+            const userId = req.user!.id;
+            if (match.challenger_id !== userId && match.opponent_id !== userId) {
+                return reply.code(403).send({ ok: false, error: "forbidden" });
+            }
+            const wallets = await listMatchWalletsForUser(userId, id);
+            return reply.send({ ok: true, wallets });
         } catch (err) {
             return v1HandleError(reply, err);
         }

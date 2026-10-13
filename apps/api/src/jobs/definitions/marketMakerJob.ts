@@ -214,10 +214,11 @@ async function ensureBotSetup(ctx: JobContext): Promise<void> {
             ? BOT_USD_BALANCE
             : (BOT_CRYPTO_BALANCES[asset.symbol] ?? "0");
 
-        // Check if wallet exists (unique index uses COALESCE on competition_id)
+        // Check if the free-play wallet exists (unique index uses COALESCE on
+        // competition_id + match_id). The bot never has match wallets.
         const { rows: existing } = await pool.query<{ id: string; balance: string }>(
             `SELECT id, balance FROM wallets
-             WHERE user_id = $1 AND asset_id = $2 AND competition_id IS NULL`,
+             WHERE user_id = $1 AND asset_id = $2 AND competition_id IS NULL AND match_id IS NULL`,
             [BOT_USER_ID, asset.id],
         );
 

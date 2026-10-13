@@ -84,7 +84,7 @@ async function fundFreePlayUsdWallet(
     const usdWallet = await client.query<{ id: string }>(
         `SELECT w.id FROM wallets w
          JOIN assets a ON a.id = w.asset_id
-         WHERE w.user_id = $1 AND w.competition_id IS NULL AND a.symbol = 'USD'
+         WHERE w.user_id = $1 AND w.competition_id IS NULL AND w.match_id IS NULL AND a.symbol = 'USD'
          LIMIT 1`,
         [userId],
     );

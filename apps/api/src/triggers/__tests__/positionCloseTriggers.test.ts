@@ -18,7 +18,7 @@ vi.mock("../../notifications/notificationService", () => ({
 import { randomUUID } from "node:crypto";
 import { pool } from "../../db/pool";
 import { resetTestData, ensureMigrations } from "../../testing/resetDb";
-import { createTestUser, createTestAssetAndPair, createTestWallets } from "../../testing/fixtures";
+import { createTestUser, createTestAssetAndPair, createTestWallets, fundTestMatchWallets } from "../../testing/fixtures";
 import { seedReferenceBook, clearReferenceBooks } from "../../testing/referenceBook";
 import { placeOrderWithSnapshot } from "../../trading/phase6OrderService";
 import { createTriggerOrder, updateTriggerByUser } from "../triggerRepo";
@@ -54,6 +54,7 @@ async function activeMatch(): Promise<string> {
          VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
         [userId, opponent],
     );
+    await fundTestMatchWallets(pool, rows[0].id, [userId, opponent]);
     return rows[0].id;
 }
 

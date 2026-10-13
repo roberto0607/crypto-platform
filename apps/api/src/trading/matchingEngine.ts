@@ -83,6 +83,7 @@ import { createTrade } from "./tradeRepo";
 import type { TradeRow } from "./tradeRepo";
 import {
     findWalletByUserAndAsset,
+    listScopeWalletIds,
     lockWalletsForUpdate,
     reserveFunds,
     releaseReserved,
@@ -91,7 +92,7 @@ import {
     debitUnconstrainedTx,
     consumeReservedAndDebitTx,
 } from "../wallets/walletRepo";
-import type { WalletRow } from "../wallets/walletRepo";
+import type { WalletRow, WalletScope } from "../wallets/walletRepo";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
 import { computeFee, maxFeeBps } from "./feeCalc";
@@ -132,18 +133,6 @@ type SystemFillPlan = {
     feeAmt: Decimal;
 };
 
-/** Every wallet the user holds in this scope (free-play or one competition). */
-async function listScopeWalletIds(client: PoolClient, userId: string, competitionId?: string | null): Promise<string[]> {
-    const compId = competitionId ?? null;
-    const { rows } = await timedQuery<{ id: string }>(client, "matchingEngine.listScopeWalletIds",
-        compId === null
-            ? `SELECT id FROM wallets WHERE user_id = $1 AND competition_id IS NULL`
-            : `SELECT id FROM wallets WHERE user_id = $1 AND competition_id = $2`,
-        compId === null ? [userId] : [userId, compId],
-    );
-    return rows.map((r) => r.id);
-}
-
 /**
  * Internal matching logic — operates on a caller-provided PoolClient.
  * Does NOT call BEGIN/COMMIT. The caller owns the transaction.
@@ -157,10 +146,9 @@ async function placeOrderInternal(
     qty: string,
     limitPrice?: string,
     competitionId?: string | null,
-    // matchId is stamped onto the order row so the post-fill pipeline can
-    // scope position updates to the user's active match. Wallets are NOT
-    // match-scoped (see migration 066 notes) — we keep free-play wallet
-    // lookups even when match_id is set on the order.
+    // matchId is stamped onto the order row (post-fill positions are scoped by
+    // it) AND picks the wallets: a match order trades that match's own
+    // wallets (migration 095), so it never touches free-play.
     matchId?: string | null,
     // Provenance tag, stamped onto the order row verbatim. Omitted/null =
     // manual user order (every existing caller). See phase6OrderService
@@ -195,9 +183,13 @@ async function placeOrderInternal(
     }
 
     // ── Phase B: Find user's wallets (non-locking read) ──
-    const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id, competitionId);
-    const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id, competitionId);
-    if (!baseWallet || !quoteWallet) throw new Error("wallet_not_found");
+    // The order's own account: a match order trades that match's wallets
+    // (funded at accept, migration 095), never free-play.
+    const scope: WalletScope = { competitionId: competitionId ?? null, matchId: matchId ?? null };
+    const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id, scope);
+    const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id, scope);
+    if (!baseWallet || !quoteWallet) throw new Error(scope.matchId ? "match_wallets_missing" : "wallet_not_found");
+    if (baseWallet.closed_at || quoteWallet.closed_at) throw new Error("match_ended");
 
     // ── Phase C+D: Incrementally scan book and build execution plan ──
     // Reads resting orders under the pair lock (no competing matcher
@@ -300,36 +292,53 @@ async function placeOrderInternal(
     // locks in the same order, preventing deadlocks.
     const walletIdSet = new Set<string>([baseWallet.id, quoteWallet.id]);
 
-    // Batch-fetch all counter-party wallets in a single query (2N → 1)
-    const counterUserIds = [...new Set(plan.map((e) => e.resting.user_id))];
-
-    if (counterUserIds.length > 0) {
-        const compFilter = (competitionId ?? null) === null
-            ? `AND w.competition_id IS NULL`
-            : `AND w.competition_id = $4`;
-        const counterParams = (competitionId ?? null) === null
-            ? [counterUserIds, pair.base_asset_id, pair.quote_asset_id]
-            : [counterUserIds, pair.base_asset_id, pair.quote_asset_id, competitionId];
-
-        const counterWallets = await timedQuery<WalletRow>(
+    // Batch-fetch all counter-party wallets in a single query (2N → 1).
+    // Each maker trades in ITS order's account, not the taker's: the scope
+    // comes from the resting order's own reserved wallet (every resting LIMIT
+    // has one). A match taker can hit a free-play maker (the MM bot) and each
+    // side settles in its own wallets.
+    if (plan.length > 0) {
+        const reservedIds = [...new Set(plan.map((e) => e.resting.reserved_wallet_id).filter((id): id is string => !!id))];
+        const counterWallets = await timedQuery<WalletRow & { reserved_id: string }>(
             client,
             "matchingEngine.batchCounterWallets",
-            `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at
-             FROM wallets w
-             WHERE w.user_id = ANY($1)
-               AND w.asset_id IN ($2, $3)
-               ${compFilter}`,
-            counterParams
+            `SELECT r.id AS reserved_id, w.id, w.user_id, w.asset_id, w.balance, w.reserved,
+                    w.created_at, w.updated_at, w.match_id, w.closed_at
+             FROM wallets r
+             JOIN wallets w
+               ON w.user_id = r.user_id
+              AND w.competition_id IS NOT DISTINCT FROM r.competition_id
+              AND w.match_id IS NOT DISTINCT FROM r.match_id
+             WHERE r.id = ANY($1::uuid[])
+               AND w.asset_id IN ($2, $3)`,
+            [reservedIds, pair.base_asset_id, pair.quote_asset_id],
         );
 
-        const walletMap = new Map<string, WalletRow>();
-        for (const w of counterWallets.rows) {
-            walletMap.set(`${w.user_id}:${w.asset_id}`, w);
+        const byReserved = new Map<string, WalletRow>();
+        for (const w of counterWallets.rows) byReserved.set(`${w.reserved_id}:${w.asset_id}`, w);
+
+        // A resting order with no reserved wallet (legacy/seeded) trades free-play.
+        const legacyUserIds = [...new Set(plan.filter((e) => !e.resting.reserved_wallet_id).map((e) => e.resting.user_id))];
+        const freePlay = new Map<string, WalletRow>();
+        if (legacyUserIds.length > 0) {
+            const { rows } = await timedQuery<WalletRow>(client, "matchingEngine.legacyCounterWallets",
+                `SELECT id, user_id, asset_id, balance, reserved, created_at, updated_at, match_id, closed_at
+                 FROM wallets
+                 WHERE user_id = ANY($1::uuid[]) AND asset_id IN ($2, $3)
+                   AND competition_id IS NULL AND match_id IS NULL`,
+                [legacyUserIds, pair.base_asset_id, pair.quote_asset_id],
+            );
+            for (const w of rows) freePlay.set(`${w.user_id}:${w.asset_id}`, w);
         }
 
         for (const entry of plan) {
-            const counterBase = walletMap.get(`${entry.resting.user_id}:${pair.base_asset_id}`);
-            const counterQuote = walletMap.get(`${entry.resting.user_id}:${pair.quote_asset_id}`);
+            const key = entry.resting.reserved_wallet_id;
+            const counterBase = key
+                ? byReserved.get(`${key}:${pair.base_asset_id}`)
+                : freePlay.get(`${entry.resting.user_id}:${pair.base_asset_id}`);
+            const counterQuote = key
+                ? byReserved.get(`${key}:${pair.quote_asset_id}`)
+                : freePlay.get(`${entry.resting.user_id}:${pair.quote_asset_id}`);
             if (!counterBase || !counterQuote) throw new Error("wallet_not_found");
             entry.counterBaseId = counterBase.id;
             entry.counterQuoteId = counterQuote.id;
@@ -341,8 +350,14 @@ async function placeOrderInternal(
     const walletIds = [...walletIdSet].sort();
     // Buying power reads every wallet in the user's scope, so lock them all
     // (same sorted single statement — no new deadlock order).
-    const scopeWalletIds = await listScopeWalletIds(client, userId, competitionId);
+    const scopeWalletIds = await listScopeWalletIds(client, userId, scope);
     const locked = await lockWalletsForUpdate(client, [...new Set([...walletIds, ...scopeWalletIds])]);
+    // Re-check under the lock: a match that ended while this order was in
+    // flight closed its wallets (matchWallets.closeMatchWalletsTx) — the
+    // Phase B read above was unlocked.
+    if (locked.get(baseWallet.id)?.closed_at || locked.get(quoteWallet.id)?.closed_at) {
+        throw new Error("match_ended");
+    }
 
     // ── Phase F2: Buying power (2× rule, trading/buyingPower.ts) ──
     // Reduce-only orders always pass; system users (MM / risk bots) are exempt.

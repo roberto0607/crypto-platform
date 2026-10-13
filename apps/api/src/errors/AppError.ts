@@ -61,6 +61,8 @@ const ERROR_STATUS: Record<string, number> = {
   no_active_replay: 400,
   // 409
   email_taken: 409,
+  match_ended: 409,
+  match_wallets_missing: 409,
   wallet_already_exists: 409,
   asset_already_exists: 409,
   pair_already_exists: 409,
