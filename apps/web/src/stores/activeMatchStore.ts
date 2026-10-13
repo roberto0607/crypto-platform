@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { getActiveMatch, type Match } from "@/api/endpoints/matches";
 import { coalesce } from "@/lib/coalesce";
+import { setVisibleInterval } from "@/lib/visibleInterval";
 
 interface ActiveMatchState {
     activeMatch: Match | null;
@@ -45,7 +46,7 @@ export const useActiveMatchStore = create<ActiveMatchState>((set) => ({
 // mount/unmount so the timer starts on the first subscriber and stops on
 // the last, independent of mount/unmount order between call sites.
 const POLL_INTERVAL_MS = 30_000;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let stopPoll: (() => void) | null = null;
 let subscriberCount = 0;
 
 // Fast-path refresh on match.started/match.ended so isInCompetition/activeMatch
@@ -61,8 +62,9 @@ function handleMatchEnded(): void {
 
 export function acquireActiveMatchPolling(): void {
     subscriberCount++;
-    if (subscriberCount === 1 && !pollTimer) {
-        pollTimer = setInterval(() => {
+    if (subscriberCount === 1 && !stopPoll) {
+        // Paused while the tab is hidden; SSE match.started/ended still land.
+        stopPoll = setVisibleInterval(() => {
             void useActiveMatchStore.getState().refreshMatch();
         }, POLL_INTERVAL_MS);
         window.addEventListener("sse:match.started", handleMatchStarted);
@@ -72,9 +74,9 @@ export function acquireActiveMatchPolling(): void {
 
 export function releaseActiveMatchPolling(): void {
     subscriberCount = Math.max(0, subscriberCount - 1);
-    if (subscriberCount === 0 && pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+    if (subscriberCount === 0 && stopPoll) {
+        stopPoll();
+        stopPoll = null;
         window.removeEventListener("sse:match.started", handleMatchStarted);
         window.removeEventListener("sse:match.ended", handleMatchEnded);
     }

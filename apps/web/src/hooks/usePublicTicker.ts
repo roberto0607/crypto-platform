@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getPublicTickers, type PublicTicker } from "@/api/endpoints/marketData";
+import { setVisibleInterval } from "@/lib/visibleInterval";
 
 /** Display row for the scrolling ticker strips (login / landing / replay). */
 export interface TickerItem {
@@ -63,10 +64,11 @@ export function usePublicTicker(): TickerItem[] {
         });
     };
     load();
-    const id = setInterval(load, POLL_MS);
+    // Anonymous: counts against the visitor's per-IP limit, so skip hidden tabs.
+    const stop = setVisibleInterval(load, POLL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, []);
 

@@ -15,6 +15,7 @@ import OrderDock from "@/components/trading/OrderDock";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
 import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateEvent } from "@/types/api";
 import Spinner from "@/components/Spinner";
+import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
 
 /* ─────────────────────────────────────────
@@ -1188,8 +1189,7 @@ export default function TradingPage() {
       } catch { /* non-fatal */ }
     };
     fetchFunding();
-    const interval = setInterval(fetchFunding, 60_000);
-    return () => clearInterval(interval);
+    return setVisibleInterval(fetchFunding, 60_000);
   }, []);
 
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
