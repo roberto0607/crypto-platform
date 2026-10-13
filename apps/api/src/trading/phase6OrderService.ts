@@ -28,6 +28,7 @@ import {
   ordersRejectedTotal,
 } from "../metrics";
 import { writePortfolioSnapshotTx } from "../portfolio/portfolioService";
+import { walletUpdatedEventsTx } from "../wallets/walletRepo";
 import { resolveSimulationConfig } from "../sim/simConfigRepo";
 import { computeMarketExecution } from "../sim/slippageModel";
 import { computeAvailableLiquidity } from "../sim/liquidityModel";
@@ -480,6 +481,12 @@ export async function placeOrderWithSnapshot(
             }, { userId, requestId }));
         }
 
+        // Balances this order moved — the taker's and every maker's — so each
+        // owner's AVAILABLE updates live (fill, limit hold).
+        pendingEvents.push(...await walletUpdatedEventsTx(
+            client, matchResult.walletIds, matchResult.fills.length > 0 ? "TRADE" : "ORDER_RESERVE",
+        ));
+
         return { result: matchResult, idempotencyRowCount: idempRowCount };
     });
 
@@ -574,8 +581,17 @@ export async function cancelOrderWithOutbox(
             limitPrice: cancelResult.order.limit_price ?? null,
         }, { userId, requestId }));
 
+        pendingEvents.push(...await walletUpdatedEventsTx(client, releasedWalletIds([cancelResult]), "ORDER_RELEASE"));
+
         return cancelResult;
     });
+}
+
+/** Wallets whose hold a cancel released (nothing released → no balance change). */
+function releasedWalletIds(results: { order: OrderRow; releasedAmount: string }[]): string[] {
+    return results
+        .filter((r) => r.order.reserved_wallet_id && D(r.releasedAmount).gt(0))
+        .map((r) => r.order.reserved_wallet_id!);
 }
 
 /**
@@ -645,6 +661,8 @@ export async function cancelAllOrdersWithOutbox(
 
             canceled.push(cancelResult);
         }
+
+        pendingEvents.push(...await walletUpdatedEventsTx(client, releasedWalletIds(canceled), "ORDER_RELEASE"));
 
         return { canceled, skipped };
     });

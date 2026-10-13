@@ -8,6 +8,7 @@ import type {
   Wallet,
 } from "@/types/api";
 import type { SseConnectionState } from "@/api/sse";
+import { listWallets } from "@/api/endpoints/wallets";
 
 interface AppState {
   systemStatus: SystemStatus | null;
@@ -39,6 +40,10 @@ interface AppState {
   setPairs: (pairs: TradingPair[]) => void;
   setAssets: (assets: Asset[]) => void;
   setWallets: (wallets: Wallet[]) => void;
+  /** Patch one wallet from a `wallet.updated` SSE event. */
+  applyWalletUpdate: (u: { walletId: string; balance: string; reserved: string }) => void;
+  /** Re-fetch every wallet (after an SSE reconnect — events may have been missed). */
+  refreshWallets: () => Promise<void>;
   setSelectedPairId: (id: string | null) => void;
   setSseConnected: (connected: boolean) => void;
   setSseConnectionState: (state: SseConnectionState) => void;
@@ -74,6 +79,18 @@ export const useAppStore = create<AppState>((set) => ({
   setPairs: (pairs) => set({ pairs, pairsLoaded: true }),
   setAssets: (assets) => set({ assets }),
   setWallets: (wallets) => set({ wallets }),
+  applyWalletUpdate: ({ walletId, balance, reserved }) =>
+    set((s) => ({
+      wallets: s.wallets.map((w) => (w.id === walletId ? { ...w, balance, reserved } : w)),
+    })),
+  refreshWallets: async () => {
+    try {
+      const res = await listWallets();
+      set({ wallets: res.data.wallets });
+    } catch {
+      // Keep the last known balances; the next wallet.updated or reconnect retries.
+    }
+  },
   setSelectedPairId: (selectedPairId) => set({ selectedPairId }),
   setSseConnected: (sseConnected) => set({ sseConnected }),
   setSseConnectionState: (sseConnectionState) => set({ sseConnectionState }),

@@ -52,13 +52,7 @@ export function useSSE() {
       },
 
       onWalletUpdated: (event) => {
-        const wallets = useAppStore.getState().wallets;
-        const updated = wallets.map((w) =>
-          w.id === event.data.walletId
-            ? { ...w, balance: event.data.balance, reserved: event.data.reserved }
-            : w,
-        );
-        useAppStore.getState().setWallets(updated);
+        useAppStore.getState().applyWalletUpdate(event.data);
       },
 
       onPriceTick: (event) => {
@@ -223,6 +217,8 @@ export function useSSE() {
       // applies; the new stream's first ping/tick re-establishes it.
       onReconnected: () => {
         useAppStore.getState().setPriceFreshAt(null);
+        // wallet.updated events sent while disconnected are gone — reload balances.
+        void useAppStore.getState().refreshWallets();
         window.dispatchEvent(new CustomEvent("sse:reconnected"));
       },
     };

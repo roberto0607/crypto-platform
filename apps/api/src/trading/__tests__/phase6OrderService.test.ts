@@ -176,7 +176,7 @@ function setupDefaultMocks() {
   vi.mocked(getSnapshotForUser).mockResolvedValue(SNAPSHOT);
   vi.mocked(getIdempotencyKey).mockResolvedValue(null);
   vi.mocked(putIdempotencyKeyTx).mockResolvedValue(1);
-  vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL], reference: null });
+  vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL], reference: null, walletIds: [] });
   vi.mocked(findOrderById).mockResolvedValue(ORDER);
   vi.mocked(listTradesByOrderId).mockResolvedValue([FILL]);
   vi.mocked(findPairById).mockResolvedValue(PAIR as any);
@@ -357,7 +357,7 @@ describe("placeOrderWithSnapshot", () => {
 
     it("calls applyFillToPositionTx for each fill", async () => {
       const fill2 = { ...FILL, id: "trade-2", qty: "0.50000000" };
-      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null });
+      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null, walletIds: [] });
 
       await placeOrderWithSnapshot("user-1", BODY);
 
@@ -391,7 +391,7 @@ describe("placeOrderWithSnapshot", () => {
 
     it("inserts TRADE_EXECUTED outbox event for each fill", async () => {
       const fill2 = { ...FILL, id: "trade-2" };
-      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null });
+      vi.mocked(placeOrderTx).mockResolvedValue({ order: ORDER, fills: [FILL, fill2], reference: null, walletIds: [] });
 
       await placeOrderWithSnapshot("user-1", BODY);
 
@@ -453,7 +453,7 @@ describe("placeOrderWithSnapshot", () => {
       vi.mocked(placeOrderTx).mockResolvedValue({
         order: { ...ORDER, status: "OPEN", qty_filled: "0.00000000" },
         fills: [],
-        reference: null,
+        reference: null, walletIds: [],
       });
     });
 

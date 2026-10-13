@@ -109,6 +109,14 @@ type FillPlan = {
     counterQuoteId: string;
 };
 
+export type PlaceOrderResult = {
+    order: OrderRow;
+    fills: TradeRow[];
+    reference: CollarReference | null;
+    /** Every wallet this order locked and may have changed (taker + makers), for wallet.updated after COMMIT. */
+    walletIds: string[];
+};
+
 type SystemFillPlan = {
     fillQty: Decimal;
     fillPrice: Decimal;
@@ -142,7 +150,7 @@ async function placeOrderInternal(
     // price off historical candles, not the live Kraken market. Omitted =
     // resolve the live Kraken reference (book, else ticker) under the pair lock.
     pricing?: CollarReference,
-): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
+): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
     // placeOrder/cancelOrder on the same pair_id will queue here.
@@ -318,7 +326,8 @@ async function placeOrderInternal(
         }
     }
 
-    await lockWalletsForUpdate(client, [...walletIdSet].sort());
+    const walletIds = [...walletIdSet].sort();
+    await lockWalletsForUpdate(client, walletIds);
 
     // ── Phase G: Reserve funds for LIMIT orders ──
     let reservedConsumed = ZERO;
@@ -529,7 +538,7 @@ async function placeOrderInternal(
         }
     }
 
-    return { order: updatedOrder, fills, reference };
+    return { order: updatedOrder, fills, reference, walletIds };
 }
 
 /**
@@ -547,7 +556,7 @@ export async function placeOrder(
     matchId?: string | null,
     source?: string | null,
     pricing?: CollarReference,
-): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
+): Promise<PlaceOrderResult> {
     const client = await pool.connect();
 
     try {
@@ -579,7 +588,7 @@ export async function placeOrderTx(
     matchId?: string | null,
     source?: string | null,
     pricing?: CollarReference,
-): Promise<{ order: OrderRow; fills: TradeRow[]; reference: CollarReference | null }> {
+): Promise<PlaceOrderResult> {
     return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing);
 }
 
