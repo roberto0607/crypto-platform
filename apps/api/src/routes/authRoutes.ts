@@ -374,6 +374,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
+    // Own bucket (per real client IP — no Bearer on this call), so a reload
+    // can never be starved by other anonymous traffic in the shared 200/min
+    // global bucket. One refresh per full page load + one per 14 min.
+    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
   }, async (req, reply) => {
     const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
 

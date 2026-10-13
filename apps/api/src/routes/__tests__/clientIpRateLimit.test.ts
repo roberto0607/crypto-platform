@@ -110,6 +110,19 @@ describe("rate limits key on the real client IP", () => {
     },
     BURST_TIMEOUT,
   );
+
+  it(
+    "/auth/refresh has its own bucket — a depleted anonymous bucket can't starve a reload",
+    async () => {
+      for (let i = 0; i < GLOBAL_LIMIT + 1; i++) {
+        await app.inject({ method: "GET", url: "/status/system", ...viaCloudflare(VISITOR_A) });
+      }
+      const refresh = await app.inject({ method: "POST", url: "/auth/refresh", ...viaCloudflare(VISITOR_A) });
+      // No cookie → 401 from the handler, NOT 429 from the limiter.
+      expect(refresh.statusCode).toBe(401);
+    },
+    BURST_TIMEOUT,
+  );
 });
 
 describe("login lockout keys on the real client IP", () => {
