@@ -13,6 +13,15 @@ export type PositionState = {
  * lives, shared by the live fill path (positionRepo.applyFillToPositionTx)
  * and the rebuild-from-trades replay (repair/positionRebuildService).
  *
+ * Longs and shorts are symmetric:
+ *   - a fill in the position's direction (or from flat) adds to it: the
+ *     entry becomes the size-weighted average;
+ *   - a fill against it reduces it: P&L is realized on the reduced part at
+ *     the entry (long: price − entry, short: entry − price) and the entry is
+ *     unchanged; flat resets the entry to 0;
+ *   - a fill larger than the position closes it all, then opens the rest in
+ *     the other direction at the fill price.
+ *
  * Fees are not part of this — callers accumulate them separately.
  */
 export function applyFill(
@@ -21,39 +30,31 @@ export function applyFill(
     fillQty: Decimal,
     fillPrice: Decimal,
 ): PositionState {
-    let currentQty = pos.qty;
-    let avgEntry = pos.avgEntry;
-    let realizedPnl = pos.realizedPnl;
+    if (fillQty.lte(ZERO)) return pos;
 
-    if (side === "BUY") {
-        // Increase position: weighted average entry price
-        const oldCost = currentQty.mul(avgEntry);
-        const newCost = fillQty.mul(fillPrice);
-        const totalQty = currentQty.plus(fillQty);
+    const { qty, avgEntry, realizedPnl } = pos;
+    const signedFill = side === "BUY" ? fillQty : fillQty.neg();
+    const nextQty = qty.plus(signedFill);
 
-        if (totalQty.gt(ZERO)) {
-            avgEntry = oldCost.plus(newCost).div(totalQty);
-        }
-        currentQty = totalQty;
-    } else {
-        // SELL: realize PnL on min(fillQty, currentQty)
-        const closingQty = Decimal.min(fillQty, currentQty);
-
-        if (closingQty.gt(ZERO)) {
-            const pnl = closingQty.mul(fillPrice.minus(avgEntry));
-            realizedPnl = realizedPnl.plus(pnl);
-        }
-
-        currentQty = currentQty.minus(fillQty);
-
-        // Position flip: if currentQty went negative, new position at fillPrice
-        if (currentQty.lt(ZERO)) {
-            avgEntry = fillPrice;
-        } else if (currentQty.eq(ZERO)) {
-            avgEntry = ZERO;
-        }
-        // If still positive, avgEntry unchanged
+    // Adding (or opening from flat): size-weighted average entry.
+    if (qty.isZero() || qty.isNegative() === signedFill.isNegative()) {
+        const size = qty.abs();
+        return {
+            qty: nextQty,
+            avgEntry: size.mul(avgEntry).plus(fillQty.mul(fillPrice)).div(size.plus(fillQty)),
+            realizedPnl,
+        };
     }
 
-    return { qty: currentQty, avgEntry, realizedPnl };
+    // Reducing: realize P&L on the closed part at the entry.
+    const closedQty = Decimal.min(fillQty, qty.abs());
+    const pnlPerUnit = qty.isNegative() ? avgEntry.minus(fillPrice) : fillPrice.minus(avgEntry);
+    const nextRealized = realizedPnl.plus(closedQty.mul(pnlPerUnit));
+
+    let nextEntry: Decimal;
+    if (nextQty.isZero()) nextEntry = ZERO;                                  // flat
+    else if (nextQty.isNegative() === qty.isNegative()) nextEntry = avgEntry; // still open, same side
+    else nextEntry = fillPrice;                                              // flipped: the rest opened here
+
+    return { qty: nextQty, avgEntry: nextEntry, realizedPnl: nextRealized };
 }

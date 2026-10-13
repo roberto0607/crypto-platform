@@ -37,8 +37,11 @@ These override the defaults and open questions further down (e.g. `LEVERAGE_MAX_
 
 `applyFillToPositionTx` only realizes P&L in the SELL branch:
 
-- **Covering a short (BUY while `base_qty < 0`) books no realized P&L.** The weighted-average formula then runs on a negative quantity and corrupts `avg_entry_price`. Example: short 2 @ 110, buy 1 @ 90 → realized stays 0 (should be +20) and avg becomes 130 (should stay 110).
-- **Adding to a short (SELL while `base_qty < 0`)** resets `avg_entry_price` to the latest fill price instead of averaging.
+- **Covering a short (BUY while `base_qty < 0`) books no realized P&L.** Example: short 2 @ 110, buy 1 @ 90 → realized stays 0 (should be +20). The entry stays 110 (correct), but it also stays 110 after the short goes flat.
+- **Adding to a short (SELL while `base_qty < 0`)** resets `avg_entry_price` to the latest fill price instead of averaging (short 1 @ 100, sell 1 @ 120 → 120, should be 110).
+- **Flipping short → long** books no P&L on the short and gives the long a wrong entry (short 1 @ 100, buy 3 @ 90 → entry 85, realized 0; should be 90 and +10).
+
+(Corrected 2026-10-13 after running the old math: the first draft said a cover moved the entry to 130. It doesn't.)
 
 Consequences today: `calculatePlayerStats` scores a short closed *before* match end as 0 P&L. Positions-based P&L, equity snapshots and the force-close at match end, which uses the corrupted average, are all wrong for shorts. Leverage makes this worse (bigger shorts, and liquidation prices are computed from `avg_entry_price`), so **PR 0 fixes it first.** It ships on its own regardless of leverage. The wallets themselves are correct; only the `positions` analytics row is wrong.
 
