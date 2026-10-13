@@ -9,6 +9,7 @@ import { AppError } from "../errors/AppError";
 import { createInvite, listInvites, disableInvite } from "../beta/inviteRepo";
 import { setFlag, setPairTradingEnabled } from "../system/systemFlagService";
 import { cancelAllOrdersWithOutbox } from "../trading/phase6OrderService";
+import { clientIp } from "../http/clientIp";
 
 // ── Zod schemas ──
 const createInviteBody = z.object({
@@ -58,7 +59,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
         targetType: "invite",
         targetId: invite.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { code: parsed.data.code, maxUses: parsed.data.maxUses },
       });
@@ -96,7 +97,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       targetType: "invite",
       targetId: invite.id,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
     });
 
@@ -118,7 +119,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       actorUserId: req.user!.id,
       action: "system.trading_global",
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { enabled: parsed.data.enabled },
     });
@@ -139,7 +140,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       actorUserId: req.user!.id,
       action: "system.read_only",
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { enabled: parsed.data.enabled },
     });
@@ -160,7 +161,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       actorUserId: req.user!.id,
       action: "system.agent_actions",
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { enabled: parsed.data.enabled },
     });
@@ -183,7 +184,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       actorUserId: req.user!.id,
       action: "admin.orders.cancel_all",
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: {
         filters: parsed.data,
@@ -217,7 +218,7 @@ const betaAdminRoutes: FastifyPluginAsync = async (app) => {
       targetType: "pair",
       targetId: paramsParsed.data.id,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { enabled: parsed.data.enabled },
     });

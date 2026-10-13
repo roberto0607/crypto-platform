@@ -13,6 +13,7 @@ import { handleError } from "../http/handleError";
 import { pool } from "../db/pool";
 import { getQueueStats } from "../queue/queueManager";
 import { flushStaleStreams } from "../queue/redisQueue";
+import { clientIp } from "../http/clientIp";
 
 // ── Zod schemas ──
 const changeRoleParams = z.object({ id: z.string().uuid() });
@@ -103,7 +104,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         targetType: "user",
         targetId: targetUser.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { oldRole, newRole: bodyParsed.data.role },
     });
@@ -131,7 +132,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             targetType: "asset",
             targetId: asset.id,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { symbol: asset.symbol },
         });
@@ -170,7 +171,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         targetType: "wallet",
         targetId: wallet.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { amount: bodyParsed.data.amount, ledgerEntryId: result.ledgerEntryId },
     });
@@ -206,7 +207,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             targetType: "wallet",
             targetId: wallet.id,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { amount: bodyParsed.data.amount, ledgerEntryId: result.ledgerEntryId },
         });
@@ -250,7 +251,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
             targetType: "trading_pair",
             targetId: pair.id,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairId: pair.id, symbol: pair.symbol, baseAssetId: parsed.data.baseAssetId, quoteAssetId: parsed.data.quoteAssetId, makerFeeBps: parsed.data.makerFeeBps, takerFeeBps: parsed.data.takerFeeBps },
         });
@@ -288,7 +289,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
         targetType: "trading_pair",
         targetId: paramsParsed.data.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { pairId: paramsParsed.data.id, oldPrice: existing.last_price, newPrice: bodyParsed.data.price },
     });

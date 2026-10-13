@@ -166,6 +166,8 @@ All new indicators follow this pattern:
 | `REDIS_URL` | no | — | Redis connection (empty = local-only mode) |
 | `DISABLE_RATE_LIMIT` | no | `false` | Skip rate limiting (dev/load test) |
 | `DISABLE_JOB_RUNNER` | no | `false` | Skip background jobs (load test) |
+| `TRUST_PROXY_HOPS` | no | `1` prod / `0` dev | Proxy hops trusted for `req.ip` (Railway edge = 1). Use `clientIp(req)` (`src/http/clientIp.ts`), never `req.ip` |
+| `TRUST_CLOUDFLARE_CONNECTING_IP` | no | `true` | Honor `CF-Connecting-IP` only when `req.ip` is a Cloudflare edge address |
 | `DB_POOL_MAX` | no | `20` | pg pool size per instance |
 | `JOB_MAX_CONCURRENCY` | no | `4` | Max background jobs in flight; clamped to `floor((DB_POOL_MAX - 3) / 2)` so jobs can never exhaust the pool |
 | `DB_POOL_ACQUIRE_TIMEOUT_MS` | no | `10000` | Max wait for a free pool client; past it pg throws (logged as `pg.pool_acquire_timeout`) instead of hanging. A job run that hits it is skipped and stays due |

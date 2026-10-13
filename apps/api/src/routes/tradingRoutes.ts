@@ -14,6 +14,7 @@ import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
 import { getActiveMatchIdForUser } from "../competitions/matchService";
 import { assertTradablePairId } from "../market/marketSymbols";
+import { clientIp } from "../http/clientIp";
 
 
 // ── Zod schemas ──
@@ -230,7 +231,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
                 targetType: "order",
                 targetId: result.order.id,
                 requestId: req.id,
-                ip: req.ip,
+                ip: clientIp(req),
                 userAgent: req.headers["user-agent"] ?? null,
                 metadata: {
                     orderId: result.order.id,
@@ -411,7 +412,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
             targetType: "order",
             targetId: paramsParsed.data.id,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { orderId: paramsParsed.data.id, pairId: result.order.pair_id, releasedAmount: result.releasedAmount },
         });

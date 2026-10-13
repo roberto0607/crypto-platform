@@ -13,6 +13,7 @@ import {
   resolveIncident,
 } from "../../incidents/incidentService";
 import { buildProofPack } from "../../incidents/proofPackService";
+import { clientIp } from "../../http/clientIp";
 
 // ── Zod schemas ──
 
@@ -221,7 +222,7 @@ const v1Incidents: FastifyPluginAsync = async (app) => {
           targetType: "incident",
           targetId: id,
           requestId: req.id,
-          ip: req.ip,
+          ip: clientIp(req),
           userAgent: req.headers["user-agent"] ?? null,
           metadata: {
             userId: incident.user_id,

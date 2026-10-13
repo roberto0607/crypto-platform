@@ -6,6 +6,7 @@ import { generateApiKey, hashApiKey } from "../security/apiKeyService";
 import { createApiKey, revokeApiKey, listApiKeysForUser } from "../security/apiKeyRepo";
 import { auditLog } from "../audit/log";
 import { apiKeyCreatedTotal, apiKeyRevokedTotal } from "../metrics";
+import { clientIp } from "../http/clientIp";
 
 const VALID_SCOPES = ["read", "trade", "admin"] as const;
 
@@ -52,7 +53,7 @@ const apiKeyRoutes: FastifyPluginAsync = async (app) => {
       targetType: "api_key",
       targetId: row.id,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { label: parsed.data.label, scopes: parsed.data.scopes },
     });
@@ -104,7 +105,7 @@ const apiKeyRoutes: FastifyPluginAsync = async (app) => {
       targetType: "api_key",
       targetId: id,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
     });
 

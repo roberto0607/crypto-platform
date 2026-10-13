@@ -17,6 +17,7 @@ import swaggerUi from "@fastify/swagger-ui";
 
 import { config } from "./config";
 import { trustProxyOption } from "./http/trustProxy";
+import { clientIp } from "./http/clientIp";
 
 import metricsPlugin from "./metrics";
 import healthRoutes from "./routes/healthRoutes";
@@ -56,6 +57,8 @@ import { startLockSampler } from "./observability/lockSampler";
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
   disableRateLimit?: boolean;
+  /** Override TRUST_PROXY_HOPS (tests simulate the Railway edge hop). */
+  trustProxyHops?: number;
   /** Suppress pino request logging. */
   logger?: boolean;
   /** Skip starting Kraken WS feed (useful for tests). */
@@ -85,7 +88,7 @@ export interface BuildAppOptions {
 export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
     logger: opts.logger ?? true,
-    trustProxy: trustProxyOption(config.trustProxyHops),
+    trustProxy: trustProxyOption(opts.trustProxyHops ?? config.trustProxyHops),
     genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
   });
 
@@ -162,7 +165,9 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // traffic.
   //
   // keyGenerator: resolve the user id from the Bearer JWT and key as
-  //   `user:{sub}`; otherwise key as `ip:{req.ip}`.
+  //   `user:{sub}`; otherwise key as `ip:{clientIp(req)}` — the real visitor
+  //   IP behind Cloudflare + Railway (http/clientIp.ts), never the shared
+  //   proxy/edge address that req.ip resolves to.
   //
   //   We DECODE the token WITHOUT VERIFYING it. That is acceptable here because
   //   rate-limiting is not a security boundary — it's a fairness/abuse control.
@@ -178,7 +183,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   //   `preHandler`. onRequest fires first, so req.user is still undefined when
   //   keyGenerator runs — we must resolve the user id from the token directly.
   //
-  //   FALLBACK to `ip:{req.ip}` on every degenerate case: no Authorization
+  //   FALLBACK to `ip:{clientIp}` on every degenerate case: no Authorization
   //   header, header not `Bearer `, malformed token, decode throws, or no
   //   string `sub` claim. So /health, /status/system (pre-login), login, and
   //   /auth/refresh (runs before a session exists) are all IP-keyed as before.
@@ -207,7 +212,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
             // implementation; this catch is the IP-fallback path, not dead code.)
           }
         }
-        return `ip:${req.ip}`;
+        return `ip:${clientIp(req)}`;
       },
     });
   }

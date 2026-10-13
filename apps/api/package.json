@@ -14,6 +14,7 @@
     "auth:smoke": "bash scripts/auth-smoke.sh",
     "test": "vitest run",
     "test:db:setup": "tsx scripts/setup-test-db.ts",
+    "cf-ips:check": "tsx scripts/checkCloudflareIps.ts",
     "dev:me": "tsx scripts/seed-dev-user.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

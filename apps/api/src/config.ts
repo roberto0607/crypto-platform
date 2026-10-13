@@ -103,10 +103,14 @@ export const config = {
   restoreDbName: process.env.RESTORE_DB_NAME ?? "cp_restore_test",
   disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
   // Number of reverse-proxy hops in front of the API whose X-Forwarded-For
-  // entries Fastify should trust when computing req.ip. 0 (default) keeps
-  // req.ip = the TCP peer, which behind Railway's edge is the proxy itself —
-  // so any per-IP limit buckets every visitor together until this is set.
-  trustProxyHops: numberEnv("TRUST_PROXY_HOPS", 0),
+  // entries Fastify should trust when computing req.ip. Production defaults to
+  // 1 (Railway's edge — the only hop we own; Cloudflare is handled separately
+  // by http/clientIp.ts). 0 keeps req.ip = the TCP peer, which behind
+  // Railway's edge is the proxy itself — every visitor in one bucket.
+  trustProxyHops: numberEnv("TRUST_PROXY_HOPS", isProd ? 1 : 0),
+  // Honor CF-Connecting-IP when (and only when) req.ip is a Cloudflare edge
+  // address. See http/clientIp.ts.
+  trustCloudflareConnectingIp: booleanEnv("TRUST_CLOUDFLARE_CONNECTING_IP", true),
   disableJobRunner: booleanEnv("DISABLE_JOB_RUNNER", false),
 
   // ── Phase 10 PR3: Pool tuning ──
