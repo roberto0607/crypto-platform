@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { getActiveMatch, type Match } from "@/api/endpoints/matches";
+import { coalesce } from "@/lib/coalesce";
 
 interface ActiveMatchState {
     activeMatch: Match | null;
@@ -19,6 +20,9 @@ interface ActiveMatchState {
  * would repeat the exact confusion docs/followups.md already flags between
  * those two tier systems.
  */
+// Every useCompetitionMode() caller refreshes on mount (3 on /trade); share one request.
+const fetchActiveMatch = coalesce(() => getActiveMatch());
+
 export const useActiveMatchStore = create<ActiveMatchState>((set) => ({
     activeMatch: null,
     isInCompetition: false,
@@ -27,7 +31,7 @@ export const useActiveMatchStore = create<ActiveMatchState>((set) => ({
 
     refreshMatch: async () => {
         try {
-            const { data } = await getActiveMatch();
+            const { data } = await fetchActiveMatch();
             set({ activeMatch: data.match, isInCompetition: data.match?.status === "ACTIVE" });
         } catch {
             set({ activeMatch: null, isInCompetition: false });

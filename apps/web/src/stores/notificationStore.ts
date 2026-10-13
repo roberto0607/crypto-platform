@@ -5,6 +5,10 @@ import {
     markAllNotificationsRead,
     type Notification,
 } from "@/api/endpoints/notifications";
+import { coalesce } from "@/lib/coalesce";
+
+// App init and NotificationBell both fetch on mount; share one request.
+const fetchNotifications = coalesce(() => listNotifications(50));
 
 interface NotificationState {
     notifications: Notification[];
@@ -27,7 +31,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
 
     async fetch() {
         try {
-            const { data } = await listNotifications(50);
+            const { data } = await fetchNotifications();
             set({
                 notifications: data.notifications,
                 unreadCount: data.unreadCount,

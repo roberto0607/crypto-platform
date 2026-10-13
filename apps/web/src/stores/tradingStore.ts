@@ -26,6 +26,7 @@ import {
 import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
 import { rememberPairSymbol } from "@/lib/pairs";
+import { coalesceByKey } from "@/lib/coalesce";
 
 // The order book arrives over SSE (book.snapshot, ≤2/s per pair — see
 // useSSE.onBookSnapshot). It used to be refetched on every price tick, ~125
@@ -34,6 +35,10 @@ import { rememberPairSymbol } from "@/lib/pairs";
 // initial load on pair select and a backup when no book event has arrived in
 // BOOK_EVENT_STALE_MS (feed down, or the internal-book fallback is in use).
 export const BOOK_EVENT_STALE_MS = 5_000;
+
+// selectPair and UnifiedOrderPanel both load the pair's triggers on mount;
+// share one request per pair.
+const fetchActiveTriggers = coalesceByKey((pairId: string) => listTriggers({ pairId, status: "ACTIVE" }));
 
 export interface RecentTrade {
   tradeId: UUID;
@@ -320,7 +325,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     const pairId = get().selectedPairId;
     if (!pairId) return;
     try {
-      const res = await listTriggers({ pairId, status: "ACTIVE" });
+      const res = await fetchActiveTriggers(pairId);
       if (get().selectedPairId === pairId) set({ activeTriggers: res.data.data ?? [] });
     } catch (err) {
       console.error("[tradingStore] refreshTriggers failed:", err);

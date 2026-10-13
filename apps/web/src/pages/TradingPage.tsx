@@ -1160,9 +1160,11 @@ export default function TradingPage() {
       .catch(() => {});
   };
 
+  // Positions aren't pair-scoped, so load once on mount (refetching per pair
+  // change fetched twice on every load: once for null, once for the pair).
   useEffect(() => {
     refreshPositions();
-  }, [selectedPairId]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh positions on SSE trade events
   useEffect(() => {
