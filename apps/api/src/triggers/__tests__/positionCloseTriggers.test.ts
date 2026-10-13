@@ -249,6 +249,33 @@ describe("triggers are reduce-only at fire time", () => {
         expect(await freePlayQty()).toBe("0.00000000");
     });
 
+    it("clamps to the wallet the order lands in, not the total: a match long never lets a stale stop short free-play", async () => {
+        // Long 0.1 BTC in a match wallet; flat in free-play. The user is not in
+        // an ACTIVE match, so the stop's derived order would land in free-play.
+        const opponent = await trader();
+        const { rows } = await pool.query<{ id: string }>(
+            `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
+             VALUES ($1, $2, 24, '50000', 'COMPLETED', now() - interval '25 hours', now() - interval '1 hour') RETURNING id`,
+            [userId, opponent],
+        );
+        await pool.query(
+            `INSERT INTO positions (user_id, pair_id, match_id, base_qty, avg_entry_price) VALUES ($1, $2, $3, '0.10000000', '50000')`,
+            [userId, pairId, rows[0].id],
+        );
+        const stale = await trigger("SELL", "STOP_MARKET", "49000", "0.10000000");
+        const ordersBefore = await orderCount();
+
+        await fireTrigger(stale, { last: "49000" });
+
+        expect(await stateOf(stale.id)).toMatchObject({ status: "CANCELED", fail_reason: "no_position", derived_order_id: null });
+        expect(await orderCount()).toBe(ordersBefore);
+        expect(await freePlayQty()).toBe("0"); // no free-play position row at all — never sold into a short
+        const { rows: mp } = await pool.query<{ base_qty: string }>(
+            `SELECT base_qty::text FROM positions WHERE user_id = $1 AND match_id = $2`, [userId, rows[0].id],
+        );
+        expect(mp[0].base_qty).toBe("0.10000000"); // match position untouched
+    });
+
     it("a stop on a short only buys back the short", async () => {
         await market(userId, "SELL", "0.01000000");
         const sl = await trigger("BUY", "STOP_MARKET", "51000", "0.05000000"); // oversized
@@ -256,6 +283,37 @@ describe("triggers are reduce-only at fire time", () => {
         await fireTrigger(sl, { last: "51000" });
 
         expect(await freePlayQty()).toBe("0.00000000");
+    });
+});
+
+describe("trigger scope is resolved at fire time (known gap — follow-up)", () => {
+    // A free-play SELL stop, then the user joins a match and goes long there.
+    // The stop should still protect the FREE-PLAY long it was created for.
+    // Today fireTrigger routes by getActiveMatchIdForUser at FIRE time, so it
+    // sells the MATCH position instead. Fixing it needs trigger_orders.match_id
+    // set at creation (a migration) — out of scope for this PR. it.fails keeps
+    // this documented and flips red once the follow-up lands.
+    it.fails("a free-play stop must close the free-play long, not a later match long", async () => {
+        await market(userId, "BUY", "0.01000000"); // free-play long
+        const sl = await trigger("SELL", "STOP_MARKET", "49000", "0.01000000");
+
+        const opponent = await trader();
+        const { rows } = await pool.query<{ id: string }>(
+            `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
+             VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
+            [userId, opponent],
+        );
+        const matchId = rows[0].id;
+        await placeOrderWithSnapshot(userId, { pairId, side: "BUY", type: "MARKET", qty: "0.01000000" }, undefined, undefined, null, matchId);
+        const matchQty = async () => (await pool.query<{ base_qty: string }>(
+            `SELECT base_qty::text FROM positions WHERE user_id = $1 AND match_id = $2`, [userId, matchId],
+        )).rows[0]?.base_qty;
+        expect(await matchQty()).toBe("0.01000000");
+
+        await fireTrigger(sl, { last: "49000" });
+
+        expect(await matchQty()).toBe("0.01000000");    // match long untouched
+        expect(await freePlayQty()).toBe("0.00000000"); // free-play long closed
     });
 });
 
