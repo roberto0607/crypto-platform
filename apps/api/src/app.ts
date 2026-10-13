@@ -133,7 +133,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(cors, {
     origin: corsOrigins,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    // Every method the web client sends cross-origin (prod: playtradr.com →
+    // api.playtradr.com). Dev never preflights — the Vite proxy is same-origin —
+    // so a missing method only breaks in prod. Guarded by tests/corsPreflight.test.ts.
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id", "X-Api-Key", "X-Competition-Id"],
 
   });
