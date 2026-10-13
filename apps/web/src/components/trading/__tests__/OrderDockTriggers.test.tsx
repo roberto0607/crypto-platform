@@ -123,6 +123,7 @@ describe("triggerCanceledMessage", () => {
     expect(triggerCanceledMessage("position_closed", "abc")).toMatch(/Position closed/);
     expect(triggerCanceledMessage("no_position", "abc")).toMatch(/no order placed/);
     expect(triggerCanceledMessage("oco_sibling_triggered", "abc")).toMatch(/other side/);
+    expect(triggerCanceledMessage("match_ended", "abc")).toMatch(/Match ended/);
     expect(triggerCanceledMessage(undefined, "abcdef1234")).toBe("Trigger canceled: abcdef12");
   });
 });

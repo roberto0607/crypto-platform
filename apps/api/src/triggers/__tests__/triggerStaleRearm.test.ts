@@ -62,10 +62,10 @@ describe("trigger + stale Kraken book", () => {
     it("re-arms the trigger and its OCO sibling instead of failing, then fires once the book is fresh", async () => {
         const oco = randomUUID();
         const stop = await createTriggerOrder({
-            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000", ocoGroupId: oco,
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000", ocoGroupId: oco, matchId: null,
         });
         const takeProfit = await createTriggerOrder({
-            userId, pairId, kind: "TAKE_PROFIT_MARKET", side: "SELL", triggerPrice: "52000", qty: "0.10000000", ocoGroupId: oco,
+            userId, pairId, kind: "TAKE_PROFIT_MARKET", side: "SELL", triggerPrice: "52000", qty: "0.10000000", ocoGroupId: oco, matchId: null,
         });
 
         // Kraken book is 6s old → the stop's market order is rejected.
@@ -87,7 +87,7 @@ describe("trigger + stale Kraken book", () => {
 
     it("backs off before re-firing a re-armed trigger on the next ticks", async () => {
         const stop = await createTriggerOrder({
-            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000",
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000", matchId: null,
         });
         seedReferenceBook(pairId, "48990", "49000", 6_000);
         await evaluateTriggersForPair(pairId, { last: "48990" }); // fires → stale → re-armed
@@ -104,7 +104,7 @@ describe("trigger + stale Kraken book", () => {
 
     it("with the book stale but the Kraken ticker fresh (B1 fallback), the stop fires instead of re-arming", async () => {
         const stop = await createTriggerOrder({
-            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000",
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000", matchId: null,
         });
         seedReferenceBook(pairId, "48990", "49000", 6_000);
         await seedTicker("BTC/USD", "48985", "48995");
@@ -121,7 +121,7 @@ describe("trigger + stale Kraken book", () => {
     it("other order failures still mark the trigger FAILED", async () => {
         await pool.query(`UPDATE wallets SET balance = 0 WHERE user_id = $1`, [userId]);
         const stop = await createTriggerOrder({
-            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000",
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "0.10000000", matchId: null,
         });
         seedReferenceBook(pairId, "48990", "49000");
         await fireTrigger(stop, { last: "48990" });

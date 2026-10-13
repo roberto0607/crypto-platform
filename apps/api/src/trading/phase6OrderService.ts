@@ -216,12 +216,29 @@ export async function placeOrderWithSnapshot(
             const pair = await findPairById(body.pairId);
             if (pair) {
                 // Positions this order closed (taker or maker side), keyed
-                // user:triggerSide — their protective triggers are canceled
-                // after all fills are applied (see positionCloseTriggers.ts).
-                const closedPositions = new Map<string, { userId: string; triggerSide: "BUY" | "SELL" }>();
-                const noteClose = (uid: string, fillSide: "BUY" | "SELL", qty: string, afterQty: string) => {
+                // user:triggerSide:scope — the protective triggers in that
+                // scope are canceled after all fills are applied (see
+                // positionCloseTriggers.ts).
+                type ClosedPosition = {
+                    userId: string;
+                    triggerSide: "BUY" | "SELL";
+                    scope: { competitionId: string | null; matchId: string | null };
+                };
+                const closedPositions = new Map<string, ClosedPosition>();
+                const noteClose = (
+                    uid: string,
+                    fillSide: "BUY" | "SELL",
+                    qty: string,
+                    afterQty: string,
+                    scope: ClosedPosition["scope"],
+                ) => {
                     const triggerSide = closedTriggerSide(fillSide, qty, afterQty);
-                    if (triggerSide) closedPositions.set(`${uid}:${triggerSide}`, { userId: uid, triggerSide });
+                    if (triggerSide) {
+                        closedPositions.set(
+                            `${uid}:${triggerSide}:${scope.competitionId ?? ""}:${scope.matchId ?? ""}`,
+                            { userId: uid, triggerSide, scope },
+                        );
+                    }
                 };
 
                 for (const fill of matchResult.fills) {
@@ -247,7 +264,7 @@ export async function placeOrderWithSnapshot(
                         competitionId,
                         matchId: resolvedMatchId,
                     });
-                    noteClose(userId, body.side, fillQty, takerPos.base_qty);
+                    noteClose(userId, body.side, fillQty, takerPos.base_qty, { competitionId: competitionId ?? null, matchId: resolvedMatchId });
 
                     // Journal: record taker fill for FIFO P&L.
                     // NOTE: open_lots / closed_trades don't have match_id
@@ -309,7 +326,10 @@ export async function placeOrderWithSnapshot(
                                 competitionId: makerCompetitionId,
                                 matchId: makerMatchId,
                             });
-                            noteClose(makerUserId, makerSide as "BUY" | "SELL", fillQty, makerPos.base_qty);
+                            noteClose(makerUserId, makerSide as "BUY" | "SELL", fillQty, makerPos.base_qty, {
+                                competitionId: makerCompetitionId,
+                                matchId: makerMatchId,
+                            });
 
                             // Journal maker fill — same journal-scope caveat
                             // as the taker journal call above.
@@ -329,8 +349,8 @@ export async function placeOrderWithSnapshot(
                 }
 
                 // ── Cancel triggers protecting positions this order closed ──
-                for (const { userId: closedUserId, triggerSide } of closedPositions.values()) {
-                    const canceled = await cancelTriggersForClosedPositionTx(client, closedUserId, body.pairId, triggerSide);
+                for (const { userId: closedUserId, triggerSide, scope } of closedPositions.values()) {
+                    const canceled = await cancelTriggersForClosedPositionTx(client, closedUserId, body.pairId, triggerSide, scope);
                     for (const row of canceled) pendingEvents.push(triggerCanceledEvent(row, POSITION_CLOSED_REASON));
                 }
 

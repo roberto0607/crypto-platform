@@ -23,7 +23,7 @@ import { seedReferenceBook, clearReferenceBooks } from "../../testing/referenceB
 import { placeOrderWithSnapshot } from "../../trading/phase6OrderService";
 import { createTriggerOrder, updateTriggerByUser } from "../triggerRepo";
 import { fireTrigger } from "../triggerEngine";
-import { completeMatch } from "../../competitions/matchService";
+import { completeMatch, forfeitMatch, mutualForfeitMatch, cancelActiveMatch } from "../../competitions/matchService";
 import type { TriggerKind } from "../triggerTypes";
 
 let userId: string;
@@ -42,8 +42,31 @@ async function trader() {
 const market = (uid: string, side: "BUY" | "SELL", qty: string) =>
     placeOrderWithSnapshot(uid, { pairId, side, type: "MARKET", qty });
 
-function trigger(side: "BUY" | "SELL", kind: TriggerKind, triggerPrice: string, qty = "0.01000000", extra: Partial<{ ocoGroupId: string; trailingOffset: string; trailingHighWaterMark: string }> = {}) {
-    return createTriggerOrder({ userId, pairId, kind, side, triggerPrice, qty, ...extra });
+function trigger(side: "BUY" | "SELL", kind: TriggerKind, triggerPrice: string, qty = "0.01000000", extra: Partial<{ ocoGroupId: string; trailingOffset: string; trailingHighWaterMark: string; matchId: string | null }> = {}) {
+    return createTriggerOrder({ userId, pairId, kind, side, triggerPrice, qty, matchId: null, ...extra });
+}
+
+/** An ACTIVE 1v1 between the test user and a fresh opponent. */
+async function activeMatch(): Promise<string> {
+    const opponent = await trader();
+    const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
+         VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
+        [userId, opponent],
+    );
+    return rows[0].id;
+}
+
+/** Market order in a match's scope (as the HTTP edge would route it). */
+const matchMarket = (matchId: string, side: "BUY" | "SELL", qty: string) =>
+    placeOrderWithSnapshot(userId, { pairId, side, type: "MARKET", qty }, undefined, undefined, null, matchId);
+
+async function matchQty(matchId: string) {
+    const { rows } = await pool.query<{ base_qty: string }>(
+        `SELECT base_qty::text FROM positions WHERE user_id = $1 AND pair_id = $2 AND match_id = $3`,
+        [userId, pairId, matchId],
+    );
+    return rows[0]?.base_qty ?? "0";
 }
 
 async function stateOf(id: string) {
@@ -179,41 +202,68 @@ describe("closing a position cancels its triggers", () => {
         expect((await stateOf(buyStop.id)).status).toBe("ACTIVE");
     });
 
-    it("match force-close cancels the match position's triggers, but not while a free-play long remains", async () => {
-        const opponent = await trader();
-        const { rows } = await pool.query<{ id: string }>(
-            `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
-             VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
-            [userId, opponent],
-        );
-        const matchId = rows[0].id;
-        await pool.query(
-            `INSERT INTO positions (user_id, pair_id, match_id, base_qty, avg_entry_price) VALUES ($1, $2, $3, '0.01000000', '50000')`,
-            [userId, pairId, matchId],
-        );
-        const sl = await trigger("SELL", "STOP_MARKET", "49000");
+    it("closing a free-play long cancels only free-play triggers; the match stop stays", async () => {
+        const matchId = await activeMatch();
+        await market(userId, "BUY", "0.01000000");          // free-play long
+        await matchMarket(matchId, "BUY", "0.01000000");    // match long
+        const freeSl = await trigger("SELL", "STOP_MARKET", "49000");
+        const matchSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId });
 
-        // 1) With a free-play long too, the stop still protects something → stays.
-        await pool.query(
-            `INSERT INTO positions (user_id, pair_id, base_qty, avg_entry_price) VALUES ($1, $2, '0.01000000', '50000')`,
-            [userId, pairId],
-        );
+        await market(userId, "SELL", "0.01000000");         // close the free-play long
+
+        expect(await stateOf(freeSl.id)).toMatchObject({ status: "CANCELED", fail_reason: "position_closed" });
+        expect((await stateOf(matchSl.id)).status).toBe("ACTIVE");
+    });
+
+    it("closing a match long cancels only that match's triggers; the free-play stop stays", async () => {
+        const matchId = await activeMatch();
+        await market(userId, "BUY", "0.01000000");
+        await matchMarket(matchId, "BUY", "0.01000000");
+        const freeSl = await trigger("SELL", "STOP_MARKET", "49000");
+        const matchSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId });
+
+        await matchMarket(matchId, "SELL", "0.01000000");   // close the match long
+
+        expect(await stateOf(matchSl.id)).toMatchObject({ status: "CANCELED", fail_reason: "position_closed" });
+        expect((await stateOf(freeSl.id)).status).toBe("ACTIVE");
+    });
+});
+
+describe("a match ending cancels that match's triggers", () => {
+    it("completeMatch: the match's triggers → match_ended; free-play triggers stay ACTIVE", async () => {
+        const matchId = await activeMatch();
+        await market(userId, "BUY", "0.01000000");
+        await matchMarket(matchId, "BUY", "0.01000000");
+        const freeSl = await trigger("SELL", "STOP_MARKET", "49000");
+        const oco = randomUUID();
+        const matchSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId, ocoGroupId: oco });
+        const matchTp = await trigger("SELL", "TAKE_PROFIT_MARKET", "51000", undefined, { matchId, ocoGroupId: oco });
+        const matchBuyStop = await trigger("BUY", "STOP_MARKET", "52000", undefined, { matchId }); // not reducing the long
+
         await completeMatch(matchId);
-        expect((await stateOf(sl.id)).status).toBe("ACTIVE");
 
-        // 2) Same again with no free-play long → the stop is an orphan → canceled.
-        await pool.query(`DELETE FROM positions WHERE user_id = $1 AND match_id IS NULL`, [userId]);
-        const { rows: m2 } = await pool.query<{ id: string }>(
-            `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
-             VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
-            [userId, opponent],
-        );
-        await pool.query(
-            `INSERT INTO positions (user_id, pair_id, match_id, base_qty, avg_entry_price) VALUES ($1, $2, $3, '0.01000000', '50000')`,
-            [userId, pairId, m2[0].id],
-        );
-        await completeMatch(m2[0].id);
-        expect(await stateOf(sl.id)).toMatchObject({ status: "CANCELED", fail_reason: "position_closed" });
+        for (const t of [matchSl, matchTp, matchBuyStop]) {
+            expect(await stateOf(t.id)).toMatchObject({ status: "CANCELED", fail_reason: "match_ended" });
+        }
+        expect((await stateOf(freeSl.id)).status).toBe("ACTIVE");
+        expect(await freePlayQty()).toBe("0.01000000");
+    });
+
+    it("forfeit, mutual forfeit and cancel all cancel the match's triggers", async () => {
+        const forfeited = await activeMatch();
+        const fSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId: forfeited });
+        await forfeitMatch(forfeited, userId);
+        expect(await stateOf(fSl.id)).toMatchObject({ status: "CANCELED", fail_reason: "match_ended" });
+
+        const noShow = await activeMatch();
+        const nSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId: noShow });
+        await mutualForfeitMatch(noShow);
+        expect(await stateOf(nSl.id)).toMatchObject({ status: "CANCELED", fail_reason: "match_ended" });
+
+        const canceled = await activeMatch();
+        const cSl = await trigger("SELL", "STOP_MARKET", "49000", undefined, { matchId: canceled });
+        await cancelActiveMatch(userId);
+        expect(await stateOf(cSl.id)).toMatchObject({ status: "CANCELED", fail_reason: "match_ended" });
     });
 });
 
@@ -286,34 +336,56 @@ describe("triggers are reduce-only at fire time", () => {
     });
 });
 
-describe("trigger scope is resolved at fire time (known gap — follow-up)", () => {
+describe("a trigger acts on the account it was created in", () => {
     // A free-play SELL stop, then the user joins a match and goes long there.
-    // The stop should still protect the FREE-PLAY long it was created for.
-    // Today fireTrigger routes by getActiveMatchIdForUser at FIRE time, so it
-    // sells the MATCH position instead. Fixing it needs trigger_orders.match_id
-    // set at creation (a migration) — out of scope for this PR. it.fails keeps
-    // this documented and flips red once the follow-up lands.
-    it.fails("a free-play stop must close the free-play long, not a later match long", async () => {
+    // The stop protects the FREE-PLAY long it was created for. Before 094 the
+    // scope was resolved at fire time (getActiveMatchIdForUser), so it sold the
+    // match long instead.
+    it("a free-play stop closes the free-play long, not a later match long", async () => {
         await market(userId, "BUY", "0.01000000"); // free-play long
         const sl = await trigger("SELL", "STOP_MARKET", "49000", "0.01000000");
 
-        const opponent = await trader();
-        const { rows } = await pool.query<{ id: string }>(
-            `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status, started_at, ends_at)
-             VALUES ($1, $2, 24, '50000', 'ACTIVE', now() - interval '1 hour', now() + interval '23 hours') RETURNING id`,
-            [userId, opponent],
-        );
-        const matchId = rows[0].id;
-        await placeOrderWithSnapshot(userId, { pairId, side: "BUY", type: "MARKET", qty: "0.01000000" }, undefined, undefined, null, matchId);
-        const matchQty = async () => (await pool.query<{ base_qty: string }>(
-            `SELECT base_qty::text FROM positions WHERE user_id = $1 AND match_id = $2`, [userId, matchId],
-        )).rows[0]?.base_qty;
-        expect(await matchQty()).toBe("0.01000000");
+        const matchId = await activeMatch();
+        await matchMarket(matchId, "BUY", "0.01000000");
+        expect(await matchQty(matchId)).toBe("0.01000000");
 
         await fireTrigger(sl, { last: "49000" });
 
-        expect(await matchQty()).toBe("0.01000000");    // match long untouched
-        expect(await freePlayQty()).toBe("0.00000000"); // free-play long closed
+        expect(await matchQty(matchId)).toBe("0.01000000");  // match long untouched
+        expect(await freePlayQty()).toBe("0.00000000");      // free-play long closed
+    });
+
+    it("a match stop closes the match long, never a free-play long", async () => {
+        const matchId = await activeMatch();
+        await market(userId, "BUY", "0.01000000");
+        await matchMarket(matchId, "BUY", "0.01000000");
+        const sl = await trigger("SELL", "STOP_MARKET", "49000", "0.01000000", { matchId });
+
+        await fireTrigger(sl, { last: "49000" });
+
+        expect(await matchQty(matchId)).toBe("0.00000000");
+        expect(await freePlayQty()).toBe("0.01000000");
+    });
+
+    it("a match stop firing after its match ended → canceled (match_ended), no order", async () => {
+        const matchId = await activeMatch();
+        await market(userId, "BUY", "0.01000000"); // a free-play long it must not touch
+        await matchMarket(matchId, "BUY", "0.01000000");
+        const oco = randomUUID();
+        const sl = await trigger("SELL", "STOP_MARKET", "49000", "0.01000000", { matchId, ocoGroupId: oco });
+        const tp = await trigger("SELL", "TAKE_PROFIT_MARKET", "51000", "0.01000000", { matchId, ocoGroupId: oco });
+        // The match ended without its triggers being swept (e.g. a row that
+        // slipped past the match-end cancel) — fireTrigger is the backstop.
+        await pool.query(`UPDATE matches SET status = 'COMPLETED', completed_at = now() WHERE id = $1`, [matchId]);
+        const ordersBefore = await orderCount();
+
+        await fireTrigger(sl, { last: "49000" });
+
+        expect(await stateOf(sl.id)).toMatchObject({ status: "CANCELED", fail_reason: "match_ended", derived_order_id: null });
+        expect((await stateOf(tp.id)).status).toBe("CANCELED");
+        expect(await orderCount()).toBe(ordersBefore);
+        expect(await freePlayQty()).toBe("0.01000000");
+        expect(await matchQty(matchId)).toBe("0.01000000");
     });
 });
 

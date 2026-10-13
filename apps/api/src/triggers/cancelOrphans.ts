@@ -4,8 +4,9 @@
  *
  * An orphan is an ACTIVE trigger whose side would reduce a position the user
  * doesn't hold in ANY scope: a SELL trigger with no long (base_qty > 0) on the
- * pair, or a BUY trigger with no short. That's the same rule the close hook now
- * applies at close time. Before the fix, every manual close / one-leg fire left
+ * pair, or a BUY trigger with no short. Deliberately broader than the scoped
+ * close hook (migration 094): legacy rows all have match_id NULL, so "no
+ * position anywhere" is the conservative test. Before the fix, every manual close / one-leg fire left
  * these behind, ACTIVE and invisible in the UI. Driven by
  * src/scripts/cancelOrphanTriggers.ts.
  *

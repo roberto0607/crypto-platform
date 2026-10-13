@@ -19,6 +19,7 @@ function makeTrigger(overrides: Partial<TriggerOrderRow> = {}): TriggerOrderRow 
         trailing_offset: null,
         trailing_high_water_mark: null,
         trade_proposal_id: null,
+        match_id: null,
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
         ...overrides,

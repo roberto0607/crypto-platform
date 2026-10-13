@@ -13,6 +13,7 @@ import {
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
 import { assertTradablePairId } from "../../market/marketSymbols";
+import { getActiveMatchIdForUser } from "../../competitions/matchService";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
@@ -140,6 +141,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             }
             const b = parsed.data;
             await assertTradablePairId(b.pairId);
+            // Scope fixed at creation: the account this trigger acts on.
+            const matchId = await getActiveMatchIdForUser(actor.id);
 
             const trigger = await createTriggerOrder({
                 userId: actor.id,
@@ -151,6 +154,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 qty: b.qty,
                 trailingOffset: b.trailingOffset,
                 trailingHighWaterMark: b.kind === "TRAILING_STOP_MARKET" ? b.triggerPrice : undefined,
+                matchId,
             });
 
             return reply.code(201).send(trigger);
@@ -336,6 +340,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             await assertTradablePairId(b.pairId);
 
             const ocoGroupId = crypto.randomUUID();
+            // Both legs share one scope, resolved once at creation.
+            const matchId = await getActiveMatchIdForUser(actor.id);
 
             const legA = await createTriggerOrder({
                 userId: actor.id,
@@ -348,6 +354,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 ocoGroupId,
                 trailingOffset: b.legA.trailingOffset,
                 trailingHighWaterMark: b.legA.kind === "TRAILING_STOP_MARKET" ? b.legA.triggerPrice : undefined,
+                matchId,
             });
 
             const legB = await createTriggerOrder({
@@ -361,6 +368,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 ocoGroupId,
                 trailingOffset: b.legB.trailingOffset,
                 trailingHighWaterMark: b.legB.kind === "TRAILING_STOP_MARKET" ? b.legB.triggerPrice : undefined,
+                matchId,
             });
 
             return reply.code(201).send({ ocoGroupId, legA, legB });
