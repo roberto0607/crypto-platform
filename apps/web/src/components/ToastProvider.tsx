@@ -37,6 +37,8 @@ export function triggerCanceledMessage(reason: string | undefined, triggerId: st
       return "Position closed — its take-profit / stop-loss was canceled.";
     case "no_position":
       return "A stop / take-profit fired with no position left to close — canceled, no order placed.";
+    case "match_ended":
+      return "Match ended — its take-profit / stop-loss was canceled.";
     case "oco_sibling_triggered":
       return "The other side of your TP/SL pair fired — this one was canceled.";
     default:

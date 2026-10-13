@@ -2,7 +2,7 @@ import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
 import type { TriggerKind, TriggerOrderRow, TriggerStatus } from "./triggerTypes";
 
-const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, trade_proposal_id, created_at, updated_at`;
+const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, trade_proposal_id, match_id, created_at, updated_at`;
 
 export async function createTriggerOrder(params: {
     userId: string;
@@ -16,11 +16,18 @@ export async function createTriggerOrder(params: {
     trailingOffset?: string;
     trailingHighWaterMark?: string;
     tradeProposalId?: string;
+    /**
+     * The scope the trigger acts on, fixed at creation: the user's ACTIVE
+     * match at that moment, or null for free-play. Required (no default) so
+     * every caller resolves it explicitly — fireTrigger routes and clamps by
+     * it, never by whatever match the user is in when it fires.
+     */
+    matchId: string | null;
 }): Promise<TriggerOrderRow> {
     const result = await pool.query<TriggerOrderRow>(
         `
-        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark, trade_proposal_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark, trade_proposal_id, match_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING ${TRIGGER_COLUMNS}
         `,
         [
@@ -35,6 +42,7 @@ export async function createTriggerOrder(params: {
             params.trailingOffset ?? null,
             params.trailingHighWaterMark ?? null,
             params.tradeProposalId ?? null,
+            params.matchId,
         ]
     );
 
@@ -263,10 +271,11 @@ export function reducedDirectionSql(side: "BUY" | "SELL"): string {
 }
 
 /**
- * Cancel a user's ACTIVE `side` triggers on a pair once nothing is left for
- * them to reduce — i.e. the user holds no position in that direction on the
- * pair in ANY scope (free-play, competition or match). Triggers aren't scoped,
- * so closing a match position must not kill the free-play stop next to it.
+ * Cancel a user's ACTIVE `side` triggers on a pair, in one scope (free-play =
+ * matchId null, or one match), once nothing is left for them to reduce there —
+ * the user holds no position in that direction on the pair in that scope.
+ * Triggers in other scopes are untouched: closing a free-play long never
+ * cancels a match stop, and vice versa.
  *
  * Runs inside the caller's transaction. `reason` is stored in fail_reason
  * (the trigger's status-reason column). Returns the canceled rows.
@@ -276,6 +285,7 @@ export async function cancelReducingTriggersTx(
     userId: string,
     pairId: string,
     side: "BUY" | "SELL",
+    matchId: string | null,
     reason: string,
 ): Promise<TriggerOrderRow[]> {
     const result = await client.query<TriggerOrderRow>(
@@ -283,13 +293,38 @@ export async function cancelReducingTriggersTx(
         UPDATE trigger_orders
         SET status = 'CANCELED', fail_reason = $4
         WHERE user_id = $1 AND pair_id = $2 AND side = $3 AND status = 'ACTIVE'
+          AND match_id IS NOT DISTINCT FROM $5::uuid
           AND NOT EXISTS (
               SELECT 1 FROM positions
               WHERE user_id = $1 AND pair_id = $2 AND ${reducedDirectionSql(side)}
+                AND competition_id IS NULL
+                AND match_id IS NOT DISTINCT FROM $5::uuid
           )
         RETURNING ${TRIGGER_COLUMNS}
         `,
-        [userId, pairId, side, reason],
+        [userId, pairId, side, reason, matchId],
+    );
+    return result.rows;
+}
+
+/**
+ * A match has ended (completed, forfeited or canceled): cancel every ACTIVE
+ * trigger scoped to it. Runs inside the match-end transaction; publish the
+ * returned rows after COMMIT.
+ */
+export async function cancelMatchTriggersTx(
+    client: PoolClient,
+    matchId: string,
+    reason: string,
+): Promise<TriggerOrderRow[]> {
+    const result = await client.query<TriggerOrderRow>(
+        `
+        UPDATE trigger_orders
+        SET status = 'CANCELED', fail_reason = $2
+        WHERE match_id = $1 AND status = 'ACTIVE'
+        RETURNING ${TRIGGER_COLUMNS}
+        `,
+        [matchId, reason],
     );
     return result.rows;
 }

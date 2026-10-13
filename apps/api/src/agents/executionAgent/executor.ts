@@ -564,6 +564,7 @@ export async function registerProtectionOrFlatten(
           qty: proposal.qty,
           ocoGroupId,
           tradeProposalId: proposalId,
+          matchId: null, // the agent trades free-play only (its orders pass matchId null)
         });
         stopTriggerId = stopTrigger.id;
       }
@@ -577,6 +578,7 @@ export async function registerProtectionOrFlatten(
           qty: proposal.qty,
           ocoGroupId,
           tradeProposalId: proposalId,
+          matchId: null, // the agent trades free-play only (its orders pass matchId null)
         });
         targetTriggerId = targetTrigger.id;
       }

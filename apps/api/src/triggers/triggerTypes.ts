@@ -28,6 +28,8 @@ export type TriggerOrderRow = {
   trailing_offset: string | null;
   trailing_high_water_mark: string | null;
   trade_proposal_id: string | null;
+  /** Scope the trigger acts on: the match it was created in, or null = free-play. */
+  match_id: string | null;
   created_at: string;
   updated_at: string;
 };

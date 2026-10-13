@@ -1,6 +1,6 @@
 import { pool } from "../db/pool";
 import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx, updateTrailingHwm, reducibleQty } from "./triggerRepo";
-import { triggerCanceledEvent } from "./positionCloseTriggers";
+import { triggerCanceledEvent, MATCH_ENDED_REASON } from "./positionCloseTriggers";
 import Decimal from "decimal.js";
 import { D, toFixed8 } from "../utils/decimal";
 import type { TriggerOrderRow } from "./triggerTypes";
@@ -11,7 +11,6 @@ import { createEvent } from "../events/eventTypes";
 import { findPairById } from "../trading/pairRepo";
 import { logger } from "../observability/logContext";
 import { notifyTriggerFired } from "../notifications/notificationService";
-import { getActiveMatchIdForUser } from "../competitions/matchService";
 
 type PriceSnapshot = { last: string };
 
@@ -145,14 +144,17 @@ export async function fireTrigger(
 
     let derivedOrderId: string | null = null;
 
-    // Bug L4 fix: attribute the derived order to the user's CURRENT active
-    // match (not the match the trigger was placed in). Design intent: if
-    // the user left the match before the trigger fired, the position
-    // should follow them to their current state (free-play or a new
-    // match). Persisting match_id on the trigger itself (Option B) would
-    // keep the original match; Option A — resolve-at-fire-time — is
-    // simpler and handles "user exited the match" cleanly.
-    const triggerMatchId = await getActiveMatchIdForUser(trigger.user_id);
+    // The derived order acts on the account the trigger was created in
+    // (trigger_orders.match_id, null = free-play) — never on whatever match
+    // the user happens to be in when it fires. Resolving at fire time sent a
+    // free-play stop into a later match wallet and closed the wrong position.
+    const triggerMatchId = trigger.match_id;
+    if (triggerMatchId !== null && !(await isMatchActive(triggerMatchId))) {
+        // The match it protected is over (its positions were force-closed);
+        // match end normally cancels these already — this is the backstop.
+        await cancelUnfired(trigger, canceledSibling, MATCH_ENDED_REASON);
+        return;
+    }
 
     // Reduce-only: a TP/SL/trailing trigger only ever closes the position it
     // protects. Clamp its qty to what's left of that position in the scope the
@@ -165,7 +167,7 @@ export async function fireTrigger(
     }));
     const orderQty = Decimal.min(D(trigger.qty), reducible);
     if (orderQty.lte(0)) {
-        await cancelForNoPosition(trigger, canceledSibling);
+        await cancelUnfired(trigger, canceledSibling, NO_POSITION_REASON);
         return; // not fired: no order, no trigger.fired event, no notification
     }
 
@@ -182,7 +184,7 @@ export async function fireTrigger(
             undefined,           // idempotencyKey
             undefined,           // requestId
             undefined,           // competitionId — derived orders inherit free-play competition
-            triggerMatchId,      // matchId — explicitly resolved, bypasses server-side lookup
+            triggerMatchId,      // matchId — the trigger's own scope, never re-resolved
         );
 
         derivedOrderId = result.order.id;
@@ -264,31 +266,36 @@ export async function fireTrigger(
 export const NO_POSITION_REASON = "no_position";
 
 /**
- * A reduce-only trigger fired with nothing left to reduce: record it as
- * CANCELED (reason no_position) rather than TRIGGERED/FAILED. The OCO sibling
- * this firing canceled stays canceled — it protected the same, now absent,
- * position. Only touches the row while it's still in the state fireTrigger
- * left it in.
+ * A trigger that fired but must not trade — nothing left to reduce
+ * (no_position), or its match is over (match_ended): record it as CANCELED
+ * with that reason rather than TRIGGERED/FAILED. The OCO sibling this firing
+ * canceled stays canceled — it protected the same, now absent, position. Only
+ * touches the row while it's still in the state fireTrigger left it in.
  */
-async function cancelForNoPosition(trigger: TriggerOrderRow, canceledSibling: TriggerOrderRow | null): Promise<void> {
+async function cancelUnfired(trigger: TriggerOrderRow, canceledSibling: TriggerOrderRow | null, reason: string): Promise<void> {
     try {
         const { rows } = await pool.query<TriggerOrderRow>(
             `UPDATE trigger_orders SET status = 'CANCELED', fail_reason = $2
              WHERE id = $1 AND status = 'TRIGGERED' AND derived_order_id IS NULL
              RETURNING id, user_id, pair_id`,
-            [trigger.id, NO_POSITION_REASON],
+            [trigger.id, reason],
         );
-        logger.info({ triggerId: trigger.id, userId: trigger.user_id, pairId: trigger.pair_id }, "trigger_canceled_no_position");
+        logger.info({ triggerId: trigger.id, userId: trigger.user_id, pairId: trigger.pair_id, reason }, "trigger_canceled_unfired");
         for (const row of [...rows, ...(canceledSibling ? [canceledSibling] : [])]) {
             try {
-                publish(triggerCanceledEvent(row, NO_POSITION_REASON));
+                publish(triggerCanceledEvent(row, reason));
             } catch {
                 // Events must never break trigger engine
             }
         }
     } catch (err) {
-        logger.error({ triggerId: trigger.id, err }, "trigger_no_position_cancel_error");
+        logger.error({ triggerId: trigger.id, err, reason }, "trigger_unfired_cancel_error");
     }
+}
+
+async function isMatchActive(matchId: string): Promise<boolean> {
+    const { rows } = await pool.query<{ status: string }>(`SELECT status FROM matches WHERE id = $1`, [matchId]);
+    return rows[0]?.status === "ACTIVE";
 }
 
 /**

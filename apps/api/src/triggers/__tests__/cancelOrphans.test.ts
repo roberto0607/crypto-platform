@@ -15,7 +15,7 @@ let alice: string;
 let bob: string;
 
 const stop = (userId: string, side: "BUY" | "SELL", price = side === "SELL" ? "49000" : "51000") =>
-    createTriggerOrder({ userId, pairId, kind: "STOP_MARKET", side, triggerPrice: price, qty: "0.01000000" });
+    createTriggerOrder({ userId, pairId, kind: "STOP_MARKET", side, triggerPrice: price, qty: "0.01000000", matchId: null });
 
 async function position(userId: string, qty: string, matchId: string | null = null) {
     await pool.query(
