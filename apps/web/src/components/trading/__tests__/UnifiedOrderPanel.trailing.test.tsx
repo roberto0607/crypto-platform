@@ -53,7 +53,7 @@ beforeEach(() => {
 async function fillPanel(usd: string, offset: string) {
   render(
     <ToastProvider>
-      <UnifiedOrderPanel pair={PAIR} position={null} quoteBalance={100000} onOrderFilled={() => {}} />
+      <UnifiedOrderPanel pair={PAIR} position={null} onOrderFilled={() => {}} />
     </ToastProvider>,
   );
   const user = userEvent.setup();

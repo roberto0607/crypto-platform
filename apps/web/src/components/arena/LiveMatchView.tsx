@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import Decimal from "decimal.js-light";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -731,7 +730,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const userId = useAuthStore((s) => s.user?.id) ?? "";
     const pairs = useAppStore((s) => s.pairs);
     const pairsLoaded = useAppStore((s) => s.pairsLoaded);
-    const wallets = useAppStore((s) => s.wallets);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const selectPair = useTradingStore((s) => s.selectPair);
     const { addToast } = useToast();
@@ -980,9 +978,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
 
     // Derived data
     const selectedPair = pairs.find((p) => p.id === selectedPairId);
-    const quoteAssetId = selectedPair?.quote_asset_id;
-    const quoteWallet = wallets.find((w) => w.asset_id === quoteAssetId);
-    const quoteBalance = quoteWallet ? new Decimal(quoteWallet.balance).minus(quoteWallet.reserved ?? "0").toNumber() : 0;
     const currentPosition = positions.find((p) => p.pair_id === selectedPairId) ?? null;
 
     if (!selectedPair) {
@@ -1026,7 +1021,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                         <UnifiedOrderPanel
                             pair={selectedPair}
                             position={currentPosition}
-                            quoteBalance={quoteBalance}
                             onOrderFilled={refreshPositions}
                             classPrefix="lmv"
                         />

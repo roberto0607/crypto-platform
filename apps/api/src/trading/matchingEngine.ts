@@ -95,6 +95,14 @@ import type { WalletRow } from "../wallets/walletRepo";
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR, toFixed8 } from "../utils/decimal";
 import { computeFee, maxFeeBps } from "./feeCalc";
+import {
+    buyingPower,
+    isReduceOnly,
+    isSystemUser,
+    markPrice,
+    marksForExposure,
+    type BpWallet,
+} from "./buyingPower";
 
 type FillPlan = {
     resting: OrderRow;
@@ -123,6 +131,18 @@ type SystemFillPlan = {
     quoteAmt: Decimal;
     feeAmt: Decimal;
 };
+
+/** Every wallet the user holds in this scope (free-play or one competition). */
+async function listScopeWalletIds(client: PoolClient, userId: string, competitionId?: string | null): Promise<string[]> {
+    const compId = competitionId ?? null;
+    const { rows } = await timedQuery<{ id: string }>(client, "matchingEngine.listScopeWalletIds",
+        compId === null
+            ? `SELECT id FROM wallets WHERE user_id = $1 AND competition_id IS NULL`
+            : `SELECT id FROM wallets WHERE user_id = $1 AND competition_id = $2`,
+        compId === null ? [userId] : [userId, compId],
+    );
+    return rows.map((r) => r.id);
+}
 
 /**
  * Internal matching logic — operates on a caller-provided PoolClient.
@@ -250,14 +270,9 @@ async function placeOrderInternal(
             if (systemFill) totalCost = totalCost.plus(systemFill.quoteAmt).plus(systemFill.feeAmt);
             const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
             if (available.lt(totalCost)) throw new Error("insufficient_balance");
-        } else {
-            // Short sell: check USD margin (notional + fees) instead of base holdings
-            let totalCost = ZERO;
-            for (const entry of plan) totalCost = totalCost.plus(entry.quoteAmt).plus(entry.feeAmt);
-            if (systemFill) totalCost = totalCost.plus(systemFill.quoteAmt).plus(systemFill.feeAmt);
-            const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
-            if (available.lt(totalCost)) throw new Error("insufficient_balance");
         }
+        // A SELL needs no cash: closing a long frees it, and opening a short
+        // is judged by buying power after the wallet lock (Phase F2).
     }
 
     let reserveAmount = ZERO;
@@ -270,11 +285,8 @@ async function placeOrderInternal(
             if (available.lt(reserveAmount)) throw new Error("insufficient_balance");
             reserveWalletId = quoteWallet.id;
         } else {
-            // Short sell LIMIT: check USD margin affordability, but reserve base.
-            // Base will be minted (margin loan) in Phase G2 before the reserve.
-            const notional = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(maxFeeBps(pair)))).div(BPS_DIVISOR);
-            const available = D(quoteWallet.balance).minus(D(quoteWallet.reserved));
-            if (available.lt(notional)) throw new Error("insufficient_balance");
+            // SELL LIMIT reserves base; reserved beyond holdings is a resting
+            // short, which buying power counts (Phase F2).
             reserveAmount = D(qty);
             reserveWalletId = baseWallet.id;
         }
@@ -327,7 +339,52 @@ async function placeOrderInternal(
     }
 
     const walletIds = [...walletIdSet].sort();
-    await lockWalletsForUpdate(client, walletIds);
+    // Buying power reads every wallet in the user's scope, so lock them all
+    // (same sorted single statement — no new deadlock order).
+    const scopeWalletIds = await listScopeWalletIds(client, userId, competitionId);
+    const locked = await lockWalletsForUpdate(client, [...new Set([...walletIds, ...scopeWalletIds])]);
+
+    // ── Phase F2: Buying power (2× rule, trading/buyingPower.ts) ──
+    // Reduce-only orders always pass; system users (MM / risk bots) are exempt.
+    // Anything that opens or adds risk must leave buying power >= 0 after it.
+    const lockedBase = locked.get(baseWallet.id) ?? baseWallet;
+    if (!isReduceOnly(side, D(qty), lockedBase) && !(await isSystemUser(userId, client))) {
+        const after: BpWallet[] = scopeWalletIds.map((id) => {
+            const w = locked.get(id)!;
+            return { assetId: w.asset_id, balance: w.balance, reserved: w.reserved };
+        });
+        const quoteAfter = after.find((w) => w.assetId === pair.quote_asset_id);
+        const baseAfter = after.find((w) => w.assetId === pair.base_asset_id);
+        if (!quoteAfter || !baseAfter) throw new Error("wallet_not_found");
+        if (type === "MARKET") {
+            let quoteSum = ZERO;
+            let feeSum = ZERO;
+            for (const e of plan) { quoteSum = quoteSum.plus(e.quoteAmt); feeSum = feeSum.plus(e.feeAmt); }
+            if (systemFill) { quoteSum = quoteSum.plus(systemFill.quoteAmt); feeSum = feeSum.plus(systemFill.feeAmt); }
+            const filled = D(qty).minus(remaining);
+            if (side === "BUY") {
+                quoteAfter.balance = D(quoteAfter.balance).minus(quoteSum).minus(feeSum).toString();
+                baseAfter.balance = D(baseAfter.balance).plus(filled).toString();
+            } else {
+                quoteAfter.balance = D(quoteAfter.balance).plus(quoteSum).minus(feeSum).toString();
+                baseAfter.balance = D(baseAfter.balance).minus(filled).toString();
+            }
+        } else if (side === "BUY") {
+            quoteAfter.reserved = D(quoteAfter.reserved).plus(reserveAmount).toString();
+        } else {
+            baseAfter.reserved = D(baseAfter.reserved).plus(reserveAmount).toString();
+        }
+        const ownMark = reference
+            ? reference.bestBid.plus(reference.bestAsk).div(2)
+            : await markPrice(pairId, pair.symbol, pair.last_price);
+        const marks = await marksForExposure(
+            client, pair.quote_asset_id, after,
+            new Map(ownMark ? [[pair.base_asset_id, ownMark]] : []),
+        );
+        const bp = buyingPower(pair.quote_asset_id, after, (assetId) => marks.get(assetId) ?? null);
+        if (bp === null) throw new Error("stale_price_source");
+        if (bp.lt(0)) throw new Error("insufficient_balance");
+    }
 
     // ── Phase G: Reserve funds for LIMIT orders ──
     let reservedConsumed = ZERO;
