@@ -1,4 +1,5 @@
 import client from "../client";
+import type { Wallet } from "@/types/api";
 
 export interface Match {
     id: string;
@@ -59,6 +60,11 @@ export type MatchViewerRole = "participant" | "spectator";
 
 export function getMatch(matchId: string) {
     return client.get<{ ok: true; match: Match; viewerRole: MatchViewerRole }>(`/v1/matches/${matchId}`);
+}
+
+/** The caller's own wallets in a match (funded at accept, closed at match end). */
+export function getMatchWallets(matchId: string) {
+    return client.get<{ ok: true; wallets: (Wallet & { match_id: string; closed_at: string | null })[] }>(`/v1/matches/${matchId}/wallets`);
 }
 
 export function getMatchHistory(params?: { limit?: number; offset?: number }) {
