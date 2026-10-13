@@ -41,6 +41,7 @@
     "fees:refund-overcharge": "tsx src/scripts/refundFeeOvercharge.ts",
     "triggers:cancel-orphans": "tsx src/scripts/cancelOrphanTriggers.ts",
     "matches:legacy-report": "tsx src/scripts/matchesLegacyReport.ts",
+    "positions:short-pnl-report": "tsx src/scripts/positionsShortPnlReport.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],

@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
-import Decimal from "decimal.js";
-import { D, ZERO, toFixed8 } from "../utils/decimal";
+import { D, toFixed8 } from "../utils/decimal";
 import { timedQuery } from "../observability/dbTiming";
+import { applyFill } from "./positionMath";
 
 export type PositionRow = {
     user_id: string;
@@ -81,44 +81,13 @@ export async function applyFillToPositionTx(
     );
 
     const pos = posResult.rows[0];
-    let currentQty = D(pos.base_qty);
-    let avgEntry = D(pos.avg_entry_price);
-    let realizedPnl = D(pos.realized_pnl_quote);
-    let feesPaid = D(pos.fees_paid_quote);
-
-    if (side === "BUY") {
-        // Increase position: weighted average entry price
-        const oldCost = currentQty.mul(avgEntry);
-        const newCost = fillQty.mul(fillPrice);
-        const totalQty = currentQty.plus(fillQty);
-
-        if (totalQty.gt(ZERO)) {
-            avgEntry = oldCost.plus(newCost).div(totalQty);
-        }
-        currentQty = totalQty;
-    } else {
-        // SELL: realize PnL on min(fillQty, currentQty)
-        const closingQty = Decimal.min(fillQty, currentQty);
-
-        if (closingQty.gt(ZERO)) {
-            const pnl = closingQty.mul(fillPrice.minus(avgEntry));
-            realizedPnl = realizedPnl.plus(pnl);
-        }
-
-        currentQty = currentQty.minus(fillQty);
-
-        // Position flip: if currentQty went negative, new position at fillPrice
-        if (currentQty.lt(ZERO)) {
-            avgEntry = fillPrice;
-            currentQty = currentQty; // remains negative (short)
-        } else if (currentQty.eq(ZERO)) {
-            avgEntry = ZERO;
-        }
-        // If still positive, avgEntry unchanged
-    }
-
-    // Accumulate fees
-    feesPaid = feesPaid.plus(fee);
+    const { qty: currentQty, avgEntry, realizedPnl } = applyFill(
+        { qty: D(pos.base_qty), avgEntry: D(pos.avg_entry_price), realizedPnl: D(pos.realized_pnl_quote) },
+        side,
+        fillQty,
+        fillPrice,
+    );
+    const feesPaid = D(pos.fees_paid_quote).plus(fee);
 
     // Update position. Bug L1 fix: WHERE includes competition_id AND match_id
     // so we only touch the exact scope row we just locked — previously this

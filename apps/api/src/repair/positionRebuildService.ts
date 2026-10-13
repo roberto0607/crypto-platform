@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
-import Decimal from "decimal.js";
 import { D, ZERO, toFixed8 } from "../utils/decimal";
+import { applyFill } from "../analytics/positionMath";
 import type { ComputedPosition, PositionDiff, RepairMode } from "./repairTypes";
 
 // ── Types ──
@@ -86,41 +86,17 @@ export function replayTrades(pairId: string, trades: TradeRow[]): ComputedPositi
   let latestMatchId: string | null = null;
 
   for (const trade of trades) {
-    const fillQty = D(trade.qty);
-    const fillPrice = D(trade.price);
     const feeQuote = D(trade.quote_amount)
       .mul(D(trade.user_fee_bps))
       .div(D(10000));
 
-    if (trade.user_side === "BUY") {
-      const oldCost = currentQty.mul(avgEntry);
-      const newCost = fillQty.mul(fillPrice);
-      const totalQty = currentQty.plus(fillQty);
-
-      if (totalQty.gt(ZERO)) {
-        avgEntry = oldCost.plus(newCost).div(totalQty);
-      }
-      currentQty = totalQty;
-    } else {
-      // SELL: realize PnL on closed portion
-      const closingQty = Decimal.min(fillQty, currentQty);
-
-      if (closingQty.gt(ZERO)) {
-        const pnl = closingQty.mul(fillPrice.minus(avgEntry));
-        realizedPnl = realizedPnl.plus(pnl);
-      }
-
-      currentQty = currentQty.minus(fillQty);
-
-      if (currentQty.lt(ZERO)) {
-        // Flip to short
-        avgEntry = fillPrice;
-      } else if (currentQty.eq(ZERO)) {
-        // Flat
-        avgEntry = ZERO;
-      }
-      // Still long: avgEntry unchanged
-    }
+    // Same math as the live fill path (positionRepo.applyFillToPositionTx).
+    ({ qty: currentQty, avgEntry, realizedPnl } = applyFill(
+      { qty: currentQty, avgEntry, realizedPnl },
+      trade.user_side,
+      D(trade.qty),
+      D(trade.price),
+    ));
 
     feesPaid = feesPaid.plus(feeQuote);
     tradeCount++;

@@ -795,7 +795,7 @@ export async function listActiveMatches(limit = 50): Promise<MatchWithPlayers[]>
 
 // ── Internal helpers ──
 
-interface PlayerStats {
+export interface PlayerStats {
     pnlPct: number;
     tradesCount: number;
     winRate: number;
@@ -832,6 +832,19 @@ async function calculatePlayerStats(
     const parsedTradesCount = parseInt(orderCountRows[0]?.count ?? "0", 10);
     const tradesCount = Number.isNaN(parsedTradesCount) ? 0 : parsedTradesCount;
 
+    return playerStatsFromRows(positions, startingCapital, tradesCount);
+}
+
+/**
+ * The pure part of calculatePlayerStats: a player's match stats from their
+ * match-scoped position rows. Exported so read-only reports can recompute a
+ * score with the exact same formula.
+ */
+export function playerStatsFromRows(
+    positions: { realized_pnl_quote: string | null; fees_paid_quote: string | null }[],
+    startingCapital: number,
+    tradesCount: number,
+): PlayerStats {
     if (positions.length === 0) {
         return { pnlPct: 0, tradesCount, winRate: 0, consistency: 0, score: 0 };
     }
