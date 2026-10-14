@@ -10,6 +10,7 @@ import {
     getUserTier,
     getUserBadges,
 } from "@/api/endpoints/competitions";
+import { coalesce } from "@/lib/coalesce";
 import type {
     Competition,
     LeaderboardEntry,
@@ -52,6 +53,9 @@ interface CompetitionState {
     fetchUserTier: () => Promise<void>;
     fetchUserBadges: () => Promise<void>;
 }
+
+// App init and ProfilePage both fetch the tier on mount; share one request.
+const fetchTier = coalesce(() => getUserTier());
 
 export const useCompetitionStore = create<CompetitionState>((set) => ({
     competitions: [],
@@ -138,7 +142,7 @@ export const useCompetitionStore = create<CompetitionState>((set) => ({
 
     async fetchUserTier() {
         try {
-            const { data } = await getUserTier();
+            const { data } = await fetchTier();
             set({ userTier: data.tier, eloRating: data.eloRating });
         } catch {}
     },

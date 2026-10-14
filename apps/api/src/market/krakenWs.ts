@@ -34,6 +34,7 @@ import {
 } from "../observability/feedHealth.js";
 import { StalenessTracker, ReconnectBackoff, type StaleEpisode } from "./feedWatchdog.js";
 import { KrakenBook, quoteBookNumbers, type KrakenPrecision, type RawBookLevel } from "./krakenBook.js";
+import { scheduleBookPush, stopBookPush } from "./bookStream.js";
 
 // Debounce: track last DB write time per pair to avoid write storms
 const lastSyncTime = new Map<string, number>();
@@ -344,6 +345,7 @@ function publishBook(pairId: string, book: KrakenBook): void {
     bookSnapshots.set(pairId, { bids, asks, ts });
     const features = computeOrderFlowFeatures(bids, asks);
     orderFlowCache.set(pairId, { ...features, ts });
+    scheduleBookPush(pairId, ts);
 }
 
 function applyBookEntry(entry: any, type: string, ourSymbol: string, pairId: string, now: number): void {
@@ -739,6 +741,7 @@ export function startKrakenFeed(): void {
 
 export function stopKrakenFeed(): void {
     stopped = true;
+    stopBookPush();
     wsConnected = false;
     if (flushInterval) {
         clearInterval(flushInterval);

@@ -23,6 +23,7 @@ import { verificationEmail, passwordResetEmail } from "../email/templates";
 import { logger } from "../observability/logContext";
 import { autoCreateWallets } from "../wallets/autoWallets";
 import { transferAnonQuickCallState } from "../quickCall/anonTransfer";
+import { clientIp } from "../http/clientIp";
 
 // ── Zod schemas ──
 const registerBody = z.object({
@@ -143,7 +144,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           targetType: "user",
           targetId: user.id,
           requestId: req.id,
-          ip: req.ip,
+          ip: clientIp(req),
           userAgent: req.headers["user-agent"] ?? null,
           metadata: { emailNormalized, inviteCode: parsed.data.inviteCode },
         });
@@ -189,7 +190,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         targetType: "user",
         targetId: user.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { emailNormalized },
       });
@@ -287,7 +288,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const { emailNormalized } = normalizeEmail(parsed.data.email);
 
     // ── Login abuse protection: check before attempting ──
-    const blocked = await isLoginBlocked({ emailNormalized, ipAddress: req.ip });
+    const blocked = await isLoginBlocked({ emailNormalized, ipAddress: clientIp(req) });
     if (blocked) {
       return reply.code(429).send({
         error: { code: "LOGIN_BLOCKED", message: "Too many failed login attempts." },
@@ -297,18 +298,18 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const user = await findUserByEmailNormalized(emailNormalized);
 
     if (!user) {
-      await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: false });
+      await recordLoginAttempt({ emailNormalized, ipAddress: clientIp(req), success: false });
       return reply.code(401).send({ ok: false, error: "invalid_credentials" });
     }
 
     const ok = await verifyPassword(parsed.data.password, user.password_hash);
     if (!ok) {
-      await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: false });
+      await recordLoginAttempt({ emailNormalized, ipAddress: clientIp(req), success: false });
       return reply.code(401).send({ ok: false, error: "invalid_credentials" });
     }
 
     // Record successful login (resets effective window)
-    await recordLoginAttempt({ emailNormalized, ipAddress: req.ip, success: true });
+    await recordLoginAttempt({ emailNormalized, ipAddress: clientIp(req), success: true });
 
     // Issue access token
     const accessToken = app.jwt.sign(
@@ -337,7 +338,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       targetType: "user",
       targetId: user.id,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
       metadata: { emailNormalized, familyId: stored.familyId },
     });
@@ -373,6 +374,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
+    // Own bucket (per real client IP — no Bearer on this call), so a reload
+    // can never be starved by other anonymous traffic in the shared 200/min
+    // global bucket. One refresh per full page load + one per 14 min.
+    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
   }, async (req, reply) => {
     const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
 
@@ -404,7 +409,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         targetType: "refresh_token",
         targetId: row.id,
         requestId: req.id,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers["user-agent"] ?? null,
         metadata: { familyId: row.family_id, revokedCount },
       });
@@ -540,7 +545,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       actorUserId,
       action: "auth.logout",
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
     });
 
@@ -604,7 +609,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       targetType: "user",
       targetId: result.userId,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
     });
 
@@ -807,7 +812,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       targetType: "user",
       targetId: result.userId,
       requestId: req.id,
-      ip: req.ip,
+      ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
     });
 

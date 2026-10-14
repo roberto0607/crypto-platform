@@ -25,19 +25,20 @@ import {
 } from "@/api/endpoints/triggers";
 import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
-import { createThrottle } from "@/lib/throttle";
 import { rememberPairSymbol } from "@/lib/pairs";
+import { coalesceByKey } from "@/lib/coalesce";
 
-// Order-book refreshes are driven by live price ticks (see useSSE.onPriceTick).
-// Ticks arrive many times per second; this throttle gates them to at most one
-// fetch every 500ms — leading edge fires immediately, with a single coalesced
-// trailing fetch at the window boundary. A separate slow staleness floor in
-// OrderBookPanel (TradingPage.tsx) catches the case where the tick feed dies.
-const BOOK_REFRESH_THROTTLE_MS = 500;
+// The order book arrives over SSE (book.snapshot, ≤2/s per pair — see
+// useSSE.onBookSnapshot). It used to be refetched on every price tick, ~125
+// GET /market/book per minute per /trade tab, which alone ate most of the
+// user's 200/min rate-limit budget (QA 2026-10-11 P1). HTTP is now only the
+// initial load on pair select and a backup when no book event has arrived in
+// BOOK_EVENT_STALE_MS (feed down, or the internal-book fallback is in use).
+export const BOOK_EVENT_STALE_MS = 5_000;
 
-const bookRefreshThrottle = createThrottle(() => {
-  void useTradingStore.getState().refreshBook();
-}, BOOK_REFRESH_THROTTLE_MS);
+// selectPair and UnifiedOrderPanel both load the pair's triggers on mount;
+// share one request per pair.
+const fetchActiveTriggers = coalesceByKey((pairId: string) => listTriggers({ pairId, status: "ACTIVE" }));
 
 export interface RecentTrade {
   tradeId: UUID;
@@ -125,6 +126,9 @@ interface TradingState {
   // Competition context
   activeCompetitionId: string | null;
 
+  /** When the last book.snapshot SSE event for the selected pair landed (0 = none yet). */
+  lastBookEventAt: number;
+
   // Loading states
   bookLoading: boolean;
   orderSubmitting: boolean;
@@ -149,7 +153,8 @@ interface TradingState {
   setQty: (qty: string) => void;
   setLimitPrice: (price: string) => void;
   refreshBook: () => Promise<void>;
-  refreshBookThrottled: () => void;
+  /** Backup poll: fetch over HTTP only if no book.snapshot arrived recently. */
+  refreshBookIfStale: () => void;
   refreshSnapshot: () => Promise<void>;
   refreshOpenOrders: () => Promise<void>;
   refreshTriggers: () => Promise<void>;
@@ -161,6 +166,8 @@ interface TradingState {
 
   // SSE-driven setters
   setOrderBook: (book: OrderBook) => void;
+  /** book.snapshot SSE event; ignored unless it's for the selected pair. */
+  applyBookSnapshot: (pairId: string, book: OrderBook) => void;
   setSnapshot: (snapshot: Snapshot) => void;
   updateOrder: (orderId: string, status: string, filledQty: string) => void;
   addRecentTrade: (trade: RecentTrade) => void;
@@ -184,6 +191,8 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   bottomTab: "market",
   setBottomTab: (bottomTab) => set({ bottomTab }),
+
+  lastBookEventAt: 0,
 
   bookLoading: false,
   orderSubmitting: false,
@@ -220,6 +229,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({
       selectedPairId: pairId,
       orderBook: null,
+      lastBookEventAt: 0,
       snapshot: null,
       openOrders: [],
       activeTriggers: [],
@@ -227,10 +237,6 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       qty: "",
       limitPrice: "",
     });
-    // Drop any pending trailing book fetch from the previous pair so it can't
-    // land after the switch (refreshBook also guards on selectedPairId, but
-    // clearing the timer avoids a wasted fetch and resets the leading edge).
-    bookRefreshThrottle.cancel();
     // Refresh all data for the new pair
     const state = get();
     state.refreshBook();
@@ -274,10 +280,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     }
   },
 
-  // Tick-driven book refresh, throttled to BOOK_REFRESH_THROTTLE_MS. Called
-  // from onPriceTick so the book tracks the live price without a fetch per tick.
-  refreshBookThrottled: () => {
-    bookRefreshThrottle();
+  refreshBookIfStale: () => {
+    if (Date.now() - get().lastBookEventAt < BOOK_EVENT_STALE_MS) return;
+    void get().refreshBook();
   },
 
   refreshSnapshot: async () => {
@@ -320,7 +325,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     const pairId = get().selectedPairId;
     if (!pairId) return;
     try {
-      const res = await listTriggers({ pairId, status: "ACTIVE" });
+      const res = await fetchActiveTriggers(pairId);
       if (get().selectedPairId === pairId) set({ activeTriggers: res.data.data ?? [] });
     } catch (err) {
       console.error("[tradingStore] refreshTriggers failed:", err);
@@ -395,6 +400,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
   // SSE-driven setters
   setOrderBook: (orderBook) => set({ orderBook }),
+  applyBookSnapshot: (pairId, orderBook) => {
+    if (get().selectedPairId !== pairId) return;
+    const lastError = get().lastError?.source === "book" ? null : get().lastError;
+    set({ orderBook, bookLoading: false, lastBookEventAt: Date.now(), lastError });
+  },
   setSnapshot: (snapshot) => set({ snapshot }),
 
   updateOrder: (orderId, status, filledQty) => {

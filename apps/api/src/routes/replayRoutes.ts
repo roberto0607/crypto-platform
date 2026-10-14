@@ -16,6 +16,7 @@ import {
 } from "../replay/replayRepo";
 import { AppError } from "../errors/AppError";
 import { startTicking, stopTicking } from "../replay/replayTicker";
+import { clientIp } from "../http/clientIp";
 
 // ── Zod schemas ──
 const startBody = z.object({
@@ -76,7 +77,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             targetType: "replay_session",
             targetId: parsed.data.pairId,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairid: parsed.data.pairId, startTs: parsed.data.startTs, timeframe: parsed.data.timeframe, speed: parsed.data.speed },
         });
@@ -105,7 +106,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             targetType: "replay_session",
             targetId: parsed.data.pairId,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairId: parsed.data.pairId },
         });
@@ -134,7 +135,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             targetType: "replay_session",
             targetId: parsed.data.pairId,
             requestId: req.id,
-            ip: req.ip,userAgent: req.headers["user-agent"] ?? null,
+            ip: clientIp(req),userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairId: parsed.data.pairId },
         });
 
@@ -160,7 +161,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             targetType: "replay_session",
             targetId: parsed.data.pairId,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairId: parsed.data.pairId, ts: parsed.data.ts },
         });
@@ -189,7 +190,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
             targetType: "replay_session",
             targetId: parsed.data.pairId,
             requestId: req.id,
-            ip: req.ip,
+            ip: clientIp(req),
             userAgent: req.headers["user-agent"] ?? null,
             metadata: { pairId: parsed.data.pairId },
         });

@@ -12,6 +12,7 @@ import { resolveIdentity } from "../../quickCall/identity";
 import { startLatestTradeTracker } from "../../quickCall/latestTradeStore";
 import { getCurrent, placeCall, QuickCallError } from "../../quickCall/quickCallService";
 import type { Direction } from "../../quickCall/quickCallStore";
+import { clientIp } from "../../http/clientIp";
 
 const openCallSchema = {
   type: "object",
@@ -69,7 +70,7 @@ const v1QuickCall: FastifyPluginAsync = async (app) => {
     try {
       const identity = (await resolveIdentity(req, reply, { create: true }))!;
       const { direction } = req.body as { direction: Direction };
-      const result = await placeCall(identity, direction, req.ip);
+      const result = await placeCall(identity, direction, clientIp(req));
       return reply.send({ ok: true, ...result });
     } catch (err) {
       if (err instanceof QuickCallError) {

@@ -42,9 +42,10 @@ export function useSSE() {
           quoteAmount: d.quoteAmount,
           ts: event.ts,
         });
-        // Refresh order book on new trade for the selected pair
+        // A fill can move the internal (fallback) book; the Kraken book
+        // arrives via book.snapshot, so only fetch if those have stopped.
         if (d.pairId === useTradingStore.getState().selectedPairId) {
-          useTradingStore.getState().refreshBook();
+          useTradingStore.getState().refreshBookIfStale();
         }
         window.dispatchEvent(
           new CustomEvent("sse:trade.created", { detail: d }),
@@ -66,10 +67,6 @@ export function useSSE() {
             ts: String(event.ts),
             source: "live",
           });
-          // Keep the order book in step with the live price. Throttled to one
-          // fetch per 500ms (leading + coalesced trailing) so a high tick rate
-          // doesn't storm the book endpoint.
-          useTradingStore.getState().refreshBookThrottled();
         }
         const now = Date.now();
         useAppStore.getState().setLastPriceTickAt(now);
@@ -82,6 +79,11 @@ export function useSSE() {
         window.dispatchEvent(
           new CustomEvent("sse:price.tick", { detail: d }),
         );
+      },
+
+      onBookSnapshot: (event) => {
+        const { pairId, bids, asks } = event.data;
+        useTradingStore.getState().applyBookSnapshot(pairId, { bids, asks });
       },
 
       onReplayTick: (event) => {

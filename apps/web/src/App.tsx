@@ -50,6 +50,9 @@ import AdminRetentionPage from "@/pages/admin/AdminRetentionPage";
 import AdminBetaPage from "@/pages/admin/AdminBetaPage";
 import AdminEventStreamPage from "@/pages/admin/AdminEventStreamPage";
 import AdminOutboxPage from "@/pages/admin/AdminOutboxPage";
+import { setVisibleInterval } from "@/lib/visibleInterval";
+
+const PAIRS_POLL_MS = 30_000;
 
 export default function App() {
   // ── Theme auto-detection (route + active match) ──
@@ -187,16 +190,16 @@ export default function App() {
   // price.tick SSE is scoped to only the actively-viewed chart's pair (Gate
   // 2's interest-set design — the open chart stays fully real-time via its
   // own subscribeBars call; this poll covers every other pair in the row).
+  // 30s and visible-tab only (was 7s, always): 9 of the ~138 requests/min an
+  // idle /trade tab spent against the 200/min rate limit (QA 2026-10-11 P1).
   useEffect(() => {
     if (!initialized || !isAuthenticated) return;
 
-    const interval = setInterval(() => {
+    return setVisibleInterval(() => {
       listPairs()
         .then((res) => setPairs(seedAndStripPairs(res.data.pairs as TradingPairWire[])))
         .catch(() => {});
-    }, 7_000);
-
-    return () => clearInterval(interval);
+    }, PAIRS_POLL_MS);
   }, [initialized, isAuthenticated, setPairs]);
 
   if (!initialized) {

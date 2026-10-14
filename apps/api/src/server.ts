@@ -15,6 +15,7 @@ import { execSync } from "node:child_process";
 import { config } from "./config";
 import { pool } from "./db/pool";
 import { buildApp } from "./app";
+import { CLOUDFLARE_IPV4_RANGES, CLOUDFLARE_IPV6_RANGES } from "./http/cloudflareRanges";
 import { stopKrakenFeed } from "./market/krakenWs";
 import { stopCoinbaseFeed } from "./feeds/coinbaseWs";
 import { stopFootprintAggregator } from "./services/footprintAggregator";
@@ -105,6 +106,25 @@ async function start() {
       executionAgentEnabled: config.executionAgentEnabled,
     },
   });
+
+  // ── Client IP resolution (http/clientIp.ts) — config only, no secrets ──
+  app.log.info({
+    msg: "client_ip_resolution",
+    trustProxyHops: config.trustProxyHops,
+    trustProxyHopsSource: process.env.TRUST_PROXY_HOPS ? "env" : "default",
+    cloudflareRangeCheck: config.trustCloudflareConnectingIp ? "on" : "off",
+    cloudflareRanges: CLOUDFLARE_IPV4_RANGES.length + CLOUDFLARE_IPV6_RANGES.length,
+  });
+  // A misspelled variable once left prod silently on 0 hops (every visitor in
+  // one rate-limit bucket). Checks the variable NAME only, never its value.
+  if (process.env.TRSUT_PROXY_HOPS !== undefined) {
+    app.log.warn({
+      msg: "misspelled_env_var",
+      found: "TRSUT_PROXY_HOPS",
+      expected: "TRUST_PROXY_HOPS",
+      effect: `ignored; using trustProxyHops=${config.trustProxyHops}`,
+    });
+  }
 
   // ── Event-loop lag monitor (diagnostic; feeds /metrics + /v1/market/feed-health) ──
   startEventLoopMonitor();
