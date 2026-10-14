@@ -1,0 +1,484 @@
+{
+  "_comment": "Generated from docs/designs/2026-10-13-leverage-design.md \u00a73 by an independent Decimal (prec 50) oracle. Values rounded half-up to 8 dp. Shared by apps/api and apps/web (copy must stay identical).",
+  "positions": [
+    {
+      "name": "$50 @ 10x long BTC @ 83,000 (doc worked example)",
+      "side": "LONG",
+      "qty": "0.00602409",
+      "entry": "83000",
+      "margin": "49.99994700",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "499.99947000",
+        "liq": "75075.37688442",
+        "bankruptcy": "74700.00000000"
+      },
+      "marks": [
+        {
+          "mark": "83000",
+          "upnl": "0.00000000",
+          "equity": "49.99994700",
+          "maintenance": "2.49999735",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "84000",
+          "upnl": "6.02409000",
+          "equity": "56.02403700",
+          "maintenance": "2.53011780",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "80000",
+          "upnl": "-18.07227000",
+          "equity": "31.92767700",
+          "maintenance": "2.40963600",
+          "liquidatable": false,
+          "health": "0.62143310"
+        },
+        {
+          "mark": "75075.37688442",
+          "upnl": "-47.73864286",
+          "equity": "2.26130414",
+          "maintenance": "2.26130414",
+          "liquidatable": true,
+          "health": "0.00000000"
+        },
+        {
+          "mark": "75060",
+          "upnl": "-47.83127460",
+          "equity": "2.16867240",
+          "maintenance": "2.26084098",
+          "liquidatable": true,
+          "health": "0.00000000"
+        },
+        {
+          "mark": "74000",
+          "upnl": "-54.21681000",
+          "equity": "0.00000000",
+          "maintenance": "2.22891330",
+          "liquidatable": true,
+          "health": "0.00000000"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "10"
+    },
+    {
+      "name": "$50 @ 10x short BTC @ 83,000",
+      "side": "SHORT",
+      "qty": "0.00602409",
+      "entry": "83000",
+      "margin": "49.99994700",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "499.99947000",
+        "liq": "90845.77114428",
+        "bankruptcy": "91300.00000000"
+      },
+      "marks": [
+        {
+          "mark": "83000",
+          "upnl": "0.00000000",
+          "equity": "49.99994700",
+          "maintenance": "2.49999735",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "82000",
+          "upnl": "6.02409000",
+          "equity": "56.02403700",
+          "maintenance": "2.46987690",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "90000",
+          "upnl": "-42.16863000",
+          "equity": "7.83131700",
+          "maintenance": "2.71084050",
+          "liquidatable": false,
+          "health": "0.10779962"
+        },
+        {
+          "mark": "91000",
+          "upnl": "-48.19272000",
+          "equity": "1.80722700",
+          "maintenance": "2.74096095",
+          "liquidatable": true,
+          "health": "0.00000000"
+        },
+        {
+          "mark": "92000",
+          "upnl": "-54.21681000",
+          "equity": "0.00000000",
+          "maintenance": "2.77108140",
+          "liquidatable": true,
+          "health": "0.00000000"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "10"
+    },
+    {
+      "name": "$50 @ 1x long BTC @ 83,000",
+      "side": "LONG",
+      "qty": "0.00060240",
+      "entry": "83000",
+      "margin": "49.99920000",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "49.99920000",
+        "liq": "0.00000000",
+        "bankruptcy": "0.00000000"
+      },
+      "marks": [
+        {
+          "mark": "83000",
+          "upnl": "0.00000000",
+          "equity": "49.99920000",
+          "maintenance": "0.24999600",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "1000",
+          "upnl": "-49.39680000",
+          "equity": "0.60240000",
+          "maintenance": "0.00301200",
+          "liquidatable": false,
+          "health": "0.01204819"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "1"
+    },
+    {
+      "name": "$50 @ 1x short BTC @ 83,000",
+      "side": "SHORT",
+      "qty": "0.00060240",
+      "entry": "83000",
+      "margin": "49.99920000",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "49.99920000",
+        "liq": "165174.12935323",
+        "bankruptcy": "166000.00000000"
+      },
+      "marks": [
+        {
+          "mark": "83000",
+          "upnl": "0.00000000",
+          "equity": "49.99920000",
+          "maintenance": "0.24999600",
+          "liquidatable": false,
+          "health": "1.00000000"
+        },
+        {
+          "mark": "160000",
+          "upnl": "-46.38480000",
+          "equity": "3.61440000",
+          "maintenance": "0.48192000",
+          "liquidatable": false,
+          "health": "0.06296543"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "1"
+    },
+    {
+      "name": "$50 @ 5x long BTC @ 83,000 (match cap)",
+      "side": "LONG",
+      "qty": "0.00301204",
+      "entry": "83000",
+      "margin": "49.99986400",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "249.99932000",
+        "liq": "66733.66834171",
+        "bankruptcy": "66400.00000000"
+      },
+      "marks": [
+        {
+          "mark": "70000",
+          "upnl": "-39.15652000",
+          "equity": "10.84334400",
+          "maintenance": "1.05421400",
+          "liquidatable": false,
+          "health": "0.20080321"
+        },
+        {
+          "mark": "66000",
+          "upnl": "-51.20468000",
+          "equity": "0.00000000",
+          "maintenance": "0.99397320",
+          "liquidatable": true,
+          "health": "0.00000000"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "5"
+    },
+    {
+      "name": "$50 @ 10x long SOL @ 150 (mmr 1%)",
+      "side": "LONG",
+      "qty": "3.33333333",
+      "entry": "150",
+      "margin": "49.99999995",
+      "mmrBps": 100,
+      "expected": {
+        "notional": "499.99999950",
+        "liq": "136.36363636",
+        "bankruptcy": "135.00000000"
+      },
+      "marks": [
+        {
+          "mark": "140",
+          "upnl": "-33.33333330",
+          "equity": "16.66666665",
+          "maintenance": "4.66666666",
+          "liquidatable": false,
+          "health": "0.26666667"
+        },
+        {
+          "mark": "136",
+          "upnl": "-46.66666662",
+          "equity": "3.33333333",
+          "maintenance": "4.53333333",
+          "liquidatable": true,
+          "health": "0.00000000"
+        }
+      ],
+      "fromMargin": "50",
+      "leverage": "10"
+    },
+    {
+      "name": "doc long + $50 @ 10x at 80,000 (add)",
+      "side": "LONG",
+      "qty": "0.01227409",
+      "entry": "81472.391843305695167625461439503865459679699268948",
+      "margin": "99.99994700",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "999.99947000",
+        "liq": "73693.62076279",
+        "bankruptcy": "73325.15265898"
+      },
+      "marks": [
+        {
+          "mark": "76000",
+          "upnl": "-67.16863000",
+          "equity": "32.83131700",
+          "maintenance": "4.66415420",
+          "liquidatable": false,
+          "health": "0.29649661"
+        },
+        {
+          "mark": "73000",
+          "upnl": "-103.99090000",
+          "equity": "0.00000000",
+          "maintenance": "4.48004285",
+          "liquidatable": true,
+          "health": "0.00000000"
+        }
+      ]
+    },
+    {
+      "name": "doc long after closing half",
+      "side": "LONG",
+      "qty": "0.003012045",
+      "entry": "83000",
+      "margin": "24.999973500",
+      "mmrBps": 50,
+      "expected": {
+        "notional": "249.99973500",
+        "liq": "75075.37688442",
+        "bankruptcy": "74700.00000000"
+      },
+      "marks": [
+        {
+          "mark": "80000",
+          "upnl": "-9.03613500",
+          "equity": "15.96383850",
+          "maintenance": "1.20481800",
+          "liquidatable": false,
+          "health": "0.62143310"
+        }
+      ]
+    }
+  ],
+  "reduces": [
+    {
+      "name": "close half of the doc long at 85,000 (profit)",
+      "released": "24.999973500",
+      "pnl": "6.024090000",
+      "fee": "0.1280119125000",
+      "expected": {
+        "credit": "30.89605159",
+        "bookedPnl": "6.02409000",
+        "bookedFee": "0.12801191",
+        "uncollectedFee": "0.00000000",
+        "shortfall": "0.00000000"
+      }
+    },
+    {
+      "name": "liquidate the doc long at the 75,060 bid (leftover returned)",
+      "released": "49.99994700",
+      "pnl": "-47.83127460",
+      "fee": "0.226084097700",
+      "expected": {
+        "credit": "1.94258830",
+        "bookedPnl": "-47.83127460",
+        "bookedFee": "0.22608410",
+        "uncollectedFee": "0.00000000",
+        "shortfall": "0.00000000"
+      }
+    },
+    {
+      "name": "gap: the doc long closes at 74,000, past bankruptcy (loss capped)",
+      "released": "49.99994700",
+      "pnl": "-54.21681000",
+      "fee": "0.222891330000",
+      "expected": {
+        "credit": "0.00000000",
+        "bookedPnl": "-49.99994700",
+        "bookedFee": "0.00000000",
+        "uncollectedFee": "0.22289133",
+        "shortfall": "4.21686300"
+      }
+    },
+    {
+      "name": "what's left covers only part of the fee",
+      "released": "1",
+      "pnl": "-0.9",
+      "fee": "0.25",
+      "expected": {
+        "credit": "0.00000000",
+        "bookedPnl": "-0.90000000",
+        "bookedFee": "0.10000000",
+        "uncollectedFee": "0.15000000",
+        "shortfall": "0.00000000"
+      }
+    },
+    {
+      "name": "cover a short for a profit",
+      "released": "50",
+      "pnl": "12.5",
+      "fee": "0.2",
+      "expected": {
+        "credit": "62.30000000",
+        "bookedPnl": "12.50000000",
+        "bookedFee": "0.20000000",
+        "uncollectedFee": "0.00000000",
+        "shortfall": "0.00000000"
+      }
+    }
+  ],
+  "sizes": [
+    {
+      "margin": "50",
+      "leverage": "10",
+      "price": "83000",
+      "expected": "0.00602409"
+    },
+    {
+      "margin": "50",
+      "leverage": "10",
+      "price": "80000",
+      "expected": "0.00625000"
+    },
+    {
+      "margin": "50",
+      "leverage": "1",
+      "price": "83000",
+      "expected": "0.00060240"
+    },
+    {
+      "margin": "50",
+      "leverage": "10",
+      "price": "150",
+      "expected": "3.33333333"
+    },
+    {
+      "margin": "1000",
+      "leverage": "5",
+      "price": "3000",
+      "expected": "1.66666666"
+    }
+  ],
+  "releases": [
+    {
+      "margin": "49.99994700",
+      "closeQty": "0.003012045",
+      "posQty": "0.00602409",
+      "expected": "24.99997350"
+    },
+    {
+      "margin": "49.99994700",
+      "closeQty": "0.00602409",
+      "posQty": "0.00602409",
+      "expected": "49.99994700"
+    },
+    {
+      "margin": "49.99994700",
+      "closeQty": "1",
+      "posQty": "0.00602409",
+      "expected": "49.99994700"
+    }
+  ],
+  "leverage": [
+    {
+      "leverage": 10,
+      "cap": 10,
+      "valid": true
+    },
+    {
+      "leverage": 1,
+      "cap": 10,
+      "valid": true
+    },
+    {
+      "leverage": 2.25,
+      "cap": 5,
+      "valid": true
+    },
+    {
+      "leverage": 5,
+      "cap": 5,
+      "valid": true
+    },
+    {
+      "leverage": 6,
+      "cap": 5,
+      "valid": false
+    },
+    {
+      "leverage": 10.5,
+      "cap": 10,
+      "valid": false
+    },
+    {
+      "leverage": 0.5,
+      "cap": 10,
+      "valid": false
+    },
+    {
+      "leverage": 2.255,
+      "cap": 5,
+      "valid": false
+    },
+    {
+      "leverage": 1,
+      "cap": 1,
+      "valid": true
+    },
+    {
+      "leverage": 2,
+      "cap": 1,
+      "valid": false
+    }
+  ]
+}

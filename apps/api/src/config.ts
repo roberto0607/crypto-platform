@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
+import { parseLeverageConfig } from "./trading/leverageConfig";
 
 export function requireEnv(name: string): string {
   const v = process.env[name];
@@ -180,6 +181,11 @@ export const config = {
   // Fallback reference when the Kraken book is stale: the Kraken ticker
   // snapshot's bid/ask, if no older than this (matches snapshotStore's TTL).
   marketTickerMaxAgeMs: numberEnv("MARKET_TICKER_MAX_AGE_MS", 10_000),
+
+  // ── Leverage (trading/leverageConfig.ts) ──
+  // LEVERAGE_ENABLED (default off), LIQUIDATION_MODE, per-mode caps and the
+  // rollout allowlist. Off: trading is exactly as before leverage.
+  leverage: parseLeverageConfig(process.env),
 
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
