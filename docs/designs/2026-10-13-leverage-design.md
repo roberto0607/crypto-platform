@@ -105,7 +105,8 @@ CREATE INDEX idx_positions_liq_long  ON positions (pair_id, liq_price DESC)
 CREATE INDEX idx_positions_liq_short ON positions (pair_id, liq_price ASC)
   WHERE margin_mode = 'ISOLATED' AND base_qty < 0;
 
--- per-pair risk params (BTC/ETH 50 bps, SOL 100 bps proposed)
+-- per-pair risk params (BTC/ETH 50 bps, SOL 100 bps). Shipped in 096 with DEFAULT 50 for
+-- every pair (additive only); SOL's 100 is set when the engine starts reading it (PR 2).
 ALTER TABLE trading_pairs
   ADD COLUMN maintenance_margin_bps INT NOT NULL DEFAULT 50,
   ADD COLUMN max_leverage           NUMERIC(6,2) NOT NULL DEFAULT 10;
@@ -264,7 +265,7 @@ Liq prices are computed with `decimal.js` from the stored `M`, so they stay corr
 | At $80,000 | uPnL −$18.07, equity $31.93 |
 | **Liquidated**, bid $75,060 | pnl −$47.83, remaining $2.17, fee $0.23 → **$1.94 returned**. Total loss incl. open fee: **$48.31** |
 | **Gap** to $74,000 | pnl −$54.22 → booked −$50.00, credit $0, **shortfall $4.22 absorbed**, USD unaffected beyond the $50.25 |
-| Partial close of ½ at $85,000 | pnl +$6.02, released $25, fee $0.21 → **+$30.90 to USD**. Remaining M = $25, liq still $75,075.38 |
+| Partial close of ½ at $85,000 | pnl +$6.02, released $25, fee $0.13 → **+$30.90 to USD**. Remaining M = $25, liq still $75,075.38 |
 | Add $50 @10x at $80,000 | Q = 0.01227410, E = $81,472.39, M = $100 → liq **$73,693.62** |
 | Same trade as a short | liq 83,000 × 1.1 / 1.005 = **$90,845.77**, bankruptcy $91,300 |
 | 1x | long liq ≈ $0 (never). Short liq = $165,174 (+99%). 1x is effectively today's behavior. |
