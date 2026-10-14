@@ -39,6 +39,7 @@ import orderBookSignalRoutes from "./routes/orderBookSignalRoutes";
 import macroRoutes from "./routes/macroRoutes";
 import gammaRoutes from "./routes/gammaRoutes";
 import onChainRoutes from "./routes/onChainRoutes";
+import clientIpDebugRoutes from "./routes/clientIpDebugRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
@@ -316,6 +317,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(macroRoutes);
   await app.register(gammaRoutes);
   await app.register(onChainRoutes);
+  await app.register(clientIpDebugRoutes); // TEMPORARY: proxy-chain diagnosis
 
   // ── Error code reference (documentation endpoint) ──
   app.get("/api/errors", {
