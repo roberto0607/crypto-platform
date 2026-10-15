@@ -469,6 +469,104 @@ describe("LIMIT taker + maker on one order", () => {
     });
 });
 
+describe("reducing quantity reserves nothing (review #1)", () => {
+    beforeEach(() => enableLeverage());
+
+    async function bot() {
+        const id = (await createTestUser(pool, { email: "mmbot@system.local" })).id;
+        await createTestWallets(pool, id, btcAssetId, usdAssetId, "1.00000000", "1000000.00000000");
+        return id;
+    }
+
+    it("a fully-invested 1x user with $0 free can place a LIMIT close, and it fills", async () => {
+        const poor = await newTrader("830.41500000"); // 0.01 × 83,000 + 5 bps
+        await order(poor, "BUY", "0.01000000", 1);
+        expect(await usd(poor)).toBe("0.00000000");
+
+        const res = await limit(poor, "SELL", "0.01000000", "84000");
+        expect(res.order.status).toBe("OPEN");
+        expect((await wallet(poor, usdAssetId)).reserved).toBe("0.00000000");
+
+        seedReferenceBook(pairId, "84000", "84000");
+        await order(await bot(), "BUY", "0.01000000");
+        expect((await position(poor))!.base_qty).toBe("0.00000000");
+        // Margin 830 back + P&L 10 − maker fee (840 × 2 bps) out of the settlement.
+        expect(await usd(poor)).toBe("839.83200000");
+    });
+
+    it("only the part past flat reserves; another resting close already claims the position", async () => {
+        const rich = await newTrader("100000.00000000");
+        await order(rich, "BUY", "0.01000000", 1);
+        // 0.01 closes, 0.02 would open a short: 0.02 × 90,000 + max fee.
+        await limit(rich, "SELL", "0.03000000", "90000");
+        expect((await wallet(rich, usdAssetId)).reserved).toBe("1800.90000000");
+        // The position is fully claimed by the first order, so this one is all
+        // opening: + 0.001 × 90,000 + max fee.
+        await limit(rich, "SELL", "0.00100000", "90000");
+        expect((await wallet(rich, usdAssetId)).reserved).toBe("1890.94500000");
+    });
+});
+
+describe("fill-time checks on a resting order's opening part (review #2)", () => {
+    async function bot() {
+        const id = (await createTestUser(pool, { email: "mmbot@system.local" })).id;
+        await createTestWallets(pool, id, btcAssetId, usdAssetId, "1.00000000", "1000000.00000000");
+        return id;
+    }
+    async function orderRow(id: string) {
+        const { rows: [o] } = await pool.query<{ status: string; qty_filled: string; cancel_reason: string | null }>(
+            `SELECT status, qty_filled::text, cancel_reason FROM orders WHERE id = $1`, [id]);
+        return o;
+    }
+
+    it("cap lowered after placement: the reducing part fills, the opening part is canceled with a reason", async () => {
+        enableLeverage();
+        await order(userId, "BUY", SIZE, 10);
+        const res = await limit(userId, "SELL", "0.01204818", "83000", 10); // SIZE closes, SIZE would open
+        expect(res.order.status).toBe("OPEN");
+
+        enableLeverage({ maxFreePlay: 5 });
+        await order(await bot(), "BUY", "0.01204818");
+
+        expect(await orderRow(res.order.id)).toEqual({
+            status: "CANCELED", qty_filled: SIZE, cancel_reason: "leverage_exceeds_cap",
+        });
+        expect((await position(userId))!.base_qty).toBe("0.00000000");
+        expect((await wallet(userId, usdAssetId)).reserved).toBe("0.00000000");
+        const { rows: [ev] } = await pool.query<{ reason: string }>(
+            `SELECT payload->'eventInput'->'payload'->>'reason' AS reason FROM outbox_events
+             WHERE aggregate_id = $1 AND payload->'eventInput'->>'eventType' = 'ORDER_CANCELLED'`, [res.order.id]);
+        expect(ev.reason).toBe("leverage_exceeds_cap");
+    });
+
+    it("position closed another way first: a close with no reserve doesn't open, it's canceled", async () => {
+        enableLeverage();
+        await order(userId, "BUY", "0.01000000", 1);
+        const res = await limit(userId, "SELL", "0.01000000", "84000"); // reserves nothing
+        await order(userId, "SELL", "0.01000000");                      // closed by market
+        const usdBefore = await usd(userId);
+
+        seedReferenceBook(pairId, "84000", "84000");
+        await order(await bot(), "BUY", "0.01000000");
+
+        expect(await orderRow(res.order.id)).toEqual({
+            status: "CANCELED", qty_filled: "0.00000000", cancel_reason: "insufficient_margin",
+        });
+        expect((await position(userId))!.base_qty).toBe("0.00000000");
+        expect(await usd(userId)).toBe(usdBefore);
+    });
+
+    it("a reducing fill is never blocked by the cap", async () => {
+        enableLeverage();
+        await order(userId, "BUY", SIZE, 10);
+        const res = await limit(userId, "SELL", SIZE, "83000");
+        enableLeverage({ maxFreePlay: 1 });
+        await order(await bot(), "BUY", SIZE);
+        expect((await orderRow(res.order.id)).status).toBe("FILLED");
+        expect((await position(userId))!.base_qty).toBe("0.00000000");
+    });
+});
+
 describe("protective triggers (#202)", () => {
     beforeEach(() => enableLeverage());
 

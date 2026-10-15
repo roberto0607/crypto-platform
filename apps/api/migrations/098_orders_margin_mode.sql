@@ -18,3 +18,13 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS margin_mode TEXT NOT NULL DEFAULT 'S
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_margin_mode_check;
 ALTER TABLE orders ADD CONSTRAINT orders_margin_mode_check
     CHECK (margin_mode IN ('SPOT', 'ISOLATED')) NOT VALID;
+
+-- cancel_reason: why the engine (not the user) canceled an order. NULL for a
+-- user/admin cancel and every existing row. Set when a resting ISOLATED
+-- order's fill would open past what's allowed at fill time:
+--   leverage_exceeds_cap  its leverage is now above the user's cap
+--   insufficient_margin   the opening part isn't covered by the order's
+--                         reserve (e.g. the position it was closing was
+--                         closed another way first)
+-- The reducing part of such a fill still fills; only the remainder is canceled.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT DEFAULT NULL;

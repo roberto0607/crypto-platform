@@ -492,6 +492,35 @@ export async function placeOrderWithSnapshot(
             }, { userId, requestId }));
         }
 
+        // Resting ISOLATED orders the sweep canceled at fill time (their
+        // opening part was over the cap or unfunded): tell their owners.
+        for (const c of matchResult.canceledMakers ?? []) {
+            await insertOutboxEventTx(client, {
+                event_type: "EVENT_STREAM_APPEND",
+                aggregate_type: "ORDER",
+                aggregate_id: c.order.id,
+                payload: {
+                    eventInput: {
+                        eventType: "ORDER_CANCELLED",
+                        entityType: "ORDER",
+                        entityId: c.order.id,
+                        actorUserId: c.order.user_id,
+                        payload: { pairId: c.order.pair_id, releasedAmount: c.releasedAmount, reason: c.reason },
+                    },
+                },
+            });
+            pendingEvents.push(createEvent("order.updated", {
+                orderId: c.order.id,
+                pairId: c.order.pair_id,
+                side: c.order.side as "BUY" | "SELL",
+                type: c.order.type as "MARKET" | "LIMIT",
+                status: c.order.status,
+                qty: c.order.qty,
+                filledQty: c.order.qty_filled,
+                limitPrice: c.order.limit_price ?? null,
+            }, { userId: c.order.user_id, requestId }));
+        }
+
         // Balances this order moved — the taker's and every maker's — so each
         // owner's AVAILABLE updates live (fill, limit hold).
         pendingEvents.push(...await walletUpdatedEventsTx(

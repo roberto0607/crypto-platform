@@ -51,7 +51,7 @@ type PositionDbRow = {
 const POSITION_READ = `base_qty::text, avg_entry_price::text, margin_mode, leverage::text,
                        isolated_margin::text, liq_price::text, epoch`;
 
-async function readPosition(
+export async function readPosition(
     client: PoolClient, userId: string, pairId: string, scope: PositionScope, forUpdate: boolean,
 ): Promise<PositionDbRow | null> {
     const { rows } = await timedQuery<PositionDbRow>(client,
@@ -64,7 +64,7 @@ async function readPosition(
     return rows[0] ?? null;
 }
 
-function stateOf(row: PositionDbRow | null): IsolatedState {
+export function stateOf(row: PositionDbRow | null): IsolatedState {
     if (!row || D(row.base_qty).isZero()) {
         return { ...FLAT, epoch: row?.epoch ?? 0 };
     }
@@ -104,6 +104,12 @@ export type TakerMargin =
          * leverage per (user, pair, scope) while anything is open.
          */
         inherited: Decimal | null;
+        /**
+         * Unfilled qty of the user's resting ISOLATED orders on this
+         * pair/scope, per side. A resting order that reduces claims that much
+         * of the position, so a new order can't count it as reducible too.
+         */
+        claimed: { BUY: Decimal; SELL: Decimal };
     };
 
 /**
@@ -151,11 +157,13 @@ export async function resolveTakerMargin(
     }
 
     const other: MarginMode = mode === "SPOT" ? "ISOLATED" : "SPOT";
-    const { rows: resting } = await timedQuery<{ margin_mode: MarginMode; leverage: string }>(client,
+    const { rows: resting } = await timedQuery<{ margin_mode: MarginMode; leverage: string; side: "BUY" | "SELL"; remaining: string }>(client,
         "isolatedSettlement.restingOrders",
-        `SELECT DISTINCT margin_mode, leverage::text FROM orders
+        `SELECT margin_mode, leverage::text, side, SUM(qty - qty_filled)::text AS remaining
+         FROM orders
          WHERE user_id = $1 AND pair_id = $2 AND status IN ('OPEN', 'PARTIALLY_FILLED')
-           AND ${SCOPE_SQL(3)}`,
+           AND ${SCOPE_SQL(3)}
+         GROUP BY margin_mode, leverage, side`,
         [userId, pairId, scope.competitionId, scope.matchId],
     );
     if (resting.some((r) => r.margin_mode === other)) {
@@ -163,6 +171,33 @@ export async function resolveTakerMargin(
     }
     if (mode === "SPOT") return { mode };
 
+    const { mmrBps, cap: scopeCap } = await isolatedCap(client, userId, pairId, scope, matchCap);
+    // Solo replay prices off historical candles, not the live book: 1x (§2.3).
+    const cap = params.replay ? 1 : scopeCap;
+
+    const position = stateOf(row);
+    const inherited = !position.qty.isZero()
+        ? position.leverage
+        : resting.length > 0 ? D(resting[0].leverage) : null;
+    const claimed = { BUY: ZERO, SELL: ZERO };
+    for (const r of resting) claimed[r.side] = claimed[r.side].plus(D(r.remaining));
+
+    return { mode: "ISOLATED", position, mmrBps, cap, inherited, claimed };
+}
+
+/**
+ * The leverage cap for `userId` on `pairId` in `scope` right now (flag,
+ * allowlist, per-mode cap, match stamp, pair ceiling), and the pair's
+ * maintenance margin. Also used at fill time for resting orders.
+ */
+export async function isolatedCap(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    scope: PositionScope,
+    knownMatchCap: number | null = null,
+): Promise<{ cap: number; mmrBps: number }> {
+    let matchCap = knownMatchCap;
     if (scope.matchId && matchCap === null) {
         const { rows } = await timedQuery<{ max_leverage: string }>(client,
             "isolatedSettlement.matchCap",
@@ -171,20 +206,10 @@ export async function resolveTakerMargin(
         );
         matchCap = rows[0] ? Number(rows[0].max_leverage) : 1;
     }
-
     const { mmrBps, maxLeverage } = await pairRiskParams(client, pairId);
-    const leverageMode: LeverageMode = scope.matchId ? "MATCH" : scope.competitionId ? "COMPETITION" : "FREE_PLAY";
-    // Solo replay prices off historical candles, not the live book: 1x (§2.3).
-    const cap = params.replay ? 1 : leverageCap(cfg, {
-        mode: leverageMode, userId, pairMaxLeverage: maxLeverage, matchMaxLeverage: matchCap,
-    });
-
-    const position = stateOf(row);
-    const inherited = !position.qty.isZero()
-        ? position.leverage
-        : resting.length > 0 ? D(resting[0].leverage) : null;
-
-    return { mode: "ISOLATED", position, mmrBps, cap, inherited };
+    const mode: LeverageMode = scope.matchId ? "MATCH" : scope.competitionId ? "COMPETITION" : "FREE_PLAY";
+    const cap = leverageCap(config.leverage, { mode, userId, pairMaxLeverage: maxLeverage, matchMaxLeverage: matchCap });
+    return { cap, mmrBps };
 }
 
 /** Lock the position row (creating it if missing) and return its state. */
@@ -305,13 +330,16 @@ export async function settleIsolatedFillTx(
         feeBooked = feeBooked.plus(r.open.fee);
         for (const [amount, type] of [[r.open.margin, "MARGIN_LOCK"], [r.open.fee, "FEE"]] as const) {
             if (amount.isZero()) continue;
-            if (p.reserve !== undefined) {
-                const fromReserve = Decimal.min(amount, reserveLeft);
-                reserveLeft = reserveLeft.minus(fromReserve);
-                reserveUsed = reserveUsed.plus(fromReserve);
+            if (p.reserve !== undefined && reserveLeft.gte(amount)) {
+                reserveLeft = reserveLeft.minus(amount);
+                reserveUsed = reserveUsed.plus(amount);
                 await postUsd(client, p.usdWalletId, amount.neg(), type, p.tradeId,
-                    { ...meta, leverage: r.next.leverage.toString() }, fromReserve);
+                    { ...meta, leverage: r.next.leverage.toString() }, amount);
             } else {
+                // No reserve (a taker's immediate fill), or more than the
+                // order reserved: it must fit the free balance. The engine
+                // sizes resting fills to their reserve, so for a maker this
+                // is a backstop, not a path.
                 await debitAvailableTx(client, p.usdWalletId, toFixed8(amount), type, p.tradeId, "TRADE",
                     { ...meta, leverage: r.next.leverage.toString() });
             }
