@@ -75,8 +75,8 @@ describe("openButtonLabel", () => {
       .toBe("OPEN SHORT · $2000.00 · 0.1235 ETH");
   });
 
-  it("uses the leverage-applied notional (effectiveUsd), not raw usd", () => {
-    // effectiveUsd = usd * leverage; label must reflect the notional passed in.
+  it("shows the notional passed in (effectiveUsd)", () => {
+    // effectiveUsd is the order notional; the label must reflect it verbatim.
     expect(openButtonLabel({ mode: "LONG", baseQty: 0.03, effectiveUsd: 3000, baseSymbol: "BTC", fmtUsd: fmt }))
       .toContain("$3000.00");
   });

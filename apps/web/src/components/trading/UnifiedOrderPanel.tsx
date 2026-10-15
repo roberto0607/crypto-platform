@@ -21,6 +21,7 @@ import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
 import { useBuyingPower } from "@/hooks/useBuyingPower";
+import { SHOW_LEVERAGE_SELECTOR } from "@/lib/featureFlags";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -93,7 +94,7 @@ export function leverageRisk(lv: number): {
 
 /**
  * OPEN-button label (#18). For the plain OPEN case with a real size, enrich with
- * the leverage-applied NOTIONAL and base qty (matches the "effective" hint):
+ * the order NOTIONAL and base qty:
  *   `OPEN LONG · $1,000.00 · 0.0158 BTC`
  * Zero/empty qty → plain `OPEN LONG`/`OPEN SHORT`. Caller keeps the PLACING /
  * ORDER PLACED / FAILED / ADD TO / CLOSE & REVERSE states untouched. Pure.
@@ -150,7 +151,6 @@ export function UnifiedOrderPanel({
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
     const [usdAmount, setUsdAmount] = useState("");
     const [leverage, setLeverage] = useState(1);
-    const [posLeverage, setPosLeverage] = useState(1);
     const [tpPrice, setTpPrice] = useState("");
     const [slPrice, setSlPrice] = useState("");
     const [tslOffset, setTslOffset] = useState("");
@@ -207,13 +207,14 @@ export function UnifiedOrderPanel({
     const effectivePrice =
         orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
 
-    // USD → base conversion (leverage applied)
+    // USD → base conversion. The order is exactly the amount entered — the
+    // leverage selector (hidden, see SHOW_LEVERAGE_SELECTOR) never scales it.
     const usdNum = usdAmount ? parseFloat(usdAmount) : 0;
-    const effectiveUsd = usdNum * leverage;
+    const effectiveUsd = usdNum;
     const baseQty = effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
     const baseQtyStr = baseQty > 0 ? baseQty.toFixed(8) : "";
 
-    // Fee estimate (on effective size). A MARKET order is always the taker.
+    // Fee estimate (on order size). A MARKET order is always the taker.
     // A LIMIT order pays the taker rate if it crosses now and the maker rate
     // if it rests, so estimate at the taker rate (the higher one) and label both.
     const estFee = effectiveUsd > 0 ? (effectiveUsd * (pair.taker_fee_bps / 10000)) : 0;
@@ -396,7 +397,6 @@ export function UnifiedOrderPanel({
             setBtnState("success");
             setLastOrderUsd(effectiveUsd);
             setLastOrderFee(estFee);
-            if (usdNum > 0) setPosLeverage(leverage);
             setUsdAmount("");
             setTpPrice("");
             setSlPrice("");
@@ -509,7 +509,8 @@ export function UnifiedOrderPanel({
                 ))}
             </div>
 
-            {/* ── LEVERAGE ── */}
+            {/* ── LEVERAGE ── (hidden until real leverage UI ships) */}
+            {SHOW_LEVERAGE_SELECTOR && <>
             <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                 {([1, 2, 3, 5, 10] as const).map((lv) => {
                     const risk = leverageRisk(lv);
@@ -538,6 +539,7 @@ export function UnifiedOrderPanel({
                     {leverage}x leverage amplifies both gains and losses
                 </div>
             )}
+            </>}
 
             {/* LIMIT PRICE + AMOUNT share one row. In LIMIT mode the tr-pa-row CSS
                 lays them out as two columns so the limit-price field adds no vertical
@@ -585,7 +587,7 @@ export function UnifiedOrderPanel({
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
-                    ≈ {baseQty.toFixed(4)} {baseSymbol}{leverage > 1 ? `  (${leverage}x = ${fmtUsd(effectiveUsd)} effective)` : ""}
+                    ≈ {baseQty.toFixed(4)} {baseSymbol}
                 </div>}
             </div>
             </div>{/* /tr-pa-row */}
@@ -695,7 +697,7 @@ export function UnifiedOrderPanel({
                     >
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
-                                {baseSymbol} {posDirection}{posLeverage > 1 ? ` ${posLeverage}x` : ""}
+                                {baseSymbol} {posDirection}
                             </span>
                             <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
                                 {fmtUsd(posUsdSize)}
