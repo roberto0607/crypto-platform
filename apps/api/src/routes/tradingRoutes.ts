@@ -24,6 +24,9 @@ const placeOrderBody = z.object({
   type: z.enum(["MARKET", "LIMIT"]),
   qty: z.string().regex(/^\d+(\.\d{1,8})?$/),
   limitPrice: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+  // 1–100, at most 2 decimals (NUMERIC(6, 2)). The engine enforces the
+  // per-mode cap; above 1 needs LEVERAGE_ENABLED (leverage_exceeds_cap).
+  leverage: z.number().min(1).max(100).multipleOf(0.01).optional(),
 }).refine(
   (data) => {
     if (data.type === "LIMIT" && !data.limitPrice) return false;
@@ -120,6 +123,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: { type: "string", enum: ["MARKET", "LIMIT"] },
           qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Order quantity (decimal string, up to 8 decimals)" },
           limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for LIMIT orders, forbidden for MARKET orders" },
+          leverage: { type: "number", minimum: 1, maximum: 100, description: "Leverage (default 1x). Above 1 needs leverage enabled; capped per mode (free-play / match / competition)." },
         },
       },
       response: {
@@ -160,7 +164,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable"] },
+            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable", "invalid_leverage", "leverage_exceeds_cap", "leverage_mismatch", "spot_orders_open", "isolated_orders_open"] },
             details: { type: "object", additionalProperties: true },
           },
         },
@@ -216,6 +220,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
                 type: parsed.data.type,
                 qty: parsed.data.qty,
                 limitPrice: parsed.data.limitPrice,
+                leverage: parsed.data.leverage,
             },
             idempotencyKey,
             req.id as string,

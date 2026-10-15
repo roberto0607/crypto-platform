@@ -26,6 +26,12 @@ const ERROR_STATUS: Record<string, number> = {
   message_empty: 400,
   cannot_report_own_message: 400,
   pair_not_tradable: 400,
+  // Leverage (trading/isolatedSettlement.ts, matchingEngine Phase F2)
+  invalid_leverage: 400,
+  leverage_exceeds_cap: 400,
+  leverage_mismatch: 400,
+  spot_orders_open: 400,
+  isolated_orders_open: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,

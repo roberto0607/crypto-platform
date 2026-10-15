@@ -104,6 +104,20 @@ import {
     marksForExposure,
     type BpWallet,
 } from "./buyingPower";
+import { isValidLeverage } from "./margin";
+import { applyIsolatedFill, type IsolatedState } from "./isolatedPosition";
+import { LEVERAGE_CEILING } from "./leverageConfig";
+import {
+    resolveTakerMargin,
+    isolatedCap,
+    readPosition,
+    stateOf,
+    lockIsolatedPositionTx,
+    settleIsolatedFillTx,
+    isolatedOpenCost,
+    type IsolatedLeg,
+    type PositionScope,
+} from "./isolatedSettlement";
 
 type FillPlan = {
     resting: OrderRow;
@@ -124,6 +138,31 @@ export type PlaceOrderResult = {
     reference: CollarReference | null;
     /** Every wallet this order locked and may have changed (taker + makers), for wallet.updated after COMMIT. */
     walletIds: string[];
+    /**
+     * Legs settled ISOLATED, keyed `${tradeId}:TAKER` / `${tradeId}:MAKER`.
+     * Their position rows are already updated here (the USD moves depend on
+     * the position), so the post-fill pipeline must not apply them again.
+     * Empty while LEVERAGE_ENABLED is off.
+     */
+    isolatedLegs?: Map<string, IsolatedLeg>;
+    /**
+     * Resting ISOLATED orders this order's sweep canceled because their fill
+     * would have opened past what's allowed now (review #2): the reducing
+     * part filled, the remainder was canceled. For events after COMMIT.
+     */
+    canceledMakers?: CanceledMaker[];
+};
+
+export type CanceledMaker = {
+    order: OrderRow;
+    reason: "leverage_exceeds_cap" | "insufficient_margin";
+    releasedAmount: string;
+};
+
+/** A resting order that was placed ISOLATED (orders.margin_mode, migration 098). */
+type IsolatedMaker = {
+    leverage: Decimal;
+    scope: PositionScope;
 };
 
 type SystemFillPlan = {
@@ -158,6 +197,10 @@ async function placeOrderInternal(
     // price off historical candles, not the live Kraken market. Omitted =
     // resolve the live Kraken reference (book, else ticker) under the pair lock.
     pricing?: CollarReference,
+    // Requested leverage. Omitted/null = 1x, or the leverage already in force
+    // on this pair/scope for an ISOLATED order. Anything above 1 needs the
+    // ISOLATED path (LEVERAGE_ENABLED + a real user + a scope allowing it).
+    leverage?: number | null,
 ): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -191,6 +234,20 @@ async function placeOrderInternal(
     if (!baseWallet || !quoteWallet) throw new Error(scope.matchId ? "match_wallets_missing" : "wallet_not_found");
     if (baseWallet.closed_at || quoteWallet.closed_at) throw new Error("match_ended");
 
+    // ── Phase B2: Margin model (isolatedSettlement.resolveTakerMargin) ──
+    // SPOT is today's path. ISOLATED (LEVERAGE_ENABLED, real users) never
+    // moves base: margin is locked out of USD into the position row.
+    const leverageParam = leverage ?? null;
+    if (leverageParam !== null && !isValidLeverage(leverageParam, LEVERAGE_CEILING)) {
+        throw new Error("invalid_leverage");
+    }
+    const posScope: PositionScope = { competitionId: scope.competitionId ?? null, matchId: scope.matchId ?? null };
+    const margin = await resolveTakerMargin(client, { userId, pairId, scope: posScope, replay: pricing?.source === "replay" });
+    const isolated = margin.mode === "ISOLATED" ? margin : null;
+    if (!isolated && leverageParam !== null && leverageParam > 1) throw new Error("leverage_exceeds_cap");
+    // One leverage per (user, pair, scope) while a position or order is open.
+    const orderLeverage = isolated ? (isolated.inherited ?? D(leverageParam ?? 1)) : D(1);
+
     // ── Phase C+D: Incrementally scan book and build execution plan ──
     // Reads resting orders under the pair lock (no competing matcher
     // can consume them).  Price filtering and self-trade prevention
@@ -202,6 +259,14 @@ async function placeOrderInternal(
     const priceBound = type === "LIMIT" ? limitPrice : undefined;
     const BATCH_SIZE = 100;
     let cursor: BookCursor | undefined;
+
+    // Resting orders placed ISOLATED settle their maker leg ISOLATED, from
+    // their own reserve, in their own scope — whatever the flag says now.
+    const isolatedMakers = new Map<string, IsolatedMaker>();
+    // Each ISOLATED maker's position as this sweep will leave it, so several
+    // of its orders in one sweep see each other's fills.
+    const makerBooks = new Map<string, { state: IsolatedState; cap: number; mmrBps: number }>();
+    const cancelMakers = new Map<string, { resting: OrderRow; reason: CanceledMaker["reason"] }>();
 
     while (remaining.gt(0)) {
         const batch = await fetchRestingOrdersBatch(client, pairId, bookSide, {
@@ -215,10 +280,60 @@ async function placeOrderInternal(
 
         if (batch.length === 0) break;
 
+        const { rows: isoRows } = await timedQuery<{ id: string; leverage: string; competition_id: string | null; match_id: string | null }>(
+            client, "matchingEngine.isolatedMakers",
+            `SELECT id, leverage::text, competition_id, match_id FROM orders
+             WHERE id = ANY($1::uuid[]) AND margin_mode = 'ISOLATED'`,
+            [batch.map((o) => o.id)],
+        );
+        for (const r of isoRows) {
+            isolatedMakers.set(r.id, { leverage: D(r.leverage), scope: { competitionId: r.competition_id, matchId: r.match_id } });
+        }
+
         for (const resting of batch) {
             if (remaining.lte(0)) break;
-            const fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
+            let fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
             const fillPrice = D(resting.limit_price!);
+
+            // ISOLATED maker: its reducing part always fills; a part that
+            // would open (or flip past flat) fills only if its leverage is
+            // still within the cap and its reserve covers margin + fee
+            // (review #2). Otherwise the order fills what it can and the
+            // rest of it is canceled with the reason.
+            const iso = isolatedMakers.get(resting.id);
+            if (iso) {
+                const key = `${resting.user_id}:${iso.scope.competitionId ?? ""}:${iso.scope.matchId ?? ""}`;
+                let book = makerBooks.get(key);
+                if (!book) {
+                    const row = await readPosition(client, resting.user_id, pairId, iso.scope, false);
+                    const { cap, mmrBps } = await isolatedCap(client, resting.user_id, pairId, iso.scope);
+                    book = { state: stateOf(row), cap, mmrBps };
+                    makerBooks.set(key, book);
+                }
+                const makerSide = bookSide;
+                const opposite = !book.state.qty.isZero() && book.state.qty.isPositive() !== (makerSide === "BUY");
+                const reducible = opposite ? book.state.qty.abs() : ZERO;
+                const opening = Decimal.max(ZERO, fillQty.minus(reducible));
+                if (opening.gt(0)) {
+                    let affordable = ZERO;
+                    let reason: CanceledMaker["reason"] = "leverage_exceeds_cap";
+                    if (iso.leverage.lte(book.cap)) {
+                        reason = "insufficient_margin";
+                        const reserveLeft = D(resting.reserved_amount).minus(D(resting.reserved_consumed));
+                        const makerBps = D(computeFee("1", "MAKER", pair, resting.user_id).feeAmount);
+                        const perUnit = fillPrice.div(iso.leverage).plus(fillPrice.mul(makerBps));
+                        affordable = reserveLeft.div(perUnit).toDecimalPlaces(8, Decimal.ROUND_DOWN);
+                    }
+                    if (affordable.lt(opening)) {
+                        fillQty = Decimal.min(fillQty, reducible.plus(affordable));
+                        cancelMakers.set(resting.id, { resting, reason });
+                    }
+                }
+                if (fillQty.lte(0)) continue;
+                const makerFee = D(computeFee(toFixed8(fillQty.mul(fillPrice)), "MAKER", pair, resting.user_id).feeAmount);
+                book.state = applyIsolatedFill(book.state, makerSide, fillQty, fillPrice, makerFee, iso.leverage, book.mmrBps).next;
+            }
+
             // Fees derive from the rounded quote amount — the same input
             // the post-fill pipeline (positions, journal) feeds computeFee.
             const quoteStr = toFixed8(fillQty.mul(fillPrice));
@@ -255,7 +370,8 @@ async function placeOrderInternal(
     }
 
     // ── Phase E: Check affordability ──
-    if (type === "MARKET") {
+    // (ISOLATED: margin + fee, checked under the wallet locks in Phase F2.)
+    if (type === "MARKET" && !isolated) {
         if (side === "BUY") {
             let totalCost = ZERO;
             for (const entry of plan) totalCost = totalCost.plus(entry.quoteAmt).plus(entry.feeAmt);
@@ -269,7 +385,7 @@ async function placeOrderInternal(
 
     let reserveAmount = ZERO;
     let reserveWalletId: string | null = null;
-    if (type === "LIMIT") {
+    if (type === "LIMIT" && !isolated) {
         if (side === "BUY") {
             // Reserve at the higher of maker/taker: the order may fill as either.
             reserveAmount = D(qty).mul(D(limitPrice!)).mul(BPS_DIVISOR.plus(D(maxFeeBps(pair)))).div(BPS_DIVISOR);
@@ -347,6 +463,10 @@ async function placeOrderInternal(
         }
     }
 
+    // A resting order canceled by the fill-time check releases its reserve.
+    for (const { resting } of cancelMakers.values()) {
+        if (resting.reserved_wallet_id) walletIdSet.add(resting.reserved_wallet_id);
+    }
     const walletIds = [...walletIdSet].sort();
     // Buying power reads every wallet in the user's scope, so lock them all
     // (same sorted single statement — no new deadlock order).
@@ -359,11 +479,53 @@ async function placeOrderInternal(
         throw new Error("match_ended");
     }
 
+    if (isolated) {
+        // ── Phase F2 (ISOLATED): leverage + margin ──
+        // The position is locked last (pair → wallets → positions). The
+        // immediate fills are walked against it with the settlement's own
+        // math: closing parts need nothing, opening parts need margin + fee.
+        // A LIMIT's resting remainder reserves margin + max fee in USD
+        // whichever side it is (conservative: it may open when it fills).
+        // USD free must cover both. Mark-to-market drops out: each position's
+        // loss is confined to its margin.
+        const { state: position } = await lockIsolatedPositionTx(client, userId, pairId, posScope);
+        const immediate = plan.map((e) => ({ qty: e.fillQty, price: e.fillPrice, fee: e.feeAmt }));
+        if (systemFill) immediate.push({ qty: systemFill.fillQty, price: systemFill.fillPrice, fee: systemFill.feeAmt });
+        const { cost, opensQty, after } = isolatedOpenCost(position, side, immediate, orderLeverage, isolated.mmrBps);
+
+        // The resting remainder reserves only what would open: the part that
+        // reduces the position — net of what the user's other resting orders
+        // on this side already claim — needs nothing (its fee comes out of
+        // the settlement, review #1). If the position shrinks some other way
+        // before it fills, the fill-time check cancels the unfunded part.
+        const restQty = type === "LIMIT" ? remaining : ZERO;
+        const reducesAfter = !after.qty.isZero() && after.qty.isPositive() !== (side === "BUY");
+        const reducible = reducesAfter ? Decimal.max(ZERO, after.qty.abs().minus(isolated.claimed[side])) : ZERO;
+        const restOpenQty = Decimal.max(ZERO, restQty.minus(reducible));
+        const restOpens = restOpenQty.gt(0);
+        if (opensQty.gt(0) || restOpens) {
+            if (leverageParam !== null && isolated.inherited !== null && !D(leverageParam).eq(isolated.inherited)) {
+                throw new Error("leverage_mismatch");
+            }
+            if (orderLeverage.gt(isolated.cap)) throw new Error("leverage_exceeds_cap");
+        }
+        if (restQty.gt(0)) {
+            const restNotional = restOpenQty.mul(D(limitPrice!));
+            reserveAmount = restNotional.div(orderLeverage)
+                .plus(restNotional.mul(D(maxFeeBps(pair))).div(BPS_DIVISOR))
+                .toDecimalPlaces(8, Decimal.ROUND_UP);
+            reserveWalletId = quoteWallet.id;
+        }
+        const lockedQuote = locked.get(quoteWallet.id) ?? quoteWallet;
+        const free = D(lockedQuote.balance).minus(D(lockedQuote.reserved));
+        if (free.lt(cost.plus(reserveAmount))) throw new Error("insufficient_balance");
+    }
+
     // ── Phase F2: Buying power (2× rule, trading/buyingPower.ts) ──
     // Reduce-only orders always pass; system users (MM / risk bots) are exempt.
     // Anything that opens or adds risk must leave buying power >= 0 after it.
     const lockedBase = locked.get(baseWallet.id) ?? baseWallet;
-    if (!isReduceOnly(side, D(qty), lockedBase) && !(await isSystemUser(userId, client))) {
+    if (!isolated && !isReduceOnly(side, D(qty), lockedBase) && !(await isSystemUser(userId, client))) {
         const after: BpWallet[] = scopeWalletIds.map((id) => {
             const w = locked.get(id)!;
             return { assetId: w.asset_id, balance: w.balance, reserved: w.reserved };
@@ -422,7 +584,12 @@ async function placeOrderInternal(
         competitionId: competitionId ?? null,
         matchId: matchId ?? null,
         source: source ?? null,
+        leverage: orderLeverage.toFixed(2),
+        marginMode: margin.mode,
     });
+
+    const mmrBps = isolated?.mmrBps ?? [...makerBooks.values()][0]?.mmrBps ?? 0;
+    const isolatedLegs = new Map<string, IsolatedLeg>();
 
     // ── Phase I: Execute book fills ──
     // All wallet locks are held — balance mutations are safe.
@@ -454,7 +621,19 @@ async function placeOrderInternal(
             isSystemFill: false,
         });
 
-        if( side === "BUY") {
+        const ts = new Date(trade.executed_at).getTime();
+        const makerIso = isolatedMakers.get(resting.id);
+        const makerSide: "BUY" | "SELL" = side === "BUY" ? "SELL" : "BUY";
+
+        // Taker leg.
+        if (isolated) {
+            const { leg } = await settleIsolatedFillTx(client, {
+                userId, pairId, scope: posScope, side, qty: qtyStr, price: toFixed8(fillPrice),
+                fee: feeStr, feeRole: "TAKER", leverage: orderLeverage, mmrBps,
+                usdWalletId: quoteWallet.id, tradeId: trade.id, ts,
+            });
+            isolatedLegs.set(`${trade.id}:TAKER`, leg);
+        } else if (side === "BUY") {
             // Taker (buyer): debit quote (cost + fee), credit base
             const costPlusFee = toFixed8(D(quoteStr).plus(D(feeStr)));
             if (type === "MARKET") {
@@ -467,24 +646,7 @@ async function placeOrderInternal(
             }
             await creditWalletTx(client, baseWallet.id, qtyStr,
                 "TRADE_BUY", trade.id, "TRADE");
-
-            //Maker (seller): consume reserved base, credit quote minus maker fee
-            await consumeReservedAndDebitTx(client, entry.counterBaseId, qtyStr,
-                "TRADE_SELL", trade.id, "TRADE");
-            await creditWalletTx(client, entry.counterQuoteId, toFixed8(D(quoteStr).minus(D(makerFeeStr))),
-                "TRADE_SELL", trade.id, "TRADE", { fee: makerFeeStr, feeRole: "MAKER" });
-
-            //update maker order (SELL maker: reserved in base, consumed = fillQty)
-            const newMakerFilled = D(resting.qty_filled).plus(fillQty);
-            const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
-            await updateOrderFill(client, resting.id, qtyStr, qtyStr, makerStatus);
-
-            if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
-                const newConsumed = D(resting.reserved_consumed).plus(D(qtyStr));
-                const excess = D(resting.reserved_amount).minus(newConsumed);
-                if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
-            }
-        } else{
+        } else {
             //Taker (seller): debit base, credit quote minus fee
             const costMinusFee = toFixed8(D(quoteStr).minus(D(feeStr)));
             if (type === "MARKET") {
@@ -497,7 +659,44 @@ async function placeOrderInternal(
             }
             await creditWalletTx(client, quoteWallet.id, costMinusFee,
                 "TRADE_SELL", trade.id, "TRADE", { fee: feeStr, feeRole: "TAKER" });
+        }
 
+        // Maker leg.
+        const newMakerFilled = D(resting.qty_filled).plus(fillQty);
+        const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
+        if (makerIso) {
+            // ISOLATED maker: margin + maker fee come out of its own reserve.
+            const reserveLeft = D(resting.reserved_amount).minus(D(resting.reserved_consumed));
+            const { leg, reserveUsed } = await settleIsolatedFillTx(client, {
+                userId: resting.user_id, pairId, scope: makerIso.scope, side: makerSide,
+                qty: qtyStr, price: toFixed8(fillPrice), fee: makerFeeStr, feeRole: "MAKER",
+                leverage: makerIso.leverage, mmrBps, usdWalletId: entry.counterQuoteId,
+                tradeId: trade.id, ts, reserve: reserveLeft,
+            });
+            isolatedLegs.set(`${trade.id}:MAKER`, leg);
+            const usedStr = toFixed8(reserveUsed);
+            await updateOrderFill(client, resting.id, qtyStr, usedStr, makerStatus);
+
+            if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
+                const excess = reserveLeft.minus(D(usedStr));
+                if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
+            }
+        } else if (side === "BUY") {
+            //Maker (seller): consume reserved base, credit quote minus maker fee
+            await consumeReservedAndDebitTx(client, entry.counterBaseId, qtyStr,
+                "TRADE_SELL", trade.id, "TRADE");
+            await creditWalletTx(client, entry.counterQuoteId, toFixed8(D(quoteStr).minus(D(makerFeeStr))),
+                "TRADE_SELL", trade.id, "TRADE", { fee: makerFeeStr, feeRole: "MAKER" });
+
+            //update maker order (SELL maker: reserved in base, consumed = fillQty)
+            await updateOrderFill(client, resting.id, qtyStr, qtyStr, makerStatus);
+
+            if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
+                const newConsumed = D(resting.reserved_consumed).plus(D(qtyStr));
+                const excess = D(resting.reserved_amount).minus(newConsumed);
+                if (excess.gt(0)) await releaseReserved(client, resting.reserved_wallet_id, toFixed8(excess));
+            }
+        } else {
             //Maker (buyer): consume reserved quote (cost + maker fee), credit base.
             //The reserve was sized at maxFeeBps, so it always covers the fee.
             const makerCostPlusFee = toFixed8(D(quoteStr).plus(D(makerFeeStr)));
@@ -507,8 +706,6 @@ async function placeOrderInternal(
                 "TRADE_BUY", trade.id, "TRADE");
 
             //Update maker order (BUY maker: reserved in quote, consumed = cost + maker fee)
-            const newMakerFilled = D(resting.qty_filled).plus(fillQty);
-            const makerStatus = newMakerFilled.gte(D(resting.qty)) ? "FILLED" : "PARTIALLY_FILLED";
             await updateOrderFill(client, resting.id, qtyStr, makerCostPlusFee, makerStatus);
 
             if (makerStatus === "FILLED" && resting.reserved_wallet_id) {
@@ -520,6 +717,25 @@ async function placeOrderInternal(
 
         fills.push(trade);
         lastFillPrice = fillPrice
+    }
+
+    // ── Phase I2: Cancel resting ISOLATED orders the fill-time check stopped ──
+    const canceledMakers: CanceledMaker[] = [];
+    for (const { resting, reason } of cancelMakers.values()) {
+        const row = (await findOrderByIdForUpdate(client, resting.id))!;
+        const releasable = D(row.reserved_amount).minus(D(row.reserved_consumed));
+        if (releasable.gt(0) && row.reserved_wallet_id) {
+            await releaseReserved(client, row.reserved_wallet_id, toFixed8(releasable));
+        }
+        const { rows: [canceled] } = await timedQuery<OrderRow>(client, "matchingEngine.cancelMaker",
+            `UPDATE orders SET status = 'CANCELED', cancel_reason = $2 WHERE id = $1
+             RETURNING id, user_id, pair_id, side, type, limit_price, qty, qty_filled, status,
+                       reserved_wallet_id, reserved_amount, reserved_consumed, created_at, updated_at, source`,
+            [resting.id, reason],
+        );
+        logger.info({ orderId: resting.id, userId: resting.user_id, pairId, reason, released: toFixed8(releasable) },
+            "resting_isolated_order_canceled");
+        canceledMakers.push({ order: canceled, reason, releasedAmount: toFixed8(releasable) });
     }
 
     // ── Phase J: System fill (MARKET only) ──
@@ -543,7 +759,14 @@ async function placeOrderInternal(
             isSystemFill: true,
         });
 
-        if (side === "BUY") {
+        if (isolated) {
+            const { leg } = await settleIsolatedFillTx(client, {
+                userId, pairId, scope: posScope, side, qty: sysQtyStr, price: toFixed8(fillPrice),
+                fee: sysFeeStr, feeRole: "TAKER", leverage: orderLeverage, mmrBps,
+                usdWalletId: quoteWallet.id, tradeId: trade.id, ts: new Date(trade.executed_at).getTime(),
+            });
+            isolatedLegs.set(`${trade.id}:TAKER`, leg);
+        } else if (side === "BUY") {
             const sysCostPlusFee = toFixed8(D(sysQuoteStr).plus(D(sysFeeStr)));
             await debitAvailableTx(client, quoteWallet.id, sysCostPlusFee,
                 "TRADE_BUY", trade.id, "TRADE", { fee: sysFeeStr, feeRole: "TAKER" });
@@ -610,7 +833,7 @@ async function placeOrderInternal(
         }
     }
 
-    return { order: updatedOrder, fills, reference, walletIds };
+    return { order: updatedOrder, fills, reference, walletIds, isolatedLegs, canceledMakers };
 }
 
 /**
@@ -628,12 +851,13 @@ export async function placeOrder(
     matchId?: string | null,
     source?: string | null,
     pricing?: CollarReference,
+    leverage?: number | null,
 ): Promise<PlaceOrderResult> {
     const client = await pool.connect();
 
     try {
         await client.query("BEGIN");
-        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing);
+        const result = await placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage);
         await client.query("COMMIT");
         return result;
     } catch (err) {
@@ -660,8 +884,9 @@ export async function placeOrderTx(
     matchId?: string | null,
     source?: string | null,
     pricing?: CollarReference,
+    leverage?: number | null,
 ): Promise<PlaceOrderResult> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage);
 }
 
 /**

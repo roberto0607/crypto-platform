@@ -167,6 +167,17 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
     expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][ARG_MATCH_ID]).toBeNull();
   });
 
+  // Leverage (PR 2 of the leverage plan) rides in the JSON payload: it must
+  // reach phase6 as the same number, and stay absent when not sent.
+  it("round-trips an order's leverage through the payload", async () => {
+    await enqueueRedis(PAIR_ID, "u-lev", { ...payload(PAIR_ID), leverage: 10 }, undefined, "req-lev", undefined, undefined, null);
+    expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][1]).toEqual({ ...payload(PAIR_ID), leverage: 10 });
+
+    vi.mocked(placeOrderWithSnapshot).mockClear();
+    await enqueueRedis(PAIR_ID, "u-lev", payload(PAIR_ID), undefined, "req-lev-none", undefined, undefined, null);
+    expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][1]).not.toHaveProperty("leverage");
+  });
+
   // Engine rejections are plain `new Error("<code>")` — they must reach the
   // client with their code across Redis, not as a 500 queue_processing_error
   // (the in-memory path always preserved them via the route's toAppError).

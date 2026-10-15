@@ -3,10 +3,14 @@ import type { PositionRow } from "./positionRepo";
 import { D, ZERO, toFixed8 } from "../utils/decimal";
 import { getSnapshotForUser } from "../replay/replayEngine";
 import { findPairById } from "../trading/pairRepo";
+import { positionValue } from "./accountEquity";
 
 export type PositionWithPnl = PositionRow & {
     unrealized_pnl_quote: string;
     current_price: string;
+    /** Only on ISOLATED rows (leverage): the position's margin. */
+    margin_mode?: "ISOLATED";
+    isolated_margin?: string;
 };
 
 export type PnlSummary = {
@@ -49,9 +53,10 @@ export async function getPositions(
     conditions.push(`base_qty != 0`);
     const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
-    const result = await pool.query<PositionRow>(
+    const result = await pool.query<PositionRow & { margin_mode: string; isolated_margin: string }>(
         `
-        SELECT user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote, updated_at
+        SELECT user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote, updated_at,
+               margin_mode, isolated_margin
         FROM positions
         ${whereClause}
         ORDER BY updated_at DESC
@@ -61,19 +66,19 @@ export async function getPositions(
 
     const positions: PositionWithPnl[] = [];
 
-    for (const pos of result.rows) {
-        const baseQty = D(pos.base_qty);
-
+    for (const { margin_mode, isolated_margin, ...pos } of result.rows) {
         // Get current price from snapshot cascade
         const snapshot = await getSnapshotForUser(userId, pos.pair_id);
         const currentPrice = D(snapshot.last);
-        const avgEntry = D(pos.avg_entry_price);
-        const unrealized = baseQty.mul(currentPrice.minus(avgEntry));
+        // SPOT: base × (mark − entry), as before. ISOLATED: loss capped at the margin.
+        const { unrealized } = positionValue({ ...pos, margin_mode, isolated_margin }, currentPrice);
 
         positions.push({
             ...pos,
             unrealized_pnl_quote: toFixed8(unrealized),
             current_price: toFixed8(currentPrice),
+            // SPOT rows keep exactly their pre-leverage shape.
+            ...(margin_mode === "ISOLATED" ? { margin_mode, isolated_margin } : {}),
         });
     }
 

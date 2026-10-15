@@ -1,0 +1,901 @@
+{
+  "wallets": [
+    {
+      "id": "w:alice:BTC:free",
+      "balance": "0.03000000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:alice:USD:free",
+      "balance": "97618.69233500",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:bob:BTC:free",
+      "balance": "0.14000000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:bob:USD:free",
+      "balance": "38623.71890000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:bot:BTC:free",
+      "balance": "4.94000000",
+      "reserved": "0.15000000",
+      "closed": false
+    },
+    {
+      "id": "w:bot:USD:free",
+      "balance": "504969.00995000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:alice:USD:comp",
+      "balance": "11794.89950000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:alice:BTC:comp",
+      "balance": "0.10000000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:alice:BTC:match",
+      "balance": "0.00000000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:alice:USD:match",
+      "balance": "10000.00000000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:bob:USD:match",
+      "balance": "12456.92990000",
+      "reserved": "0.00000000",
+      "closed": false
+    },
+    {
+      "id": "w:bob:BTC:match",
+      "balance": "-0.03000000",
+      "reserved": "0.00000000",
+      "closed": false
+    }
+  ],
+  "ledger": [
+    {
+      "wallet_id": "w:alice:USD:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "-8305.15050000",
+      "balance_after": "91694.84950000",
+      "reference_id": "t1",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "4.15050000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:alice:BTC:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.10000000",
+      "balance_after": "0.10000000",
+      "reference_id": "t1",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:alice:USD:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "-4152.32512500",
+      "balance_after": "87542.52437500",
+      "reference_id": "t2",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "2.07512500",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:alice:BTC:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.05000000",
+      "balance_after": "0.15000000",
+      "reference_id": "t2",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bot:BTC:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.05000000",
+      "balance_after": "4.95000000",
+      "reference_id": "t2",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bot:USD:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "4149.41995000",
+      "balance_after": "504149.41995000",
+      "reference_id": "t2",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "0.83005000",
+        "feeRole": "MAKER"
+      }
+    },
+    {
+      "wallet_id": "w:alice:BTC:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.08000000",
+      "balance_after": "0.07000000",
+      "reference_id": "t3",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:alice:USD:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "6716.64000000",
+      "balance_after": "94259.16437500",
+      "reference_id": "t3",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "3.36000000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:BTC:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.10000000",
+      "balance_after": "-0.10000000",
+      "reference_id": "t4",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bob:USD:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "8395.80000000",
+      "balance_after": "58395.80000000",
+      "reference_id": "t4",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "4.20000000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:USD:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "-3361.88010000",
+      "balance_after": "55033.91990000",
+      "reference_id": "t5",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "1.68010000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:BTC:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.04000000",
+      "balance_after": "-0.06000000",
+      "reference_id": "t5",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:alice:BTC:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.04000000",
+      "balance_after": "0.03000000",
+      "reference_id": "t5",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:alice:USD:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "3359.52796000",
+      "balance_after": "97618.69233500",
+      "reference_id": "t5",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "0.67204000",
+        "feeRole": "MAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:USD:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "-16410.20100000",
+      "balance_after": "38623.71890000",
+      "reference_id": "t6",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "8.20100000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:BTC:free",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.20000000",
+      "balance_after": "0.14000000",
+      "reference_id": "t6",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bot:BTC:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.01000000",
+      "balance_after": "4.94000000",
+      "reference_id": "t7",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bot:USD:free",
+      "entry_type": "TRADE_SELL",
+      "amount": "819.59000000",
+      "balance_after": "504969.00995000",
+      "reference_id": "t7",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "0.41000000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:alice:USD:comp",
+      "entry_type": "TRADE_BUY",
+      "amount": "-8205.10050000",
+      "balance_after": "11794.89950000",
+      "reference_id": "t8",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "4.10050000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:alice:BTC:comp",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.10000000",
+      "balance_after": "0.10000000",
+      "reference_id": "t8",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:alice:USD:match",
+      "entry_type": "MATCH_FUNDING",
+      "amount": "10000.00000000",
+      "balance_after": "10000.00000000",
+      "reference_id": "match",
+      "reference_type": "MATCH",
+      "metadata": {
+        "matchId": "match"
+      }
+    },
+    {
+      "wallet_id": "w:bob:USD:match",
+      "entry_type": "MATCH_FUNDING",
+      "amount": "10000.00000000",
+      "balance_after": "10000.00000000",
+      "reference_id": "match",
+      "reference_type": "MATCH",
+      "metadata": {
+        "matchId": "match"
+      }
+    },
+    {
+      "wallet_id": "w:bob:BTC:match",
+      "entry_type": "TRADE_SELL",
+      "amount": "-0.05000000",
+      "balance_after": "-0.05000000",
+      "reference_id": "t9",
+      "reference_type": "TRADE",
+      "metadata": {}
+    },
+    {
+      "wallet_id": "w:bob:USD:match",
+      "entry_type": "TRADE_SELL",
+      "amount": "4097.95000000",
+      "balance_after": "14097.95000000",
+      "reference_id": "t9",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "2.05000000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:USD:match",
+      "entry_type": "TRADE_BUY",
+      "amount": "-1641.02010000",
+      "balance_after": "12456.92990000",
+      "reference_id": "t10",
+      "reference_type": "TRADE",
+      "metadata": {
+        "fee": "0.82010000",
+        "feeRole": "TAKER"
+      }
+    },
+    {
+      "wallet_id": "w:bob:BTC:match",
+      "entry_type": "TRADE_BUY",
+      "amount": "0.02000000",
+      "balance_after": "-0.03000000",
+      "reference_id": "t10",
+      "reference_type": "TRADE",
+      "metadata": {}
+    }
+  ],
+  "orders": [
+    {
+      "id": "o1",
+      "user_id": "alice",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.10000000",
+      "qty_filled": "0.10000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o2",
+      "user_id": "bot",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "LIMIT",
+      "limit_price": "83005.00000000",
+      "qty": "0.20000000",
+      "qty_filled": "0.05000000",
+      "status": "PARTIALLY_FILLED",
+      "reserved_wallet_id": "w:bot:BTC:free",
+      "reserved_amount": "0.20000000",
+      "reserved_consumed": "0.05000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o3",
+      "user_id": "alice",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.05000000",
+      "qty_filled": "0.05000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o4",
+      "user_id": "alice",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.08000000",
+      "qty_filled": "0.08000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o5",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.10000000",
+      "qty_filled": "0.10000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o6",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "LIMIT",
+      "limit_price": "80000.00000000",
+      "qty": "0.05000000",
+      "qty_filled": "0.00000000",
+      "status": "CANCELED",
+      "reserved_wallet_id": "w:bob:USD:free",
+      "reserved_amount": "4002.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o7",
+      "user_id": "alice",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "LIMIT",
+      "limit_price": "84005.00000000",
+      "qty": "0.04000000",
+      "qty_filled": "0.04000000",
+      "status": "FILLED",
+      "reserved_wallet_id": "w:alice:BTC:free",
+      "reserved_amount": "0.04000000",
+      "reserved_consumed": "0.04000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o8",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.04000000",
+      "qty_filled": "0.04000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o9",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.20000000",
+      "qty_filled": "0.20000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o10",
+      "user_id": "bot",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.01000000",
+      "qty_filled": "0.01000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o11",
+      "user_id": "alice",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.10000000",
+      "qty_filled": "0.10000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": "comp",
+      "match_id": null,
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o12",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "SELL",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.05000000",
+      "qty_filled": "0.05000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": "match",
+      "source": null,
+      "leverage": "1.00"
+    },
+    {
+      "id": "o13",
+      "user_id": "bob",
+      "pair_id": "pair",
+      "side": "BUY",
+      "type": "MARKET",
+      "limit_price": null,
+      "qty": "0.02000000",
+      "qty_filled": "0.02000000",
+      "status": "FILLED",
+      "reserved_wallet_id": null,
+      "reserved_amount": "0.00000000",
+      "reserved_consumed": "0.00000000",
+      "competition_id": null,
+      "match_id": "match",
+      "source": null,
+      "leverage": "1.00"
+    }
+  ],
+  "trades": [
+    {
+      "id": "t1",
+      "buy_order_id": "o1",
+      "sell_order_id": null,
+      "price": "83010.00000000",
+      "qty": "0.10000000",
+      "quote_amount": "8301.00000000",
+      "fee_amount": "4.15050000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t2",
+      "buy_order_id": "o3",
+      "sell_order_id": "o2",
+      "price": "83005.00000000",
+      "qty": "0.05000000",
+      "quote_amount": "4150.25000000",
+      "fee_amount": "2.07512500",
+      "is_system_fill": false
+    },
+    {
+      "id": "t3",
+      "buy_order_id": null,
+      "sell_order_id": "o4",
+      "price": "84000.00000000",
+      "qty": "0.08000000",
+      "quote_amount": "6720.00000000",
+      "fee_amount": "3.36000000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t4",
+      "buy_order_id": null,
+      "sell_order_id": "o5",
+      "price": "84000.00000000",
+      "qty": "0.10000000",
+      "quote_amount": "8400.00000000",
+      "fee_amount": "4.20000000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t5",
+      "buy_order_id": "o8",
+      "sell_order_id": "o7",
+      "price": "84005.00000000",
+      "qty": "0.04000000",
+      "quote_amount": "3360.20000000",
+      "fee_amount": "1.68010000",
+      "is_system_fill": false
+    },
+    {
+      "id": "t6",
+      "buy_order_id": "o9",
+      "sell_order_id": null,
+      "price": "82010.00000000",
+      "qty": "0.20000000",
+      "quote_amount": "16402.00000000",
+      "fee_amount": "8.20100000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t7",
+      "buy_order_id": null,
+      "sell_order_id": "o10",
+      "price": "82000.00000000",
+      "qty": "0.01000000",
+      "quote_amount": "820.00000000",
+      "fee_amount": "0.41000000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t8",
+      "buy_order_id": "o11",
+      "sell_order_id": null,
+      "price": "82010.00000000",
+      "qty": "0.10000000",
+      "quote_amount": "8201.00000000",
+      "fee_amount": "4.10050000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t9",
+      "buy_order_id": null,
+      "sell_order_id": "o12",
+      "price": "82000.00000000",
+      "qty": "0.05000000",
+      "quote_amount": "4100.00000000",
+      "fee_amount": "2.05000000",
+      "is_system_fill": true
+    },
+    {
+      "id": "t10",
+      "buy_order_id": "o13",
+      "sell_order_id": null,
+      "price": "82010.00000000",
+      "qty": "0.02000000",
+      "quote_amount": "1640.20000000",
+      "fee_amount": "0.82010000",
+      "is_system_fill": true
+    }
+  ],
+  "positions": [
+    {
+      "user_id": "alice",
+      "competition_id": "comp",
+      "match_id": null,
+      "base_qty": "0.10000000",
+      "avg_entry_price": "82010.00000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "4.10050000",
+      "margin_mode": "SPOT",
+      "leverage": "1.00",
+      "isolated_margin": "0.00000000",
+      "liq_price": null,
+      "epoch": 0,
+      "opened_at": null
+    },
+    {
+      "user_id": "alice",
+      "competition_id": null,
+      "match_id": null,
+      "base_qty": "0.03000000",
+      "avg_entry_price": "83008.33333333",
+      "realized_pnl_quote": "119.19999999",
+      "fees_paid_quote": "10.25766500",
+      "margin_mode": "SPOT",
+      "leverage": "1.00",
+      "isolated_margin": "0.00000000",
+      "liq_price": null,
+      "epoch": 0,
+      "opened_at": null
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": "match",
+      "base_qty": "-0.03000000",
+      "avg_entry_price": "82000.00000000",
+      "realized_pnl_quote": "-0.20000000",
+      "fees_paid_quote": "2.87010000",
+      "margin_mode": "SPOT",
+      "leverage": "1.00",
+      "isolated_margin": "0.00000000",
+      "liq_price": null,
+      "epoch": 0,
+      "opened_at": null
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": null,
+      "base_qty": "0.14000000",
+      "avg_entry_price": "82010.00000000",
+      "realized_pnl_quote": "119.20000000",
+      "fees_paid_quote": "14.08110000",
+      "margin_mode": "SPOT",
+      "leverage": "1.00",
+      "isolated_margin": "0.00000000",
+      "liq_price": null,
+      "epoch": 0,
+      "opened_at": null
+    },
+    {
+      "user_id": "bot",
+      "competition_id": null,
+      "match_id": null,
+      "base_qty": "-0.06000000",
+      "avg_entry_price": "82837.50000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "1.24005000",
+      "margin_mode": "SPOT",
+      "leverage": "1.00",
+      "isolated_margin": "0.00000000",
+      "liq_price": null,
+      "epoch": 0,
+      "opened_at": null
+    }
+  ],
+  "equity": [
+    {
+      "user_id": "alice",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "99995.84950000",
+      "cash_quote": "91694.84950000",
+      "holdings_quote": "8301.00000000",
+      "unrealized_pnl_quote": "0.00000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "4.15050000"
+    },
+    {
+      "user_id": "bot",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "-0.83005000",
+      "cash_quote": null,
+      "holdings_quote": null,
+      "unrealized_pnl_quote": null,
+      "realized_pnl_quote": null,
+      "fees_paid_quote": null
+    },
+    {
+      "user_id": "alice",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "99993.27437500",
+      "cash_quote": "87542.52437500",
+      "holdings_quote": "12450.75000000",
+      "unrealized_pnl_quote": "-0.49999999",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "6.22562500"
+    },
+    {
+      "user_id": "alice",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "100139.16437500",
+      "cash_quote": "94259.16437500",
+      "holdings_quote": "5880.00000000",
+      "unrealized_pnl_quote": "69.41666666",
+      "realized_pnl_quote": "79.33333333",
+      "fees_paid_quote": "9.58562500"
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "49995.80000000",
+      "cash_quote": "58395.80000000",
+      "holdings_quote": "-8400.00000000",
+      "unrealized_pnl_quote": "0.00000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "4.20000000"
+    },
+    {
+      "user_id": "alice",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "108.94233499",
+      "cash_quote": null,
+      "holdings_quote": null,
+      "unrealized_pnl_quote": null,
+      "realized_pnl_quote": null,
+      "fees_paid_quote": null
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "49993.61990000",
+      "cash_quote": "55033.91990000",
+      "holdings_quote": "-5040.30000000",
+      "unrealized_pnl_quote": "-0.30000000",
+      "realized_pnl_quote": "-0.20000000",
+      "fees_paid_quote": "5.88010000"
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "50105.11890000",
+      "cash_quote": "38623.71890000",
+      "holdings_quote": "11481.40000000",
+      "unrealized_pnl_quote": "0.00000000",
+      "realized_pnl_quote": "119.20000000",
+      "fees_paid_quote": "14.08110000"
+    },
+    {
+      "user_id": "bot",
+      "competition_id": null,
+      "match_id": null,
+      "equity_quote": "500049.00995000",
+      "cash_quote": "504969.00995000",
+      "holdings_quote": "-4920.00000000",
+      "unrealized_pnl_quote": "50.25000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "1.24005000"
+    },
+    {
+      "user_id": "alice",
+      "competition_id": "comp",
+      "match_id": null,
+      "equity_quote": "19995.89950000",
+      "cash_quote": "11794.89950000",
+      "holdings_quote": "8201.00000000",
+      "unrealized_pnl_quote": "0.00000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "4.10050000"
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": "match",
+      "equity_quote": "9997.95000000",
+      "cash_quote": "14097.95000000",
+      "holdings_quote": "-4100.00000000",
+      "unrealized_pnl_quote": "0.00000000",
+      "realized_pnl_quote": "0.00000000",
+      "fees_paid_quote": "2.05000000"
+    },
+    {
+      "user_id": "bob",
+      "competition_id": null,
+      "match_id": "match",
+      "equity_quote": "9996.62990000",
+      "cash_quote": "12456.92990000",
+      "holdings_quote": "-2460.30000000",
+      "unrealized_pnl_quote": "-0.30000000",
+      "realized_pnl_quote": "-0.20000000",
+      "fees_paid_quote": "2.87010000"
+    }
+  ]
+}

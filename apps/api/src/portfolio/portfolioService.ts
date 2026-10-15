@@ -8,6 +8,7 @@ import { logger } from "../observability/logContext";
 import type { PortfolioSummary, PortfolioSnapshot, PerformanceSummary } from "./portfolioTypes";
 import type { EquityEntry } from "./performance";
 import { walletScopeFilter } from "../wallets/walletRepo";
+import { positionValue } from "../analytics/accountEquity";
 import {
     computeTotalReturn,
     computeMaxDrawdown,
@@ -84,8 +85,8 @@ export async function getPortfolioSummary(
     const feesPaid = D(allPosRows[0].total_fees);
 
     for (const pos of openPositions) {
-        const baseQty = D(pos.base_qty);
-        holdingsQuote = holdingsQuote.plus(baseQty.mul(D(pos.current_price)));
+        // SPOT: base × mark. ISOLATED: margin + uPnL (accountEquity).
+        holdingsQuote = holdingsQuote.plus(positionValue(pos, D(pos.current_price)).holdings);
         unrealizedPnl = unrealizedPnl.plus(D(pos.unrealized_pnl_quote));
     }
 
@@ -240,8 +241,11 @@ export async function writePortfolioSnapshot(
         avg_entry_price: string;
         realized_pnl_quote: string;
         fees_paid_quote: string;
+        margin_mode: string;
+        isolated_margin: string;
     }>(
-        `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
+        `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote,
+                margin_mode, isolated_margin
          FROM positions WHERE user_id = $1 ${compPosFilter}`,
         posParams,
     );
@@ -267,10 +271,10 @@ export async function writePortfolioSnapshot(
             markPrice = D(snap.last);
         }
 
-        holdingsQuote = holdingsQuote.plus(baseQty.mul(markPrice));
-        unrealizedPnl = unrealizedPnl.plus(
-            baseQty.mul(markPrice.minus(D(pos.avg_entry_price))),
-        );
+        // SPOT: base × mark. ISOLATED: margin + uPnL (accountEquity).
+        const value = positionValue(pos, markPrice);
+        holdingsQuote = holdingsQuote.plus(value.holdings);
+        unrealizedPnl = unrealizedPnl.plus(value.unrealized);
     }
 
     const equityQuote = cashQuote.plus(holdingsQuote);
@@ -362,8 +366,11 @@ export async function writePortfolioSnapshotTx(
         avg_entry_price: string;
         realized_pnl_quote: string;
         fees_paid_quote: string;
+        margin_mode: string;
+        isolated_margin: string;
     }>(client, "portfolioService.writePortfolioSnapshotTx.positions",
-        `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
+        `SELECT pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote,
+                margin_mode, isolated_margin
          FROM positions
          WHERE user_id = $1
            AND COALESCE(competition_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
@@ -392,10 +399,10 @@ export async function writePortfolioSnapshotTx(
             markPrice = D(snap.last);
         }
 
-        holdingsQuote = holdingsQuote.plus(baseQty.mul(markPrice));
-        unrealizedPnl = unrealizedPnl.plus(
-            baseQty.mul(markPrice.minus(D(pos.avg_entry_price))),
-        );
+        // SPOT: base × mark. ISOLATED: margin + uPnL (accountEquity).
+        const value = positionValue(pos, markPrice);
+        holdingsQuote = holdingsQuote.plus(value.holdings);
+        unrealizedPnl = unrealizedPnl.plus(value.unrealized);
     }
 
     const equityQuote = cashQuote.plus(holdingsQuote);
