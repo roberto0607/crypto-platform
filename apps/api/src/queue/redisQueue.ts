@@ -169,7 +169,7 @@ export async function initRedisQueue(): Promise<void> {
 export async function enqueueRedis(
   pairId: string,
   userId: string,
-  payload: { pairId: string; side: string; type: string; qty: string; limitPrice?: string },
+  payload: { pairId: string; side: string; type: string; qty: string; limitPrice?: string; leverage?: number },
   idempotencyKey: string | undefined,
   requestId: string,
   timeoutMs?: number,

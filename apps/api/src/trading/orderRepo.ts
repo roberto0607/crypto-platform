@@ -43,12 +43,16 @@ export async function createOrder(
         // Provenance tag. Omitted/null = manual user order (the default
         // for every existing caller — no behavior change).
         source?: string | null;
+        // The leverage and margin model the order was placed under
+        // (migrations 096/098). Omitted = 1x SPOT, the column defaults.
+        leverage?: string;
+        marginMode?: "SPOT" | "ISOLATED";
     }
 ): Promise<OrderRow> {
     const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
-        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id, source)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id, source, leverage, margin_mode)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING ${ORDER_COLUMNS}
         `,
         [
@@ -64,6 +68,8 @@ export async function createOrder(
             params.competitionId ?? null,
             params.matchId ?? null,
             params.source ?? null,
+            params.leverage ?? "1",
+            params.marginMode ?? "SPOT",
         ]
     );
 

@@ -80,6 +80,8 @@ export async function placeOrderWithSnapshot(
         type: "MARKET" | "LIMIT";
         qty: string;
         limitPrice?: string;
+        /** Requested leverage (omitted = 1x, or the leverage already in force). */
+        leverage?: number;
     },
     idempotencyKey?: string,
     requestId?: string,
@@ -210,6 +212,7 @@ export async function placeOrderWithSnapshot(
             resolvedMatchId,
             resolvedSource,
             replayPricing,
+            body.leverage ?? null,
         );
 
         // ── 5. Post-fill processing ──
@@ -253,19 +256,24 @@ export async function placeOrderWithSnapshot(
                     // ledger can't diverge.
                     const takerFee = computeFee(quoteAmount, "TAKER", pair, userId);
 
-                    // Apply fill to taker's position
-                    const takerPos = await applyFillToPositionTx(client, {
-                        userId,
-                        pairId: body.pairId,
-                        side: body.side,
-                        qty: fillQty,
-                        price: fillPrice,
-                        feeQuote: takerFee.feeAmount,
-                        ts: executedAtMs,
-                        competitionId,
-                        matchId: resolvedMatchId,
-                    });
-                    noteClose(userId, body.side, fillQty, takerPos.base_qty, { competitionId: competitionId ?? null, matchId: resolvedMatchId });
+                    // Apply fill to taker's position. An ISOLATED leg was
+                    // already applied by the matching engine (its USD moves
+                    // depend on the position) — never apply it twice.
+                    const takerIso = matchResult.isolatedLegs?.get(`${fill.id}:TAKER`);
+                    const takerBaseQty = takerIso
+                        ? takerIso.baseQtyAfter
+                        : (await applyFillToPositionTx(client, {
+                            userId,
+                            pairId: body.pairId,
+                            side: body.side,
+                            qty: fillQty,
+                            price: fillPrice,
+                            feeQuote: takerFee.feeAmount,
+                            ts: executedAtMs,
+                            competitionId,
+                            matchId: resolvedMatchId,
+                        })).base_qty;
+                    noteClose(userId, body.side, fillQty, takerBaseQty, { competitionId: competitionId ?? null, matchId: resolvedMatchId });
 
                     // Journal: record taker fill for FIFO P&L.
                     // NOTE: open_lots / closed_trades don't have match_id
@@ -278,7 +286,7 @@ export async function placeOrderWithSnapshot(
                         side: body.side,
                         price: fillPrice,
                         qty: fillQty,
-                        feeQuote: takerFee.feeAmount,
+                        feeQuote: takerIso ? takerIso.feeBooked : takerFee.feeAmount,
                         filledAt: new Date(fill.executed_at),
                         competitionId: competitionId ?? null,
                     });
@@ -316,18 +324,21 @@ export async function placeOrderWithSnapshot(
                             const makerSide = body.side === "BUY" ? "SELL" : "BUY";
                             const makerFee = computeFee(quoteAmount, "MAKER", pair, makerUserId);
 
-                            const makerPos = await applyFillToPositionTx(client, {
-                                userId: makerUserId,
-                                pairId: body.pairId,
-                                side: makerSide as "BUY" | "SELL",
-                                qty: fillQty,
-                                price: fillPrice,
-                                feeQuote: makerFee.feeAmount,
-                                ts: executedAtMs,
-                                competitionId: makerCompetitionId,
-                                matchId: makerMatchId,
-                            });
-                            noteClose(makerUserId, makerSide as "BUY" | "SELL", fillQty, makerPos.base_qty, {
+                            const makerIso = matchResult.isolatedLegs?.get(`${fill.id}:MAKER`);
+                            const makerBaseQty = makerIso
+                                ? makerIso.baseQtyAfter
+                                : (await applyFillToPositionTx(client, {
+                                    userId: makerUserId,
+                                    pairId: body.pairId,
+                                    side: makerSide as "BUY" | "SELL",
+                                    qty: fillQty,
+                                    price: fillPrice,
+                                    feeQuote: makerFee.feeAmount,
+                                    ts: executedAtMs,
+                                    competitionId: makerCompetitionId,
+                                    matchId: makerMatchId,
+                                })).base_qty;
+                            noteClose(makerUserId, makerSide as "BUY" | "SELL", fillQty, makerBaseQty, {
                                 competitionId: makerCompetitionId,
                                 matchId: makerMatchId,
                             });
@@ -341,7 +352,7 @@ export async function placeOrderWithSnapshot(
                                 side: makerSide as "BUY" | "SELL",
                                 price: fillPrice,
                                 qty: fillQty,
-                                feeQuote: makerFee.feeAmount,
+                                feeQuote: makerIso ? makerIso.feeBooked : makerFee.feeAmount,
                                 filledAt: new Date(fill.executed_at),
                                 competitionId: makerCompetitionId,
                             });

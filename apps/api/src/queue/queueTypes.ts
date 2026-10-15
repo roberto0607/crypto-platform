@@ -10,6 +10,9 @@ export interface QueueJob {
     type: "MARKET" | "LIMIT";
     qty: string;
     limitPrice?: string;
+    // Requested leverage (a JSON number, so it survives the Redis queue's
+    // JSON round trip as-is). Omitted = 1x / the leverage already in force.
+    leverage?: number;
   };
   idempotencyKey?: string;
   competitionId?: string;
