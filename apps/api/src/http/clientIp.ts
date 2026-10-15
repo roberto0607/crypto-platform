@@ -1,21 +1,37 @@
 /**
- * The real client IP behind Cloudflare → Railway edge → this process.
+ * The real client IP behind [Cloudflare →] Railway edge → Railway internal
+ * proxy → this process.
  *
- * Fastify's `req.ip` honors TRUST_PROXY_HOPS (http/trustProxy.ts). With the
- * production default of 1 hop it is the address Railway's edge saw, i.e. the
- * right-most X-Forwarded-For entry. For playtradr.com traffic that is a
- * Cloudflare edge server, shared by every visitor on the same PoP, so keying
- * anything on it would lump unrelated users together.
+ * Measured in prod (2026-10-14, temporary /debug/client-ip):
  *
- * Cloudflare puts the visitor's address in CF-Connecting-IP. That header is
- * only trustworthy when the request really arrived from Cloudflare: anyone can
- * hit the *.up.railway.app domain directly and send their own
- * CF-Connecting-IP. So we honor it only when the edge address is inside
- * Cloudflare's published ranges; otherwise the edge address IS the client.
+ *   TCP peer         100.64.0.2   (Railway internal proxy)
+ *   X-Forwarded-For  "<address that connected to Railway's edge>, <the edge, e.g. 152.233.47.68>"
+ *
+ * Railway's edge discards any client-sent X-Forwarded-For and starts a fresh
+ * one with the address that connected to it. Fastify's `req.ip` honors
+ * TRUST_PROXY_HOPS (http/trustProxy.ts); the production default of 2 peels
+ * off the internal proxy and the edge, so `req.ip` is XFF[-2]: the address
+ * that connected to Railway's edge. That stays correct even if the edge ever
+ * appended instead of rewriting — a forged entry would sit further left.
+ *
+ * For playtradr.com traffic that address is a Cloudflare edge server, shared
+ * by every visitor on the same PoP, so keying anything on it would lump
+ * unrelated users together. Cloudflare puts the visitor's address in
+ * CF-Connecting-IP, but Railway passes that header through untouched, so it is
+ * only trustworthy when the request really arrived from Cloudflare: anyone
+ * can hit the *.up.railway.app domain directly and send their own. We honor
+ * it only when `req.ip` is inside Cloudflare's published ranges; otherwise
+ * `req.ip` IS the client.
+ *
+ * X-Real-IP is deliberately not used. Railway sets it, but its rules aren't
+ * documented: it already resolves Cloudflare traffic to the visitor, so
+ * Railway applies its own Cloudflare trust logic that we can't inspect, test
+ * or pin. The XFF + range check gives the same answers from rules we own.
  *
  * Residual gap: the range check proves "came from Cloudflare", not "came from
  * our Cloudflare zone" — another Cloudflare customer's Worker could reach the
- * origin. Closing that needs Authenticated Origin Pulls (dashboard config).
+ * origin via the public *.up.railway.app domain. Closing that means removing
+ * that domain (Authenticated Origin Pulls can't work: Railway terminates TLS).
  * Acceptable here: every consumer (rate limits, login lockout, audit log) is a
  * fairness/forensics control, not an auth boundary.
  *
