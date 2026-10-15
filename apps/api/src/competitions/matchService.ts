@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import Decimal from "decimal.js";
 import type { TriggerOrderRow } from "../triggers/triggerTypes.js";
 import { triggerCanceledEvent, MATCH_ENDED_REASON } from "../triggers/positionCloseTriggers.js";
 import { cancelMatchTriggersTx } from "../triggers/triggerRepo.js";
@@ -31,6 +32,8 @@ import {
 } from "./matchWallets.js";
 import type { AppEvent } from "../events/eventTypes.js";
 import { deleteMatchConversation } from "../chat/chatService.js";
+import { config } from "../config.js";
+import { pairRiskParams, settleIsolatedFillTx } from "../trading/isolatedSettlement.js";
 
 const logger = rootLogger.child({ module: "matchService" });
 
@@ -55,6 +58,9 @@ export interface MatchRow {
     winner_id: string | null;
     forfeit_user_id: string | null;
     elo_delta: number | null;
+    /** Stamped at accept (leverage PR 3): ISOLATED while LEVERAGE_ENABLED, else SPOT. */
+    margin_mode: "SPOT" | "ISOLATED";
+    max_leverage: string;
     started_at: string | null;
     ends_at: string | null;
     completed_at: string | null;
@@ -230,12 +236,22 @@ export async function acceptMatch(matchId: string, acceptingUserId: string): Pro
         const now = new Date();
         const endsAt = new Date(now.getTime() + match.duration_hours * 3600_000);
 
+        // Leverage: the match's model and cap are stamped here, so changing
+        // the flag or LEVERAGE_MAX_MATCH never affects a match in progress.
+        // Flag off passes NULLs and leaves the column defaults (SPOT, 1x).
+        const lev = config.leverage;
         const { rows: updated } = await client.query<MatchRow>(
             `UPDATE matches
-             SET status = 'ACTIVE', started_at = $2, ends_at = $3
+             SET status = 'ACTIVE', started_at = $2, ends_at = $3,
+                 margin_mode = COALESCE($4, margin_mode),
+                 max_leverage = COALESCE($5::numeric, max_leverage)
              WHERE id = $1
              RETURNING *`,
-            [matchId, now.toISOString(), endsAt.toISOString()],
+            [
+                matchId, now.toISOString(), endsAt.toISOString(),
+                lev.enabled ? "ISOLATED" : null,
+                lev.enabled ? lev.maxMatch.toFixed(2) : null,
+            ],
         );
 
         if (!updated || updated.length === 0) {
@@ -832,7 +848,14 @@ async function calculatePlayerStats(
     const parsedTradesCount = parseInt(orderCountRows[0]?.count ?? "0", 10);
     const tradesCount = Number.isNaN(parsedTradesCount) ? 0 : parsedTradesCount;
 
-    return playerStatsFromRows(positions, startingCapital, tradesCount);
+    const stats = playerStatsFromRows(positions, startingCapital, tradesCount);
+    // calculateNuancedScore clamps P&L to ±50%. Leverage makes that bite more
+    // often (blowing up and nearly blowing up score the same); v1 keeps the
+    // formula and logs it to decide with data (leverage design §5).
+    if (Math.abs(stats.pnlPct) > 50) {
+        logger.info({ matchId, userId, pnlPct: stats.pnlPct, score: stats.score }, "score_pnl_clamped");
+    }
+    return stats;
 }
 
 /**
@@ -902,6 +925,9 @@ export interface LivePositionRow {
     avgEntryPrice: string;
     realizedPnlQuote: string;
     feesPaidQuote: string;
+    /** ISOLATED rows cap the unrealized loss at the margin. Absent = SPOT. */
+    marginMode?: "SPOT" | "ISOLATED" | string;
+    isolatedMargin?: string;
 }
 
 /**
@@ -914,6 +940,9 @@ export interface LivePositionRow {
  * calculatePlayerStats already does for realized-only, extended with the
  * unrealized term calculatePlayerStats never needed (it only ever runs
  * after closeMatchScopedPositions has already zeroed every row).
+ *
+ * An ISOLATED (leveraged) row's unrealized loss is capped at its margin,
+ * the most the position can lose, so a player's live P&L floors at −100%.
  *
  * currentPriceByPair only needs entries for pairs with an open row -- a
  * missing/non-finite price for one pair falls back to realized-only for
@@ -935,7 +964,11 @@ export function computeLiveMatchPnl(
         if (!baseQty.isZero()) {
             const price = currentPriceByPair.get(pos.pairId);
             if (price !== undefined && Number.isFinite(price)) {
-                total = total.plus(D(computeUnrealizedRowPnl(pos.baseQty, pos.avgEntryPrice, price)));
+                let unrealized = D(computeUnrealizedRowPnl(pos.baseQty, pos.avgEntryPrice, price));
+                if (pos.marginMode === "ISOLATED") {
+                    unrealized = Decimal.max(unrealized, D(pos.isolatedMargin || "0").neg());
+                }
+                total = total.plus(unrealized);
             }
         }
     }
@@ -978,7 +1011,9 @@ export function calculateNuancedScore(
  *      takes them in (pair → wallets → positions), so an in-flight match fill
  *      waits and then hits closed wallets (match_ended) instead of deadlocking
  *   3. force-close positions (score) and settle the wallets to USD at the
- *      same fair price (closing a long at the bid, a short at the ask)
+ *      same fair price (closing a long at the bid, a short at the ask). An
+ *      ISOLATED position settles its margin + P&L (loss-capped) into USD in
+ *      the force-close; it has no base wallet balance to settle
  *   4. close the wallets — final balances kept, nothing moves to free-play
  * Returns the events to publish after COMMIT.
  */
@@ -1028,8 +1063,10 @@ async function closeMatchScopedPositions(
         base_qty: string;
         avg_entry_price: string;
         competition_id: string | null;
+        margin_mode: "SPOT" | "ISOLATED";
+        leverage: string;
     }>(
-        `SELECT user_id, pair_id, base_qty, avg_entry_price, competition_id
+        `SELECT user_id, pair_id, base_qty, avg_entry_price, competition_id, margin_mode, leverage::text
          FROM positions
          WHERE match_id = $1 AND base_qty <> 0
          FOR UPDATE`,
@@ -1062,25 +1099,31 @@ async function closeMatchScopedPositions(
         // live in-match PnL push via computeUnrealizedRowPnl.
         const baseQty = D(pos.base_qty);
         const exitD = close.price;
-        const pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitD.toString()));
+        const isolated = pos.margin_mode === "ISOLATED";
+        let pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitD.toString()));
 
-        await client.query(
-            `UPDATE positions
-             SET realized_pnl_quote = realized_pnl_quote + $3,
-                 base_qty = 0,
-                 avg_entry_price = 0,
-                 updated_at = now()
-             WHERE user_id = $1
-               AND pair_id = $2
-               AND match_id = $4`,
-            [pos.user_id, pos.pair_id, toFixed8(pnl), matchId],
-        );
+        // SPOT: book the P&L on the row here; settleMatchWalletsTx then sells
+        // the base wallet at the same price. ISOLATED holds no base: the
+        // close is settled below like any other close of the position.
+        if (!isolated) {
+            await client.query(
+                `UPDATE positions
+                 SET realized_pnl_quote = realized_pnl_quote + $3,
+                     base_qty = 0,
+                     avg_entry_price = 0,
+                     updated_at = now()
+                 WHERE user_id = $1
+                   AND pair_id = $2
+                   AND match_id = $4`,
+                [pos.user_id, pos.pair_id, toFixed8(pnl), matchId],
+            );
+        }
 
         // Synthetic audit trade. The orders CHECK constraint requires at
         // least one of buy_order_id/sell_order_id to be non-null, so we
         // also synthesize a matching FILLED order to point to. Side is
         // opposite the position direction (SELL closes a long, BUY closes
-        // a short).
+        // a short). It carries the position's model and leverage.
         const closingSide = baseQty.isPositive() ? "SELL" : "BUY";
         const absQty = baseQty.abs();
         const quoteAmt = absQty.mul(exitD);
@@ -1090,17 +1133,18 @@ async function closeMatchScopedPositions(
                 user_id, pair_id, side, type, limit_price,
                 qty, qty_filled, status,
                 reserved_wallet_id, reserved_amount, reserved_consumed,
-                competition_id, match_id
+                competition_id, match_id, margin_mode, leverage
              ) VALUES ($1, $2, $3, 'MARKET', NULL,
                        $4, $4, 'FILLED',
                        NULL, '0', '0',
-                       $5::uuid, $6::uuid)
+                       $5::uuid, $6::uuid, $7, $8)
              RETURNING id`,
-            [pos.user_id, pos.pair_id, closingSide, toFixed8(absQty), pos.competition_id, matchId],
+            [pos.user_id, pos.pair_id, closingSide, toFixed8(absQty), pos.competition_id, matchId,
+                pos.margin_mode, pos.leverage],
         );
         const syntheticOrderId = syntheticOrderRows[0]?.id ?? null;
 
-        await createTrade(client, {
+        const trade = await createTrade(client, {
             pairId: pos.pair_id,
             buyOrderId: closingSide === "BUY" ? syntheticOrderId : null,
             sellOrderId: closingSide === "SELL" ? syntheticOrderId : null,
@@ -1112,6 +1156,39 @@ async function closeMatchScopedPositions(
             isSystemFill: true,
         });
 
+        // ISOLATED: the same settlement as a close through the engine —
+        // margin released, P&L booked with the loss cap (a gap past
+        // bankruptcy loses the margin, never more; the excess is recorded as
+        // LIQUIDATION_SHORTFALL), position flat. Fee-free, like the SPOT
+        // force-close. The match USD wallet is already locked.
+        let shortfall: Decimal | null = null;
+        if (isolated) {
+            const { rows: usdRows } = await client.query<{ id: string }>(
+                `SELECT id FROM wallets
+                 WHERE user_id = $1 AND match_id = $2 AND asset_id = $3 AND competition_id IS NULL`,
+                [pos.user_id, matchId, quoteAssetId],
+            );
+            if (!usdRows[0]) throw new Error("match_wallets_missing");
+            const { mmrBps } = await pairRiskParams(client, pos.pair_id);
+            const settled = await settleIsolatedFillTx(client, {
+                userId: pos.user_id,
+                pairId: pos.pair_id,
+                scope: { competitionId: pos.competition_id, matchId },
+                side: closingSide,
+                qty: toFixed8(absQty),
+                price: toFixed8(exitD),
+                fee: "0.00000000",
+                feeRole: "TAKER",
+                leverage: D(pos.leverage),
+                mmrBps,
+                usdWalletId: usdRows[0].id,
+                tradeId: trade.id,
+                ts: new Date(trade.executed_at).getTime(),
+            });
+            pnl = settled.bookedPnl;
+            if (settled.shortfall.gt(0)) shortfall = settled.shortfall;
+        }
+
         logger.info(
             {
                 matchId,
@@ -1119,8 +1196,10 @@ async function closeMatchScopedPositions(
                 pairId: pos.pair_id,
                 side: baseQty.isPositive() ? "LONG" : "SHORT",
                 baseQty: pos.base_qty,
+                marginMode: pos.margin_mode,
                 exitPrice,
                 realizedPnl: toFixed8(pnl),
+                ...(shortfall ? { shortfall: toFixed8(shortfall) } : {}),
                 fallbackSource,
             },
             "match_scoped_position_closed",

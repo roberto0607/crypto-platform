@@ -337,7 +337,7 @@ describe("leverage caps", () => {
         expect(await usd(userId)).toBe("1000.00000000");
     });
 
-    it("a SPOT match (every match until PR 3 stamps them) trades spot even with the flag on", async () => {
+    it("a match stamped SPOT (accepted while the flag was off) trades spot even with the flag on", async () => {
         enableLeverage();
         const opponent = await newTrader();
         const { rows: [m] } = await pool.query<{ id: string }>(

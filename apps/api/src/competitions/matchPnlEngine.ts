@@ -62,6 +62,8 @@ interface PositionRow {
     avg_entry_price: string;
     realized_pnl_quote: string | null;
     fees_paid_quote: string | null;
+    margin_mode: string;
+    isolated_margin: string;
 }
 
 function toLiveRow(row: PositionRow): LivePositionRow {
@@ -71,6 +73,8 @@ function toLiveRow(row: PositionRow): LivePositionRow {
         avgEntryPrice: row.avg_entry_price,
         realizedPnlQuote: row.realized_pnl_quote ?? "0",
         feesPaidQuote: row.fees_paid_quote ?? "0",
+        marginMode: row.margin_mode,
+        isolatedMargin: row.isolated_margin,
     };
 }
 
@@ -84,7 +88,8 @@ async function recomputeAndPublish(match: ActiveMatchRef): Promise<void> {
     const startingCapital = parseFloat(match.starting_capital);
 
     const { rows: positions } = await pool.query<PositionRow>(
-        `SELECT user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote
+        `SELECT user_id, pair_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote,
+                margin_mode, isolated_margin::text
          FROM positions
          WHERE match_id = $1`,
         [match.id],

@@ -109,4 +109,21 @@ describe("computeLiveMatchPnl", () => {
         // unrealized = -2 * (49000 - 50000) = 2000; 2000 / 50000 * 100 = 4%
         expect(computeLiveMatchPnl(positions, prices, 50_000)).toBeCloseTo(4, 8);
     });
+
+    it("caps an ISOLATED row's unrealized loss at its margin (leverage)", () => {
+        const iso = (baseQty: string) => row({
+            pairId: "pair-btc", baseQty, avgEntryPrice: "50000", feesPaidQuote: "10",
+            marginMode: "ISOLATED", isolatedMargin: "10000",
+        });
+        // Long 1 @ 50,000 at 5x: −20,000 raw at 30,000, capped at −10,000.
+        expect(computeLiveMatchPnl([iso("1")], new Map([["pair-btc", 30000]]), 50_000)).toBeCloseTo(-20.02, 8);
+        // Within the margin it's the plain mark-to-market.
+        expect(computeLiveMatchPnl([iso("1")], new Map([["pair-btc", 45000]]), 50_000)).toBeCloseTo(-10.02, 8);
+        // Short 1 @ 50,000: −30,000 raw at 80,000, capped at −10,000; gains aren't capped.
+        expect(computeLiveMatchPnl([iso("-1")], new Map([["pair-btc", 80000]]), 50_000)).toBeCloseTo(-20.02, 8);
+        expect(computeLiveMatchPnl([iso("-1")], new Map([["pair-btc", 20000]]), 50_000)).toBeCloseTo(59.98, 8);
+        // A SPOT row is never capped.
+        expect(computeLiveMatchPnl([row({ pairId: "pair-btc", baseQty: "1", avgEntryPrice: "50000", marginMode: "SPOT" })],
+            new Map([["pair-btc", 30000]]), 50_000)).toBeCloseTo(-40, 8);
+    });
 });

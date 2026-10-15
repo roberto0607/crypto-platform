@@ -118,9 +118,11 @@ export type TakerMargin =
  *   1. An open position keeps its model (a SPOT position opened before
  *      leverage keeps trading spot until it's flat; an ISOLATED one stays
  *      ISOLATED even if the flag is later turned off).
- *   2. Otherwise SPOT when LEVERAGE_ENABLED is off, for system users, and in
- *      a match stamped SPOT (every match until PR 3 stamps them at accept).
- *   3. Otherwise ISOLATED.
+ *   2. In a match, the model stamped on the match at accept, whatever the
+ *      flag says now (acceptMatch stamps ISOLATED only while the flag is on;
+ *      turned off mid-match, an ISOLATED match keeps trading ISOLATED at 1x).
+ *   3. Otherwise SPOT when LEVERAGE_ENABLED is off and for system users.
+ *   4. Otherwise ISOLATED.
  *
  * A resting order of the other model on the same pair/scope blocks the order
  * (`spot_orders_open` / `isolated_orders_open`): its fill would land on a
@@ -142,8 +144,6 @@ export async function resolveTakerMargin(
     let matchCap: number | null = null;
     if (open) {
         mode = row!.margin_mode;
-    } else if (!cfg.enabled) {
-        mode = "SPOT";
     } else if (scope.matchId) {
         const { rows } = await timedQuery<{ margin_mode: MarginMode; max_leverage: string }>(client,
             "isolatedSettlement.matchMarginMode",
@@ -152,6 +152,8 @@ export async function resolveTakerMargin(
         );
         mode = rows[0]?.margin_mode ?? "SPOT";
         matchCap = rows[0] ? Number(rows[0].max_leverage) : null;
+    } else if (!cfg.enabled) {
+        mode = "SPOT";
     } else {
         mode = "ISOLATED";
     }
@@ -269,7 +271,8 @@ async function postUsd(
  * reserve they must fit the wallet's free balance (`insufficient_balance`
  * otherwise; the engine checks this up front, so it's a backstop).
  *
- * Returns the leg for the post-fill pipeline and how much reserve it used.
+ * Returns the leg for the post-fill pipeline, how much reserve it used, and
+ * the P&L it booked (after the loss cap) with any shortfall beyond it.
  */
 export async function settleIsolatedFillTx(
     client: PoolClient,
@@ -290,7 +293,7 @@ export async function settleIsolatedFillTx(
         ts: number;
         reserve?: Decimal;
     },
-): Promise<{ leg: IsolatedLeg; reserveUsed: Decimal }> {
+): Promise<{ leg: IsolatedLeg; reserveUsed: Decimal; bookedPnl: Decimal; shortfall: Decimal }> {
     const { state, mode } = await lockIsolatedPositionTx(client, p.userId, p.pairId, p.scope);
     if (mode === "SPOT" && !state.qty.isZero()) throw new Error("position_mode_conflict");
 
@@ -387,6 +390,8 @@ export async function settleIsolatedFillTx(
     return {
         leg: { userId: p.userId, baseQtyAfter: pos.base_qty, feeBooked: toFixed8(feeBooked) },
         reserveUsed,
+        bookedPnl,
+        shortfall: r.reduce?.settlement.shortfall ?? ZERO,
     };
 }
 
