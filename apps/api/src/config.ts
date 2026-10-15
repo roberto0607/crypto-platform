@@ -105,10 +105,12 @@ export const config = {
   disableRateLimit: booleanEnv("DISABLE_RATE_LIMIT", false),
   // Number of reverse-proxy hops in front of the API whose X-Forwarded-For
   // entries Fastify should trust when computing req.ip. Production defaults to
-  // 1 (Railway's edge — the only hop we own; Cloudflare is handled separately
-  // by http/clientIp.ts). 0 keeps req.ip = the TCP peer, which behind
-  // Railway's edge is the proxy itself — every visitor in one bucket.
-  trustProxyHops: numberEnv("TRUST_PROXY_HOPS", isProd ? 1 : 0),
+  // 2: Railway runs two proxy layers (its internal 100.64.x proxy and its
+  // public edge), so req.ip = XFF[-2], the address that connected to Railway's
+  // edge. Cloudflare is handled separately by http/clientIp.ts. Measured
+  // 2026-10-14; see docs/runbooks/client-ip.md. 0 keeps req.ip = the TCP peer
+  // (Railway's internal proxy) — every visitor in one bucket.
+  trustProxyHops: numberEnv("TRUST_PROXY_HOPS", isProd ? 2 : 0),
   // Honor CF-Connecting-IP when (and only when) req.ip is a Cloudflare edge
   // address. See http/clientIp.ts.
   trustCloudflareConnectingIp: booleanEnv("TRUST_CLOUDFLARE_CONNECTING_IP", true),

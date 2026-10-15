@@ -39,7 +39,6 @@ import orderBookSignalRoutes from "./routes/orderBookSignalRoutes";
 import macroRoutes from "./routes/macroRoutes";
 import gammaRoutes from "./routes/gammaRoutes";
 import onChainRoutes from "./routes/onChainRoutes";
-import clientIpDebugRoutes from "./routes/clientIpDebugRoutes";
 import { startKrakenFeed } from "./market/krakenWs"
 import { startCoinbaseFeed } from "./feeds/coinbaseWs"
 import { startFootprintAggregator } from "./services/footprintAggregator"
@@ -58,7 +57,7 @@ import { startLockSampler } from "./observability/lockSampler";
 export interface BuildAppOptions {
   /** Disable rate limiting (useful for tests). */
   disableRateLimit?: boolean;
-  /** Override TRUST_PROXY_HOPS (tests simulate the Railway edge hop). */
+  /** Override TRUST_PROXY_HOPS (tests simulate Railway's proxy hops). */
   trustProxyHops?: number;
   /** Suppress pino request logging. */
   logger?: boolean;
@@ -317,7 +316,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(macroRoutes);
   await app.register(gammaRoutes);
   await app.register(onChainRoutes);
-  await app.register(clientIpDebugRoutes); // TEMPORARY: proxy-chain diagnosis
 
   // ── Error code reference (documentation endpoint) ──
   app.get("/api/errors", {

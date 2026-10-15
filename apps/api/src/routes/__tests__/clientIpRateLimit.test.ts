@@ -4,13 +4,13 @@ import { buildApp } from "../../app";
 import { pool } from "../../db/pool";
 
 // Integration tests: rate limits and the login lockout key on the REAL client
-// IP behind Cloudflare → Railway edge (http/clientIp.ts), not on the shared
-// proxy/edge address (QA 2026-10-11 P1).
+// IP behind Cloudflare → Railway edge → Railway internal proxy
+// (http/clientIp.ts), not on the shared proxy/edge address (QA 2026-10-11 P1).
 //
-// Topology simulated with app.inject():
-//   remoteAddress  = Railway's edge proxy (TCP peer, 10.0.0.9)
-//   X-Forwarded-For = "<visitor>, <address Railway saw>"  (trustProxyHops: 1
-//                     → req.ip is that right-most entry)
+// Topology simulated with app.inject(), as measured in prod 2026-10-14:
+//   remoteAddress   = Railway's internal proxy (TCP peer, 100.64.0.2)
+//   X-Forwarded-For = "<address that connected to Railway's edge>, <the edge>"
+//                     (trustProxyHops: 2 → req.ip is the left of the two)
 //   CF-Connecting-IP = what Cloudflare says the visitor is
 //
 // Fresh app per test resets the in-memory limiter.
@@ -18,7 +18,8 @@ import { pool } from "../../db/pool";
 const GLOBAL_LIMIT = 200; // keep in sync with app.ts global `max`
 const BURST_TIMEOUT = 30_000;
 
-const RAILWAY_PROXY = "10.0.0.9";
+const RAILWAY_PROXY = "100.64.0.2";
+const RAILWAY_EDGE = "152.233.47.68";
 const CF_EDGE = "104.16.1.1"; // inside 104.16.0.0/13
 const NOT_CF = "203.0.113.7";
 const VISITOR_A = "198.51.100.20";
@@ -26,7 +27,7 @@ const VISITOR_B = "198.51.100.21";
 
 const buildOpts = {
   logger: false,
-  trustProxyHops: 1,
+  trustProxyHops: 2,
   disableKrakenFeed: true,
   disableTriggerEngine: true,
   disableJobRunner: true,
@@ -38,14 +39,14 @@ const buildOpts = {
 function viaCloudflare(visitor: string) {
   return {
     remoteAddress: RAILWAY_PROXY,
-    headers: { "x-forwarded-for": `${visitor}, ${CF_EDGE}`, "cf-connecting-ip": visitor },
+    headers: { "x-forwarded-for": `${CF_EDGE}, ${RAILWAY_EDGE}`, "cf-connecting-ip": visitor },
   };
 }
 
 function direct(from: string, spoofedCf: string) {
   return {
     remoteAddress: RAILWAY_PROXY,
-    headers: { "x-forwarded-for": from, "cf-connecting-ip": spoofedCf },
+    headers: { "x-forwarded-for": `${from}, ${RAILWAY_EDGE}`, "cf-connecting-ip": spoofedCf },
   };
 }
 
@@ -99,8 +100,9 @@ describe("rate limits key on the real client IP", () => {
       const bearer = (sub: string) => ({
         authorization: `Bearer ${app.jwt.sign({ sub, role: "USER" }, { expiresIn: 3600 })}`,
       });
-      const a = { remoteAddress: RAILWAY_PROXY, headers: { "x-forwarded-for": CF_EDGE, ...bearer("11111111-1111-1111-1111-111111111111") } };
-      const b = { remoteAddress: RAILWAY_PROXY, headers: { "x-forwarded-for": CF_EDGE, ...bearer("22222222-2222-2222-2222-222222222222") } };
+      const xff = `${CF_EDGE}, ${RAILWAY_EDGE}`;
+      const a = { remoteAddress: RAILWAY_PROXY, headers: { "x-forwarded-for": xff, ...bearer("11111111-1111-1111-1111-111111111111") } };
+      const b = { remoteAddress: RAILWAY_PROXY, headers: { "x-forwarded-for": xff, ...bearer("22222222-2222-2222-2222-222222222222") } };
       for (let i = 0; i < GLOBAL_LIMIT; i++) {
         const res = await app.inject({ method: "GET", url: "/pairs", ...a });
         expect(res.statusCode).toBe(200);
@@ -141,7 +143,7 @@ describe("login lockout keys on the real client IP", () => {
   });
 
   afterEach(async () => {
-    await pool.query(`DELETE FROM login_attempts WHERE ip_address = ANY($1)`, [[VISITOR_A, VISITOR_B, CF_EDGE, RAILWAY_PROXY]]);
+    await pool.query(`DELETE FROM login_attempts WHERE ip_address = ANY($1)`, [[VISITOR_A, VISITOR_B, CF_EDGE, RAILWAY_EDGE, RAILWAY_PROXY]]);
     await app.close();
   });
 
