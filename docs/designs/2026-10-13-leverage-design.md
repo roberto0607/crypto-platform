@@ -389,6 +389,15 @@ Decisions made while building the engine path, beyond the table above:
 - **`GET /positions`** adds `margin_mode, leverage, isolated_margin, liq_price, mark_price, margin_health` on ISOLATED rows only; SPOT rows keep their exact shape.
 - **Flag off is proven unchanged** by `flagOffParity.test.ts`: a scripted session's full DB state (wallets, ledger, orders, trades, positions, equity snapshots) equals a golden dump generated from origin/main before this PR.
 
+### PR 3 implementation notes (feat/leverage-matches)
+
+- **Stamp at accept.** `acceptMatch` sets `matches.margin_mode = 'ISOLATED'` and `max_leverage = LEVERAGE_MAX_MATCH` while `LEVERAGE_ENABLED` is on. Flag off leaves the column defaults (SPOT, 1x), so flag-off matches are unchanged. A PENDING match isn't stamped; the config in force at accept wins.
+- **The stamp beats the flag.** In a match, `resolveTakerMargin` uses the stamp before looking at the flag: an ISOLATED match keeps trading ISOLATED if the flag is later turned off (at 1x, since `leverageCap` is 1 with the flag off: the kill switch), and a SPOT match stays SPOT when it's turned on. One model per match. An open position still keeps its own model first.
+- **Match-end settlement.** `closeMatchScopedPositions` closes an ISOLATED position through `settleIsolatedFillTx` at the same fair touch as before: `MARGIN_RELEASE` + `REALIZED_PNL` with the loss cap (`LIQUIDATION_SHORTFALL` past bankruptcy), position flat, margin 0, liq NULL. **No fee**, the same as the SPOT force-close. The synthetic close order now carries the position's `margin_mode` and `leverage` (SPOT/1 for spot rows, i.e. the defaults). `settleMatchWalletsTx` has no base to settle for ISOLATED players.
+- **Score.** Unchanged formula (realized − fees ÷ capital), now over loss-capped realized P&L. `calculatePlayerStats` logs `score_pnl_clamped {matchId, userId, pnlPct, score}` when |P&L| > 50% (where `calculateNuancedScore` clamps).
+- **Live P&L.** `computeLiveMatchPnl` caps an ISOLATED row's unrealized loss at `−isolated_margin`; `matchPnlEngine` reads `margin_mode` and `isolated_margin`. SPOT rows are computed exactly as before.
+- **Flag off is proven unchanged** by `flagOffMatchParity.test.ts`: two matches through createMatch → acceptMatch → trades → completeMatch / forfeitMatch with positions open, the full DB state (matches, ELO, wallets, ledger, orders, trades, positions, equity snapshots) compared to a golden generated from origin/main before this PR. `flagOffParity.test.ts` (PR 2) still passes, and its golden regenerated on current main is byte-identical.
+
 ---
 
 ## Funding: recommendation **no funding in v1**
