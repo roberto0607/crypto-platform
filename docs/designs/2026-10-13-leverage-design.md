@@ -374,6 +374,20 @@ Roughly **4–5k lines including tests**, in 9 PRs, each independently reviewabl
 | 7 | Journal: close_reason / leverage / margin / ROE, LIQUIDATED badge, CSV columns | S–M |
 | 8 | After the last pre-cutover match ends and Phase 2 is stable: delete the spot path for real users and the 2× rule | S |
 
+### PR 2 implementation notes (feat/leverage-engine)
+
+Decisions made while building the engine path, beyond the table above:
+
+- **Where the math runs.** `trading/isolatedPosition.ts` (pure: increase / reduce / flip + the loss cap) and `trading/isolatedSettlement.ts` (mode resolution, position lock, ledger postings). The matching engine settles an ISOLATED leg itself, because its USD moves depend on the position; `phase6OrderService` skips `applyFillToPositionTx` for those legs (`PlaceOrderResult.isolatedLegs`). Spot legs are untouched.
+- **Which model an order trades.** An open position keeps its model (a pre-leverage SPOT position trades spot until flat; an ISOLATED one stays ISOLATED even with the flag off). Otherwise SPOT when the flag is off, for system users, and in a match stamped SPOT (all matches until PR 3). Otherwise ISOLATED.
+- **`orders.margin_mode` (migration 098).** A resting order settles its maker leg in the model it was reserved under, whatever the flag says at fill time. A resting order of the other model on the same pair/scope blocks a new order (`spot_orders_open` / `isolated_orders_open`), so a fill can never land on a position of the wrong model.
+- **One leverage per (user, pair, scope)** while a position or resting order is open. An order that opens or adds must match it (`leverage_mismatch`); an order with no leverage inherits it; a pure reduce ignores the requested leverage. The cap (`leverage_exceeds_cap`) is checked only on orders that open or add, so lowering a cap never blocks a close.
+- **LIMIT reserve.** Immediate (taker) fills are paid from free USD. Only the resting remainder reserves `remaining × limit / L + max fee`, in USD, for either side, even when it would reduce at placement (conservative, as above). Consequence: a resting LIMIT that would close a position needs free USD ≈ the margin it would lock. MARKET closes and TP/SL triggers (MARKET) need nothing.
+- **SOL** maintenance margin = 100 bps (migration 097, SOL-based pairs only).
+- **Equity.** `analytics/accountEquity.positionValue`: an ISOLATED position is worth `M + max(uPnL, −M)`; SPOT rows are valued as before. Used by the portfolio summary (and so the competition leaderboard and finalize) and the per-fill portfolio snapshot. `computeLiveMatchPnl` and match-end settlement are PR 3.
+- **`GET /positions`** adds `margin_mode, leverage, isolated_margin, liq_price, mark_price, margin_health` on ISOLATED rows only; SPOT rows keep their exact shape.
+- **Flag off is proven unchanged** by `flagOffParity.test.ts`: a scripted session's full DB state (wallets, ledger, orders, trades, positions, equity snapshots) equals a golden dump generated from origin/main before this PR.
+
 ---
 
 ## Funding: recommendation **no funding in v1**
