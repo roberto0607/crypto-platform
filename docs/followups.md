@@ -380,7 +380,8 @@ wall. Original investigation trail below.
 `https://gallant-reprieve-production.up.railway.app/trade` in rapid succession
 produced the full-page **"SERVER OFFLINE — Cannot reach the backend API"** wall
 on at least one tab. Web Inspector confirmed at 10:26 PM:
-`Failed to load resource: the server responded with a status of 429 () https://crypto-platform-production-691d.up.railway.app/health`.
+`Failed to load resource: the server responded with a status of 429 () https://crypto-platform-production-691d.up.railway.app/health`
+(log quoted verbatim; that is the pre-cutover API host, now `api.playtradr.com`).
 
 **Root cause — two cooperating bugs:**
 - **Server:** `/health` was rate-limited from the shared global 100/min-per-IP

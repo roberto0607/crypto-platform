@@ -179,7 +179,7 @@ Expected:
 
 ```bash
 curl -s -i -H "Authorization: Bearer $TOKEN" \
-  https://crypto-platform-production-691d.up.railway.app/v1/matches/active
+  https://api.playtradr.com/v1/matches/active
 ```
 
 Expect `200 OK` with `{ ok: true, match: ... }` or `{ ok: true, match: null }`.
@@ -194,7 +194,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: rollout-test-$(date +%s)" \
   -d '{"pairId":"<some-pair-id>","side":"BUY","type":"MARKET","qty":"0.0001"}' \
-  https://crypto-platform-production-691d.up.railway.app/orders
+  https://api.playtradr.com/orders
 ```
 
 Then:

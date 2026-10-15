@@ -10,7 +10,7 @@ TRADR is a competitive crypto paper trading platform. Users trade BTC/ETH/SOL wi
 - **Database**: PostgreSQL 16 via raw SQL (`pg` pool, no ORM) + Redis for distributed state
 - **Deployment**: Railway — separate web and API services
   - Frontend: `playtradr.com` (Railway service `gallant-reprieve`; legacy host `gallant-reprieve-production.up.railway.app` 301s to it via `apps/web/nginx.conf`)
-  - API: `api.playtradr.com` (Railway service `crypto-platform`; legacy host `crypto-platform-production-691d.up.railway.app`)
+  - API: `api.playtradr.com` (Railway service `crypto-platform`). Don't use its Railway-generated `*.up.railway.app` host: it bypasses Cloudflare and is slated for removal (see `docs/runbooks/client-ip.md`)
   - DNS on Cloudflare, proxied (orange cloud) for both hosts
 - **Auth**: Argon2 + JWT access tokens + HttpOnly refresh cookie rotation
 - **Trading**: Simulated order book with limit/market orders, slippage model, TP/SL/trailing stop triggers
