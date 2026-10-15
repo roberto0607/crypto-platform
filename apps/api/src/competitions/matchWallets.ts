@@ -16,7 +16,10 @@
  *                                   order can't deadlock with an in-flight fill)
  *            positions force-closed, then settleMatchWalletsTx at the SAME
  *            fair price (closing a long sells at the bid, a short buys at the
- *            ask — the touch a real close would cross, never the last trade)
+ *            ask — the touch a real close would cross, never the last trade).
+ *            An ISOLATED match (leverage, stamped at accept) holds no base:
+ *            the force-close settles each position's margin + capped P&L
+ *            into USD itself, and there's no base left to settle.
  *            closeMatchWalletsTx  — closed_at set, final balances kept
  *
  * Nothing ever transfers between a match's wallets and free-play.
