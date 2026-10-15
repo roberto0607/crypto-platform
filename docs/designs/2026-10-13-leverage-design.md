@@ -397,6 +397,9 @@ Decisions made while building the engine path, beyond the table above:
 - **Score.** Unchanged formula (realized − fees ÷ capital), now over loss-capped realized P&L. `calculatePlayerStats` logs `score_pnl_clamped {matchId, userId, pnlPct, score}` when |P&L| > 50% (where `calculateNuancedScore` clamps).
 - **Live P&L.** `computeLiveMatchPnl` caps an ISOLATED row's unrealized loss at `−isolated_margin`; `matchPnlEngine` reads `margin_mode` and `isolated_margin`. SPOT rows are computed exactly as before.
 - **Flag off is proven unchanged** by `flagOffMatchParity.test.ts`: two matches through createMatch → acceptMatch → trades → completeMatch / forfeitMatch with positions open, the full DB state (matches, ELO, wallets, ledger, orders, trades, positions, equity snapshots) compared to a golden generated from origin/main before this PR. `flagOffParity.test.ts` (PR 2) still passes, and its golden regenerated on current main is byte-identical.
+- **Decided:** no fee on the match-end close for ISOLATED positions, consistent with the SPOT force-close.
+- **Follow-up, PR 4:** liquidation racing match end (§7 "Match end with open leveraged positions": a liquidation waiting on the match wallet locks → `match_ended` no-op). Until PR 4, a leveraged match position past its liq price rides to match end, where the loss cap applies.
+- **Follow-up, PR 6:** the match screen's balance/equity readouts must count ISOLATED positions as margin + capped uPnL. An ISOLATED player's match USD wallet excludes locked margin, so a wallet-only readout shows it low.
 
 ---
 
