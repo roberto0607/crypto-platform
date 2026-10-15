@@ -113,9 +113,8 @@ Check these before removing it:
    the live bundle, not just the variable:
    `curl -s https://playtradr.com/ | grep -o '/assets/index-[^"]*\.js'`, then fetch that file and
    grep it for `up.railway.app`.
-3. **`apps/web/index.html`.** The `preconnect` and `dns-prefetch` hints point at the legacy API
-   host. They don't break anything when it's gone (the hint fails silently), but point them at
-   `https://api.playtradr.com`.
+3. **`apps/web/index.html`.** Done: the `preconnect` and `dns-prefetch` hints point at
+   `https://api.playtradr.com`. Re-check with `git grep crypto-platform-production apps/web` (should print nothing) before removing.
 4. **Anything outside the repo:** uptime monitors, k6 `BASE_URL`s, saved curl or Postman
    requests, scripts on other machines. Railway's own healthcheck uses the internal network, so
    removing the domain doesn't affect it.
