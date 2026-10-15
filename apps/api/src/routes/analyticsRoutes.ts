@@ -9,6 +9,16 @@ import { getActiveMatchIdForUser } from "../competitions/matchService";
 import { getSnapshotForUser } from "../replay/replayEngine";
 import { pool } from "../db/pool";
 import { D, toFixed8 } from "../utils/decimal";
+import { positionValue, isolatedHealth } from "../analytics/accountEquity";
+
+/** The leverage columns (migration 096) GET /positions reads. */
+type IsolatedColumns = {
+    margin_mode: string;
+    leverage: string;
+    isolated_margin: string;
+    liq_price: string | null;
+    maintenance_margin_bps: number;
+};
 
 // ── Zod schemas ──
 const positionsQuery = z.object({
@@ -45,45 +55,57 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
         const activeMatchId = await getActiveMatchIdForUser(actor.id);
 
-        const conditions: string[] = [`user_id = $1`, `base_qty <> 0`];
+        const conditions: string[] = [`p.user_id = $1`, `p.base_qty <> 0`];
         const params: (string | null)[] = [actor.id];
 
         if (activeMatchId) {
             // In-match — show only the current match's rows.
             params.push(activeMatchId);
-            conditions.push(`match_id = $${params.length}`);
+            conditions.push(`p.match_id = $${params.length}`);
         } else {
             // Free-play — exclude any match- or competition-scoped rows.
-            conditions.push(`match_id IS NULL`);
-            conditions.push(`competition_id IS NULL`);
+            conditions.push(`p.match_id IS NULL`);
+            conditions.push(`p.competition_id IS NULL`);
         }
 
         if (pairId) {
             params.push(pairId);
-            conditions.push(`pair_id = $${params.length}`);
+            conditions.push(`p.pair_id = $${params.length}`);
         }
 
-        const { rows } = await pool.query<PositionRow>(
-            `SELECT user_id, pair_id, base_qty, avg_entry_price,
-                    realized_pnl_quote, fees_paid_quote, updated_at
-             FROM positions
+        const { rows } = await pool.query<PositionRow & IsolatedColumns>(
+            `SELECT p.user_id, p.pair_id, p.base_qty, p.avg_entry_price,
+                    p.realized_pnl_quote, p.fees_paid_quote, p.updated_at,
+                    p.margin_mode, p.leverage, p.isolated_margin, p.liq_price,
+                    tp.maintenance_margin_bps
+             FROM positions p
+             JOIN trading_pairs tp ON tp.id = p.pair_id
              WHERE ${conditions.join(" AND ")}
-             ORDER BY updated_at DESC`,
+             ORDER BY p.updated_at DESC`,
             params,
         );
 
         // Attach unrealized PnL using the same snapshot cascade as getPositions.
-        const positions: PositionWithPnl[] = [];
-        for (const pos of rows) {
-            const baseQty = D(pos.base_qty);
+        // ISOLATED rows (leverage) also carry their margin, liq price, the
+        // mark and margin health (1 at entry → 0 at liq); SPOT rows keep
+        // exactly their pre-leverage shape.
+        const positions: (PositionWithPnl | Record<string, unknown>)[] = [];
+        for (const { margin_mode, leverage, isolated_margin, liq_price, maintenance_margin_bps, ...pos } of rows) {
             const snapshot = await getSnapshotForUser(actor.id, pos.pair_id);
             const currentPrice = D(snapshot.last);
-            const avgEntry = D(pos.avg_entry_price);
-            const unrealized = baseQty.mul(currentPrice.minus(avgEntry));
+            const { unrealized } = positionValue({ ...pos, margin_mode, isolated_margin }, currentPrice);
             positions.push({
                 ...pos,
                 unrealized_pnl_quote: toFixed8(unrealized),
                 current_price: toFixed8(currentPrice),
+                ...(margin_mode === "ISOLATED" ? {
+                    margin_mode,
+                    leverage,
+                    isolated_margin,
+                    liq_price,
+                    mark_price: toFixed8(currentPrice),
+                    margin_health: isolatedHealth({ ...pos, isolated_margin, maintenance_margin_bps }, currentPrice).toFixed(4),
+                } : {}),
             });
         }
 
