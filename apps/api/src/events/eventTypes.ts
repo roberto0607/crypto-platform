@@ -102,6 +102,30 @@ export interface TriggerFiredData {
   derivedOrderId: string | null;
 }
 
+/** The liquidation engine closed an ISOLATED position (trading/liquidationEngine.ts). */
+export interface PositionLiquidatedData {
+  liquidationId: string;
+  orderId: string;
+  pairId: string;
+  competitionId: string | null;
+  matchId: string | null;
+  side: "LONG" | "SHORT";
+  qty: string;
+  entryPrice: string;
+  leverage: string;
+  margin: string;
+  liqPrice: string;
+  /** The Kraken book mid that tripped it. */
+  markPrice: string;
+  fillPrice: string;
+  realizedPnl: string;
+  fee: string;
+  /** Margin left after the loss and fee, back to the user's USD. */
+  returnedEquity: string;
+  /** Loss beyond the margin (a gap), absorbed. */
+  shortfall: string;
+}
+
 export interface TriggerCanceledData {
   triggerId: string;
   pairId: string;
@@ -353,6 +377,7 @@ export type AppEvent =
   | EventEnvelope<"book.snapshot", BookSnapshotData>
   | EventEnvelope<"trigger.fired", TriggerFiredData>
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
+  | EventEnvelope<"position.liquidated", PositionLiquidatedData>
   | EventEnvelope<"alert.updated", AlertUpdatedData>
   | EventEnvelope<"competition.started", CompetitionStartedData>
   | EventEnvelope<"competition.ended", CompetitionEndedData>

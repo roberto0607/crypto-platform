@@ -21,6 +21,7 @@ import { stopCoinbaseFeed } from "./feeds/coinbaseWs";
 import { stopFootprintAggregator } from "./services/footprintAggregator";
 import { stopPressureAggregator } from "./services/pressureAggregator";
 import { stopTriggerEngine } from "./triggers/triggerEngine";
+import { startLiquidationEngine, stopLiquidationEngine } from "./trading/liquidationEngine";
 import { stopAlertEngine } from "./alerts/alertEngine";
 import { stopMatchPnlEngine } from "./competitions/matchPnlEngine";
 import { stopChartAnalysisEngine } from "./agents/chartAnalysis/chartAnalysisEngine";
@@ -145,9 +146,14 @@ async function start() {
   // ── Start orchestrator (leader election for background jobs) ──
   await startOrchestrator();
 
+  // ── Liquidation engine (LIQUIDATION_MODE; evaluates on the leader only) ──
+  startLiquidationEngine();
+
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
+    // Before the orchestrator releases every advisory lock (incl. ours).
+    await stopLiquidationEngine();
     await stopOrchestrator();
     stopDbSizeGuard();
     stopEventLoopMonitor();

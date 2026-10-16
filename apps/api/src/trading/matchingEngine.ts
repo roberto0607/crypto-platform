@@ -66,7 +66,7 @@ import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
 import { isTradableSymbol } from "../market/marketSymbols";
-import { getMarketReference, collarBand, systemFillPrice, isOnMarket, type CollarReference } from "./priceCollar";
+import { getMarketReference, getCollarReference, collarBand, systemFillPrice, isOnMarket, type CollarReference } from "./priceCollar";
 import { logger as rootLogger } from "../observability/logContext";
 
 const logger = rootLogger.child({ module: "matchingEngine" });
@@ -118,6 +118,14 @@ import {
     type IsolatedLeg,
     type PositionScope,
 } from "./isolatedSettlement";
+import {
+    confirmLiquidation,
+    closingSide,
+    LiquidationNotNeeded,
+    markOf,
+    type LiquidationFill,
+    type LiquidationRequest,
+} from "./liquidation";
 
 type FillPlan = {
     resting: OrderRow;
@@ -151,6 +159,8 @@ export type PlaceOrderResult = {
      * part filled, the remainder was canceled. For events after COMMIT.
      */
     canceledMakers?: CanceledMaker[];
+    /** Set when this order was a liquidation: what it booked. */
+    liquidation?: LiquidationFill;
 };
 
 export type CanceledMaker = {
@@ -201,6 +211,10 @@ async function placeOrderInternal(
     // on this pair/scope for an ISOLATED order. Anything above 1 needs the
     // ISOLATED path (LEVERAGE_ENABLED + a real user + a scope allowing it).
     leverage?: number | null,
+    // A liquidation (liquidationEngine.ts): close the position the engine saw
+    // breach, if it still does. side/qty are taken from the position under
+    // the locks, not from the caller. A no-op throws LiquidationNotNeeded.
+    liquidation?: LiquidationRequest,
 ): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -210,29 +224,51 @@ async function placeOrderInternal(
     // MARKET_SYMBOLS backstop — HTTP routes reject earlier (with details), but
     // agents, the trigger engine and the market maker reach this directly.
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
+    if (liquidation && (type !== "MARKET" || pricing)) throw new Error("invalid_liquidation_order");
 
     // Market reference (MARKET only): the real Kraken touch — fresh book, else
     // fresh ticker bid/ask. It bands which resting orders may be swept (at the
     // touch or better, never a stale quote far off market — see collarBand)
     // and prices the system-fill remainder. No
     // fresh reference → reject; never fall back to trading_pairs.last_price.
+    // A liquidation is stricter: the fresh book only, never the ticker.
     let reference: CollarReference | null = null;
     let collar: { min: string; max: string } | null = null;
     if (type === "MARKET") {
-        reference = pricing ?? await getMarketReference(pairId, pair.symbol);
+        reference = liquidation
+            ? getCollarReference(pairId)
+            : pricing ?? await getMarketReference(pairId, pair.symbol);
         if (!reference) throw new Error("stale_price_source");
-        const band = collarBand(reference, side);
-        collar = { min: band.min.toFixed(8), max: band.max.toFixed(8) };
     }
 
     // ── Phase B: Find user's wallets (non-locking read) ──
     // The order's own account: a match order trades that match's wallets
     // (funded at accept, migration 095), never free-play.
     const scope: WalletScope = { competitionId: competitionId ?? null, matchId: matchId ?? null };
+    const posScope: PositionScope = { competitionId: scope.competitionId ?? null, matchId: scope.matchId ?? null };
     const baseWallet = await findWalletByUserAndAsset(client, userId, pair.base_asset_id, scope);
     const quoteWallet = await findWalletByUserAndAsset(client, userId, pair.quote_asset_id, scope);
     if (!baseWallet || !quoteWallet) throw new Error(scope.matchId ? "match_wallets_missing" : "wallet_not_found");
     if (baseWallet.closed_at || quoteWallet.closed_at) throw new Error("match_ended");
+
+    // ── Liquidation check #1 (under the pair lock) ──
+    // Every order that changes this position holds the pair lock, and so
+    // does match end (matchWallets.lockMatchPairsTx; a liquidation that
+    // waited on it stops above with match_ended), so this read is current;
+    // the size and side to close come from it. Check #2 repeats it under the
+    // position row lock for any writer that doesn't take the pair lock.
+    const liqMark = liquidation ? markOf(reference!) : null;
+    // The position as check #2 found it under its row lock (for the liquidations row).
+    let liquidatedFrom: IsolatedState | null = null;
+    if (liquidation) {
+        const row = await readPosition(client, userId, pairId, posScope, false);
+        qty = toFixed8(confirmLiquidation(stateOf(row), row?.margin_mode ?? "SPOT", liquidation, liqMark!));
+        side = closingSide(liquidation.side);
+    }
+    if (reference) {
+        const band = collarBand(reference, side);
+        collar = { min: band.min.toFixed(8), max: band.max.toFixed(8) };
+    }
 
     // ── Phase B2: Margin model (isolatedSettlement.resolveTakerMargin) ──
     // SPOT is today's path. ISOLATED (LEVERAGE_ENABLED, real users) never
@@ -241,9 +277,10 @@ async function placeOrderInternal(
     if (leverageParam !== null && !isValidLeverage(leverageParam, LEVERAGE_CEILING)) {
         throw new Error("invalid_leverage");
     }
-    const posScope: PositionScope = { competitionId: scope.competitionId ?? null, matchId: scope.matchId ?? null };
     const margin = await resolveTakerMargin(client, { userId, pairId, scope: posScope, replay: pricing?.source === "replay" });
     const isolated = margin.mode === "ISOLATED" ? margin : null;
+    // Bots and @system.local users trade SPOT: never liquidated.
+    if (liquidation && !isolated) throw new LiquidationNotNeeded("not_isolated");
     if (!isolated && leverageParam !== null && leverageParam > 1) throw new Error("leverage_exceeds_cap");
     // One leverage per (user, pair, scope) while a position or order is open.
     const orderLeverage = isolated ? (isolated.inherited ?? D(leverageParam ?? 1)) : D(1);
@@ -488,7 +525,17 @@ async function placeOrderInternal(
         // whichever side it is (conservative: it may open when it fills).
         // USD free must cover both. Mark-to-market drops out: each position's
         // loss is confined to its margin.
-        const { state: position } = await lockIsolatedPositionTx(client, userId, pairId, posScope);
+        const { state: position, mode: positionMode } = await lockIsolatedPositionTx(client, userId, pairId, posScope);
+        // ── Liquidation check #2 (under the position row lock) ──
+        // Same episode, same side, same size as check #1, still breaching.
+        // A match end that settled it first is caught here (flat) or by the
+        // closed-wallet re-check above (match_ended).
+        if (liquidation) {
+            if (!confirmLiquidation(position, positionMode, liquidation, liqMark!).eq(D(qty))) {
+                throw new LiquidationNotNeeded("size_changed");
+            }
+            liquidatedFrom = position;
+        }
         const immediate = plan.map((e) => ({ qty: e.fillQty, price: e.fillPrice, fee: e.feeAmt }));
         if (systemFill) immediate.push({ qty: systemFill.fillQty, price: systemFill.fillPrice, fee: systemFill.feeAmt });
         const { cost, opensQty, after } = isolatedOpenCost(position, side, immediate, orderLeverage, isolated.mmrBps);
@@ -591,6 +638,21 @@ async function placeOrderInternal(
     const mmrBps = isolated?.mmrBps ?? [...makerBooks.values()][0]?.mmrBps ?? 0;
     const isolatedLegs = new Map<string, IsolatedLeg>();
 
+    // What a liquidation's taker legs booked, summed over its fills.
+    const liqBooked = { quote: ZERO, pnl: ZERO, fee: ZERO, returned: ZERO, shortfall: ZERO };
+    const noteLiquidationLeg = (
+        fillQty: Decimal, fillPrice: Decimal,
+        s: { bookedPnl: Decimal; shortfall: Decimal; released: Decimal; leg: IsolatedLeg },
+    ) => {
+        if (!liquidation) return;
+        const fee = D(s.leg.feeBooked);
+        liqBooked.quote = liqBooked.quote.plus(fillQty.mul(fillPrice));
+        liqBooked.pnl = liqBooked.pnl.plus(s.bookedPnl);
+        liqBooked.fee = liqBooked.fee.plus(fee);
+        liqBooked.returned = liqBooked.returned.plus(s.released).plus(s.bookedPnl).minus(fee);
+        liqBooked.shortfall = liqBooked.shortfall.plus(s.shortfall);
+    };
+
     // ── Phase I: Execute book fills ──
     // All wallet locks are held — balance mutations are safe.
     const fills: TradeRow[] = [];
@@ -627,12 +689,13 @@ async function placeOrderInternal(
 
         // Taker leg.
         if (isolated) {
-            const { leg } = await settleIsolatedFillTx(client, {
+            const settled = await settleIsolatedFillTx(client, {
                 userId, pairId, scope: posScope, side, qty: qtyStr, price: toFixed8(fillPrice),
                 fee: feeStr, feeRole: "TAKER", leverage: orderLeverage, mmrBps,
                 usdWalletId: quoteWallet.id, tradeId: trade.id, ts,
             });
-            isolatedLegs.set(`${trade.id}:TAKER`, leg);
+            isolatedLegs.set(`${trade.id}:TAKER`, settled.leg);
+            noteLiquidationLeg(fillQty, fillPrice, settled);
         } else if (side === "BUY") {
             // Taker (buyer): debit quote (cost + fee), credit base
             const costPlusFee = toFixed8(D(quoteStr).plus(D(feeStr)));
@@ -760,12 +823,13 @@ async function placeOrderInternal(
         });
 
         if (isolated) {
-            const { leg } = await settleIsolatedFillTx(client, {
+            const settled = await settleIsolatedFillTx(client, {
                 userId, pairId, scope: posScope, side, qty: sysQtyStr, price: toFixed8(fillPrice),
                 fee: sysFeeStr, feeRole: "TAKER", leverage: orderLeverage, mmrBps,
                 usdWalletId: quoteWallet.id, tradeId: trade.id, ts: new Date(trade.executed_at).getTime(),
             });
-            isolatedLegs.set(`${trade.id}:TAKER`, leg);
+            isolatedLegs.set(`${trade.id}:TAKER`, settled.leg);
+            noteLiquidationLeg(fillQty, fillPrice, settled);
         } else if (side === "BUY") {
             const sysCostPlusFee = toFixed8(D(sysQuoteStr).plus(D(sysFeeStr)));
             await debitAvailableTx(client, quoteWallet.id, sysCostPlusFee,
@@ -833,7 +897,31 @@ async function placeOrderInternal(
         }
     }
 
-    return { order: updatedOrder, fills, reference, walletIds, isolatedLegs, canceledMakers };
+    let liquidationFill: LiquidationFill | undefined;
+    if (liquidation && liquidatedFrom) {
+        const closedQty = D(qty);
+        liquidationFill = {
+            userId,
+            pairId,
+            scope: posScope,
+            epoch: liquidation.epoch,
+            side: liquidation.side,
+            qty: toFixed8(closedQty),
+            entry: toFixed8(liquidatedFrom.entry),
+            leverage: liquidatedFrom.leverage.toFixed(2),
+            margin: toFixed8(liquidatedFrom.margin),
+            liqPrice: toFixed8(liquidatedFrom.liqPrice!),
+            mark: toFixed8(liqMark!),
+            bookAgeMs: Math.round(reference!.ageMs),
+            fillPrice: toFixed8(liqBooked.quote.div(closedQty)),
+            realizedPnl: toFixed8(liqBooked.pnl),
+            fee: toFixed8(liqBooked.fee),
+            returnedEquity: toFixed8(liqBooked.returned),
+            shortfall: toFixed8(liqBooked.shortfall),
+        };
+    }
+
+    return { order: updatedOrder, fills, reference, walletIds, isolatedLegs, canceledMakers, liquidation: liquidationFill };
 }
 
 /**
@@ -885,8 +973,9 @@ export async function placeOrderTx(
     source?: string | null,
     pricing?: CollarReference,
     leverage?: number | null,
+    liquidation?: LiquidationRequest,
 ): Promise<PlaceOrderResult> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage, liquidation);
 }
 
 /**

@@ -150,6 +150,32 @@ export const marketFillOffBookTotal = new client.Counter({
   labelNames: ["side", "direction"] as const,
 });
 
+// ── Liquidation engine (trading/liquidationEngine.ts) ──
+
+export const liquidationsTotal = new client.Counter({
+  name: "tradr_liquidations_total",
+  help: "Liquidation rows written, by mode (LOG_ONLY, EXECUTED, SKIPPED_STALE)",
+  labelNames: ["mode"] as const,
+});
+
+export const liquidationPaused = new client.Gauge({
+  name: "tradr_liquidation_paused",
+  help: "1 while liquidation is paused on a pair because its Kraken book is stale",
+  labelNames: ["pair"] as const,
+});
+
+export const liquidationEvalLag = new client.Histogram({
+  name: "tradr_liquidation_eval_lag_ms",
+  help: "Delay between a pair becoming due for evaluation (tick or sweep) and the evaluation starting",
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500],
+});
+
+export const liquidationEvalDuration = new client.Histogram({
+  name: "tradr_liquidation_eval_duration_ms",
+  help: "Time to evaluate one pair (candidate query + any rows/orders it led to)",
+  buckets: [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000],
+});
+
 export const ordersRejectedTotal = new client.Counter({
   name: "orders_rejected_total",
   help: "Total orders rejected",

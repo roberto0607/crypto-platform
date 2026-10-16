@@ -271,8 +271,9 @@ async function postUsd(
  * reserve they must fit the wallet's free balance (`insufficient_balance`
  * otherwise; the engine checks this up front, so it's a backstop).
  *
- * Returns the leg for the post-fill pipeline, how much reserve it used, and
- * the P&L it booked (after the loss cap) with any shortfall beyond it.
+ * Returns the leg for the post-fill pipeline, how much reserve it used, the
+ * P&L it booked (after the loss cap) with any shortfall beyond it, and the
+ * margin it released.
  */
 export async function settleIsolatedFillTx(
     client: PoolClient,
@@ -293,7 +294,7 @@ export async function settleIsolatedFillTx(
         ts: number;
         reserve?: Decimal;
     },
-): Promise<{ leg: IsolatedLeg; reserveUsed: Decimal; bookedPnl: Decimal; shortfall: Decimal }> {
+): Promise<{ leg: IsolatedLeg; reserveUsed: Decimal; bookedPnl: Decimal; shortfall: Decimal; released: Decimal }> {
     const { state, mode } = await lockIsolatedPositionTx(client, p.userId, p.pairId, p.scope);
     if (mode === "SPOT" && !state.qty.isZero()) throw new Error("position_mode_conflict");
 
@@ -392,6 +393,7 @@ export async function settleIsolatedFillTx(
         reserveUsed,
         bookedPnl,
         shortfall: r.reduce?.settlement.shortfall ?? ZERO,
+        released: r.reduce?.released ?? ZERO,
     };
 }
 

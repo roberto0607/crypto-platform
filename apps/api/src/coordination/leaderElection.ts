@@ -9,6 +9,7 @@ export const LOCK_NAMES = {
   reconciliation: "leader:reconciliation",
   lockSampler: "leader:lockSampler",
   migrations: "leader:migrations",
+  liquidation: "leader:liquidation",
 } as const;
 
 export type LockName = (typeof LOCK_NAMES)[keyof typeof LOCK_NAMES];
@@ -136,5 +137,6 @@ export function getLeadershipStatus(): Record<string, boolean> {
     outbox: heldLocks.has(LOCK_NAMES.outbox),
     reconciliation: heldLocks.has(LOCK_NAMES.reconciliation),
     lockSampler: heldLocks.has(LOCK_NAMES.lockSampler),
+    liquidation: heldLocks.has(LOCK_NAMES.liquidation),
   };
 }
