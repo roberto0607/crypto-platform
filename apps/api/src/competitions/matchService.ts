@@ -28,6 +28,7 @@ import {
     closeMatchWalletsTx,
     fundMatchWalletsTx,
     lockMatchWalletsTx,
+    lockMatchPairsTx,
     settleMatchWalletsTx,
 } from "./matchWallets.js";
 import type { AppEvent } from "../events/eventTypes.js";
@@ -301,7 +302,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         await client.query("BEGIN");
 
         const { rows } = await client.query<MatchRow>(
-            `SELECT * FROM matches WHERE id = $1 FOR UPDATE`,
+            `SELECT * FROM matches WHERE id = $1 FOR NO KEY UPDATE`,
             [matchId],
         );
         if (rows.length === 0) throw new Error("match_not_found");
@@ -387,7 +388,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         await client.query("BEGIN");
 
         const { rows } = await client.query<MatchRow>(
-            `SELECT * FROM matches WHERE id = $1 FOR UPDATE`,
+            `SELECT * FROM matches WHERE id = $1 FOR NO KEY UPDATE`,
             [matchId],
         );
         if (rows.length === 0) throw new Error("match_not_found");
@@ -485,7 +486,7 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
         await client.query("BEGIN");
 
         const { rows } = await client.query<MatchRow>(
-            `SELECT * FROM matches WHERE id = $1 FOR UPDATE`,
+            `SELECT * FROM matches WHERE id = $1 FOR NO KEY UPDATE`,
             [matchId],
         );
         if (rows.length === 0) throw new Error("match_not_found");
@@ -695,7 +696,7 @@ export async function cancelActiveMatch(userId: string): Promise<MatchRow> {
             `SELECT * FROM matches
              WHERE (challenger_id = $1 OR opponent_id = $1)
                AND status IN ('PENDING', 'ACTIVE')
-             FOR UPDATE
+             FOR NO KEY UPDATE
              LIMIT 1`,
             [userId],
         );
@@ -1005,7 +1006,16 @@ export function calculateNuancedScore(
 
 /**
  * End a match's accounts, inside the caller's match-end transaction (all 4
- * paths: complete, forfeit, mutual forfeit, cancel):
+ * paths: complete, forfeit, mutual forfeit, cancel). Each path locks the
+ * match row FOR NO KEY UPDATE, not FOR UPDATE: it still serializes the match-
+ * end paths with each other and with accept, but it doesn't block the
+ * key-share lock an in-flight match order's INSERTs take through their
+ * match_id foreign keys. With FOR UPDATE that order (holding its pair and
+ * wallets) and match end (holding the match row, waiting on them) deadlock.
+ *   0. lock the trading pairs it may touch (matchWallets.lockMatchPairsTx):
+ *      the force-close's synthetic order/trade rows need a key-share lock on
+ *      their pair, so pairs come first, as in trading (pair → wallets →
+ *      positions); otherwise an in-flight order on the pair deadlocks with it
  *   1. cancel the match's open orders (holds released)
  *   2. lock the match wallets — before positions, the same order trading
  *      takes them in (pair → wallets → positions), so an in-flight match fill
@@ -1018,6 +1028,7 @@ export function calculateNuancedScore(
  * Returns the events to publish after COMMIT.
  */
 async function settleMatchAccountsTx(matchId: string, client: PoolClient): Promise<AppEvent[]> {
+    await lockMatchPairsTx(client, matchId);
     const events = await cancelMatchOrdersTx(client, matchId);
     await lockMatchWalletsTx(client, matchId);
     const prices = new ClosePrices();
