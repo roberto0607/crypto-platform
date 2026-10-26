@@ -437,6 +437,21 @@ Decisions made while building the engine path, beyond the table above:
   - races with the user's own order (both orders), a maker fill, a second run, and the liquidation engine;
   - a TP/SL set before the conversion still closes the converted position.
 
+### PR 6a implementation notes (feat/leverage-ui-api)
+
+PR 6 was split in two because of its size: 6a = API, 6b = web (stacked on 6a).
+
+- **Reduce-only.** `POST /orders` accepts `reduceOnly` (MARKET only; with a LIMIT it's a 400, because a resting order could fill after its position is gone).
+  - The matching engine reads the position under the pair lock. Every writer of a position holds that lock: orders, triggers, the liquidation engine, match end (`lockMatchPairsTx`), the conversion.
+  - It trims the order to what's left of the position, or rejects it with `reduce_only_no_position`. It never opens or flips a position.
+  - The flag rides both queue backends; a real-Redis integration test covers it.
+  - This closes the PR 4 gap: a CLOSE that loses the race to a liquidation (or to match end, which now wins with `match_ended`) no longer opens a new 1x position. Race tests cover close vs liquidation and close vs match end, in both orders.
+- **Trigger closes.** A trigger's derived MARKET order is now reduce-only too. The unlocked `reducibleQty` clamp stays as a fast path. If the position closed between the clamp and the pair lock, the order ends as `CANCELED no_position` instead of a new position (race-tested against a liquidation). STOP_LIMIT / TAKE_PROFIT_LIMIT derived orders can't be reduce-only and keep the clamp only.
+- **`GET /leverage?pairId=`.** The model and cap the caller's next order on the pair would get, in the scope `POST /orders` uses: the active match, else `X-Competition-Id`, else free-play.
+  - It is built from the engine's own `resolveTakerMargin` and `isolatedCap`, so it can't disagree with order placement. It returns 1 in an active solo replay on the pair.
+  - It also returns the pair's MMR, the open position's leverage (the selector locks to it), and `blockedBy` (a resting order of the other model).
+- **`closed_trades.close_reason`** is recorded on every closing fill: MANUAL, TP, SL, TRAILING or LIQUIDATION. The journal API returns it. Match-scoped fills still journal without `match_id` (PR 7).
+
 ---
 
 ## Funding: recommendation **no funding in v1**
