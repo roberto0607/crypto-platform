@@ -10,6 +10,10 @@
  *            (WalletScope.matchId), so starting_capital is the cap and the 2×
  *            buying-power rule runs on the match's own wallet set.
  *   end    → settleMatchAccountsTx (matchService) runs, in this order:
+ *            lockMatchPairsTx     — the pairs it may trade on, first (trading
+ *                                   locks pair → wallets → positions; the
+ *                                   force-close's synthetic order/trade rows
+ *                                   need a key-share lock on their pair)
  *            cancelMatchOrdersTx  — open match orders canceled, holds released
  *            lockMatchWalletsTx   — wallets locked BEFORE positions (trading
  *                                   locks pair → wallets → positions, so this
@@ -101,6 +105,34 @@ export async function cancelMatchOrdersTx(client: PoolClient, matchId: string): 
         }, { userId: o.user_id }));
     }
     return events;
+}
+
+/**
+ * Lock, before anything else at match end, every trading pair match end may
+ * touch: each tradable pair (a match order can only trade those) plus the
+ * pairs of the match's open positions and orders. Sorted, one statement.
+ *
+ * Why first: an order on a pair holds the pair row FOR UPDATE and then waits
+ * on its wallets. Match end holds the match wallets and then inserts the
+ * force-close's synthetic order and trade, whose foreign keys take a
+ * key-share lock on the same pair row. Taken in that order the two wait on
+ * each other (Postgres aborts one: deadlock detected). With the pairs first,
+ * match end takes the same order trading does (pair → wallets → positions):
+ * an order in flight finishes first, and one arriving later waits for match
+ * end, then finds the wallets closed (match_ended). This covers the
+ * liquidation engine's close, which is an ordinary order.
+ */
+export async function lockMatchPairsTx(client: PoolClient, matchId: string): Promise<void> {
+    await client.query(
+        `SELECT id FROM trading_pairs
+         WHERE (is_active AND symbol = ANY($2))
+            OR id IN (SELECT pair_id FROM positions WHERE match_id = $1 AND base_qty <> 0
+                      UNION
+                      SELECT pair_id FROM orders WHERE match_id = $1 AND status IN ('OPEN', 'PARTIALLY_FILLED'))
+         ORDER BY id
+         FOR UPDATE`,
+        [matchId, tradableSymbols()],
+    );
 }
 
 /** Lock every wallet of the match (sorted, one statement). */

@@ -93,6 +93,23 @@ export async function notifyTriggerFired(
     });
 }
 
+export async function notifyPositionLiquidated(
+    userId: string,
+    pairSymbol: string,
+    l: { side: "LONG" | "SHORT"; leverage: string; fillPrice: string; returnedEquity: string; matchId: string | null },
+): Promise<void> {
+    const lev = `${Number(l.leverage)}x`;
+    const price = Number(l.fillPrice).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const returned = Number(l.returnedEquity).toFixed(2);
+    await notify({
+        userId,
+        kind: "POSITION_LIQUIDATED",
+        title: `${pairSymbol} ${lev} ${l.side} liquidated`,
+        body: `Liquidated at $${price}. $${returned} margin returned.`,
+        metadata: { pairSymbol, ...l },
+    });
+}
+
 export async function notifyOrderFilled(
     userId: string,
     pairSymbol: string,

@@ -41,12 +41,15 @@ import { listOpenOrders } from "./orderRepo";
 import { bookSnapshots } from "../market/orderFlowFeatures";
 import { buildFillPriceAudit } from "./fillPriceAudit";
 import type { CollarReference } from "./priceCollar";
+import { recordExecutedTx, type LiquidationFill, type LiquidationRequest } from "./liquidation";
 
 export type PlaceOrderResult = {
     order: OrderRow;
     fills: TradeRow[];
     snapshot: Snapshot;
     fromIdempotencyCache: boolean;
+    /** Set when the order was a liquidation: what it booked, and its liquidations row. */
+    liquidation?: LiquidationFill & { liquidationId: string };
 };
 
 /**
@@ -95,8 +98,14 @@ export async function placeOrderWithSnapshot(
     // Provenance tag. Omitted/null = manual user order — every existing
     // caller (HTTP route, market-maker bot, trigger engine, sim script)
     // is unaffected by this param and the kill-switch check below. Only
-    // 'agent' is gated; there is no other special-cased value today.
+    // 'agent' is gated; 'liquidation' is the liquidation engine (below).
     source?: string | null,
+    // The liquidation engine's close (liquidationEngine.ts): a MARKET order
+    // priced off the live Kraken book only (no replay pricing, no sim
+    // liquidity check, which could otherwise refuse it). The matching engine
+    // re-checks the position under its locks; the liquidations row is
+    // written in this same transaction.
+    liquidation?: LiquidationRequest,
 ): Promise<PlaceOrderResult> {
     const startMs = performance.now();
 
@@ -155,7 +164,7 @@ export async function placeOrderWithSnapshot(
     // liquidity check. A solo replay session is the exception: its orders price
     // off the historical candle via the sim model, passed down as `replayPricing`.
     let replayPricing: CollarReference | undefined;
-    if (body.type === "MARKET") {
+    if (body.type === "MARKET" && !liquidation) {
         const simConfig = await resolveSimulationConfig(userId, body.pairId);
 
         // 1m-pinned, index-served candle for the sim. null when the pair has no
@@ -196,7 +205,7 @@ export async function placeOrderWithSnapshot(
     }
 
     // ── 3–8. Single transaction: risk + matching + post-fill ──
-    const { result, idempotencyRowCount } = await txWithEvents(async (client, pendingEvents) => {
+    const { result, idempotencyRowCount, liquidationId } = await txWithEvents(async (client, pendingEvents) => {
         let idempRowCount = 1;
 
         // ── 4. Match (within caller's transaction) ──
@@ -213,7 +222,36 @@ export async function placeOrderWithSnapshot(
             resolvedSource,
             replayPricing,
             body.leverage ?? null,
+            liquidation,
         );
+
+        // A liquidation closes the position's size at the time of the lock,
+        // whatever the engine's candidate said.
+        let liquidationId: string | null = null;
+        if (matchResult.liquidation) {
+            body = { ...body, side: matchResult.order.side as "BUY" | "SELL", qty: matchResult.order.qty };
+            liquidationId = await recordExecutedTx(client, matchResult.liquidation, matchResult.order.id);
+            const f = matchResult.liquidation;
+            pendingEvents.push(createEvent("position.liquidated", {
+                liquidationId,
+                orderId: matchResult.order.id,
+                pairId: f.pairId,
+                competitionId: f.scope.competitionId,
+                matchId: f.scope.matchId,
+                side: f.side,
+                qty: f.qty,
+                entryPrice: f.entry,
+                leverage: f.leverage,
+                margin: f.margin,
+                liqPrice: f.liqPrice,
+                markPrice: f.mark,
+                fillPrice: f.fillPrice,
+                realizedPnl: f.realizedPnl,
+                fee: f.fee,
+                returnedEquity: f.returnedEquity,
+                shortfall: f.shortfall,
+            }, { userId, requestId }));
+        }
 
         // ── 5. Post-fill processing ──
         if (matchResult.fills.length > 0) {
@@ -527,7 +565,7 @@ export async function placeOrderWithSnapshot(
             client, matchResult.walletIds, matchResult.fills.length > 0 ? "TRADE" : "ORDER_RESERVE",
         ));
 
-        return { result: matchResult, idempotencyRowCount: idempRowCount };
+        return { result: matchResult, idempotencyRowCount: idempRowCount, liquidationId };
     });
 
     // ── Idempotency race recovery (after commit) ──
@@ -574,6 +612,7 @@ export async function placeOrderWithSnapshot(
         fills: result.fills,
         snapshot,
         fromIdempotencyCache: false,
+        ...(result.liquidation && liquidationId ? { liquidation: { ...result.liquidation, liquidationId } } : {}),
     };
 }
 

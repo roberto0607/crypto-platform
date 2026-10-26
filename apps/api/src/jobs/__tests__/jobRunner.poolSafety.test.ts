@@ -89,7 +89,8 @@ describe("safeMaxConcurrency", () => {
     it("leaves the leader reserve plus a free client per in-flight job", () => {
         expect(safeMaxConcurrency(20)).toBe(8); // prod default DB_POOL_MAX
         expect(safeMaxConcurrency(40)).toBe(18); // prod stopgap DB_POOL_MAX
-        expect(safeMaxConcurrency(7)).toBe(2);
+        expect(safeMaxConcurrency(7)).toBe(1);
+        expect(safeMaxConcurrency(8)).toBe(2);
         expect(safeMaxConcurrency(3)).toBe(1); // never below 1
     });
 });
