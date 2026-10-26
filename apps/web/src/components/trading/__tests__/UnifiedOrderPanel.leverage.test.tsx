@@ -161,7 +161,8 @@ describe("the order: input = margin", () => {
     await user.type(screen.getByPlaceholderText("0.00"), "50");
 
     expect(sumVal("NOTIONAL")).toBe("$500.00");
-    expect(sumVal("EST. LIQ PRICE")).toBe("$75,075.38 (-9.5%)");
+    expect(sumVal("EST. LIQ PRICE")).toBe("$75,075.38");
+    expect(screen.getByText("$75,075.38").getAttribute("title")).toContain("(-9.5% from entry)");
     expect(screen.getByText(/FEE \(5 bps\)/).parentElement!.textContent).toContain("$0.2500");
 
     await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
@@ -176,7 +177,8 @@ describe("the order: input = margin", () => {
     await user.click(screen.getByText("SHORT"));
     await user.click(screen.getByRole("radio", { name: "10x" }));
     await user.type(screen.getByPlaceholderText("0.00"), "50");
-    expect(sumVal("EST. LIQ PRICE")).toBe("$90,845.77 (+9.5%)");
+    expect(sumVal("EST. LIQ PRICE")).toBe("$90,845.77");
+    expect(screen.getByText("$90,845.77").getAttribute("title")).toContain("(+9.5% from entry)");
   });
 
   it("1x long: NONE (can't be liquidated); still sends leverage 1 (the user chose it)", async () => {
@@ -225,8 +227,10 @@ describe("the ISOLATED position card", () => {
   it("at $80,000: P&L −$18.07 (−36.14% of margin), health 62%; $78,000 amber; past bankruptcy: −$50.00 (−100%), red", async () => {
     await mount(ISO_LONG);
     setPrice("80000");
-    const pnl = screen.getByText("P&L · RETURN ON MARGIN").nextElementSibling!;
-    expect(pnl.textContent).toBe("$-18.07 (-36.14%)");
+    const pnl = () => card().getByText("P&L").nextElementSibling!.textContent;
+    const roe = () => card().getByText("ROE").nextElementSibling!.textContent;
+    expect(pnl()).toBe("$-18.07");
+    expect(roe()).toBe("-36.14%");
     // Health is linear from entry (100%) to liq (0%): (80,000 − 75,075.38) / 7,924.62 = 62%.
     const meterNow = () => Number(screen.getByRole("meter", { name: "Margin health" }).getAttribute("aria-valuenow"));
     expect(meterNow()).toBe(62);
@@ -234,7 +238,8 @@ describe("the ISOLATED position card", () => {
     expect(meterNow()).toBe(37);
     expect(screen.getByText("37%").style.color).toBe("rgb(245, 158, 11)");
     setPrice("70000");
-    expect(screen.getByText("P&L · RETURN ON MARGIN").nextElementSibling!.textContent).toBe("$-50.00 (-100.00%)");
+    expect(pnl()).toBe("$-50.00");
+    expect(roe()).toBe("-100.00%");
     const meter = screen.getByRole("meter", { name: "Margin health" });
     expect(meter.getAttribute("aria-valuenow")).toBe("0");
     expect(meter.className).toBe("margin-health-danger");

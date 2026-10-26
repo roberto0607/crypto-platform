@@ -781,10 +781,12 @@ export function UnifiedOrderPanel({
                         <span
                             className={`${p}-sum-val`}
                             style={{ color: preview?.liqPrice ? "#f59e0b" : undefined }}
-                            title="Where this position would be liquidated (its margin, less the maintenance margin, used up)"
+                            title={preview?.liqPrice
+                                ? `Liquidation at ${fmtUsd(preview.liqPrice.toNumber())} (${preview.liqDistancePct! >= 0 ? "+" : ""}${preview.liqDistancePct!.toFixed(1)}% from entry): the margin, less the maintenance margin, used up`
+                                : "A 1x long can't be liquidated"}
                         >
                             {preview?.liqPrice
-                                ? `${fmtUsd(preview.liqPrice.toNumber())} (${preview.liqDistancePct! >= 0 ? "+" : ""}${preview.liqDistancePct!.toFixed(1)}%)`
+                                ? fmtUsd(preview.liqPrice.toNumber())
                                 : usdNum > 0 ? "NONE" : <span className={`${p}-sum-empty`}>--</span>}
                         </span>
                     </div>
@@ -890,8 +892,8 @@ export function UnifiedOrderPanel({
                                 <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
                             </div>
                             )}
-                            <div style={isoView ? { gridColumn: "1 / -1" } : undefined}>
-                                <span style={smallLabel}>{isoView ? "P&L · RETURN ON MARGIN" : "P&L"}</span>
+                            <div>
+                                <span style={smallLabel}>P&L</span>
                                 <div
                                     key={pnlFlash.key}
                                     className={pnlFlash.dir ? "pnl-flash" : undefined}
@@ -906,9 +908,17 @@ export function UnifiedOrderPanel({
                                             : "rgba(255,59,59,0.45)",
                                     } as React.CSSProperties}
                                 >
-                                    {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)
+                                    {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)}{!isoView && <> ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)</>}
                                 </div>
                             </div>
+                            {isoView && (
+                                <div>
+                                    <span style={smallLabel} title="Unrealized P&L as a % of the position's margin">ROE</span>
+                                    <div style={{ ...smallVal, color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700 }}>
+                                        {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
+                                    </div>
+                                </div>
+                            )}
 
                             {/* TP display */}
                             <div>
