@@ -35,7 +35,7 @@ import { computeAvailableLiquidity } from "../sim/liquidityModel";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { timedQuery } from "../observability/dbTiming";
 import { txWithEvents } from "../utils/txWithEvents";
-import { processFillForJournal } from "../journal/journalService";
+import { processFillForJournal, type CloseReason } from "../journal/journalService";
 import { isAgentActionsEnabled } from "../system/systemFlagService";
 import { listOpenOrders } from "./orderRepo";
 import { bookSnapshots } from "../market/orderFlowFeatures";
@@ -85,6 +85,18 @@ export async function placeOrderWithSnapshot(
         limitPrice?: string;
         /** Requested leverage (omitted = 1x, or the leverage already in force). */
         leverage?: number;
+        /**
+         * Only shrink the position (MARKET only): trimmed to it under the pair
+         * lock, reduce_only_no_position when nothing is left. The CLOSE
+         * button and every trigger's derived MARKET order send it.
+         */
+        reduceOnly?: boolean;
+        /**
+         * Why a fill that closes a position closed it, for the journal
+         * (closed_trades.close_reason). Set by the trigger engine; never
+         * from the HTTP body. Default MANUAL; a liquidation is LIQUIDATION.
+         */
+        closeReason?: CloseReason;
     },
     idempotencyKey?: string,
     requestId?: string,
@@ -223,7 +235,13 @@ export async function placeOrderWithSnapshot(
             replayPricing,
             body.leverage ?? null,
             liquidation,
+            body.reduceOnly ?? false,
         );
+        // A reduce-only order may have been trimmed to the position.
+        if (body.reduceOnly && matchResult.order.qty !== body.qty) {
+            body = { ...body, qty: matchResult.order.qty };
+        }
+        const takerCloseReason: CloseReason = liquidation ? "LIQUIDATION" : body.closeReason ?? "MANUAL";
 
         // A liquidation closes the position's size at the time of the lock,
         // whatever the engine's candidate said.
@@ -327,6 +345,7 @@ export async function placeOrderWithSnapshot(
                         feeQuote: takerIso ? takerIso.feeBooked : takerFee.feeAmount,
                         filledAt: new Date(fill.executed_at),
                         competitionId: competitionId ?? null,
+                        closeReason: takerCloseReason,
                     });
 
                     // Apply fill to maker's position (if not system fill).
@@ -393,6 +412,8 @@ export async function placeOrderWithSnapshot(
                                 feeQuote: makerIso ? makerIso.feeBooked : makerFee.feeAmount,
                                 filledAt: new Date(fill.executed_at),
                                 competitionId: makerCompetitionId,
+                                // A resting order the user placed: their own close.
+                                closeReason: "MANUAL",
                             });
                         }
                     }

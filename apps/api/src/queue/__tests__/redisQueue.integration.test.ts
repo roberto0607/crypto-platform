@@ -178,6 +178,22 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
     expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][1]).not.toHaveProperty("leverage");
   });
 
+  // reduceOnly (leverage PR 6a, the CLOSE button) rides in the same JSON
+  // payload: a boolean must arrive as true, not "true" or dropped, or a close
+  // that lost a race to a liquidation would open a new position.
+  it("round-trips reduceOnly through the payload", async () => {
+    await enqueueRedis(PAIR_ID, "u-ro", { ...payload(PAIR_ID), reduceOnly: true }, undefined, "req-ro", undefined, undefined, null);
+    expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][1]).toEqual({ ...payload(PAIR_ID), reduceOnly: true });
+    expect(vi.mocked(placeOrderWithSnapshot).mock.calls[0][1].reduceOnly).toBe(true);
+  });
+
+  it("preserves reduce_only_no_position across Redis (a 400, not a 500)", async () => {
+    vi.mocked(placeOrderWithSnapshot).mockRejectedValueOnce(new Error("reduce_only_no_position"));
+    await expect(
+      enqueueRedis(PAIR_ID, "u-ro", { ...payload(PAIR_ID), reduceOnly: true }, undefined, "req-ro-err", undefined, undefined, null),
+    ).rejects.toMatchObject({ code: "reduce_only_no_position", statusCode: 400 });
+  });
+
   // Engine rejections are plain `new Error("<code>")` — they must reach the
   // client with their code across Redis, not as a 500 queue_processing_error
   // (the in-memory path always preserved them via the route's toAppError).

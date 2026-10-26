@@ -11,6 +11,7 @@ import { createEvent } from "../events/eventTypes";
 import { findPairById } from "../trading/pairRepo";
 import { logger } from "../observability/logContext";
 import { notifyTriggerFired } from "../notifications/notificationService";
+import type { CloseReason } from "../journal/journalService";
 
 type PriceSnapshot = { last: string };
 
@@ -180,6 +181,13 @@ export async function fireTrigger(
                 type: derivedType,
                 qty: toFixed8(orderQty),
                 limitPrice: derivedLimitPrice,
+                // The clamp above read the position without a lock. A MARKET
+                // order is also reduce-only under the pair lock, so a close
+                // that got there first (the user's, the other leg, a
+                // liquidation) can never turn this into a new position. (A
+                // LIMIT can't be reduce-only: it may rest.)
+                reduceOnly: derivedType === "MARKET",
+                closeReason: closeReasonOf(trigger.kind),
             },
             undefined,           // idempotencyKey
             undefined,           // requestId
@@ -207,6 +215,11 @@ export async function fireTrigger(
         if (err instanceof Error && err.message === "stale_price_source") {
             await rearmTrigger(trigger, canceledSibling);
             return; // not fired: no trigger.fired event, no notification
+        }
+        if (err instanceof Error && err.message === "reduce_only_no_position") {
+            // The position closed between the clamp and the pair lock.
+            await cancelUnfired(trigger, canceledSibling, NO_POSITION_REASON);
+            return; // not fired: no order, no trigger.fired event, no notification
         }
 
         // Mark FAILED with reason
@@ -264,6 +277,13 @@ export async function fireTrigger(
 }
 
 export const NO_POSITION_REASON = "no_position";
+
+/** closed_trades.close_reason for a trigger's derived order. */
+export function closeReasonOf(kind: TriggerOrderRow["kind"]): CloseReason {
+    if (kind.startsWith("TRAILING_STOP")) return "TRAILING";
+    if (kind.startsWith("TAKE_PROFIT")) return "TP";
+    return "SL";
+}
 
 /**
  * A trigger that fired but must not trade — nothing left to reduce

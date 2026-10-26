@@ -32,6 +32,9 @@ const ERROR_STATUS: Record<string, number> = {
   leverage_mismatch: 400,
   spot_orders_open: 400,
   isolated_orders_open: 400,
+  // Reduce-only (matchingEngine): nothing left to reduce / not a MARKET order
+  reduce_only_no_position: 400,
+  reduce_only_market_only: 400,
   // 401
   invalid_credentials: 401,
   unauthorized: 401,
