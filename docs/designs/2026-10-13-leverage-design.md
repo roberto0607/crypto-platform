@@ -452,6 +452,27 @@ PR 6 was split in two because of its size: 6a = API, 6b = web (stacked on 6a).
   - It also returns the pair's MMR, the open position's leverage (the selector locks to it), and `blockedBy` (a resting order of the other model).
 - **`closed_trades.close_reason`** is recorded on every closing fill: MANUAL, TP, SL, TRAILING or LIQUIDATION. The journal API returns it. Match-scoped fills still journal without `match_id` (PR 7).
 
+### PR 6b implementation notes (feat/leverage-ui-web)
+
+- **The server decides.** `useLeverageInfo` calls `GET /leverage` for the selected pair. It refetches on a pair, match or competition change and after fills, liquidations and reconnects. The web never computes a cap.
+  - `SHOW_LEVERAGE_SELECTOR` is now only a client kill switch (default on). The old multiplier path is deleted.
+  - Everything new renders only when `leveraged` = switch on && `ISOLATED` && cap > 1.
+- **Leverage off is unchanged, and that's proven.** `UnifiedOrderPanel.leverageOff.test.tsx` compares the panel's HTML and every request body to a golden recorded on origin/main. It covers three cases: the server says SPOT, `GET /leverage` fails, and ISOLATED at a 1x cap. Two documented exceptions are applied explicitly in the test:
+  1. CLOSE sends `reduceOnly: true` in every mode.
+  2. The clipped-summary fix moves the card into the order footer.
+- **Order panel (leveraged).**
+  - The selector shows `[1,2,3,5,10]` up to the cap. It is locked to the open position's leverage ("Close the position to change leverage"), and explains `blockedBy`.
+  - The input is MARGIN. Notional = margin × L, sized by `lib/margin.sizeForMargin`. The fee is on the notional. The est. liq price comes from the shared `liquidationPrice`, with its distance in the tooltip.
+  - AVAILABLE = free USD (`balance − reserved` of the order's wallets, no 2× rule). MAX leaves room for the fee.
+  - EQUITY = USD + Σ (margin + capped uPnL), the server's `accountEquity`. It is shown on /trade and in a match, which closes the PR 3 follow-up.
+  - `leverage` is sent only for leveraged orders.
+- **ISOLATED position card:** leverage badge, mark, margin, liq price (tooltip with the distance from entry), loss-capped P&L, ROE, and a margin-health bar (green > 50%, amber 25–50%, red < 25% with a pulse). Health is computed live from the pair's MMR. A SPOT position keeps the old card.
+- **Liquidation UX.** `position.liquidated` (SSE) → a toast ("BTC/USD 10x LONG liquidated at $… . $… margin returned.", or the gap wording), a wallet reload and a positions refresh. The bell shows `POSITION_LIQUIDATED`. The journal shows a LIQUIDATED / TP / SL / TRAILING STOP badge from `close_reason`.
+- **Two bug fixes (separate commits).**
+  1. With a position open, the summary, submit and card are now one bottom-pinned group with the card last. Before, the card covered the FEE / AVAILABLE rows and the submit button.
+  2. The "Position closed" toast showed twice: one toast per TP/SL leg. `position_closed` / `match_ended` toasts now collapse per pair within 1 s.
+- **Not in 6b** (§4 items left for later): the chart's dashed liq line, the server-side `position.margin_warning` event, and the journal CSV columns (PR 7).
+
 ---
 
 ## Funding: recommendation **no funding in v1**
