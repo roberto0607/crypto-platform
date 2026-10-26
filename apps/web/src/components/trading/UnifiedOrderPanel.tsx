@@ -901,7 +901,9 @@ export function UnifiedOrderPanel({
                                     style={{
                                         color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b",
                                         fontWeight: 700, fontSize: 10,
-                                        display: "inline-block",
+                                        // ISOLATED: on its own line under the label (the
+                                        // SPOT card's layout is unchanged).
+                                        display: isoView ? "table" : "inline-block",
                                         padding: "1px 4px", margin: "-1px -4px",
                                         borderRadius: 2,
                                         "--pnl-flash-tint": pnlFlash.dir === "up"
