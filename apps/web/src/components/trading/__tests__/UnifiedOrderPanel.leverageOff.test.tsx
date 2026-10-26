@@ -9,8 +9,12 @@
  *   B  LIMIT SHORT at 84,000, $50 entered → submit
  *   C  an open SPOT long (position card) → CLOSE POSITION
  *
- * The one deliberate difference: CLOSE POSITION now sends reduceOnly: true
- * (so a close that loses a race can never open a position).
+ * Deliberate differences, each applied explicitly below so everything else
+ * still has to match the golden byte for byte:
+ *   - CLOSE POSITION sends reduceOnly: true (a close that loses a race can
+ *     never open a position);
+ *   - with a position open, the card sits inside the order footer, which
+ *     gets tr-order-footer-with-position (the clipped-summary bug fix).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
@@ -147,6 +151,19 @@ async function record() {
 
 type Golden = Awaited<ReturnType<typeof record>>;
 
+/**
+ * The golden's position-open markup with the footer fix applied: the card
+ * moved to the end of the footer, the footer marked -with-position.
+ */
+function withFooterFix(html: string): string {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+  const footer = doc.querySelector(".tr-order-footer")!;
+  const card = doc.querySelector(".tr-position-card-sticky")!;
+  footer.classList.add("tr-order-footer-with-position");
+  footer.appendChild(card);
+  return doc.body.innerHTML;
+}
+
 async function golden(): Promise<Golden> {
   return JSON.parse((await nodeFs()).readFileSync(GOLDEN, "utf8"));
 }
@@ -166,7 +183,7 @@ describe("leverage off: the order panel is unchanged", () => {
     const g = await golden();
     expect(got.A).toEqual(g.A);
     expect(got.B).toEqual(g.B);
-    expect(got.C.html).toEqual(g.C.html);
+    expect(got.C.html).toEqual(withFooterFix(g.C.html));
     // The one difference: CLOSE is reduce-only.
     expect(got.C.closeBody).toEqual({ ...(g.C.closeBody as object), reduceOnly: true });
   });
@@ -177,7 +194,7 @@ describe("leverage off: the order panel is unchanged", () => {
     const g = await golden();
     expect(got.A).toEqual(g.A);
     expect(got.B).toEqual(g.B);
-    expect(got.C.html).toEqual(g.C.html);
+    expect(got.C.html).toEqual(withFooterFix(g.C.html));
   });
 
   it("ISOLATED at a 1x cap: the order form and bodies are unchanged too (no selector, no leverage sent)", async () => {

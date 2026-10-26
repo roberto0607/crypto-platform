@@ -756,11 +756,13 @@ export function UnifiedOrderPanel({
                 )}
             </div>
 
-            {/* Sticky footer (trade page, no open position): keeps the cost summary +
-                submit button always visible while TP/SL/TSL scroll above. Renders as
-                display:contents otherwise, so the arena (lmv) and the has-position case
-                — where the position card is the pinned element — are unchanged. */}
-            <div className={`${p}-order-footer${hasPosition ? "" : ` ${p}-order-footer-pinned`}`}>
+            {/* Sticky footer. No open position (trade page): keeps the cost summary +
+                submit button always visible while TP/SL/TSL scroll above (display:contents
+                in the arena). With a position open (both pages): the summary, submit AND
+                the position card are one bottom-pinned group, the card last. The card
+                used to be pinned on its own over a flowing summary, so it covered the
+                FEE / AVAILABLE rows and the submit button whenever they scrolled under it. */}
+            <div className={`${p}-order-footer${hasPosition ? ` ${p}-order-footer-with-position` : ` ${p}-order-footer-pinned`}`}>
             {/* ── SUMMARY ── */}
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
@@ -825,9 +827,8 @@ export function UnifiedOrderPanel({
             >
                 {btnLabel}
             </button>
-            </div>
 
-            {/* ── OPEN POSITION CARD — sticky-pinned to bottom of scroll area ── */}
+            {/* ── OPEN POSITION CARD — last in the pinned footer group ── */}
             {hasPosition && (
                 <div className={`${p}-position-card-sticky`}>
                     <div
@@ -1006,6 +1007,7 @@ export function UnifiedOrderPanel({
                     </div>
                 </div>
             )}
+            </div>{/* /order-footer */}
         </div>
     );
 }

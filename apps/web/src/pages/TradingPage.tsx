@@ -697,6 +697,15 @@ const TRADE_CSS = `
     background:#050505;
     border-top:1px solid rgba(255,255,255,0.08);
   }
+  /* With a position open, the summary + submit + card pin together (the card
+     is the group's last child), so the card can never cover the summary rows
+     or the submit button. Inside the group the card isn't sticky on its own. */
+  .tr-order-footer-with-position {
+    display:block;position:sticky;bottom:0;z-index:2;
+    margin:0 -16px;padding:8px 16px 0;
+    background:#050505;border-top:1px solid var(--borderW);
+  }
+  .tr-order-footer-with-position .tr-position-card-sticky { position:static;margin:10px -16px 0; }
 
   /* ticker provided by AppLayout */
 `;
