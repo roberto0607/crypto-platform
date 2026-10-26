@@ -417,6 +417,26 @@ Decisions made while building the engine path, beyond the table above:
 - **Not reduce-only.** If a liquidation and the user's manual close race and the liquidation wins, the user's SELL then opens a new position (1x, next epoch). Manual orders aren't reduce-only today; that's a PR 6 UI question (a reduce-only close button).
 - **Metrics.** `tradr_liquidations_total{mode}`, `tradr_liquidation_paused{pair}`, `tradr_liquidation_eval_lag_ms`, `tradr_liquidation_eval_duration_ms`.
 
+### PR 5 implementation notes (feat/leverage-convert)
+
+- **Where.** `trading/leverageConversion.ts` (plan, apply, report), CLI `pnpm leverage:convert` (`scripts/convertToIsolated.ts`), runbook `docs/runbooks/leverage-convert.md`. Dry run is the default; only `--apply` writes. Unknown arguments are an error.
+- **What converts.** Open SPOT rows with `match_id IS NULL` (free-play and competitions), real users only. Matches are never converted (§1): their wallets and positions aren't read or locked. Already-ISOLATED and flat rows are skipped.
+- **How.** Per position of size q at entry P, M = |q|·P:
+  1. The user's resting SPOT orders on that pair and scope are canceled through `cancelOrderTx` (`cancel_reason = 'leverage_conversion'`, `ORDER_CANCELLED` outbox), as the PR 2 notes require.
+  2. Base wallet −q (`POSITION_CONVERSION`).
+  3. USD ±M (`POSITION_CONVERSION`, the base settled at P).
+  4. USD −M (`MARGIN_LOCK`).
+  5. The row becomes ISOLATED: 1x, margin M, liq from `margin.ts`, epoch + 1, `opened_at` now. Entry, realized P&L and fees are unchanged.
+  A long's USD nets to 0; a short's falls by 2M.
+- **Drift (changed from §1).** §1 said a position whose qty disagrees with the base wallet should be struck at the mark. Instead, only the position's qty leaves the wallet, at its entry. The difference stays in the base wallet as reported `residue`. This keeps equity identical by both the app's measure (`getPortfolioSummary`: USD + positions) and the wallets' (USD + base × mark), at any mark, and needs no mark price. Striking at the mark would preserve only the wallets' measure.
+- **Blocked users** are left as they are and reported: `insufficient_usd` (a short's 2M doesn't fit USD free after the cancels), `short_past_liq` (the loss cap would bind, so equity couldn't be preserved and the engine would liquidate at once), `no_mark`, `wallet_missing`.
+- **Safety.** One transaction per user, under trading's locks in trading's order: pairs (sorted) → the user's wallets in those scopes (sorted) → the position rows. The plan is rebuilt from what's read under the locks. Before COMMIT, each scope's equity is recomputed from the database and must equal the plan's (`equity_mismatch` rolls the user back). A failing user is reported and the run continues. Events (`order.updated`, `wallet.updated`) are published after COMMIT, through Redis when the script has `REDIS_URL`. One `audit_log` row (`leverage.convert`) per user.
+- **Tests.** `leverageConversion.test.ts` covers:
+  - long, short, competition, several pairs and drift, with equity equal to the cent (1e-8) at three marks by both measures;
+  - the dry run writes nothing; idempotence; bots and matches untouched; a failure rolls back only that user;
+  - races with the user's own order (both orders), a maker fill, a second run, and the liquidation engine;
+  - a TP/SL set before the conversion still closes the converted position.
+
 ---
 
 ## Funding: recommendation **no funding in v1**
