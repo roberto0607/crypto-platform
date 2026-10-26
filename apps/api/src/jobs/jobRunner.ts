@@ -37,8 +37,11 @@ const logger = rootLogger.child({ module: "jobRunner" });
  *   - the advisory lock is released before the client goes back to the pool.
  */
 
-/** Clients leader election can hold permanently (outbox, job runner, lock sampler). */
-const LEADER_LOCK_RESERVE = 3;
+/**
+ * Clients leader election can hold permanently: outbox, job runner, lock
+ * sampler, and the liquidation engine (trading/liquidationEngine.ts).
+ */
+const LEADER_LOCK_RESERVE = 4;
 
 const definitions: Map<string, JobDefinition> = new Map();
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
