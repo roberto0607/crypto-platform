@@ -25,6 +25,7 @@ import authRoutes from "./routes/authRoutes";
 import adminRoutes from "./routes/adminRoutes";
 import walletRoutes from "./routes/walletRoutes";
 import tradingRoutes from "./routes/tradingRoutes";
+import leverageRoutes from "./routes/leverageRoutes";
 import marketRoutes from "./routes/marketRoutes";
 import replayRoutes from "./routes/replayRoutes";
 import analyticsRoutes from "./routes/analyticsRoutes";
@@ -302,6 +303,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(adminRoutes, { prefix: "/admin" });
   await app.register(walletRoutes);
   await app.register(tradingRoutes);
+  await app.register(leverageRoutes);
   await app.register(marketRoutes);
   await app.register(replayRoutes, { prefix: "/replay" });
   await app.register(analyticsRoutes);
