@@ -13,6 +13,8 @@ export interface QueueJob {
     // Requested leverage (a JSON number, so it survives the Redis queue's
     // JSON round trip as-is). Omitted = 1x / the leverage already in force.
     leverage?: number;
+    // Only shrink the position (a JSON boolean: survives the round trip).
+    reduceOnly?: boolean;
   };
   idempotencyKey?: string;
   competitionId?: string;

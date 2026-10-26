@@ -1,6 +1,13 @@
 import type { PoolClient } from "pg";
 import { timedQuery } from "../observability/dbTiming";
 
+/**
+ * Why a position closed (closed_trades.close_reason, migration 096): an
+ * ordinary order (MANUAL), a trigger's derived order (TP / SL / TRAILING), or
+ * the liquidation engine (LIQUIDATION).
+ */
+export type CloseReason = "MANUAL" | "TP" | "SL" | "TRAILING" | "LIQUIDATION";
+
 export interface ClosedTradeInput {
     userId: string;
     pairId: string;
@@ -48,9 +55,12 @@ export async function processFillForJournal(
         feeQuote: string;
         filledAt: Date;
         competitionId?: string | null;
+        /** Recorded on every closed_trades row this fill writes. Default MANUAL. */
+        closeReason?: CloseReason;
     },
 ): Promise<void> {
     const { userId, pairId, fillId, side, price, qty, feeQuote, filledAt, competitionId } = params;
+    const closeReason: CloseReason = params.closeReason ?? "MANUAL";
     const compId = competitionId ?? null;
 
     // Determine if this fill is opening or closing a position
@@ -119,17 +129,17 @@ export async function processFillForJournal(
                 (user_id, pair_id, competition_id, direction,
                  entry_fill_ids, entry_qty, entry_avg_price, entry_fees, entry_at,
                  exit_fill_ids, exit_qty, exit_avg_price, exit_fees, exit_at,
-                 gross_pnl, total_fees, net_pnl, return_pct, holding_seconds)
+                 gross_pnl, total_fees, net_pnl, return_pct, holding_seconds, close_reason)
              VALUES ($1, $2, $3, $4,
                      $5, $6, $7, $8, $9,
                      $10, $11, $12, $13, $14,
-                     $15, $16, $17, $18, $19)`,
+                     $15, $16, $17, $18, $19, $20)`,
             [
                 userId, pairId, compId, direction,
                 [lot.fill_id], consumed.toFixed(8), lot.price, lotFee.toFixed(8), lot.filled_at,
                 [fillId], consumed.toFixed(8), price, fillFeeShare.toFixed(8), filledAt.toISOString(),
                 grossPnl.toFixed(8), totalFees.toFixed(8), netPnl.toFixed(8),
-                returnPct.toFixed(4), holdingSeconds,
+                returnPct.toFixed(4), holdingSeconds, closeReason,
             ],
         );
 

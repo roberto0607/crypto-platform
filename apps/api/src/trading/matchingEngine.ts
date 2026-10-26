@@ -215,6 +215,10 @@ async function placeOrderInternal(
     // breach, if it still does. side/qty are taken from the position under
     // the locks, not from the caller. A no-op throws LiquidationNotNeeded.
     liquidation?: LiquidationRequest,
+    // Reduce-only (a CLOSE, or a trigger's derived order): may only shrink
+    // the position in this scope. Trimmed to it under the pair lock below;
+    // nothing to reduce → reduce_only_no_position. MARKET only.
+    reduceOnly?: boolean,
 ): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -225,6 +229,9 @@ async function placeOrderInternal(
     // agents, the trigger engine and the market maker reach this directly.
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
     if (liquidation && (type !== "MARKET" || pricing)) throw new Error("invalid_liquidation_order");
+    // A resting reduce-only order could fill after its position is gone and
+    // open a new one, so reduce-only is MARKET only.
+    if (reduceOnly && type !== "MARKET") throw new Error("reduce_only_market_only");
 
     // Market reference (MARKET only): the real Kraken touch — fresh book, else
     // fresh ticker bid/ask. It bands which resting orders may be swept (at the
@@ -264,6 +271,19 @@ async function placeOrderInternal(
         const row = await readPosition(client, userId, pairId, posScope, false);
         qty = toFixed8(confirmLiquidation(stateOf(row), row?.margin_mode ?? "SPOT", liquidation, liqMark!));
         side = closingSide(liquidation.side);
+    }
+    // ── Reduce-only (under the pair lock) ──
+    // Every writer of this position holds the pair lock: orders, triggers,
+    // the liquidation engine, match end (lockMatchPairsTx), the conversion.
+    // So this read is current, and the trimmed size holds until the fills.
+    // A position already closed (a liquidation or a trigger got there first)
+    // or on the order's own side leaves nothing to reduce.
+    if (reduceOnly && !liquidation) {
+        const row = await readPosition(client, userId, pairId, posScope, false);
+        const signed = row ? D(row.base_qty) : ZERO;
+        const reducible = side === "SELL" ? Decimal.max(signed, ZERO) : Decimal.max(signed.neg(), ZERO);
+        if (reducible.isZero()) throw new Error("reduce_only_no_position");
+        if (D(qty).gt(reducible)) qty = toFixed8(reducible);
     }
     if (reference) {
         const band = collarBand(reference, side);
@@ -974,8 +994,9 @@ export async function placeOrderTx(
     pricing?: CollarReference,
     leverage?: number | null,
     liquidation?: LiquidationRequest,
+    reduceOnly?: boolean,
 ): Promise<PlaceOrderResult> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage, liquidation);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage, liquidation, reduceOnly);
 }
 
 /**
