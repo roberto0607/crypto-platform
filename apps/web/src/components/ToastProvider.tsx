@@ -48,6 +48,9 @@ export function triggerCanceledMessage(reason: string | undefined, triggerId: st
   }
 }
 
+/** trigger.canceled bursts from one close (one event per trigger) show one toast. */
+const POSITION_TOAST_COALESCE_MS = 1000;
+
 /** position.liquidated → user copy (api trading/liquidationEngine.ts). */
 export function liquidationMessage(d: PositionLiquidatedEvent, pairSymbol: string): string {
   const usd = (v: string) =>
@@ -101,8 +104,20 @@ export default function ToastProvider({
       addToast("warning", `Trigger fired: ${d.triggerKind ?? "trigger"} for ${d.pairId ?? "order"}`);
     }
 
+    // One close cancels every trigger protecting the position (both legs of a
+    // TP/SL pair), and the server sends one trigger.canceled per trigger, in
+    // the same instant. For the reasons that describe the position, not the
+    // trigger, show one toast per pair per burst.
+    const recentPositionToasts = new Map<string, number>();
     function onTriggerCanceled(e: Event) {
       const d = (e as CustomEvent).detail;
+      if (d?.reason === "position_closed" || d?.reason === "match_ended") {
+        const key = `${d.reason}:${d.pairId}`;
+        const now = Date.now();
+        const last = recentPositionToasts.get(key);
+        recentPositionToasts.set(key, now);
+        if (last !== undefined && now - last < POSITION_TOAST_COALESCE_MS) return;
+      }
       addToast("info", triggerCanceledMessage(d?.reason, d?.triggerId));
     }
 

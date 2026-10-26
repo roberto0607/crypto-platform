@@ -3,7 +3,7 @@
  * error toast naming the pair, leverage, side, fill price and the margin
  * returned (leverage PR 6b).
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import ToastProvider, { liquidationMessage } from "@/components/ToastProvider";
 import { useAppStore } from "@/stores/appStore";
@@ -41,3 +41,47 @@ describe("the sse:position.liquidated toast", () => {
     expect(screen.getByText("BTC/USD 10x LONG liquidated at $75,060.00. $1.94 margin returned.")).toBeTruthy();
   });
 });
+
+/**
+ * Bug (QA, 2026-10): "Position closed" showed twice. Closing a position with a
+ * TP/SL pair cancels both legs; the server (correctly) sends one
+ * trigger.canceled per trigger, in the same instant, and each became a toast.
+ */
+describe("trigger.canceled toasts", () => {
+  afterEach(() => vi.useRealTimers());
+  const canceled = (triggerId: string, reason: string, pairId = "p1") =>
+    act(() => { window.dispatchEvent(new CustomEvent("sse:trigger.canceled", { detail: { triggerId, pairId, reason } })); });
+
+  it("both legs of a TP/SL canceled by one close: one 'Position closed' toast", () => {
+    render(<ToastProvider><div /></ToastProvider>);
+    canceled("tp", "position_closed");
+    canceled("sl", "position_closed");
+    expect(screen.getAllByText(/Position closed/)).toHaveLength(1);
+  });
+
+  it("the same for match end", () => {
+    render(<ToastProvider><div /></ToastProvider>);
+    canceled("tp", "match_ended");
+    canceled("sl", "match_ended");
+    expect(screen.getAllByText(/Match ended/)).toHaveLength(1);
+  });
+
+  it("different pairs, or a later close, still each get their toast", () => {
+    vi.useFakeTimers();
+    render(<ToastProvider><div /></ToastProvider>);
+    canceled("a", "position_closed", "p1");
+    canceled("b", "position_closed", "p2");
+    expect(screen.getAllByText(/Position closed/)).toHaveLength(2);
+    act(() => { vi.advanceTimersByTime(6000); }); // both toasts expire
+    canceled("c", "position_closed", "p1");
+    expect(screen.getAllByText(/Position closed/)).toHaveLength(1);
+  });
+
+  it("other reasons are per trigger, unchanged", () => {
+    render(<ToastProvider><div /></ToastProvider>);
+    canceled("a", "no_position");
+    canceled("b", "no_position");
+    expect(screen.getAllByText(/fired with no position/)).toHaveLength(2);
+  });
+});
+
