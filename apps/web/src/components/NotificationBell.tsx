@@ -7,6 +7,7 @@ const KIND_ICONS: Record<string, string> = {
     RANK_CHANGED: "#",
     TRIGGER_FIRED: "T",
     ORDER_FILLED: "$",
+    POSITION_LIQUIDATED: "!",
     SYSTEM: "i",
 };
 

@@ -114,6 +114,17 @@ export function useSSE() {
         );
       },
 
+      // The liquidation engine closed one of the user's positions: the toast
+      // (ToastProvider), the order panel / position lists (refetch) listen
+      // for the window event. Margin came back to USD: reload balances (the
+      // wallet.updated it also sends may land first or not at all).
+      onPositionLiquidated: (event) => {
+        void useAppStore.getState().refreshWallets();
+        window.dispatchEvent(
+          new CustomEvent("sse:position.liquidated", { detail: event.data }),
+        );
+      },
+
       onCandleClosed: (event) => {
         window.dispatchEvent(
           new CustomEvent("sse:candle.closed", { detail: event.data }),

@@ -161,7 +161,8 @@ interface TradingState {
   cancelTrigger: (triggerId: string) => Promise<void>;
   /** Edit in place (PATCH) — keeps the trigger's id and OCO link. */
   updateTrigger: (triggerId: string, patch: { triggerPrice?: string; trailingOffset?: string }) => Promise<void>;
-  submitOrder: () => Promise<{ order: Order; fills: Fill[] }>;
+  /** `leverage` is added to the body only when given (an ISOLATED order above 1x). */
+  submitOrder: (opts?: { leverage?: number }) => Promise<{ order: Order; fills: Fill[] }>;
   cancelOrder: (orderId: string) => Promise<void>;
 
   // SSE-driven setters
@@ -350,7 +351,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({ activeTriggers: get().activeTriggers.map((t) => (t.id === triggerId ? res.data : t)) });
   },
 
-  submitOrder: async () => {
+  submitOrder: async (opts) => {
     const { selectedPairId, orderSide, orderType, qty, limitPrice } = get();
     if (!selectedPairId || !qty) {
       throw new Error("Missing required order fields");
@@ -368,6 +369,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
           type: orderType,
           qty,
           limitPrice: orderType === "LIMIT" ? limitPrice : undefined,
+          ...(opts?.leverage !== undefined ? { leverage: opts.leverage } : {}),
         },
         idempotencyKey,
       );

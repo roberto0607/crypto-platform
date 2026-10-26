@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { getJournal, getJournalSummary, exportJournalCsv } from "@/api/endpoints/journal";
 import { format } from "date-fns";
+import { closeReasonBadge } from "@/lib/closeReason";
 
 /* ─────────────────────────────────────────
    JOURNAL PAGE CSS — Circuit Noir
@@ -302,6 +303,8 @@ interface ClosedTrade {
   return_pct: string;
   holding_seconds: number;
   exit_at: string;
+  /** Why it closed (server, leverage PR 6a): MANUAL | TP | SL | TRAILING | LIQUIDATION; null before. */
+  close_reason?: string | null;
 }
 
 interface JournalSummaryData {
@@ -337,6 +340,7 @@ interface MappedTrade {
   slippage: number;
   tags: string[];
   note: string;
+  closeReason: string | null;
 }
 
 const ASSET_ICONS: Record<string, string> = { BTC: "\u20BF", ETH: "\u039E", SOL: "\u25CE" };
@@ -375,6 +379,7 @@ function mapTrade(t: ClosedTrade): MappedTrade {
     slippage: 0, // not tracked by backend
     tags: [],    // not tracked by backend yet
     note: "",    // not tracked by backend yet
+    closeReason: t.close_reason ?? null,
   };
 }
 
@@ -433,6 +438,20 @@ function TradeRow({ trade, expanded, onToggle }: { trade: MappedTrade; expanded:
           <span className={trade.side === "buy" ? "jn-side-b" : "jn-side-s"}>
             {trade.side === "buy" ? "\u25B2 LONG" : "\u25BC SHORT"}
           </span>
+          {(() => {
+            const badge = closeReasonBadge(trade.closeReason);
+            return badge && (
+              <div
+                data-testid="close-reason"
+                style={{
+                  display: "inline-block", marginTop: 3, padding: "0 4px", fontSize: 9, letterSpacing: 1,
+                  color: badge.color, border: `1px solid ${badge.color}`,
+                }}
+              >
+                {badge.label}
+              </div>
+            );
+          })()}
         </td>
         <td className="r">
           <div className="jn-price">{fmtPrice(trade.entry)}</div>

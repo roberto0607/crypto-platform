@@ -31,6 +31,10 @@ export function placeOrder(
     type: OrderType;
     qty: DecimalString;
     limitPrice?: DecimalString;
+    /** Sent only for an ISOLATED order the server allows above 1x (GET /leverage). */
+    leverage?: number;
+    /** CLOSE POSITION: only shrink the position, never open or flip (MARKET only). */
+    reduceOnly?: boolean;
   },
   idempotencyKey?: string,
 ) {

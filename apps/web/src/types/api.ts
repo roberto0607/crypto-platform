@@ -161,6 +161,26 @@ export interface Position {
   unrealized_pnl_quote: DecimalString;
   current_price: DecimalString;
   updated_at: ISODateString;
+  // ISOLATED (leveraged) rows only; SPOT rows don't carry these.
+  margin_mode?: "ISOLATED";
+  leverage?: DecimalString;
+  isolated_margin?: DecimalString;
+  liq_price?: DecimalString | null;
+  mark_price?: DecimalString;
+  margin_health?: DecimalString;
+}
+
+/** GET /leverage: what the user's next order on a pair may use (the server decides). */
+export interface LeverageInfo {
+  ok: true;
+  pairId: UUID;
+  enabled: boolean;
+  marginMode: "SPOT" | "ISOLATED";
+  cap: number;
+  mmrBps: number;
+  positionLeverage: DecimalString | null;
+  blockedBy: "spot_orders_open" | "isolated_orders_open" | null;
+  scope: { competitionId: UUID | null; matchId: UUID | null };
 }
 
 export interface PnlSummary {
@@ -534,6 +554,7 @@ export type SSEEvent =
   | EventEnvelope<"replay.tick", ReplayTickEvent>
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
+  | EventEnvelope<"position.liquidated", PositionLiquidatedEvent>
   | EventEnvelope<"candle.closed", CandleClosedEvent>
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
   | EventEnvelope<"signal.new", SignalNewEvent>
@@ -572,6 +593,27 @@ export interface MatchEndedEvent {
   challengerPnlPct: string | null;
   opponentPnlPct: string | null;
   eloDeltas: { winner: number; loser: number } | null;
+}
+
+/** The liquidation engine closed an ISOLATED position (api trading/liquidationEngine.ts). */
+export interface PositionLiquidatedEvent {
+  liquidationId: UUID;
+  orderId: UUID;
+  pairId: UUID;
+  competitionId: UUID | null;
+  matchId: UUID | null;
+  side: "LONG" | "SHORT";
+  qty: DecimalString;
+  entryPrice: DecimalString;
+  leverage: DecimalString;
+  margin: DecimalString;
+  liqPrice: DecimalString;
+  markPrice: DecimalString;
+  fillPrice: DecimalString;
+  realizedPnl: DecimalString;
+  fee: DecimalString;
+  returnedEquity: DecimalString;
+  shortfall: DecimalString;
 }
 
 export interface MatchPnlUpdateEvent {

@@ -7,6 +7,8 @@ import {
   useRef,
 } from "react";
 import Toast from "./Toast";
+import { useAppStore } from "@/stores/appStore";
+import type { PositionLiquidatedEvent } from "@/types/api";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
 
@@ -44,6 +46,20 @@ export function triggerCanceledMessage(reason: string | undefined, triggerId: st
     default:
       return `Trigger canceled: ${triggerId?.slice(0, 8) ?? "order"}`;
   }
+}
+
+/** trigger.canceled bursts from one close (one event per trigger) show one toast. */
+const POSITION_TOAST_COALESCE_MS = 1000;
+
+/** position.liquidated → user copy (api trading/liquidationEngine.ts). */
+export function liquidationMessage(d: PositionLiquidatedEvent, pairSymbol: string): string {
+  const usd = (v: string) =>
+    "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const head = `${pairSymbol} ${Number(d.leverage)}x ${d.side} liquidated at ${usd(d.fillPrice)}.`;
+  if (Number(d.returnedEquity) <= 0 && Number(d.shortfall) > 0) {
+    return `${head} The price gapped past bankruptcy: the margin was lost, nothing more.`;
+  }
+  return `${head} ${usd(d.returnedEquity)} margin returned.`;
 }
 
 export default function ToastProvider({
@@ -88,19 +104,40 @@ export default function ToastProvider({
       addToast("warning", `Trigger fired: ${d.triggerKind ?? "trigger"} for ${d.pairId ?? "order"}`);
     }
 
+    // One close cancels every trigger protecting the position (both legs of a
+    // TP/SL pair), and the server sends one trigger.canceled per trigger, in
+    // the same instant. For the reasons that describe the position, not the
+    // trigger, show one toast per pair per burst.
+    const recentPositionToasts = new Map<string, number>();
     function onTriggerCanceled(e: Event) {
       const d = (e as CustomEvent).detail;
+      if (d?.reason === "position_closed" || d?.reason === "match_ended") {
+        const key = `${d.reason}:${d.pairId}`;
+        const now = Date.now();
+        const last = recentPositionToasts.get(key);
+        recentPositionToasts.set(key, now);
+        if (last !== undefined && now - last < POSITION_TOAST_COALESCE_MS) return;
+      }
       addToast("info", triggerCanceledMessage(d?.reason, d?.triggerId));
+    }
+
+    function onPositionLiquidated(e: Event) {
+      const d = (e as CustomEvent<PositionLiquidatedEvent>).detail;
+      if (!d) return;
+      const symbol = useAppStore.getState().pairs.find((p) => p.id === d.pairId)?.symbol ?? "Position";
+      addToast("error", liquidationMessage(d, symbol));
     }
 
     window.addEventListener("sse:trade.created", onTradeCreated);
     window.addEventListener("sse:trigger.fired", onTriggerFired);
     window.addEventListener("sse:trigger.canceled", onTriggerCanceled);
+    window.addEventListener("sse:position.liquidated", onPositionLiquidated);
 
     return () => {
       window.removeEventListener("sse:trade.created", onTradeCreated);
       window.removeEventListener("sse:trigger.fired", onTriggerFired);
       window.removeEventListener("sse:trigger.canceled", onTriggerCanceled);
+      window.removeEventListener("sse:position.liquidated", onPositionLiquidated);
     };
   }, [addToast]);
 

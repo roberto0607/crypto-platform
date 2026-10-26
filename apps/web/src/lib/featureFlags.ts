@@ -3,10 +3,10 @@
  */
 
 /**
- * The 1x/2x/3x/5x/10x selector in the order panel. Hidden until real leverage
- * UI ships: the old buttons never applied leverage, they only multiplied qty
- * into a bigger spot order. Showing the selector does NOT change order size —
- * sizing is always exactly the amount entered — so wire real leverage into the
- * order request before turning this on.
+ * The order panel's leverage selector (1x/2x/3x/5x/10x). A client-side kill
+ * switch only: even when true, the selector shows only where the server
+ * allows more than 1x (GET /leverage: ISOLATED and cap > 1), offers only
+ * values up to that cap, and sends `leverage` with the order. false = the
+ * panel never shows leverage and never sends it (orders trade at 1x).
  */
-export const SHOW_LEVERAGE_SELECTOR = false;
+export const SHOW_LEVERAGE_SELECTOR = true;
