@@ -1167,11 +1167,15 @@ export default function TradingPage() {
     refreshPositions();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Refresh positions on SSE trade events
+  // Refresh positions on SSE trade events and liquidations
   useEffect(() => {
     const handler = () => refreshPositions();
     window.addEventListener("sse:trade.created", handler);
-    return () => window.removeEventListener("sse:trade.created", handler);
+    window.addEventListener("sse:position.liquidated", handler);
+    return () => {
+      window.removeEventListener("sse:trade.created", handler);
+      window.removeEventListener("sse:position.liquidated", handler);
+    };
   }, []);
 
   // Fetch funding rate from basis endpoint. We display fundingRateHourly
@@ -1286,6 +1290,7 @@ export default function TradingPage() {
             <UnifiedOrderPanel
               pair={selectedPair}
               position={currentPosition}
+              positions={positions}
               onOrderFilled={refreshPositions}
               classPrefix="tr"
             />

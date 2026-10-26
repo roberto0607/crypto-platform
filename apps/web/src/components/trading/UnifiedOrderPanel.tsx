@@ -9,6 +9,13 @@
  *   - Optional Trailing Stop (offset in USD)
  *   - Open position card with real-time P&L, value, TP/SL display, close button
  *   - Available balance display
+ *   - Leverage (ISOLATED margin), only where the server allows more than 1x
+ *     (GET /leverage, useLeverageInfo): the selector, MARGIN input, notional,
+ *     fee, est. liq price, free-USD AVAILABLE and account EQUITY. With
+ *     leverage off or a 1x cap the panel and every request body are exactly
+ *     as before (UnifiedOrderPanel.leverageOff.test.tsx).
+ *   - ISOLATED position card: leverage, margin, liq price, mark, margin
+ *     health, loss-capped P&L and return on margin.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -20,8 +27,17 @@ import { createTrigger, createOco } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
-import { useBuyingPower } from "@/hooks/useBuyingPower";
+import { useBuyingPower, useOrderWallets } from "@/hooks/useBuyingPower";
+import { useLeverageInfo } from "@/hooks/useLeverageInfo";
 import { SHOW_LEVERAGE_SELECTOR } from "@/lib/featureFlags";
+import {
+    leverageOptions,
+    orderPreview,
+    maxMargin,
+    isolatedPositionView,
+    scopeEquity,
+    healthTone,
+} from "@/lib/leverageUi";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -34,7 +50,16 @@ const ERROR_MAP: Record<string, string> = {
     insufficient_balance: "INSUFFICIENT BALANCE",
     insufficient_liquidity: "INSUFFICIENT LIQUIDITY",
     stale_price_source: "PRICE FEED DELAYED — RETRY",
+    match_ended: "MATCH ENDED",
+    reduce_only_no_position: "POSITION ALREADY CLOSED",
+    leverage_exceeds_cap: "LEVERAGE ABOVE YOUR LIMIT",
+    leverage_mismatch: "CLOSE THE POSITION TO CHANGE LEVERAGE",
+    spot_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
+    isolated_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
 };
+
+/** Margin-health bar colours (§4): green > 50%, amber 25–50%, red < 25% (pulses). */
+const HEALTH_COLORS = { ok: "#00ff41", warn: "#f59e0b", danger: "#ff3b3b" } as const;
 
 function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -116,6 +141,8 @@ export function openButtonLabel(args: {
 interface UnifiedOrderPanelProps {
     pair: TradingPair;
     position: Position | null;
+    /** Every open position of the account this panel trades (for EQUITY). Defaults to `position`. */
+    positions?: Position[];
     onOrderFilled: () => void;
     classPrefix?: string;
 }
@@ -123,6 +150,7 @@ interface UnifiedOrderPanelProps {
 export function UnifiedOrderPanel({
     pair,
     position,
+    positions,
     onOrderFilled,
     classPrefix = "tr",
 }: UnifiedOrderPanelProps) {
@@ -144,13 +172,30 @@ export function UnifiedOrderPanel({
     // AVAILABLE = buying power (2× rule, lib/buyingPower.ts): cash minus what
     // open shorts hold, live with wallet.updated and prices. Null = a shorted
     // asset has no price yet. MAX/quick amounts never go below 0.
-    const available = useBuyingPower(pair.quote_asset_id);
-    const quoteBalance = Math.max(0, available ?? 0);
+    const spotAvailable = useBuyingPower(pair.quote_asset_id);
     const { addToast } = useToast();
+
+    // ── Leverage: the server decides (GET /leverage). ──
+    // `leveraged` = this order trades ISOLATED and may go above 1x. Only then
+    // does anything here differ from the pre-leverage panel.
+    const levInfo = useLeverageInfo(pair.id);
+    const isolated = levInfo?.marginMode === "ISOLATED";
+    const levCap = isolated ? levInfo!.cap : 1;
+    const leveraged = SHOW_LEVERAGE_SELECTOR && isolated && levCap > 1;
+    const levOptions = leverageOptions(levCap);
+    // An open ISOLATED position fixes the leverage until it's closed.
+    const lockedLeverage = levInfo?.positionLeverage ? Number(levInfo.positionLeverage) : null;
+    const orderWallets = useOrderWallets();
+    const quoteWallet = orderWallets?.find((w) => w.asset_id === pair.quote_asset_id) ?? null;
+    // ISOLATED: what's free is the USD the order can draw (margin is already
+    // out of it, and no base is held), not the 2× spot rule.
+    const freeUsd = quoteWallet ? parseFloat(quoteWallet.balance) - parseFloat(quoteWallet.reserved ?? "0") : null;
+    const available = isolated ? freeUsd : spotAvailable;
+    const quoteBalance = Math.max(0, available ?? 0);
 
     const [activeMode, setActiveMode] = useState<"LONG" | "SHORT">("LONG");
     const [usdAmount, setUsdAmount] = useState("");
-    const [leverage, setLeverage] = useState(1);
+    const [chosenLeverage, setLeverage] = useState(1);
     const [tpPrice, setTpPrice] = useState("");
     const [slPrice, setSlPrice] = useState("");
     const [tslOffset, setTslOffset] = useState("");
@@ -207,17 +252,30 @@ export function UnifiedOrderPanel({
     const effectivePrice =
         orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
 
-    // USD → base conversion. The order is exactly the amount entered — the
-    // leverage selector (hidden, see SHOW_LEVERAGE_SELECTOR) never scales it.
+    const leverage = leveraged
+        ? (lockedLeverage ?? (levOptions.includes(chosenLeverage) ? chosenLeverage : 1))
+        : 1;
+
+    // USD → base conversion. Without leverage the order is exactly the amount
+    // entered. Leveraged, the amount is the MARGIN: notional = margin × L,
+    // sized (rounded down) by lib/margin.ts the way the engine locks it.
     const usdNum = usdAmount ? parseFloat(usdAmount) : 0;
-    const effectiveUsd = usdNum;
-    const baseQty = effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
-    const baseQtyStr = baseQty > 0 ? baseQty.toFixed(8) : "";
+    const preview = leveraged
+        ? orderPreview({
+            margin: usdNum, leverage, price: effectivePrice, takerBps: pair.taker_fee_bps,
+            mmrBps: levInfo!.mmrBps, side: activeMode,
+        })
+        : null;
+    const effectiveUsd = preview ? preview.notional : usdNum;
+    const baseQty = preview
+        ? (preview.qty ? parseFloat(preview.qty) : 0)
+        : effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
+    const baseQtyStr = preview ? preview.qty : baseQty > 0 ? baseQty.toFixed(8) : "";
 
     // Fee estimate (on order size). A MARKET order is always the taker.
     // A LIMIT order pays the taker rate if it crosses now and the maker rate
     // if it rests, so estimate at the taker rate (the higher one) and label both.
-    const estFee = effectiveUsd > 0 ? (effectiveUsd * (pair.taker_fee_bps / 10000)) : 0;
+    const estFee = preview ? preview.fee : effectiveUsd > 0 ? (effectiveUsd * (pair.taker_fee_bps / 10000)) : 0;
     const feeLabel = orderType === "LIMIT"
         ? `FEE (${pair.taker_fee_bps} bps taker / ${pair.maker_fee_bps} maker)`
         : `FEE (${pair.taker_fee_bps} bps)`;
@@ -230,8 +288,36 @@ export function UnifiedOrderPanel({
     const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
     const posUsdSize = posAbsQty * posEntryPrice;
     const posCurrentValue = posAbsQty * currentPrice;
-    const pnlValue = hasPosition ? (currentPrice - posEntryPrice) * posQty : 0;
-    const pnlPct = posUsdSize > 0 ? (pnlValue / posUsdSize) * 100 : 0;
+    // An ISOLATED position: margin, liq, health, P&L capped at the margin,
+    // return on margin (lib/leverageUi). Health uses the pair's maintenance
+    // margin from GET /leverage; until that arrives, the server's own figure.
+    const isoView = hasPosition && position!.margin_mode === "ISOLATED"
+        ? isolatedPositionView({
+            baseQty: position!.base_qty,
+            entry: position!.avg_entry_price,
+            margin: position!.isolated_margin ?? "0",
+            leverage: position!.leverage ?? "1",
+            liqPrice: position!.liq_price ?? null,
+            mmrBps: levInfo?.mmrBps ?? 0,
+            mark: currentPrice,
+        })
+        : null;
+    const isoHealth = isoView
+        ? (levInfo ? isoView.health : Number(position!.margin_health ?? "1"))
+        : 1;
+    const pnlValue = isoView ? isoView.unrealizedPnl : hasPosition ? (currentPrice - posEntryPrice) * posQty : 0;
+    const pnlPct = isoView ? isoView.roePct : posUsdSize > 0 ? (pnlValue / posUsdSize) * 100 : 0;
+
+    // EQUITY (leveraged accounts): USD + every open position's worth, an
+    // ISOLATED one at margin + capped uPnL (the USD wallet no longer holds
+    // its margin, so a wallet-only number reads low). Same as the server's
+    // accountEquity. Marks: the selected pair live, others at their tick.
+    const pairPrices = usePairPricesStore((s) => s.prices);
+    const accountPositions = positions ?? (position ? [position] : []);
+    const equity = leveraged && quoteWallet
+        ? scopeEquity(parseFloat(quoteWallet.balance), accountPositions,
+            (id) => (id === pair.id ? currentPrice : pairPrices[id] ?? null))
+        : null;
 
     // Flash the P&L number green/red when it moves (throttled, micro-noise suppressed).
     const pnlFlash = usePnlFlash(pnlValue, selectedPairId ?? "", 0.01);
@@ -336,7 +422,9 @@ export function UnifiedOrderPanel({
         setTpSlMsg("");
         setBtnState("idle");
         try {
-            const result = await submitOrder();
+            // `leverage` only for a leveraged order: otherwise the body is
+            // exactly the pre-leverage one.
+            const result = await submitOrder(leveraged ? { leverage } : undefined);
             const fills = result?.fills ?? [];
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
 
@@ -424,16 +512,27 @@ export function UnifiedOrderPanel({
         setClosing(true);
         try {
             const closeSide = posQty > 0 ? "SELL" : "BUY";
+            // Reduce-only: if the position is already gone (liquidated, a
+            // stop fired, the match ended) or smaller, the server trims or
+            // rejects it — a CLOSE can never open a new position.
             await placeOrder(
-                { pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8) },
+                { pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8), reduceOnly: true },
                 crypto.randomUUID(),
             );
             onOrderFilled();
             fetchTriggers();
-        } catch {
-            setErrorMsg("Close failed");
-            setBtnState("error");
-            setTimeout(() => setBtnState("idle"), 3000);
+        } catch (err) {
+            const code = (err as AxiosError<{ error?: string }>).response?.data?.error;
+            if (code === "reduce_only_no_position") {
+                // Nothing left to close: refresh so the card goes away.
+                addToast("info", "Position already closed.");
+                onOrderFilled();
+                fetchTriggers();
+            } else {
+                setErrorMsg(code && ERROR_MAP[code] ? ERROR_MAP[code] : "Close failed");
+                setBtnState("error");
+                setTimeout(() => setBtnState("idle"), 3000);
+            }
         } finally {
             setClosing(false);
         }
@@ -456,7 +555,9 @@ export function UnifiedOrderPanel({
 
     // 25/50/75/MAX quick-amount buttons (#15). MAX is just frac 1.
     const setQuickAmount = (frac: number) => {
-        const v = computeQuickAmount(quoteBalance, frac);
+        // Leveraged, the amount is margin: leave room for the fee on its notional.
+        const pool = leveraged ? maxMargin(quoteBalance, leverage, pair.taker_fee_bps) : quoteBalance;
+        const v = computeQuickAmount(pool, frac);
         if (v > 0) {
             setUsdAmount(v + "");
             setLastOrderUsd(null);
@@ -509,19 +610,26 @@ export function UnifiedOrderPanel({
                 ))}
             </div>
 
-            {/* ── LEVERAGE ── (hidden until real leverage UI ships) */}
-            {SHOW_LEVERAGE_SELECTOR && <>
-            <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-                {([1, 2, 3, 5, 10] as const).map((lv) => {
+            {/* ── LEVERAGE ── only where the server allows more than 1x. Only
+                values ≤ the cap; locked to the open position's leverage. */}
+            {leveraged && <>
+            <div role="radiogroup" aria-label="Leverage" style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                {levOptions.map((lv) => {
                     const risk = leverageRisk(lv);
                     const selected = leverage === lv;
+                    const locked = lockedLeverage !== null && !selected;
                     return (
                         <div
                             key={lv}
-                            onClick={() => setLeverage(lv)}
+                            role="radio"
+                            aria-checked={selected}
+                            aria-disabled={locked}
+                            onClick={() => { if (lockedLeverage === null) setLeverage(lv); }}
                             style={{
                                 flex: 1, textAlign: "center", padding: "5px 0",
-                                fontSize: 10, letterSpacing: 1, cursor: "pointer",
+                                fontSize: 10, letterSpacing: 1,
+                                cursor: lockedLeverage === null ? "pointer" : "not-allowed",
+                                opacity: locked ? 0.35 : 1,
                                 // Selected → tier color; unselected risky → faint tier tint
                                 // so 3x/5x/10x read as risky before they're chosen.
                                 border: `1px solid ${selected ? risk.color : risk.faintBorder}`,
@@ -534,9 +642,18 @@ export function UnifiedOrderPanel({
                     );
                 })}
             </div>
-            {leverage > 1 && (
+            {lockedLeverage !== null ? (
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.45)", marginBottom: 8, letterSpacing: 1 }}>
+                    Close the position to change leverage
+                </div>
+            ) : leverage > 1 && (
                 <div style={{ fontSize: 9, color: leverageRisk(leverage).color, marginBottom: 8, letterSpacing: 1 }}>
                     {leverage}x leverage amplifies both gains and losses
+                </div>
+            )}
+            {levInfo?.blockedBy && (
+                <div style={{ fontSize: 9, color: "#f59e0b", marginBottom: 8, letterSpacing: 1 }}>
+                    Cancel your open orders on this pair to trade with leverage
                 </div>
             )}
             </>}
@@ -562,7 +679,7 @@ export function UnifiedOrderPanel({
             {/* ── AMOUNT (USD) ── */}
             <div className={`${p}-field`}>
                 <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>AMOUNT</span>
+                    <span>{leveraged ? "MARGIN" : "AMOUNT"}</span>
                     {/* 25/50/75/MAX quick-amount row (#15) — right-aligned on the label
                         row so panel height stays stable. Inert at zero balance. */}
                     <span style={{ display: "flex", gap: 8 }}>
@@ -587,7 +704,7 @@ export function UnifiedOrderPanel({
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
-                    ≈ {baseQty.toFixed(4)} {baseSymbol}
+                    ≈ {baseQty.toFixed(4)} {baseSymbol}{leveraged && ` · ${fmtUsd(effectiveUsd)} at ${leverage}x`}
                 </div>}
             </div>
             </div>{/* /tr-pa-row */}
@@ -651,19 +768,45 @@ export function UnifiedOrderPanel({
                     <span className={`${p}-sum-val`}>{orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`}>POSITION SIZE</span>
+                    <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
                     <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{feeLabel}</span>
                     <span className={`${p}-sum-val`}>{estFee > 0 ? fmtFee(estFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
+                {leveraged && (
+                    <div className={`${p}-sum-row`}>
+                        <span className={`${p}-sum-lbl`}>EST. LIQ PRICE</span>
+                        <span
+                            className={`${p}-sum-val`}
+                            style={{ color: preview?.liqPrice ? "#f59e0b" : undefined }}
+                            title="Where this position would be liquidated (its margin, less the maintenance margin, used up)"
+                        >
+                            {preview?.liqPrice
+                                ? `${fmtUsd(preview.liqPrice.toNumber())} (${preview.liqDistancePct! >= 0 ? "+" : ""}${preview.liqDistancePct!.toFixed(1)}%)`
+                                : usdNum > 0 ? "NONE" : <span className={`${p}-sum-empty`}>--</span>}
+                        </span>
+                    </div>
+                )}
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
-                    <span className={`${p}-sum-val`} style={{ color: available !== null && available < 0 ? "#ff3b3b" : "#fff" }} title="Cash minus what open shorts hold (2× their value)">
+                    <span
+                        className={`${p}-sum-val`}
+                        style={{ color: available !== null && available < 0 ? "#ff3b3b" : "#fff" }}
+                        title={leveraged ? "Free USD: your balance minus what open orders hold. Open positions' margin is already out of it." : "Cash minus what open shorts hold (2× their value)"}
+                    >
                         {available === null ? "—" : `${available < 0 ? "-" : ""}$${formatDecimal(Math.abs(available).toString(), 2)} USD`}
                     </span>
                 </div>
+                {leveraged && (
+                    <div className={`${p}-sum-row`}>
+                        <span className={`${p}-sum-lbl`}>EQUITY</span>
+                        <span className={`${p}-sum-val`} title="USD plus each open position's margin and P&L (a loss counts at most its margin)">
+                            {equity === null ? "—" : `$${formatDecimal(equity.toString(), 2)} USD`}
+                        </span>
+                    </div>
+                )}
             </div>
 
             {/* ── SUBMIT ── */}
@@ -698,6 +841,18 @@ export function UnifiedOrderPanel({
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
                                 {baseSymbol} {posDirection}
+                                {isoView && (
+                                    <span
+                                        data-testid="position-leverage"
+                                        style={{
+                                            marginLeft: 6, padding: "0 4px", fontSize: 9, letterSpacing: 1,
+                                            border: `1px solid ${leverageRisk(isoView.leverage).color}`,
+                                            color: leverageRisk(isoView.leverage).color,
+                                        }}
+                                    >
+                                        {isoView.leverage}x
+                                    </span>
+                                )}
                             </span>
                             <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
                                 {fmtUsd(posUsdSize)}
@@ -710,15 +865,33 @@ export function UnifiedOrderPanel({
                                 <div style={smallVal}>{fmtUsd(posEntryPrice)}</div>
                             </div>
                             <div>
-                                <span style={smallLabel}>CURRENT</span>
+                                <span style={smallLabel}>{isoView ? "MARK" : "CURRENT"}</span>
                                 <div style={smallVal}>{fmtUsd(currentPrice)}</div>
                             </div>
+                            {isoView ? (<>
+                                <div>
+                                    <span style={smallLabel}>MARGIN</span>
+                                    <div style={smallVal}>{fmtUsd(isoView.margin)}</div>
+                                </div>
+                                <div>
+                                    <span style={smallLabel}>LIQ PRICE</span>
+                                    <div
+                                        style={{ ...smallVal, color: isoView.liqPrice ? "#f59e0b" : smallVal.color }}
+                                        title={isoView.liqPrice
+                                            ? `Liquidation at ${fmtUsd(isoView.liqPrice)} (${((isoView.liqPrice / posEntryPrice - 1) * 100).toFixed(1)}% from entry)`
+                                            : "A 1x long can't be liquidated"}
+                                    >
+                                        {isoView.liqPrice ? fmtUsd(isoView.liqPrice) : "NONE"}
+                                    </div>
+                                </div>
+                            </>) : (
                             <div>
                                 <span style={smallLabel}>VALUE</span>
                                 <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
                             </div>
-                            <div>
-                                <span style={smallLabel}>P&L</span>
+                            )}
+                            <div style={isoView ? { gridColumn: "1 / -1" } : undefined}>
+                                <span style={smallLabel}>{isoView ? "P&L · RETURN ON MARGIN" : "P&L"}</span>
                                 <div
                                     key={pnlFlash.key}
                                     className={pnlFlash.dir ? "pnl-flash" : undefined}
@@ -783,6 +956,29 @@ export function UnifiedOrderPanel({
                                 </div>
                             )}
                         </div>
+
+                        {isoView && (
+                            <div style={{ marginBottom: 8 }} data-testid="margin-health">
+                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, letterSpacing: 2, marginBottom: 3 }}>
+                                    <span style={{ color: "rgba(255,255,255,0.3)" }}>MARGIN HEALTH</span>
+                                    <span style={{ color: HEALTH_COLORS[healthTone(isoHealth)] }}>{Math.round(isoHealth * 100)}%</span>
+                                </div>
+                                <div
+                                    role="meter"
+                                    aria-label="Margin health"
+                                    aria-valuemin={0}
+                                    aria-valuemax={100}
+                                    aria-valuenow={Math.round(isoHealth * 100)}
+                                    className={healthTone(isoHealth) === "danger" ? "margin-health-danger" : undefined}
+                                    style={{ height: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}
+                                >
+                                    <div style={{
+                                        width: `${Math.max(0, Math.min(1, isoHealth)) * 100}%`, height: "100%",
+                                        background: HEALTH_COLORS[healthTone(isoHealth)], transition: "width 0.3s",
+                                    }} />
+                                </div>
+                            </div>
+                        )}
 
                         <button
                             disabled={closing}

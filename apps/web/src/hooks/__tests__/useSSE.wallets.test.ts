@@ -66,3 +66,19 @@ describe("useSSE wallet sync", () => {
     expect(useAppStore.getState().wallets[0]!.balance).toBe("100000");
   });
 });
+
+describe("useSSE position.liquidated", () => {
+  it("dispatches sse:position.liquidated and reloads wallets (margin returned)", async () => {
+    listWallets.mockResolvedValue({ data: { ok: true, wallets: [usd("1001.94")] } });
+    renderHook(() => useSSE());
+    const seen: unknown[] = [];
+    const on = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("sse:position.liquidated", on);
+    const data = { pairId: "p1", side: "LONG", leverage: "10.00", fillPrice: "75060", returnedEquity: "1.94" };
+    captured.handlers!.onPositionLiquidated!({ type: "position.liquidated", ts: 1, data } as never);
+    window.removeEventListener("sse:position.liquidated", on);
+    expect(seen).toEqual([data]);
+    await vi.waitFor(() => expect(useAppStore.getState().wallets[0]!.balance).toBe("1001.94"));
+  });
+});
+

@@ -959,7 +959,11 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
             if (isMounted.current) refreshPositions();
         };
         window.addEventListener("sse:trade.created", handler);
-        return () => window.removeEventListener("sse:trade.created", handler);
+        window.addEventListener("sse:position.liquidated", handler);
+        return () => {
+            window.removeEventListener("sse:trade.created", handler);
+            window.removeEventListener("sse:position.liquidated", handler);
+        };
     }, [refreshPositions]);
 
     // Handle forfeit
@@ -1021,6 +1025,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                         <UnifiedOrderPanel
                             pair={selectedPair}
                             position={currentPosition}
+                            positions={positions}
                             onOrderFilled={refreshPositions}
                             classPrefix="lmv"
                         />

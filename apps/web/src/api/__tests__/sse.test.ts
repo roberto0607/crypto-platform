@@ -195,3 +195,15 @@ describe("sse stream identity across reconnects", () => {
     ]);
   });
 });
+
+describe("event routing", () => {
+  afterEach(() => disconnectSSE());
+
+  it("position.liquidated → onPositionLiquidated", () => {
+    const onPositionLiquidated = vi.fn();
+    connectSSE("tok", { onPositionLiquidated });
+    const envelope = { type: "position.liquidated", ts: 1, userId: "u1", data: { pairId: "p1", side: "LONG", leverage: "10.00", fillPrice: "75060", returnedEquity: "1.94" } };
+    capturedOpts().onmessage({ event: "position.liquidated", data: JSON.stringify(envelope) });
+    expect(onPositionLiquidated).toHaveBeenCalledWith(envelope);
+  });
+});

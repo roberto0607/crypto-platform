@@ -511,8 +511,15 @@ canvas, .tv-lightweight-charts, [data-no-theme-transition] {
 }
 
 /* All three degrade to no motion when the user requests reduced motion. */
+/* Margin health below 25% (leveraged position card): the bar pulses red. */
+@keyframes margin-health-danger {
+  0%, 100% { box-shadow: 0 0 0 rgba(255, 59, 59, 0); }
+  50%      { box-shadow: 0 0 8px rgba(255, 59, 59, 0.75); }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .position-card-enter { animation: position-card-enter 0.45s ease-out both; }
+  .margin-health-danger { animation: margin-health-danger 1.2s ease-in-out infinite; }
   .pnl-flash           { animation: pnl-flash 0.35s ease-out; }
   .elo-settle-pulse    { animation: elo-settle-pulse 0.3s ease-out; }
 }

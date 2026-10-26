@@ -7,6 +7,8 @@ import {
   useRef,
 } from "react";
 import Toast from "./Toast";
+import { useAppStore } from "@/stores/appStore";
+import type { PositionLiquidatedEvent } from "@/types/api";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
 
@@ -44,6 +46,17 @@ export function triggerCanceledMessage(reason: string | undefined, triggerId: st
     default:
       return `Trigger canceled: ${triggerId?.slice(0, 8) ?? "order"}`;
   }
+}
+
+/** position.liquidated → user copy (api trading/liquidationEngine.ts). */
+export function liquidationMessage(d: PositionLiquidatedEvent, pairSymbol: string): string {
+  const usd = (v: string) =>
+    "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const head = `${pairSymbol} ${Number(d.leverage)}x ${d.side} liquidated at ${usd(d.fillPrice)}.`;
+  if (Number(d.returnedEquity) <= 0 && Number(d.shortfall) > 0) {
+    return `${head} The price gapped past bankruptcy: the margin was lost, nothing more.`;
+  }
+  return `${head} ${usd(d.returnedEquity)} margin returned.`;
 }
 
 export default function ToastProvider({
@@ -93,14 +106,23 @@ export default function ToastProvider({
       addToast("info", triggerCanceledMessage(d?.reason, d?.triggerId));
     }
 
+    function onPositionLiquidated(e: Event) {
+      const d = (e as CustomEvent<PositionLiquidatedEvent>).detail;
+      if (!d) return;
+      const symbol = useAppStore.getState().pairs.find((p) => p.id === d.pairId)?.symbol ?? "Position";
+      addToast("error", liquidationMessage(d, symbol));
+    }
+
     window.addEventListener("sse:trade.created", onTradeCreated);
     window.addEventListener("sse:trigger.fired", onTriggerFired);
     window.addEventListener("sse:trigger.canceled", onTriggerCanceled);
+    window.addEventListener("sse:position.liquidated", onPositionLiquidated);
 
     return () => {
       window.removeEventListener("sse:trade.created", onTradeCreated);
       window.removeEventListener("sse:trigger.fired", onTriggerFired);
       window.removeEventListener("sse:trigger.canceled", onTriggerCanceled);
+      window.removeEventListener("sse:position.liquidated", onPositionLiquidated);
     };
   }, [addToast]);
 

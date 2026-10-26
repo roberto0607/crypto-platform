@@ -41,6 +41,7 @@ export interface SSEHandlers {
   onReplayTick?: (event: Extract<SSEEvent, { type: "replay.tick" }>) => void;
   onTriggerFired?: (event: Extract<SSEEvent, { type: "trigger.fired" }>) => void;
   onTriggerCanceled?: (event: Extract<SSEEvent, { type: "trigger.canceled" }>) => void;
+  onPositionLiquidated?: (event: Extract<SSEEvent, { type: "position.liquidated" }>) => void;
   onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
   onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
@@ -278,6 +279,9 @@ export function connectSSE(
           break;
         case "trigger.canceled":
           handlers.onTriggerCanceled?.(event);
+          break;
+        case "position.liquidated":
+          handlers.onPositionLiquidated?.(event);
           break;
         case "candle.closed":
           handlers.onCandleClosed?.(event);
