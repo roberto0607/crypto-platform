@@ -497,11 +497,12 @@ The last fixes before `LIQUIDATION_MODE=execute`. (The original PR 7 "journal" r
   - Web: a toast, and a NEAR LIQUIDATION line on the card under 25%.
 - **Chart.** A dashed red `LIQ` price line for an open ISOLATED position with a liq price, on /trade and the match screen. A 1x long has no liq price, so no line. SPOT positions never get one.
 - **Journal / CSV.**
-  - An ISOLATED close writes the position's leverage, the margin that row's share of the close released, and `return_on_margin_pct` = net P&L / that margin.
+  - An ISOLATED close writes the position's leverage, the margin that row's share of the close released, and `return_on_margin_pct` = (booked P&L − booked closing fee) / released margin. These are the loss-capped numbers the wallet got, so it's never below −100% (a gap past bankruptcy reads exactly −100%).
   - The server CSV and the page's client CSV append `Leverage, Margin, Close Reason, Return on Margin %` after the existing columns. `liq_price` isn't recorded on closed trades and isn't exported.
-  - Journal P&L is the journal's own FIFO and isn't loss-capped, so a gap past bankruptcy can show a return on margin below −100%.
+  - The row's own `net_pnl` is the journal's FIFO P&L and isn't loss-capped; return on margin doesn't use it.
+  - The export now returns every trade. The repo used to cap every call at 100 rows, so the CSV stopped at the newest 100.
 - **`pnpm leverage:liq-report`** (read-only) lists LOG_ONLY / SKIPPED_STALE rows with what execute would have booked. That figure is the engine's settlement math at the row's mark, tested equal to a real execute at that mark. Runbook: `docs/runbooks/leverage-liquidation-execute.md`.
-- **Found, not fixed (pre-existing, PR 2):** with `LEVERAGE_ENABLED=false`, a flat ISOLATED position row stays ISOLATED when a new SPOT order fills into it, so the next close settles ISOLATED with margin 0. The runbook says to use caps = 1, not the flag, to stop leverage.
+- **Fixed (pre-existing since PR 2): a flat ISOLATED row handed its model to the next position.** With `LEVERAGE_ENABLED=false`, a SPOT fill into a flat ISOLATED row left it ISOLATED, so the next close settled ISOLATED with margin 0 and the base stayed in the wallet. A SPOT fill opening from a flat ISOLATED row now resets it to a fresh SPOT episode (SPOT, 1x, margin 0, no liq price, next epoch). Rows that were never ISOLATED are untouched. A SPOT fill into an open ISOLATED row throws `position_mode_conflict`. Verified against a pure-SPOT round trip (ledger line for line). Reopening with the caps at 1, or in an ISOLATED match after the flag goes off, was already fresh and is now tested.
 
 ---
 
