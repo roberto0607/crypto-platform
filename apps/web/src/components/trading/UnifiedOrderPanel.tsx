@@ -785,18 +785,24 @@ export function UnifiedOrderPanel({
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
-                    <span className={`${p}-sum-val`}>
+                    <span className={`${p}-sum-val`} style={previewStale ? { color: "#f59e0b" } : undefined}>
                         {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : marketPrice > 0 ? fmtUsd(marketPrice) : "MARKET"}
-                        {previewStale && (
+                    </span>
+                </div>
+                {/* Its own row: a chip beside the price overflows the cell at panel width. */}
+                {previewStale && (
+                    <div className={`${p}-sum-row`}>
+                        <span className={`${p}-sum-lbl`}>PRICE FEED</span>
+                        <span className={`${p}-sum-val`}>
                             <span
                                 title="Price feed stale: liquidations are paused on this pair. Previewing at the last trade."
-                                style={{ marginLeft: 4, padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
+                                style={{ padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
                             >
                                 STALE
                             </span>
-                        )}
-                    </span>
-                </div>
+                        </span>
+                    </div>
+                )}
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
                     <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>

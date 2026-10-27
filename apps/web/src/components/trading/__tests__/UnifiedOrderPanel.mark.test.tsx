@@ -222,12 +222,15 @@ describe("the order preview uses the engine mark (leveraged MARKET orders)", () 
     expect(screen.queryByText("STALE")).toBeNull();
   });
 
-  it("engine paused: falls back to the ticker, with the STALE chip", async () => {
+  it("engine paused: falls back to the ticker (amber), with a STALE chip on its own row (it overflowed the price cell)", async () => {
     await noPosition();
     engineMark(79919);
+    expect(screen.queryByText("PRICE FEED")).toBeNull();
     engineMark(null, true);
-    expect(entry().textContent).toContain("$79,905.00");
-    expect(within(entry() as HTMLElement).getByText("STALE")).toBeTruthy();
+    expect(entry().textContent).toBe("$79,905.00");
+    expect((entry() as HTMLElement).style.color).toBe("rgb(245, 158, 11)");
+    const row = screen.getByText("PRICE FEED").parentElement!;
+    expect(within(row).getByText("STALE").getAttribute("title")).toMatch(/liquidations are paused/i);
   });
 
   it("a LIMIT order still previews at its limit price", async () => {
