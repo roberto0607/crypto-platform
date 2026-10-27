@@ -150,6 +150,49 @@ export async function findLiquidationCandidates(
     });
 }
 
+/** An open ISOLATED position near its liq price (the margin-warning scan). */
+export type MarginWatchRow = LiquidationCandidate & { mmrBps: number };
+
+/**
+ * Every open ISOLATED position on `pairId` whose margin health at `mark` is
+ * below `health`. Health is linear in the mark (1 at entry, 0 at the liq
+ * price), so that's the mark being past W = liq + health·(entry − liq): at or
+ * below W for a long, at or above it for a short.
+ */
+export async function findMarginWatch(
+    db: Pool | PoolClient, pairId: string, mark: Decimal, health: number,
+): Promise<MarginWatchRow[]> {
+    const { rows } = await timedQuery<{
+        user_id: string; competition_id: string | null; match_id: string | null; epoch: number;
+        base_qty: string; avg_entry_price: string; leverage: string; isolated_margin: string; liq_price: string;
+        maintenance_margin_bps: number;
+    }>(db, "liquidation.marginWatch",
+        `SELECT p.user_id, p.competition_id, p.match_id, p.epoch, p.base_qty::text, p.avg_entry_price::text,
+                p.leverage::text, p.isolated_margin::text, p.liq_price::text, tp.maintenance_margin_bps
+         FROM positions p
+         JOIN trading_pairs tp ON tp.id = p.pair_id
+         WHERE p.pair_id = $1 AND p.margin_mode = 'ISOLATED' AND p.liq_price IS NOT NULL
+           AND ((p.base_qty > 0 AND p.liq_price + $3::numeric * (p.avg_entry_price - p.liq_price) >= $2)
+             OR (p.base_qty < 0 AND p.liq_price + $3::numeric * (p.avg_entry_price - p.liq_price) <= $2))`,
+        [pairId, toFixed8(mark), String(health)]);
+    return rows.map((r) => {
+        const qty = D(r.base_qty);
+        return {
+            userId: r.user_id,
+            pairId,
+            scope: { competitionId: r.competition_id, matchId: r.match_id },
+            epoch: r.epoch,
+            side: sideOf(qty),
+            qty: qty.abs(),
+            entry: D(r.avg_entry_price),
+            leverage: D(r.leverage),
+            margin: D(r.isolated_margin),
+            liqPrice: D(r.liq_price),
+            mmrBps: r.maintenance_margin_bps,
+        };
+    });
+}
+
 /**
  * Record a breach the engine did not act on: LOG_ONLY (log-only mode) or
  * SKIPPED_STALE (the pair's feed was stale). One statement: the row is built

@@ -2,9 +2,11 @@
  * reduceOnly.test.ts: reduce-only orders (leverage PR 6a).
  *
  * A reduce-only order can only shrink the position it closes, in the scope
- * it lands in. It's a MARKET order. Under the pair lock (which every writer
- * of a position holds: orders, triggers, liquidations, match end, the
- * conversion) the matching engine trims it to what's left of the position,
+ * it lands in. POST /orders takes it on MARKET orders only (a LIMIT one
+ * comes only from a TP/SL limit fire: reduceOnlyLimit.test.ts). Under the
+ * pair lock (which every writer of a position holds: orders, triggers,
+ * liquidations, match end, the conversion) the matching engine trims it to
+ * what's left of the position,
  * or rejects it (`reduce_only_no_position`) when nothing is left. It never
  * opens or flips a position. The CLOSE button sends it; TP/SL fires use it.
  *
@@ -164,12 +166,13 @@ describe.each([
     });
 });
 
-describe("reduce-only is a MARKET order", () => {
-    it("the engine refuses a reduce-only LIMIT", async () => {
+describe("a reduce-only LIMIT (a TP/SL limit fire; PR 7)", () => {
+    it("the engine accepts it, trimmed to the position (POST /orders still refuses one: see below)", async () => {
         const u = await trader();
         await order(u, "BUY", "0.01000000");
-        await expect(placeOrderWithSnapshot(u, { pairId, side: "SELL", type: "LIMIT", qty: "0.01000000", limitPrice: "90000", reduceOnly: true }))
-            .rejects.toThrow("reduce_only_market_only");
+        const r = await placeOrderWithSnapshot(u, { pairId, side: "SELL", type: "LIMIT", qty: "0.05000000", limitPrice: "90000", reduceOnly: true });
+        expect(r.order).toMatchObject({ qty: "0.01000000", status: "OPEN" });
+        // Resting behaviour: triggers/__tests__/reduceOnlyLimit.test.ts.
     });
 });
 

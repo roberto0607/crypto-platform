@@ -237,6 +237,12 @@ export type IsolatedLeg = {
     baseQtyAfter: string;
     /** Fee actually charged for this fill (capped on a loss-capped reduce). */
     feeBooked: string;
+    /**
+     * The closing part, for the journal: its size, the margin it released,
+     * the position's leverage, and the P&L and fee it booked (after the loss
+     * cap: pnl − fee ≥ −released).
+     */
+    reduce: { closeQty: string; released: string; leverage: string; pnl: string; fee: string } | null;
 };
 
 type LedgerMeta = Record<string, unknown>;
@@ -389,7 +395,20 @@ export async function settleIsolatedFillTx(
     );
 
     return {
-        leg: { userId: p.userId, baseQtyAfter: pos.base_qty, feeBooked: toFixed8(feeBooked) },
+        leg: {
+            userId: p.userId,
+            baseQtyAfter: pos.base_qty,
+            feeBooked: toFixed8(feeBooked),
+            reduce: r.reduce
+                ? {
+                    closeQty: toFixed8(r.reduce.closeQty),
+                    released: toFixed8(r.reduce.released),
+                    leverage: state.leverage.toFixed(2),
+                    pnl: toFixed8(r.reduce.settlement.bookedPnl),
+                    fee: toFixed8(r.reduce.settlement.bookedFee),
+                }
+                : null,
+        },
         reserveUsed,
         bookedPnl,
         shortfall: r.reduce?.settlement.shortfall ?? ZERO,

@@ -70,8 +70,8 @@ export async function applyFillToPositionTx(
     );
 
     // Lock and read current position for this exact (user, pair, scope).
-    const posResult = await timedQuery<PositionRow>(client, "positionRepo.applyFillToPositionTx.lock",
-        `SELECT ${POSITION_COLUMNS}
+    const posResult = await timedQuery<PositionRow & { margin_mode: string }>(client, "positionRepo.applyFillToPositionTx.lock",
+        `SELECT ${POSITION_COLUMNS}, margin_mode
          FROM positions
          WHERE user_id = $1 AND pair_id = $2
            AND COALESCE(competition_id, ${NIL_UUID}) = COALESCE($3::uuid, ${NIL_UUID})
@@ -81,6 +81,16 @@ export async function applyFillToPositionTx(
     );
 
     const pos = posResult.rows[0];
+    // This is the SPOT path. An open ISOLATED position never takes a SPOT
+    // fill (the engine keeps an open position's model and blocks resting
+    // orders of the other model), so reaching here would corrupt it.
+    if (pos.margin_mode === "ISOLATED" && !D(pos.base_qty).isZero()) throw new Error("position_mode_conflict");
+    // A flat row left by a closed ISOLATED position starts a fresh SPOT
+    // episode: SPOT, 1x, no margin, no liq price, the next epoch. Otherwise
+    // the old model would stick to the row and the next close would settle
+    // this SPOT position as ISOLATED with margin 0 (leverage PR 7). Rows that
+    // were never ISOLATED are untouched.
+    const resetFromIsolated = pos.margin_mode === "ISOLATED";
     const { qty: currentQty, avgEntry, realizedPnl } = applyFill(
         { qty: D(pos.base_qty), avgEntry: D(pos.avg_entry_price), realizedPnl: D(pos.realized_pnl_quote) },
         side,
@@ -97,7 +107,12 @@ export async function applyFillToPositionTx(
          SET base_qty = $3,
              avg_entry_price = $4,
              realized_pnl_quote = $5,
-             fees_paid_quote = $6
+             fees_paid_quote = $6,
+             margin_mode = CASE WHEN $9::boolean THEN 'SPOT' ELSE margin_mode END,
+             leverage = CASE WHEN $9::boolean THEN 1 ELSE leverage END,
+             isolated_margin = CASE WHEN $9::boolean THEN 0 ELSE isolated_margin END,
+             liq_price = CASE WHEN $9::boolean THEN NULL ELSE liq_price END,
+             epoch = CASE WHEN $9::boolean THEN epoch + 1 ELSE epoch END
          WHERE user_id = $1 AND pair_id = $2
            AND COALESCE(competition_id, ${NIL_UUID}) = COALESCE($7::uuid, ${NIL_UUID})
            AND COALESCE(match_id, ${NIL_UUID}) = COALESCE($8::uuid, ${NIL_UUID})
@@ -111,6 +126,7 @@ export async function applyFillToPositionTx(
             toFixed8(feesPaid),
             compId,
             matchId,
+            resetFromIsolated,
         ]
     );
 

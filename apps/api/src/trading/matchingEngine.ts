@@ -154,9 +154,10 @@ export type PlaceOrderResult = {
      */
     isolatedLegs?: Map<string, IsolatedLeg>;
     /**
-     * Resting ISOLATED orders this order's sweep canceled because their fill
-     * would have opened past what's allowed now (review #2): the reducing
-     * part filled, the remainder was canceled. For events after COMMIT.
+     * Resting orders this order's sweep canceled: an ISOLATED one whose fill
+     * would have opened past what's allowed now (review #2), or a reduce-only
+     * one with nothing left to reduce. What could fill did; the remainder
+     * was canceled. For events after COMMIT.
      */
     canceledMakers?: CanceledMaker[];
     /** Set when this order was a liquidation: what it booked. */
@@ -165,7 +166,7 @@ export type PlaceOrderResult = {
 
 export type CanceledMaker = {
     order: OrderRow;
-    reason: "leverage_exceeds_cap" | "insufficient_margin";
+    reason: "leverage_exceeds_cap" | "insufficient_margin" | "reduce_only_no_position";
     releasedAmount: string;
 };
 
@@ -217,7 +218,9 @@ async function placeOrderInternal(
     liquidation?: LiquidationRequest,
     // Reduce-only (a CLOSE, or a trigger's derived order): may only shrink
     // the position in this scope. Trimmed to it under the pair lock below;
-    // nothing to reduce → reduce_only_no_position. MARKET only.
+    // nothing to reduce → reduce_only_no_position. A LIMIT one (a STOP_LIMIT
+    // / TAKE_PROFIT_LIMIT fire) may rest: orders.reduce_only keeps it from
+    // ever opening (the sweep caps its fills, a close cancels it).
     reduceOnly?: boolean,
 ): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
@@ -229,9 +232,6 @@ async function placeOrderInternal(
     // agents, the trigger engine and the market maker reach this directly.
     if (!isTradableSymbol(pair.symbol)) throw new Error("pair_not_tradable");
     if (liquidation && (type !== "MARKET" || pricing)) throw new Error("invalid_liquidation_order");
-    // A resting reduce-only order could fill after its position is gone and
-    // open a new one, so reduce-only is MARKET only.
-    if (reduceOnly && type !== "MARKET") throw new Error("reduce_only_market_only");
 
     // Market reference (MARKET only): the real Kraken touch — fresh book, else
     // fresh ticker bid/ask. It bands which resting orders may be swept (at the
@@ -324,6 +324,11 @@ async function placeOrderInternal(
     // of its orders in one sweep see each other's fills.
     const makerBooks = new Map<string, { state: IsolatedState; cap: number; mmrBps: number }>();
     const cancelMakers = new Map<string, { resting: OrderRow; reason: CanceledMaker["reason"] }>();
+    // Reduce-only makers: what each one's position (user:scope) had to reduce
+    // before this sweep, and how much of it this sweep's fills on that
+    // maker (any of its orders) have already taken.
+    const makerReducible = new Map<string, Decimal>();
+    const makerSwept = new Map<string, Decimal>();
 
     while (remaining.gt(0)) {
         const batch = await fetchRestingOrdersBatch(client, pairId, bookSide, {
@@ -337,20 +342,49 @@ async function placeOrderInternal(
 
         if (batch.length === 0) break;
 
-        const { rows: isoRows } = await timedQuery<{ id: string; leverage: string; competition_id: string | null; match_id: string | null }>(
+        const { rows: makerRows } = await timedQuery<{
+            id: string; leverage: string; competition_id: string | null; match_id: string | null;
+            margin_mode: string; reduce_only: boolean;
+        }>(
             client, "matchingEngine.isolatedMakers",
-            `SELECT id, leverage::text, competition_id, match_id FROM orders
-             WHERE id = ANY($1::uuid[]) AND margin_mode = 'ISOLATED'`,
+            `SELECT id, leverage::text, competition_id, match_id, margin_mode, reduce_only FROM orders
+             WHERE id = ANY($1::uuid[])`,
             [batch.map((o) => o.id)],
         );
-        for (const r of isoRows) {
-            isolatedMakers.set(r.id, { leverage: D(r.leverage), scope: { competitionId: r.competition_id, matchId: r.match_id } });
+        const makerScope = new Map<string, PositionScope>();
+        const reduceOnlyMakers = new Set<string>();
+        for (const r of makerRows) {
+            const s: PositionScope = { competitionId: r.competition_id, matchId: r.match_id };
+            makerScope.set(r.id, s);
+            if (r.reduce_only) reduceOnlyMakers.add(r.id);
+            if (r.margin_mode === "ISOLATED") isolatedMakers.set(r.id, { leverage: D(r.leverage), scope: s });
         }
 
         for (const resting of batch) {
             if (remaining.lte(0)) break;
             let fillQty = Decimal.min(remaining, D(resting.qty).minus(D(resting.qty_filled)));
             const fillPrice = D(resting.limit_price!);
+            const ms = makerScope.get(resting.id) ?? { competitionId: null, matchId: null };
+            const makerKey = `${resting.user_id}:${ms.competitionId ?? ""}:${ms.matchId ?? ""}`;
+
+            // Reduce-only maker (a resting TP/SL limit): fills at most what's
+            // left of its position, net of this sweep's earlier fills on the
+            // same maker; the rest is canceled. It never opens or flips.
+            if (reduceOnlyMakers.has(resting.id)) {
+                let before = makerReducible.get(makerKey);
+                if (before === undefined) {
+                    const row = await readPosition(client, resting.user_id, pairId, ms, false);
+                    const signed = row ? D(row.base_qty) : ZERO;
+                    before = bookSide === "SELL" ? Decimal.max(signed, ZERO) : Decimal.max(signed.neg(), ZERO);
+                    makerReducible.set(makerKey, before);
+                }
+                const left = Decimal.max(ZERO, before.minus(makerSwept.get(makerKey) ?? ZERO));
+                if (fillQty.gt(left)) {
+                    fillQty = left;
+                    cancelMakers.set(resting.id, { resting, reason: "reduce_only_no_position" });
+                }
+                if (fillQty.lte(0)) continue;
+            }
 
             // ISOLATED maker: its reducing part always fills; a part that
             // would open (or flip past flat) fills only if its leverage is
@@ -401,6 +435,7 @@ async function placeOrderInternal(
                 resting, fillQty, fillPrice, quoteAmt, feeAmt, makerFeeAmt,
                 counterBaseId: "", counterQuoteId: "",
             });
+            makerSwept.set(makerKey, (makerSwept.get(makerKey) ?? ZERO).plus(fillQty));
             remaining = remaining.minus(fillQty);
         }
 
@@ -565,10 +600,12 @@ async function placeOrderInternal(
         // on this side already claim — needs nothing (its fee comes out of
         // the settlement, review #1). If the position shrinks some other way
         // before it fills, the fill-time check cancels the unfunded part.
+        // A reduce-only remainder can't open (the sweep caps it, a close
+        // cancels it), so it reserves nothing.
         const restQty = type === "LIMIT" ? remaining : ZERO;
         const reducesAfter = !after.qty.isZero() && after.qty.isPositive() !== (side === "BUY");
         const reducible = reducesAfter ? Decimal.max(ZERO, after.qty.abs().minus(isolated.claimed[side])) : ZERO;
-        const restOpenQty = Decimal.max(ZERO, restQty.minus(reducible));
+        const restOpenQty = reduceOnly ? ZERO : Decimal.max(ZERO, restQty.minus(reducible));
         const restOpens = restOpenQty.gt(0);
         if (opensQty.gt(0) || restOpens) {
             if (leverageParam !== null && isolated.inherited !== null && !D(leverageParam).eq(isolated.inherited)) {
@@ -653,6 +690,7 @@ async function placeOrderInternal(
         source: source ?? null,
         leverage: orderLeverage.toFixed(2),
         marginMode: margin.mode,
+        reduceOnly: reduceOnly ?? false,
     });
 
     const mmrBps = isolated?.mmrBps ?? [...makerBooks.values()][0]?.mmrBps ?? 0;
@@ -802,7 +840,7 @@ async function placeOrderInternal(
         lastFillPrice = fillPrice
     }
 
-    // ── Phase I2: Cancel resting ISOLATED orders the fill-time check stopped ──
+    // ── Phase I2: Cancel resting orders the fill-time checks stopped ──
     const canceledMakers: CanceledMaker[] = [];
     for (const { resting, reason } of cancelMakers.values()) {
         const row = (await findOrderByIdForUpdate(client, resting.id))!;
@@ -817,7 +855,7 @@ async function placeOrderInternal(
             [resting.id, reason],
         );
         logger.info({ orderId: resting.id, userId: resting.user_id, pairId, reason, released: toFixed8(releasable) },
-            "resting_isolated_order_canceled");
+            "resting_order_canceled_at_fill");
         canceledMakers.push({ order: canceled, reason, releasedAmount: toFixed8(releasable) });
     }
 
@@ -1081,3 +1119,60 @@ export async function cancelOrderTx(
 ): Promise<{ order: OrderRow; releasedAmount: string }> {
     return cancelOrderInternal(client, userId, orderId);
 }
+
+/**
+ * A fill just closed the user's position in `scope` (positionCloseTriggers):
+ * cancel their resting reduce-only `side` orders on the pair (a TP/SL limit
+ * that rests) unless a position they can still reduce remains. Releases each
+ * one's reserve and records cancel_reason = 'position_closed'.
+ *
+ * Runs inside the closing order's transaction, under its locks: the pair
+ * lock, and the wallets of that scope (an order's reserve sits on its own
+ * scope's base or USD wallet, which the closing fill locked), so it adds no
+ * lock order. Returns the canceled orders for events after COMMIT.
+ */
+export async function cancelReduceOnlyOrdersTx(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    side: "BUY" | "SELL",
+    scope: PositionScope,
+): Promise<CanceledReduceOnly[]> {
+    const { rows } = await timedQuery<OrderRow>(client, "matchingEngine.reduceOnlyToCancel",
+        `SELECT id, user_id, pair_id, side, type, limit_price, qty, qty_filled, status,
+                reserved_wallet_id, reserved_amount, reserved_consumed, created_at, updated_at, source
+         FROM orders o
+         WHERE o.pair_id = $2 AND o.status IN ('OPEN', 'PARTIALLY_FILLED')
+           AND o.user_id = $1 AND o.side = $3 AND o.reduce_only
+           AND o.competition_id IS NOT DISTINCT FROM $4::uuid
+           AND o.match_id IS NOT DISTINCT FROM $5::uuid
+           AND NOT EXISTS (
+               SELECT 1 FROM positions p
+               WHERE p.user_id = $1 AND p.pair_id = $2
+                 AND p.competition_id IS NOT DISTINCT FROM $4::uuid
+                 AND p.match_id IS NOT DISTINCT FROM $5::uuid
+                 AND (CASE WHEN $3 = 'SELL' THEN p.base_qty > 0 ELSE p.base_qty < 0 END)
+           )
+         ORDER BY o.created_at
+         FOR UPDATE OF o`,
+        [userId, pairId, side, scope.competitionId, scope.matchId],
+    );
+    const canceled: CanceledReduceOnly[] = [];
+    for (const row of rows) {
+        const releasable = D(row.reserved_amount).minus(D(row.reserved_consumed));
+        if (releasable.gt(0) && row.reserved_wallet_id) {
+            await releaseReserved(client, row.reserved_wallet_id, toFixed8(releasable));
+        }
+        const { rows: [order] } = await timedQuery<OrderRow>(client, "matchingEngine.cancelReduceOnly",
+            `UPDATE orders SET status = 'CANCELED', cancel_reason = 'position_closed' WHERE id = $1
+             RETURNING id, user_id, pair_id, side, type, limit_price, qty, qty_filled, status,
+                       reserved_wallet_id, reserved_amount, reserved_consumed, created_at, updated_at, source`,
+            [row.id],
+        );
+        logger.info({ orderId: row.id, userId, pairId, released: toFixed8(releasable) }, "reduce_only_order_canceled_position_closed");
+        canceled.push({ order, reason: "position_closed", releasedAmount: toFixed8(releasable) });
+    }
+    return canceled;
+}
+
+export type CanceledReduceOnly = { order: OrderRow; reason: "position_closed"; releasedAmount: string };

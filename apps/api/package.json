@@ -44,6 +44,7 @@
     "matches:legacy-report": "tsx src/scripts/matchesLegacyReport.ts",
     "positions:short-pnl-report": "tsx src/scripts/positionsShortPnlReport.ts",
     "leverage:convert": "tsx src/scripts/convertToIsolated.ts",
+    "leverage:liq-report": "tsx src/scripts/liquidationReport.ts",
     "seed": "tsx src/sandbox/seed.ts"
   },
   "keywords": [],

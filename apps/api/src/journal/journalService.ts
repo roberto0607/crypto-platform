@@ -57,6 +57,15 @@ export async function processFillForJournal(
         competitionId?: string | null;
         /** Recorded on every closed_trades row this fill writes. Default MANUAL. */
         closeReason?: CloseReason;
+        /**
+         * An ISOLATED fill's closing part (IsolatedLeg.reduce): each row gets
+         * the position's leverage, its share of the released margin, and
+         * return on margin = (booked P&L − booked closing fee) / released
+         * margin: the loss-capped numbers the wallet got, so never below
+         * −100% (the row's own FIFO net_pnl isn't capped). Omitted (SPOT):
+         * the column defaults (leverage 1, margin and return on margin NULL).
+         */
+        isolated?: { closeQty: string; released: string; leverage: string; pnl: string; fee: string } | null;
     },
 ): Promise<void> {
     const { userId, pairId, fillId, side, price, qty, feeQuote, filledAt, competitionId } = params;
@@ -123,23 +132,38 @@ export async function processFillForJournal(
         const returnPct = notional > 0 ? (netPnl / notional) * 100 : 0;
         const holdingSeconds = Math.floor((filledAt.getTime() - new Date(lot.filled_at).getTime()) / 1000);
 
+        // ISOLATED: this row's share of the margin the close released.
+        const iso = params.isolated;
+        const isoCloseQty = iso ? parseFloat(iso.closeQty) : 0;
+        const rowMargin = iso && isoCloseQty > 0
+            ? parseFloat(iso.released) * Math.min(consumed, isoCloseQty) / isoCloseQty
+            : null;
+        const released = iso ? parseFloat(iso.released) : 0;
+        const returnOnMargin = iso && rowMargin !== null && released > 0
+            ? ((parseFloat(iso.pnl) - parseFloat(iso.fee)) / released) * 100
+            : null;
+
         // Insert closed trade
         await timedQuery(client, "journalService.processFillForJournal.insertClosedTrade",
             `INSERT INTO closed_trades
                 (user_id, pair_id, competition_id, direction,
                  entry_fill_ids, entry_qty, entry_avg_price, entry_fees, entry_at,
                  exit_fill_ids, exit_qty, exit_avg_price, exit_fees, exit_at,
-                 gross_pnl, total_fees, net_pnl, return_pct, holding_seconds, close_reason)
+                 gross_pnl, total_fees, net_pnl, return_pct, holding_seconds, close_reason,
+                 leverage, margin, return_on_margin_pct)
              VALUES ($1, $2, $3, $4,
                      $5, $6, $7, $8, $9,
                      $10, $11, $12, $13, $14,
-                     $15, $16, $17, $18, $19, $20)`,
+                     $15, $16, $17, $18, $19, $20,
+                     $21, $22, $23)`,
             [
                 userId, pairId, compId, direction,
                 [lot.fill_id], consumed.toFixed(8), lot.price, lotFee.toFixed(8), lot.filled_at,
                 [fillId], consumed.toFixed(8), price, fillFeeShare.toFixed(8), filledAt.toISOString(),
                 grossPnl.toFixed(8), totalFees.toFixed(8), netPnl.toFixed(8),
                 returnPct.toFixed(4), holdingSeconds, closeReason,
+                iso ? iso.leverage : "1", rowMargin === null ? null : rowMargin.toFixed(8),
+                returnOnMargin === null ? null : returnOnMargin.toFixed(4),
             ],
         );
 

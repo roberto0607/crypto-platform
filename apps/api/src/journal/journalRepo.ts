@@ -1,6 +1,8 @@
 import { pool } from "../db/pool";
 
 export interface JournalFilters {
+    /** Highest limit honored (default 100, the paged list's page size cap). */
+    maxLimit?: number;
     userId: string;
     pairId?: string;
     competitionId?: string | null;
@@ -67,7 +69,9 @@ export async function listClosedTrades(filters: JournalFilters) {
         params.push(filters.cursor);
     }
 
-    const limit = Math.min(filters.limit ?? 50, 100);
+    // The paged list caps a page at 100; the CSV export raises the cap
+    // (maxLimit) so it gets every trade, not the first page.
+    const limit = Math.min(filters.limit ?? 50, filters.maxLimit ?? 100);
     params.push(limit);
 
     const sql = `

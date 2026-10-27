@@ -30,14 +30,14 @@ const PING_INTERVAL_MS = 5_000;
 
 /**
  * Per-connection interest set — gates which pairIds a stream's price.tick/
- * candle.closed/book.snapshot events are filtered to. Populated on connect (empty — no
+ * candle.closed/book.snapshot/mark.price events are filtered to. Populated on connect (empty — no
  * symbol ticks until the client explicitly subscribes) and replaced wholesale
  * by POST /v1/events/subscribe. Every other event type (order/wallet/
  * trigger/notification/match/etc.) bypasses this filter entirely — only
  * symbol-scoped market-data events are gated. See docs/designs/2026-07-22-
  * multi-asset-datafeed-gate1.md section 3.
  */
-const PAIR_SCOPED_EVENT_TYPES = new Set(["price.tick", "candle.closed", "book.snapshot"]);
+const PAIR_SCOPED_EVENT_TYPES = new Set(["price.tick", "candle.closed", "book.snapshot", "mark.price"]);
 
 interface StreamEntry {
   userId: string;

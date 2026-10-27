@@ -103,6 +103,44 @@ export interface TriggerFiredData {
 }
 
 /** The liquidation engine closed an ISOLATED position (trading/liquidationEngine.ts). */
+/**
+ * The mark the liquidation engine evaluates a pair with (the Kraken book mid),
+ * published by the engine at most every MARK_PUBLISH_MS per pair and at once
+ * when the pair pauses or resumes. Global, pair-scoped on the SSE stream.
+ * The ISOLATED position card shows this mark, so it can't disagree with when
+ * a liquidation fires.
+ */
+export interface MarkPriceData {
+  pairId: string;
+  symbol: string;
+  /** null while paused. */
+  mark: string | null;
+  /** True while the engine won't liquidate on this pair (stale feed / book). */
+  paused: boolean;
+  feed: "ok" | "stale" | "waiting" | "disconnected";
+  bookAgeMs: number | null;
+  /** When the engine evaluated (epoch ms). */
+  ts: number;
+}
+
+/**
+ * An ISOLATED position's margin health dropped below the warning threshold
+ * (once per episode; re-arms above MARGIN_WARNING_REARM). User-scoped.
+ */
+export interface PositionMarginWarningData {
+  pairId: string;
+  symbol: string;
+  competitionId: string | null;
+  matchId: string | null;
+  side: "LONG" | "SHORT";
+  leverage: string;
+  /** 0..1 (1 at entry, 0 at the liq price), 4 dp. */
+  marginHealth: string;
+  mark: string;
+  liqPrice: string;
+  threshold: number;
+}
+
 export interface PositionLiquidatedData {
   liquidationId: string;
   orderId: string;
@@ -378,6 +416,8 @@ export type AppEvent =
   | EventEnvelope<"trigger.fired", TriggerFiredData>
   | EventEnvelope<"trigger.canceled", TriggerCanceledData>
   | EventEnvelope<"position.liquidated", PositionLiquidatedData>
+  | EventEnvelope<"position.margin_warning", PositionMarginWarningData>
+  | EventEnvelope<"mark.price", MarkPriceData>
   | EventEnvelope<"alert.updated", AlertUpdatedData>
   | EventEnvelope<"competition.started", CompetitionStartedData>
   | EventEnvelope<"competition.ended", CompetitionEndedData>
