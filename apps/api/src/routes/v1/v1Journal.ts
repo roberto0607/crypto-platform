@@ -72,6 +72,7 @@ const v1Journal: FastifyPluginAsync = async (app) => {
                 userId,
                 competitionId: competitionId ?? null,
                 limit: 10000,
+                maxLimit: 10000,
             });
 
             // Leverage PR 7 appends leverage, margin, close_reason and return

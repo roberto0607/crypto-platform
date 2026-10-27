@@ -182,3 +182,28 @@ describe("GET /v1/trades/journal/export", () => {
         expect(spot.slice(11)).toEqual(["1.00", "", "MANUAL", ""]);
     });
 });
+
+describe("export size", () => {
+    const auth = (sub: string) => ({ authorization: `Bearer ${app.jwt.sign({ sub, role: "USER" }, { expiresIn: 3600 })}` });
+
+    it("exports every trade (the route asks for up to 10,000; the paged list stays capped at 100)", async () => {
+        const u = await trader();
+        await pool.query(
+            `INSERT INTO closed_trades
+                (user_id, pair_id, competition_id, direction, entry_fill_ids, entry_qty, entry_avg_price, entry_fees, entry_at,
+                 exit_fill_ids, exit_qty, exit_avg_price, exit_fees, exit_at, gross_pnl, total_fees, net_pnl, return_pct,
+                 holding_seconds, close_reason)
+             SELECT $1, $2, NULL, 'LONG', ARRAY[gen_random_uuid()], 0.001, 83000, 0.04, now() - (g || ' minutes')::interval,
+                    ARRAY[gen_random_uuid()], 0.001, 83100, 0.04, now() - (g || ' minutes')::interval + interval '30 seconds',
+                    0.1, 0.08, 0.02, 0.0241, 30, 'MANUAL'
+             FROM generate_series(1, 130) g`,
+            [u, pairId],
+        );
+        const res = await app.inject({ method: "GET", url: "/v1/trades/journal/export", headers: auth(u) });
+        expect(res.statusCode).toBe(200);
+        expect(res.body.split("\n").length - 1).toBe(130); // minus the header
+
+        const page = await app.inject({ method: "GET", url: "/v1/trades/journal?limit=100", headers: auth(u) });
+        expect(page.json().trades).toHaveLength(100);
+    });
+});
