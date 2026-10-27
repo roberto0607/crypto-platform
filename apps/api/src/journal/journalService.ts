@@ -60,10 +60,12 @@ export async function processFillForJournal(
         /**
          * An ISOLATED fill's closing part (IsolatedLeg.reduce): each row gets
          * the position's leverage, its share of the released margin, and
-         * return on margin = net P&L / that margin. Omitted (SPOT): the
-         * column defaults (leverage 1, margin and return on margin NULL).
+         * return on margin = (booked P&L − booked closing fee) / released
+         * margin: the loss-capped numbers the wallet got, so never below
+         * −100% (the row's own FIFO net_pnl isn't capped). Omitted (SPOT):
+         * the column defaults (leverage 1, margin and return on margin NULL).
          */
-        isolated?: { closeQty: string; released: string; leverage: string } | null;
+        isolated?: { closeQty: string; released: string; leverage: string; pnl: string; fee: string } | null;
     },
 ): Promise<void> {
     const { userId, pairId, fillId, side, price, qty, feeQuote, filledAt, competitionId } = params;
@@ -136,7 +138,10 @@ export async function processFillForJournal(
         const rowMargin = iso && isoCloseQty > 0
             ? parseFloat(iso.released) * Math.min(consumed, isoCloseQty) / isoCloseQty
             : null;
-        const returnOnMargin = rowMargin !== null && rowMargin > 0 ? (netPnl / rowMargin) * 100 : null;
+        const released = iso ? parseFloat(iso.released) : 0;
+        const returnOnMargin = iso && rowMargin !== null && released > 0
+            ? ((parseFloat(iso.pnl) - parseFloat(iso.fee)) / released) * 100
+            : null;
 
         // Insert closed trade
         await timedQuery(client, "journalService.processFillForJournal.insertClosedTrade",
