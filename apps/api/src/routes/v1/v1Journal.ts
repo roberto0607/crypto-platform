@@ -74,13 +74,19 @@ const v1Journal: FastifyPluginAsync = async (app) => {
                 limit: 10000,
             });
 
-            const header = "Date,Pair,Direction,Entry Price,Exit Price,Qty,Gross P&L,Fees,Net P&L,Return %,Hold Time (s)\n";
+            // Leverage PR 7 appends leverage, margin, close_reason and return
+            // on margin (empty where NULL: SPOT rows, trades closed before
+            // the journal recorded them). Appended, so existing columns keep
+            // their positions.
+            const header = "Date,Pair,Direction,Entry Price,Exit Price,Qty,Gross P&L,Fees,Net P&L,Return %,Hold Time (s)," +
+                "Leverage,Margin,Close Reason,Return on Margin %\n";
             const rows = trades.map((t: Record<string, unknown>) =>
                 [
                     t.exit_at, t.pair_symbol, t.direction,
                     t.entry_avg_price, t.exit_avg_price, t.entry_qty,
                     t.gross_pnl, t.total_fees, t.net_pnl,
                     t.return_pct, t.holding_seconds,
+                    t.leverage, t.margin ?? "", t.close_reason ?? "", t.return_on_margin_pct ?? "",
                 ].join(",")
             ).join("\n");
 

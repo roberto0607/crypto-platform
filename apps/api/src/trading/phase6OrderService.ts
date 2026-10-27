@@ -354,6 +354,7 @@ export async function placeOrderWithSnapshot(
                         filledAt: new Date(fill.executed_at),
                         competitionId: competitionId ?? null,
                         closeReason: takerCloseReason,
+                        isolated: takerIso?.reduce,
                     });
 
                     // Apply fill to maker's position (if not system fill).
@@ -426,6 +427,7 @@ export async function placeOrderWithSnapshot(
                                 // A resting order the user placed (their own
                                 // close), or a resting TP/SL limit.
                                 closeReason: makerCloseReason,
+                                isolated: makerIso?.reduce,
                             });
                         }
                     }
