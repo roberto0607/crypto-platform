@@ -488,6 +488,8 @@ The last fixes before `LIQUIDATION_MODE=execute`. (The original PR 7 "journal" r
   - The engine publishes it as `mark.price`: global, pair-scoped on the SSE stream, at most every 500 ms per pair, and at once on a pause or resume.
   - `GET /positions` ISOLATED rows compute `mark_price`, P&L and `margin_health` from it. While paused they use the ticker and set `mark_stale: true`.
   - The web card, and the EQUITY row for the selected pair, use the last engine mark. Paused, or silent for more than 5 s, shows a STALE chip and "FEED STALE · LIQUIDATIONS PAUSED". No engine mark at all (`LIQUIDATION_MODE=off`) falls back to the ticker, as before.
+  - The order preview of a leveraged MARKET order (ENTRY PRICE, NOTIONAL, EST. LIQ PRICE) uses the same mark. While it's stale, it previews at the ticker with a STALE chip. A LIMIT order previews at its limit price.
+  - The card's header shows EQUITY = margin + capped uPnL (what the user has at stake), not the notional. Notional is a labeled NOTIONAL row.
   - Not changed: server-side equity (`accountEquity`, portfolio, match live P&L) still values at the ticker.
 - **Margin warning.** Threshold 25% health, re-armed above 35% (§4).
   - The engine scans each pair at most once a second, from the leader, in `log_only` and `execute`, and never on a paused pair.
