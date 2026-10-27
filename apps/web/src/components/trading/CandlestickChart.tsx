@@ -285,6 +285,11 @@ interface CandlestickChartProps {
      * fetched — renders as a muted em-dash.
      */
     fundingRateHourly?: number | null;
+    /**
+     * The open ISOLATED position's liq price on this pair (lib/leverageUi
+     * chartLiqPrice): drawn as a dashed red LIQ line. null = no line.
+     */
+    liquidationPrice?: number | null;
 }
 
 /**
@@ -360,7 +365,7 @@ function TextAnnotationChip({
     );
 }
 
-export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null }: CandlestickChartProps) {
+export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null, liquidationPrice = null }: CandlestickChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -1013,6 +1018,28 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             measurePreviewPrimitiveRef.current = null;
         };
     }, []);
+
+    // Liq-price line for an open ISOLATED position: dashed red, labelled LIQ
+    // on the price axis. Its own line (not priceLinesRef, which overlay
+    // re-renders wipe); recreated when the liq price moves (an add, a partial
+    // close), removed when the position closes. Runs after the chart effect
+    // above, so the series exists.
+    useEffect(() => {
+        const series = seriesRef.current;
+        if (!series || liquidationPrice === null || !(liquidationPrice > 0)) return;
+        const line = series.createPriceLine({
+            price: liquidationPrice,
+            color: "#ff3b3b",
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "LIQ",
+        });
+        return () => {
+            // The chart may already be gone (unmount): nothing to remove then.
+            if (seriesRef.current === series) series.removePriceLine(line);
+        };
+    }, [liquidationPrice]);
 
     // Load this pair's persisted drawings whenever the selected pair changes
     // (loadForPair no-ops if already loaded for this pair, e.g. re-renders).

@@ -8,7 +8,7 @@ import {
 } from "react";
 import Toast from "./Toast";
 import { useAppStore } from "@/stores/appStore";
-import type { PositionLiquidatedEvent } from "@/types/api";
+import type { PositionLiquidatedEvent, PositionMarginWarningEvent } from "@/types/api";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
 
@@ -60,6 +60,14 @@ export function liquidationMessage(d: PositionLiquidatedEvent, pairSymbol: strin
     return `${head} The price gapped past bankruptcy: the margin was lost, nothing more.`;
   }
   return `${head} ${usd(d.returnedEquity)} margin returned.`;
+}
+
+/** position.margin_warning → user copy (api liquidationEngine warnLowMargin). */
+export function marginWarningMessage(d: PositionMarginWarningEvent, pairSymbol: string): string {
+  const usd = (v: string) =>
+    "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct = Math.round(Number(d.marginHealth) * 100);
+  return `${pairSymbol} ${Number(d.leverage)}x ${d.side}: margin health ${pct}%. Liquidation at ${usd(d.liqPrice)}.`;
 }
 
 export default function ToastProvider({
@@ -128,16 +136,25 @@ export default function ToastProvider({
       addToast("error", liquidationMessage(d, symbol));
     }
 
+    function onMarginWarning(e: Event) {
+      const d = (e as CustomEvent<PositionMarginWarningEvent>).detail;
+      if (!d) return;
+      const symbol = useAppStore.getState().pairs.find((p) => p.id === d.pairId)?.symbol ?? d.symbol;
+      addToast("warning", marginWarningMessage(d, symbol));
+    }
+
     window.addEventListener("sse:trade.created", onTradeCreated);
     window.addEventListener("sse:trigger.fired", onTriggerFired);
     window.addEventListener("sse:trigger.canceled", onTriggerCanceled);
     window.addEventListener("sse:position.liquidated", onPositionLiquidated);
+    window.addEventListener("sse:position.margin_warning", onMarginWarning);
 
     return () => {
       window.removeEventListener("sse:trade.created", onTradeCreated);
       window.removeEventListener("sse:trigger.fired", onTriggerFired);
       window.removeEventListener("sse:trigger.canceled", onTriggerCanceled);
       window.removeEventListener("sse:position.liquidated", onPositionLiquidated);
+      window.removeEventListener("sse:position.margin_warning", onMarginWarning);
     };
   }, [addToast]);
 

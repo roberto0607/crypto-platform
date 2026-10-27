@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
+import { useMarkPriceStore } from "@/stores/markPriceStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useNotificationStore } from "@/stores/notificationStore";
 import { useAgentActivityStore } from "@/stores/agentActivityStore";
@@ -122,6 +123,20 @@ export function useSSE() {
         void useAppStore.getState().refreshWallets();
         window.dispatchEvent(
           new CustomEvent("sse:position.liquidated", { detail: event.data }),
+        );
+      },
+
+      // The liquidation engine's mark (Kraken book mid) for the ISOLATED
+      // position card: the same price liquidations are judged by.
+      onMarkPrice: (event) => {
+        const d = event.data;
+        useMarkPriceStore.getState().setMark(d.pairId, d.mark === null ? null : parseFloat(d.mark), d.paused, d.feed);
+      },
+
+      // Margin health fell below the warning line: ToastProvider shows it.
+      onPositionMarginWarning: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:position.margin_warning", { detail: event.data }),
         );
       },
 

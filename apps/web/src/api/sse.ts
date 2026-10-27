@@ -42,6 +42,8 @@ export interface SSEHandlers {
   onTriggerFired?: (event: Extract<SSEEvent, { type: "trigger.fired" }>) => void;
   onTriggerCanceled?: (event: Extract<SSEEvent, { type: "trigger.canceled" }>) => void;
   onPositionLiquidated?: (event: Extract<SSEEvent, { type: "position.liquidated" }>) => void;
+  onPositionMarginWarning?: (event: Extract<SSEEvent, { type: "position.margin_warning" }>) => void;
+  onMarkPrice?: (event: Extract<SSEEvent, { type: "mark.price" }>) => void;
   onCandleClosed?: (event: Extract<SSEEvent, { type: "candle.closed" }>) => void;
   onNotificationCreated?: (event: Extract<SSEEvent, { type: "notification.created" }>) => void;
   onSignalNew?: (event: Extract<SSEEvent, { type: "signal.new" }>) => void;
@@ -282,6 +284,12 @@ export function connectSSE(
           break;
         case "position.liquidated":
           handlers.onPositionLiquidated?.(event);
+          break;
+        case "position.margin_warning":
+          handlers.onPositionMarginWarning?.(event);
+          break;
+        case "mark.price":
+          handlers.onMarkPrice?.(event);
           break;
         case "candle.closed":
           handlers.onCandleClosed?.(event);

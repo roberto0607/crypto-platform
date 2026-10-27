@@ -156,3 +156,45 @@ export function scopeEquity(
   }
   return total.toNumber();
 }
+
+/** A mark.price older than this means the engine has gone quiet: shown as stale. */
+export const MARK_FRESH_MS = 5_000;
+
+export type PositionMark = {
+  /** What the ISOLATED card shows and values the position at. */
+  mark: number;
+  /** The engine isn't liquidating on this pair right now (stale feed), or has gone quiet. */
+  stale: boolean;
+  /** engine = the liquidation engine's mark (Kraken book mid); ticker = no engine mark received. */
+  source: "engine" | "ticker";
+};
+
+/**
+ * The mark an ISOLATED position card uses: the liquidation engine's (SSE
+ * mark.price, the same Kraken book mid liquidations are judged by) when one
+ * has arrived. Paused, or silent for MARK_FRESH_MS: the last good engine
+ * mark, flagged stale. None received (the engine is off, or not yet): the
+ * ticker, not flagged.
+ */
+export function positionMark(
+  entry: { mark: number | null; paused: boolean; receivedAt: number } | undefined,
+  now: number,
+  ticker: number,
+): PositionMark {
+  if (!entry) return { mark: ticker, stale: false, source: "ticker" };
+  const stale = entry.paused || now - entry.receivedAt > MARK_FRESH_MS;
+  if (entry.mark === null) return { mark: ticker, stale, source: "ticker" };
+  return { mark: entry.mark, stale, source: "engine" };
+}
+
+/**
+ * The chart's dashed liq-price line for the selected pair's position: an
+ * open ISOLATED position with a liq price (a 1x long has none). SPOT
+ * positions (leverage off) never get one.
+ */
+export function chartLiqPrice(position: { base_qty: string; margin_mode?: string; liq_price?: string | null } | null): number | null {
+  if (!position || position.margin_mode !== "ISOLATED" || !position.liq_price) return null;
+  if (Number(position.base_qty) === 0) return null;
+  const liq = Number(position.liq_price);
+  return liq > 0 ? liq : null;
+}
