@@ -251,8 +251,20 @@ export function UnifiedOrderPanel({
         ? parseFloat(snapshot.last)
         : pairPrice ?? 0;
 
+    // An ISOLATED position is valued at the liquidation engine's mark (SSE
+    // mark.price: the Kraken book mid liquidations are judged by), not the
+    // last-trade ticker; flagged stale while the engine is paused on the pair
+    // (lib/leverageUi positionMark). No engine mark yet: the ticker.
+    const isIsolatedPosition = !!position && parseFloat(position.base_qty) !== 0 && position.margin_mode === "ISOLATED";
+    const liqMark = useLiquidationMark(pair.id, currentPrice, isIsolatedPosition || leveraged);
+    // A leveraged MARKET order previews (entry, notional, est. liq) at that
+    // same mark; while it's stale, at the ticker with a STALE chip. Not
+    // leveraged: the ticker, exactly as before.
+    const marketPrice = leveraged && liqMark.source === "engine" && !liqMark.stale ? liqMark.mark : currentPrice;
+    const previewStale = leveraged && orderType === "MARKET" && liqMark.stale;
+
     const effectivePrice =
-        orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
+        orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : marketPrice;
 
     const leverage = leveraged
         ? (lockedLeverage ?? (levOptions.includes(chosenLeverage) ? chosenLeverage : 1))
@@ -290,12 +302,6 @@ export function UnifiedOrderPanel({
     const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
     const posUsdSize = posAbsQty * posEntryPrice;
     const posCurrentValue = posAbsQty * currentPrice;
-    // An ISOLATED position is valued at the liquidation engine's mark (SSE
-    // mark.price: the Kraken book mid liquidations are judged by), not the
-    // last-trade ticker; flagged stale while the engine is paused on the pair
-    // (lib/leverageUi positionMark). No engine mark yet: the ticker.
-    const isIsolatedPosition = !!hasPosition && position!.margin_mode === "ISOLATED";
-    const liqMark = useLiquidationMark(pair.id, currentPrice, isIsolatedPosition);
     const engineMarks = useMarkPriceStore((s) => s.marks);
     // An ISOLATED position: margin, liq, health, P&L capped at the margin,
     // return on margin (lib/leverageUi). Health uses the pair's maintenance
@@ -779,7 +785,17 @@ export function UnifiedOrderPanel({
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
-                    <span className={`${p}-sum-val`}>{orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}</span>
+                    <span className={`${p}-sum-val`}>
+                        {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : marketPrice > 0 ? fmtUsd(marketPrice) : "MARKET"}
+                        {previewStale && (
+                            <span
+                                title="Price feed stale: liquidations are paused on this pair. Previewing at the last trade."
+                                style={{ marginLeft: 4, padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
+                            >
+                                STALE
+                            </span>
+                        )}
+                    </span>
                 </div>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>

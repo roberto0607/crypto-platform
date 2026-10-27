@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const flags = vi.hoisted(() => ({ SHOW_LEVERAGE_SELECTOR: true }));
 vi.mock("@/lib/featureFlags", () => flags);
@@ -46,6 +47,7 @@ import ToastProvider from "@/components/ToastProvider";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useAppStore } from "@/stores/appStore";
 import { useMarkPriceStore } from "@/stores/markPriceStore";
+import { orderPreview } from "@/lib/leverageUi";
 import type { Position, TradingPair } from "@/types/api";
 
 const TICKER = "79905";
@@ -198,3 +200,49 @@ describe("the card header: EQUITY (what the user has at stake), NOTIONAL as a ro
     expect(card().getByText("$500.00")).toBeTruthy();
   });
 });
+
+describe("the order preview uses the engine mark (leveraged MARKET orders)", () => {
+  const entry = () => screen.getByText("ENTRY PRICE").parentElement!.querySelector("span:last-child")!;
+  const noPosition = async () => {
+    lev.info = { ...info, positionLeverage: null };
+    render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={null} positions={[]} onOrderFilled={() => {}} /></ToastProvider>);
+    await settle();
+  };
+
+  it("ENTRY PRICE and EST. LIQ PRICE from the book mid, not the last trade", async () => {
+    await noPosition();
+    engineMark(79919);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.type(screen.getByPlaceholderText("0.00"), "50");
+    expect(entry().textContent).toBe("$79,919.00");
+    const want = orderPreview({ margin: 50, leverage: 10, price: 79919, takerBps: 5, mmrBps: 50, side: "LONG" });
+    const fmt = (n: number) => "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    expect(sumVal("EST. LIQ PRICE")).toBe(fmt(want.liqPrice!.toNumber()));
+    expect(screen.queryByText("STALE")).toBeNull();
+  });
+
+  it("engine paused: falls back to the ticker, with the STALE chip", async () => {
+    await noPosition();
+    engineMark(79919);
+    engineMark(null, true);
+    expect(entry().textContent).toContain("$79,905.00");
+    expect(within(entry() as HTMLElement).getByText("STALE")).toBeTruthy();
+  });
+
+  it("a LIMIT order still previews at its limit price", async () => {
+    await noPosition();
+    engineMark(79919);
+    act(() => { useTradingStore.setState({ orderType: "LIMIT", limitPrice: "78000" }); });
+    expect(entry().textContent).toBe("$78,000.00");
+  });
+
+  it("not leveraged (SPOT): ENTRY PRICE stays the ticker", async () => {
+    lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
+    render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={null} positions={[]} onOrderFilled={() => {}} /></ToastProvider>);
+    await settle();
+    engineMark(79919);
+    expect(entry().textContent).toBe("$79,905.00");
+  });
+});
+
