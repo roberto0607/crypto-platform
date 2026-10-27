@@ -39,6 +39,15 @@
  * least CONFIRM_MS apart before anything is written or traded, so one bad
  * book print can't liquidate anyone.
  *
+ * Published (PR 7): every evaluation's mark (or "paused") as a mark.price
+ * event, at most every MARK_PUBLISH_MS per pair and at once on a pause or
+ * resume: the ISOLATED position card shows it, so the card can't disagree
+ * with the engine. And at most every WARN_SCAN_MS, a position.margin_warning
+ * to the owner of any ISOLATED position whose margin health fell below
+ * MARGIN_WARNING_HEALTH (once per episode; re-armed above
+ * MARGIN_WARNING_REARM). Both only from the leader, both in every mode but
+ * off, neither on a paused pair.
+ *
  * Exactly once: the engine only proposes. The matching engine re-checks the
  * epoch, side, size and breach under the pair lock and the position row lock
  * and makes anything else a no-op (LiquidationNotNeeded); liquidations_once
@@ -52,24 +61,28 @@ import { config } from "../config";
 import Decimal from "decimal.js";
 import { D, toFixed8 } from "../utils/decimal";
 import { logger as rootLogger } from "../observability/logContext";
-import { subscribeGlobal, unsubscribe, type EventHandler } from "../events/eventBus";
+import { subscribeGlobal, unsubscribe, publish, type EventHandler } from "../events/eventBus";
+import { createEvent } from "../events/eventTypes";
 import { bookSnapshots } from "../market/orderFlowFeatures";
-import { getKrakenWsHealth } from "../market/krakenWs";
 import { isTradableSymbol } from "../market/marketSymbols";
 import { tryAcquireLeadership, releaseLeadership, isLeader, LOCK_NAMES } from "../coordination/leaderElection";
 import { notifyPositionLiquidated } from "../notifications/notificationService";
-import { liquidationsTotal, liquidationPaused, liquidationEvalLag, liquidationEvalDuration } from "../metrics";
-import { getCollarReference } from "./priceCollar";
+import { liquidationsTotal, liquidationPaused, liquidationEvalLag, liquidationEvalDuration, marginWarningsTotal } from "../metrics";
 import { isSystemUser } from "./buyingPower";
 import { placeOrderWithSnapshot } from "./phase6OrderService";
+import { marginHealth } from "./margin";
 import {
     findLiquidationCandidates,
+    findMarginWatch,
     recordUnexecutedTx,
     closingSide,
     markOf,
     LiquidationNotNeeded,
     type LiquidationCandidate,
 } from "./liquidation";
+import { liquidationMark, krakenFeedStatus, type FeedStatus } from "./liquidationMark";
+
+export { krakenFeedStatus, type FeedStatus };
 
 const logger = rootLogger.child({ module: "liquidationEngine" });
 
@@ -80,15 +93,14 @@ export const CONFIRM_MS = 500;
 export const FAILURE_BACKOFF_MS = 5_000;
 const PAIR_REFRESH_MS = 60_000;
 const LEADERSHIP_RETRY_MS = 5_000;
-
-export type FeedStatus = "ok" | "stale" | "waiting" | "disconnected";
-
-/** krakenWs's view of a symbol's book feed. */
-export function krakenFeedStatus(symbol: string): FeedStatus {
-    const health = getKrakenWsHealth();
-    if (!health.connected) return "disconnected";
-    return health.symbols[symbol]?.status ?? "waiting";
-}
+/** At most one mark.price per pair this often (a pause or resume goes out at once). */
+export const MARK_PUBLISH_MS = 500;
+/** How often a pair's positions are checked for the margin warning. */
+export const WARN_SCAN_MS = 1_000;
+/** Warn below this margin health (§4: the card's red band)... */
+export const MARGIN_WARNING_HEALTH = 0.25;
+/** ...and warn that position again only after it recovers above this. */
+export const MARGIN_WARNING_REARM = 0.35;
 
 /** A liquidation the matching engine declined, or that match end beat: not a failure. */
 const NOOP_ERRORS = new Set(["liquidation_not_needed", "match_ended", "stale_price_source"]);
@@ -121,6 +133,12 @@ type PairState = {
     /** Key → no retry before this time (after an unexpected error). */
     retryAfter: Map<string, number>;
     pausedSince: number | null;
+    /** Last mark.price published: when, and whether it said paused. */
+    markPublishedAt: number;
+    markPublishedPaused: boolean | null;
+    warnScannedAt: number;
+    /** Positions (key) warned this episode and not yet back above MARGIN_WARNING_REARM. */
+    warned: Set<string>;
 };
 
 const keyOf = (c: Pick<LiquidationCandidate, "userId" | "scope" | "epoch">) =>
@@ -186,6 +204,7 @@ export class LiquidationEngine {
             st = {
                 symbol, inFlight: false, lastEvalAt: 0, timer: null,
                 firstBreachAt: new Map(), recorded: new Set(), retryAfter: new Map(), pausedSince: null,
+                markPublishedAt: 0, markPublishedPaused: null, warnScannedAt: 0, warned: new Set(),
             };
             this.pairs.set(pairId, st);
         }
@@ -279,15 +298,20 @@ export class LiquidationEngine {
         st.lastEvalAt = now;
         const started = performance.now();
         try {
-            const feed = this.feedStatus(st.symbol);
-            const ref = feed === "ok" ? getCollarReference(pairId, now) : null;
-            if (!ref) {
-                this.pause(pairId, st, feed, now);
-                return { status: "paused", feed, skippedStale: await this.recordStale(pairId, st, now) };
+            const m = liquidationMark(pairId, st.symbol, now, this.feedStatus);
+            if (!m.ok) {
+                this.pause(pairId, st, m.feed, now);
+                this.publishMark(pairId, st, now, null, m.feed, m.bookAgeMs);
+                return { status: "paused", feed: m.feed, skippedStale: await this.recordStale(pairId, st, now) };
             }
             this.resume(pairId, st, now);
 
-            const mark = markOf(ref);
+            const { mark, ref } = m;
+            this.publishMark(pairId, st, now, mark, "ok", Math.round(ref.ageMs));
+            if (now - st.warnScannedAt >= WARN_SCAN_MS) {
+                st.warnScannedAt = now;
+                await this.warnLowMargin(pairId, st, mark);
+            }
             const candidates = await findLiquidationCandidates(pool, pairId, mark);
             const result = { status: "evaluated" as const, mark: toFixed8(mark), candidates: candidates.length,
                 pending: 0, logged: 0, executed: 0, noop: 0, failed: 0 };
@@ -340,6 +364,56 @@ export class LiquidationEngine {
             st.inFlight = false;
             liquidationEvalDuration.observe(performance.now() - started);
         }
+    }
+
+    /** mark.price for this evaluation, throttled; a change of paused state goes out at once. */
+    private publishMark(
+        pairId: string, st: PairState, now: number, mark: Decimal | null, feed: FeedStatus, bookAgeMs: number | null,
+    ): void {
+        const paused = mark === null;
+        if (st.markPublishedPaused === paused && now - st.markPublishedAt < MARK_PUBLISH_MS) return;
+        st.markPublishedAt = now;
+        st.markPublishedPaused = paused;
+        try {
+            publish(createEvent("mark.price", {
+                pairId, symbol: st.symbol, mark: mark === null ? null : toFixed8(mark), paused, feed, bookAgeMs, ts: now,
+            }));
+        } catch (err) {
+            logger.error({ err, pairId }, "mark_publish_error");
+        }
+    }
+
+    /**
+     * position.margin_warning to the owner of each ISOLATED position on the
+     * pair whose health at `mark` is below MARGIN_WARNING_HEALTH, once per
+     * episode (user:scope:epoch). A position re-arms once it's back above
+     * MARGIN_WARNING_REARM (or closed: a new episode is a new key).
+     */
+    private async warnLowMargin(pairId: string, st: PairState, mark: Decimal): Promise<void> {
+        const rows = await findMarginWatch(pool, pairId, mark, MARGIN_WARNING_REARM);
+        const under = new Set<string>();
+        for (const r of rows) {
+            const key = keyOf(r);
+            under.add(key);
+            const health = marginHealth(r, mark);
+            if (health.gte(MARGIN_WARNING_HEALTH) || st.warned.has(key)) continue;
+            if (await isSystemUser(r.userId)) continue;
+            st.warned.add(key);
+            marginWarningsTotal.inc();
+            const data = {
+                pairId, symbol: st.symbol, competitionId: r.scope.competitionId, matchId: r.scope.matchId,
+                side: r.side, leverage: r.leverage.toFixed(2), marginHealth: health.toFixed(4),
+                mark: toFixed8(mark), liqPrice: toFixed8(r.liqPrice), threshold: MARGIN_WARNING_HEALTH,
+            };
+            logger.warn({ userId: r.userId, epoch: r.epoch, ...data }, "margin_warning");
+            try {
+                publish(createEvent("position.margin_warning", data, { userId: r.userId }));
+            } catch (err) {
+                logger.error({ err, pairId, userId: r.userId }, "margin_warning_publish_error");
+            }
+        }
+        // Back above the re-arm level, or gone: warn again next time.
+        for (const key of st.warned) if (!under.has(key)) st.warned.delete(key);
     }
 
     /**

@@ -164,6 +164,11 @@ export const liquidationPaused = new client.Gauge({
   labelNames: ["pair"] as const,
 });
 
+export const marginWarningsTotal = new client.Counter({
+  name: "tradr_margin_warnings_total",
+  help: "position.margin_warning events sent (ISOLATED margin health below the warning threshold)",
+});
+
 export const liquidationEvalLag = new client.Histogram({
   name: "tradr_liquidation_eval_lag_ms",
   help: "Delay between a pair becoming due for evaluation (tick or sweep) and the evaluation starting",
