@@ -3,6 +3,7 @@ import { useAppStore } from "@/stores/appStore";
 import { getJournal, getJournalSummary, exportJournalCsv } from "@/api/endpoints/journal";
 import { format } from "date-fns";
 import { closeReasonBadge } from "@/lib/closeReason";
+import { journalCsv } from "@/lib/journalCsv";
 
 /* ─────────────────────────────────────────
    JOURNAL PAGE CSS — Circuit Noir
@@ -305,6 +306,10 @@ interface ClosedTrade {
   exit_at: string;
   /** Why it closed (server, leverage PR 6a): MANUAL | TP | SL | TRAILING | LIQUIDATION; null before. */
   close_reason?: string | null;
+  /** Leverage PR 7: the position's leverage ("1.00" for SPOT), its margin share and net P&L / margin (null for SPOT). */
+  leverage?: string;
+  margin?: string | null;
+  return_on_margin_pct?: string | null;
 }
 
 interface JournalSummaryData {
@@ -341,6 +346,9 @@ interface MappedTrade {
   tags: string[];
   note: string;
   closeReason: string | null;
+  leverage: number;
+  margin: number | null;
+  returnOnMarginPct: number | null;
 }
 
 const ASSET_ICONS: Record<string, string> = { BTC: "\u20BF", ETH: "\u039E", SOL: "\u25CE" };
@@ -380,6 +388,9 @@ function mapTrade(t: ClosedTrade): MappedTrade {
     tags: [],    // not tracked by backend yet
     note: "",    // not tracked by backend yet
     closeReason: t.close_reason ?? null,
+    leverage: Number(t.leverage ?? "1"),
+    margin: t.margin == null ? null : parseFloat(t.margin),
+    returnOnMarginPct: t.return_on_margin_pct == null ? null : parseFloat(t.return_on_margin_pct),
   };
 }
 
@@ -389,23 +400,7 @@ function fmtPrice(v: number): string {
 
 /* ── CSV EXPORT ── */
 function exportFilteredCsv(trades: MappedTrade[]) {
-  const header = "Date,Asset,Direction,Entry,Exit,Size,PnL,PnL%,Duration,Fee,Note";
-  const rows = trades.map((t) =>
-    [
-      t.date,
-      t.pair,
-      t.side === "buy" ? "LONG" : "SHORT",
-      t.entry.toFixed(2),
-      t.exit.toFixed(2),
-      t.qty.toString(),
-      t.pnl.toFixed(2),
-      `${t.pnlPct.toFixed(2)}%`,
-      t.dur,
-      t.fee.toFixed(2),
-      `"${t.note.replace(/"/g, '""')}"`,
-    ].join(","),
-  );
-  const csv = [header, ...rows].join("\n");
+  const csv = journalCsv(trades);
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

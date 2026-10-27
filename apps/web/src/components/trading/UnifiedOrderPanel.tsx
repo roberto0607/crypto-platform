@@ -29,6 +29,8 @@ import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
 import { useBuyingPower, useOrderWallets } from "@/hooks/useBuyingPower";
 import { useLeverageInfo } from "@/hooks/useLeverageInfo";
+import { useLiquidationMark } from "@/hooks/useLiquidationMark";
+import { useMarkPriceStore } from "@/stores/markPriceStore";
 import { SHOW_LEVERAGE_SELECTOR } from "@/lib/featureFlags";
 import {
     leverageOptions,
@@ -249,8 +251,20 @@ export function UnifiedOrderPanel({
         ? parseFloat(snapshot.last)
         : pairPrice ?? 0;
 
+    // An ISOLATED position is valued at the liquidation engine's mark (SSE
+    // mark.price: the Kraken book mid liquidations are judged by), not the
+    // last-trade ticker; flagged stale while the engine is paused on the pair
+    // (lib/leverageUi positionMark). No engine mark yet: the ticker.
+    const isIsolatedPosition = !!position && parseFloat(position.base_qty) !== 0 && position.margin_mode === "ISOLATED";
+    const liqMark = useLiquidationMark(pair.id, currentPrice, isIsolatedPosition || leveraged);
+    // A leveraged MARKET order previews (entry, notional, est. liq) at that
+    // same mark; while it's stale, at the ticker with a STALE chip. Not
+    // leveraged: the ticker, exactly as before.
+    const marketPrice = leveraged && liqMark.source === "engine" && !liqMark.stale ? liqMark.mark : currentPrice;
+    const previewStale = leveraged && orderType === "MARKET" && liqMark.stale;
+
     const effectivePrice =
-        orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : currentPrice;
+        orderType === "LIMIT" && limitPrice ? parseFloat(limitPrice) : marketPrice;
 
     const leverage = leveraged
         ? (lockedLeverage ?? (levOptions.includes(chosenLeverage) ? chosenLeverage : 1))
@@ -288,10 +302,11 @@ export function UnifiedOrderPanel({
     const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
     const posUsdSize = posAbsQty * posEntryPrice;
     const posCurrentValue = posAbsQty * currentPrice;
+    const engineMarks = useMarkPriceStore((s) => s.marks);
     // An ISOLATED position: margin, liq, health, P&L capped at the margin,
     // return on margin (lib/leverageUi). Health uses the pair's maintenance
     // margin from GET /leverage; until that arrives, the server's own figure.
-    const isoView = hasPosition && position!.margin_mode === "ISOLATED"
+    const isoView = isIsolatedPosition
         ? isolatedPositionView({
             baseQty: position!.base_qty,
             entry: position!.avg_entry_price,
@@ -299,7 +314,7 @@ export function UnifiedOrderPanel({
             leverage: position!.leverage ?? "1",
             liqPrice: position!.liq_price ?? null,
             mmrBps: levInfo?.mmrBps ?? 0,
-            mark: currentPrice,
+            mark: liqMark.mark,
         })
         : null;
     const isoHealth = isoView
@@ -311,12 +326,15 @@ export function UnifiedOrderPanel({
     // EQUITY (leveraged accounts): USD + every open position's worth, an
     // ISOLATED one at margin + capped uPnL (the USD wallet no longer holds
     // its margin, so a wallet-only number reads low). Same as the server's
-    // accountEquity. Marks: the selected pair live, others at their tick.
+    // accountEquity. Marks: the engine's where it has published one (the
+    // selected pair's ISOLATED position as on its card), else the tick.
     const pairPrices = usePairPricesStore((s) => s.prices);
     const accountPositions = positions ?? (position ? [position] : []);
     const equity = leveraged && quoteWallet
         ? scopeEquity(parseFloat(quoteWallet.balance), accountPositions,
-            (id) => (id === pair.id ? currentPrice : pairPrices[id] ?? null))
+            (id) => (id === pair.id
+                ? (isoView ? liqMark.mark : currentPrice)
+                : engineMarks[id]?.mark ?? pairPrices[id] ?? null))
         : null;
 
     // Flash the P&L number green/red when it moves (throttled, micro-noise suppressed).
@@ -767,8 +785,24 @@ export function UnifiedOrderPanel({
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
-                    <span className={`${p}-sum-val`}>{orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : currentPrice > 0 ? fmtUsd(currentPrice) : "MARKET"}</span>
+                    <span className={`${p}-sum-val`} style={previewStale ? { color: "#f59e0b" } : undefined}>
+                        {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : marketPrice > 0 ? fmtUsd(marketPrice) : "MARKET"}
+                    </span>
                 </div>
+                {/* Its own row: a chip beside the price overflows the cell at panel width. */}
+                {previewStale && (
+                    <div className={`${p}-sum-row`}>
+                        <span className={`${p}-sum-lbl`}>PRICE FEED</span>
+                        <span className={`${p}-sum-val`}>
+                            <span
+                                title="Price feed stale: liquidations are paused on this pair. Previewing at the last trade."
+                                style={{ padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
+                            >
+                                STALE
+                            </span>
+                        </span>
+                    </div>
+                )}
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
                     <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
@@ -857,9 +891,19 @@ export function UnifiedOrderPanel({
                                     </span>
                                 )}
                             </span>
-                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
-                                {fmtUsd(posUsdSize)}
-                            </span>
+                            {isoView ? (
+                                // What the user has at stake: margin + capped uPnL.
+                                <span style={{ textAlign: "right" }} title="Margin + unrealized P&L (the loss is capped at the margin)">
+                                    <span style={{ ...smallLabel, marginRight: 6 }}>EQUITY</span>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: 1 }}>
+                                        {fmtUsd(isoView.margin + isoView.unrealizedPnl)}
+                                    </span>
+                                </span>
+                            ) : (
+                                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
+                                    {fmtUsd(posUsdSize)}
+                                </span>
+                            )}
                         </div>
 
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
@@ -869,14 +913,28 @@ export function UnifiedOrderPanel({
                             </div>
                             <div>
                                 <span style={smallLabel}>{isoView ? "MARK" : "CURRENT"}</span>
-                                <div style={smallVal}>{fmtUsd(currentPrice)}</div>
+                                <div style={smallVal}>
+                                    {fmtUsd(isoView ? liqMark.mark : currentPrice)}
+                                    {isoView && liqMark.stale && (
+                                        <span
+                                            title="Price feed stale: liquidations are paused on this pair. Showing the last good mark."
+                                            style={{ marginLeft: 4, padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
+                                        >
+                                            STALE
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                             {isoView ? (<>
+                                <div>
+                                    <span style={smallLabel} title="Position size at entry: size × entry price">NOTIONAL</span>
+                                    <div style={smallVal}>{fmtUsd(isoView.notional)}</div>
+                                </div>
                                 <div>
                                     <span style={smallLabel}>MARGIN</span>
                                     <div style={smallVal}>{fmtUsd(isoView.margin)}</div>
                                 </div>
-                                <div>
+                                <div style={{ gridColumn: "1 / -1" }}>
                                     <span style={smallLabel}>LIQ PRICE</span>
                                     <div
                                         style={{ ...smallVal, color: isoView.liqPrice ? "#f59e0b" : smallVal.color }}
@@ -990,6 +1048,16 @@ export function UnifiedOrderPanel({
                                         background: HEALTH_COLORS[healthTone(isoHealth)], transition: "width 0.3s",
                                     }} />
                                 </div>
+                                {isoView.liqPrice !== null && healthTone(isoHealth) === "danger" && (
+                                    <div role="alert" style={{ marginTop: 4, fontSize: 8, letterSpacing: 2, color: HEALTH_COLORS.danger }}>
+                                        ⚠ NEAR LIQUIDATION · LIQ {fmtUsd(isoView.liqPrice)}
+                                    </div>
+                                )}
+                                {liqMark.stale && (
+                                    <div style={{ marginTop: 4, fontSize: 8, letterSpacing: 2, color: "#f59e0b" }}>
+                                        FEED STALE · LIQUIDATIONS PAUSED
+                                    </div>
+                                )}
                             </div>
                         )}
 

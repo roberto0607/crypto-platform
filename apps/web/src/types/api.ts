@@ -167,6 +167,8 @@ export interface Position {
   isolated_margin?: DecimalString;
   liq_price?: DecimalString | null;
   mark_price?: DecimalString;
+  /** True when the liquidation engine's mark (Kraken book mid) was paused and mark_price is the ticker. */
+  mark_stale?: boolean;
   margin_health?: DecimalString;
 }
 
@@ -555,6 +557,8 @@ export type SSEEvent =
   | EventEnvelope<"trigger.fired", TriggerFiredEvent>
   | EventEnvelope<"trigger.canceled", TriggerCanceledEvent>
   | EventEnvelope<"position.liquidated", PositionLiquidatedEvent>
+  | EventEnvelope<"position.margin_warning", PositionMarginWarningEvent>
+  | EventEnvelope<"mark.price", MarkPriceEvent>
   | EventEnvelope<"candle.closed", CandleClosedEvent>
   | EventEnvelope<"notification.created", NotificationCreatedEvent>
   | EventEnvelope<"signal.new", SignalNewEvent>
@@ -596,6 +600,35 @@ export interface MatchEndedEvent {
 }
 
 /** The liquidation engine closed an ISOLATED position (api trading/liquidationEngine.ts). */
+/**
+ * The mark the liquidation engine evaluates a pair with (the Kraken book mid;
+ * api trading/liquidationMark.ts). Pair-scoped, at most every 500 ms, and at
+ * once on a pause/resume. mark is null while paused.
+ */
+export interface MarkPriceEvent {
+  pairId: UUID;
+  symbol: string;
+  mark: DecimalString | null;
+  paused: boolean;
+  feed: "ok" | "stale" | "waiting" | "disconnected";
+  bookAgeMs: number | null;
+  ts: number;
+}
+
+/** An ISOLATED position's margin health fell below the warning threshold (once per episode). */
+export interface PositionMarginWarningEvent {
+  pairId: UUID;
+  symbol: string;
+  competitionId: UUID | null;
+  matchId: UUID | null;
+  side: "LONG" | "SHORT";
+  leverage: DecimalString;
+  marginHealth: DecimalString;
+  mark: DecimalString;
+  liqPrice: DecimalString;
+  threshold: number;
+}
+
 export interface PositionLiquidatedEvent {
   liquidationId: UUID;
   orderId: UUID;

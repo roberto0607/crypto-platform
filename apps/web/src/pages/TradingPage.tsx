@@ -17,6 +17,7 @@ import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateE
 import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
+import { chartLiqPrice } from "@/lib/leverageUi";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -1283,6 +1284,7 @@ export default function TradingPage() {
             timeframe={timeframe}
             vpvrMode={vpvrMode}
             fundingRateHourly={fundingRateHourly}
+            liquidationPrice={chartLiqPrice(currentPosition)}
           />
         </div>
 
