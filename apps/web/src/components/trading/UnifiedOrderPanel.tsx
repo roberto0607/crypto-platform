@@ -869,9 +869,19 @@ export function UnifiedOrderPanel({
                                     </span>
                                 )}
                             </span>
-                            <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
-                                {fmtUsd(posUsdSize)}
-                            </span>
+                            {isoView ? (
+                                // What the user has at stake: margin + capped uPnL.
+                                <span style={{ textAlign: "right" }} title="Margin + unrealized P&L (the loss is capped at the margin)">
+                                    <span style={{ ...smallLabel, marginRight: 6 }}>EQUITY</span>
+                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: 1 }}>
+                                        {fmtUsd(isoView.margin + isoView.unrealizedPnl)}
+                                    </span>
+                                </span>
+                            ) : (
+                                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
+                                    {fmtUsd(posUsdSize)}
+                                </span>
+                            )}
                         </div>
 
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
@@ -895,10 +905,14 @@ export function UnifiedOrderPanel({
                             </div>
                             {isoView ? (<>
                                 <div>
+                                    <span style={smallLabel} title="Position size at entry: size × entry price">NOTIONAL</span>
+                                    <div style={smallVal}>{fmtUsd(isoView.notional)}</div>
+                                </div>
+                                <div>
                                     <span style={smallLabel}>MARGIN</span>
                                     <div style={smallVal}>{fmtUsd(isoView.margin)}</div>
                                 </div>
-                                <div>
+                                <div style={{ gridColumn: "1 / -1" }}>
                                     <span style={smallLabel}>LIQ PRICE</span>
                                     <div
                                         style={{ ...smallVal, color: isoView.liqPrice ? "#f59e0b" : smallVal.color }}

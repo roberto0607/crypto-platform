@@ -84,7 +84,8 @@ async function mount(position: Position | null = null, onOrderFilled = () => {})
 const card = () => within(screen.getByTestId("position-leverage").closest(".tr-position-card-sticky") as HTMLElement);
 
 const radios = () => screen.queryAllByRole("radio").map((r) => r.textContent);
-const sumVal = (label: string) => screen.getByText(label).parentElement!.querySelector("span:last-child")!.textContent;
+/** A row of the order summary (scoped: the ISOLATED card has its own EQUITY / NOTIONAL). */
+const sumVal = (label: string) => within(document.querySelector(".tr-summary") as HTMLElement).getByText(label).parentElement!.querySelector("span:last-child")!.textContent;
 
 beforeEach(() => {
   vi.mocked(placeOrder).mockReset().mockResolvedValue({ data: { ok: true, order: { id: "o1" }, fills: [] } } as never);

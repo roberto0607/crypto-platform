@@ -78,7 +78,8 @@ async function mount(position: Position) {
 const card = () => within(document.querySelector(".tr-position-card-sticky") as HTMLElement);
 const markText = () => card().getByText("MARK").nextElementSibling!.textContent;
 const health = () => Number(screen.getByRole("meter", { name: "Margin health" }).getAttribute("aria-valuenow"));
-const sumVal = (label: string) => screen.getByText(label).parentElement!.querySelector("span:last-child")!.textContent;
+/** A row of the order summary (scoped: the ISOLATED card has its own EQUITY / NOTIONAL). */
+const sumVal = (label: string) => within(document.querySelector(".tr-summary") as HTMLElement).getByText(label).parentElement!.querySelector("span:last-child")!.textContent;
 
 function engineMark(mark: number | null, paused = false, receivedAt = Date.now()) {
   act(() => {
@@ -174,5 +175,26 @@ describe("near liquidation", () => {
       } }));
     });
     expect(screen.getByText("BTC/USD 10x LONG: margin health 24%. Liquidation at $75,075.38.")).toBeTruthy();
+  });
+});
+
+describe("the card header: EQUITY (what the user has at stake), NOTIONAL as a row", () => {
+  it("EQUITY = margin + capped uPnL at the engine mark; NOTIONAL = size × entry", async () => {
+    await mount(ISO_LONG);
+    engineMark(79919);
+    const eq = card().getByText("EQUITY").nextElementSibling!;
+    expect(eq.textContent).toBe("$31.44"); // 49.999947 − 18.56
+    expect(card().getByText("NOTIONAL").nextElementSibling!.textContent).toBe("$500.00"); // 0.00602409 × 83,000
+    engineMark(70000); // past bankruptcy: the loss is capped at the margin
+    expect(card().getByText("EQUITY").nextElementSibling!.textContent).toBe("$0.00");
+  });
+
+  it("a SPOT card keeps its header (position size, no EQUITY / NOTIONAL labels)", async () => {
+    const { margin_mode: _m, leverage: _l, isolated_margin: _i, liq_price: _q, mark_price: _k, margin_health: _h, ...spot } = ISO_LONG;
+    lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
+    await mount(spot as Position);
+    expect(card().queryByText("EQUITY")).toBeNull();
+    expect(card().queryByText("NOTIONAL")).toBeNull();
+    expect(card().getByText("$500.00")).toBeTruthy();
   });
 });
