@@ -181,12 +181,13 @@ export async function fireTrigger(
                 type: derivedType,
                 qty: toFixed8(orderQty),
                 limitPrice: derivedLimitPrice,
-                // The clamp above read the position without a lock. A MARKET
-                // order is also reduce-only under the pair lock, so a close
-                // that got there first (the user's, the other leg, a
-                // liquidation) can never turn this into a new position. (A
-                // LIMIT can't be reduce-only: it may rest.)
-                reduceOnly: derivedType === "MARKET",
+                // The clamp above read the position without a lock. The order
+                // is also reduce-only under the pair lock, so a close that got
+                // there first (the user's, the other leg, a liquidation) can
+                // never turn this into a new position. A LIMIT that rests
+                // stays reduce-only (orders.reduce_only): a close cancels it
+                // and a sweep fills at most what's left of the position.
+                reduceOnly: true,
                 closeReason: closeReasonOf(trigger.kind),
             },
             undefined,           // idempotencyKey

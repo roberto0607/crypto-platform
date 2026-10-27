@@ -1,6 +1,6 @@
 import { pool } from "../db/pool";
 import { getSnapshotForUser } from "../replay/replayEngine";
-import { placeOrderTx, cancelOrderTx } from "./matchingEngine";
+import { placeOrderTx, cancelOrderTx, cancelReduceOnlyOrdersTx, type CanceledMaker, type CanceledReduceOnly } from "./matchingEngine";
 import { computeFee } from "./feeCalc";
 import { applyFillToPositionTx } from "../analytics/positionRepo";
 import { getIdempotencyKey, putIdempotencyKeyTx } from "./idempotencyRepo";
@@ -242,6 +242,14 @@ export async function placeOrderWithSnapshot(
             body = { ...body, qty: matchResult.order.qty };
         }
         const takerCloseReason: CloseReason = liquidation ? "LIQUIDATION" : body.closeReason ?? "MANUAL";
+        // A trigger's order remembers why it closes, for a later maker fill
+        // of its resting remainder (a TP/SL limit).
+        if (body.closeReason && body.closeReason !== "MANUAL") {
+            await client.query(`UPDATE orders SET close_reason = $2 WHERE id = $1`, [matchResult.order.id, body.closeReason]);
+        }
+        // Resting orders this order canceled (fill-time checks, or the
+        // reduce-only orders of positions it closed), for events below.
+        const canceledOrders: (CanceledMaker | CanceledReduceOnly)[] = [...(matchResult.canceledMakers ?? [])];
 
         // A liquidation closes the position's size at the time of the lock,
         // whatever the engine's candidate said.
@@ -359,13 +367,15 @@ export async function placeOrderWithSnapshot(
                         let makerUserId: string | null = null;
                         let makerCompetitionId: string | null = null;
                         let makerMatchId: string | null = null;
+                        let makerCloseReason: CloseReason = "MANUAL";
                         if (makerOrderId) {
                             const makerResult = await timedQuery<{
                                 user_id: string;
                                 competition_id: string | null;
                                 match_id: string | null;
+                                close_reason: CloseReason | null;
                             }>(client, "phase6OrderService.placeOrderWithSnapshot.makerOrderLookup",
-                                `SELECT user_id, competition_id, match_id
+                                `SELECT user_id, competition_id, match_id, close_reason
                                  FROM orders WHERE id = $1`,
                                 [makerOrderId]
                             );
@@ -374,6 +384,7 @@ export async function placeOrderWithSnapshot(
                                 makerUserId = makerRow.user_id;
                                 makerCompetitionId = makerRow.competition_id;
                                 makerMatchId = makerRow.match_id;
+                                makerCloseReason = makerRow.close_reason ?? "MANUAL";
                             }
                         }
 
@@ -412,17 +423,21 @@ export async function placeOrderWithSnapshot(
                                 feeQuote: makerIso ? makerIso.feeBooked : makerFee.feeAmount,
                                 filledAt: new Date(fill.executed_at),
                                 competitionId: makerCompetitionId,
-                                // A resting order the user placed: their own close.
-                                closeReason: "MANUAL",
+                                // A resting order the user placed (their own
+                                // close), or a resting TP/SL limit.
+                                closeReason: makerCloseReason,
                             });
                         }
                     }
                 }
 
                 // ── Cancel triggers protecting positions this order closed ──
+                // ... and their resting reduce-only orders (a TP/SL limit), so
+                // none can fill later and open or flip a position.
                 for (const { userId: closedUserId, triggerSide, scope } of closedPositions.values()) {
                     const canceled = await cancelTriggersForClosedPositionTx(client, closedUserId, body.pairId, triggerSide, scope);
                     for (const row of canceled) pendingEvents.push(triggerCanceledEvent(row, POSITION_CLOSED_REASON));
+                    canceledOrders.push(...await cancelReduceOnlyOrdersTx(client, closedUserId, body.pairId, triggerSide, scope));
                 }
 
                 // ── Idempotency key ──
@@ -551,9 +566,11 @@ export async function placeOrderWithSnapshot(
             }, { userId, requestId }));
         }
 
-        // Resting ISOLATED orders the sweep canceled at fill time (their
-        // opening part was over the cap or unfunded): tell their owners.
-        for (const c of matchResult.canceledMakers ?? []) {
+        // Resting orders this order canceled: at fill time (an ISOLATED
+        // opening part over the cap or unfunded, a reduce-only one with
+        // nothing left to reduce), or a closed position's reduce-only
+        // orders. Tell their owners.
+        for (const c of canceledOrders) {
             await insertOutboxEventTx(client, {
                 event_type: "EVENT_STREAM_APPEND",
                 aggregate_type: "ORDER",

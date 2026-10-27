@@ -47,12 +47,14 @@ export async function createOrder(
         // (migrations 096/098). Omitted = 1x SPOT, the column defaults.
         leverage?: string;
         marginMode?: "SPOT" | "ISOLATED";
+        // Reduce-only (migration 100): may only shrink the position. Omitted = false.
+        reduceOnly?: boolean;
     }
 ): Promise<OrderRow> {
     const result = await timedQuery<OrderRow>(client, "orderRepo.createOrder",
         `
-        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id, source, leverage, margin_mode)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        INSERT INTO orders (user_id, pair_id, side, type, limit_price, qty, status, reserved_wallet_id, reserved_amount, competition_id, match_id, source, leverage, margin_mode, reduce_only)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING ${ORDER_COLUMNS}
         `,
         [
@@ -70,6 +72,7 @@ export async function createOrder(
             params.source ?? null,
             params.leverage ?? "1",
             params.marginMode ?? "SPOT",
+            params.reduceOnly ?? false,
         ]
     );
 
