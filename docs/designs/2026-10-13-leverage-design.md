@@ -473,6 +473,36 @@ PR 6 was split in two because of its size: 6a = API, 6b = web (stacked on 6a).
   2. The "Position closed" toast showed twice: one toast per TP/SL leg. `position_closed` / `match_ended` toasts now collapse per pair within 1 s.
 - **Not in 6b** (§4 items left for later): the chart's dashed liq line, the server-side `position.margin_warning` event, and the journal CSV columns (PR 7).
 
+### PR 7 implementation notes (feat/leverage-pre-execute)
+
+The last fixes before `LIQUIDATION_MODE=execute`. (The original PR 7 "journal" row is folded in here; PR 8 is unchanged.)
+
+- **TP/SL limit orders are reduce-only.** STOP_LIMIT / TAKE_PROFIT_LIMIT fire a LIMIT that may rest. Migration 100 adds `orders.reduce_only` and `orders.close_reason`.
+  - The engine now accepts a reduce-only LIMIT, trimmed under the pair lock like a MARKET one; `POST /orders` still refuses one.
+  - An ISOLATED reduce-only order reserves no margin.
+  - A fill that closes a position cancels the owner's resting reduce-only orders on that side, in the same transaction (`cancel_reason = 'position_closed'`, `ORDER_CANCELLED` outbox, `order.updated`). The orders' reserves sit on wallets the closing fill already locked, so this adds no lock order.
+  - A swept reduce-only maker fills at most what's left of its position, net of the sweep's earlier fills on that maker; the rest is canceled (`reduce_only_no_position`).
+  - A resting TP/SL limit filled as a maker journals as TP/SL (`orders.close_reason`), not MANUAL.
+  - Race-tested: TP limit vs liquidation and SL limit vs manual close, in both orders, SPOT and ISOLATED.
+- **One mark.** `trading/liquidationMark.ts` is the only definition of the mark: the Kraken book mid while krakenWs says `ok`, else paused.
+  - The engine publishes it as `mark.price`: global, pair-scoped on the SSE stream, at most every 500 ms per pair, and at once on a pause or resume.
+  - `GET /positions` ISOLATED rows compute `mark_price`, P&L and `margin_health` from it. While paused they use the ticker and set `mark_stale: true`.
+  - The web card, and the EQUITY row for the selected pair, use the last engine mark. Paused, or silent for more than 5 s, shows a STALE chip and "FEED STALE · LIQUIDATIONS PAUSED". No engine mark at all (`LIQUIDATION_MODE=off`) falls back to the ticker, as before.
+  - Not changed: server-side equity (`accountEquity`, portfolio, match live P&L) still values at the ticker.
+- **Margin warning.** Threshold 25% health, re-armed above 35% (§4).
+  - The engine scans each pair at most once a second, from the leader, in `log_only` and `execute`, and never on a paused pair.
+  - Health is linear in the mark, so the SQL prefilter is the mark past `liq + 0.35·(entry − liq)`.
+  - It sends `position.margin_warning` (user-scoped) once per position episode. The state lives in memory: a leader change can repeat a warning once.
+  - Metric `tradr_margin_warnings_total`.
+  - Web: a toast, and a NEAR LIQUIDATION line on the card under 25%.
+- **Chart.** A dashed red `LIQ` price line for an open ISOLATED position with a liq price, on /trade and the match screen. A 1x long has no liq price, so no line. SPOT positions never get one.
+- **Journal / CSV.**
+  - An ISOLATED close writes the position's leverage, the margin that row's share of the close released, and `return_on_margin_pct` = net P&L / that margin.
+  - The server CSV and the page's client CSV append `Leverage, Margin, Close Reason, Return on Margin %` after the existing columns. `liq_price` isn't recorded on closed trades and isn't exported.
+  - Journal P&L is the journal's own FIFO and isn't loss-capped, so a gap past bankruptcy can show a return on margin below −100%.
+- **`pnpm leverage:liq-report`** (read-only) lists LOG_ONLY / SKIPPED_STALE rows with what execute would have booked. That figure is the engine's settlement math at the row's mark, tested equal to a real execute at that mark. Runbook: `docs/runbooks/leverage-liquidation-execute.md`.
+- **Found, not fixed (pre-existing, PR 2):** with `LEVERAGE_ENABLED=false`, a flat ISOLATED position row stays ISOLATED when a new SPOT order fills into it, so the next close settles ISOLATED with margin 0. The runbook says to use caps = 1, not the flag, to stop leverage.
+
 ---
 
 ## Funding: recommendation **no funding in v1**
