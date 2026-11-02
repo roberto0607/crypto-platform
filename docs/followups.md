@@ -1042,3 +1042,32 @@ pair-active check (permit an order that strictly reduces |position| even on an
 inactive pair — the more general fix, also helps the admin "disable pair"
 action), or (b) a force-close sweep in `checkDelistings` before a pair goes
 fully inactive.
+
+---
+
+## 🔵 LOW — `position_fees_paid` includes the closing leg's fee after an ISOLATED flip (break-even slightly high)
+
+**Discovered:** 2026-11-02, position-card redesign (feat/position-card-redesign).
+
+**Context:** GET /positions returns `position_fees_paid` on ISOLATED rows: the
+sum of the FEE ledger entries whose `metadata.epoch` is the row's current
+epoch. The card's BREAK-EVEN and FEES PAID use it.
+
+**Bug:** on a flip (an opposite-side fill bigger than the position),
+`settleIsolatedFillTx` (`apps/api/src/trading/isolatedSettlement.ts`) tags
+every ledger entry of the fill with `r.next.epoch`, the NEW position's epoch,
+including the closing leg's fee (`applyIsolatedFill` splits the fee pro rata
+by qty, but both parts are posted with the same meta). So right after a flip,
+`position_fees_paid` counts the old position's closing fee too, and the new
+position's break-even reads slightly worse than it is (by about closeFee /
+qty in price).
+
+**Why LOW:** only after a flip, and only by one taker fee on the closed size
+(e.g. ~$2.50 on a $5,000 position, ~$40 of BTC price on 0.06 BTC); display only,
+no balance or P&L is affected.
+
+**Scope of fix:** post the reduce leg's entries (MARGIN_RELEASE, REALIZED_PNL,
+FEE, LIQUIDATION_SHORTFALL) with the position's epoch BEFORE the fill
+(`state.epoch`) and only the open leg's with `r.next.epoch`, plus a test that
+flips and checks `position_fees_paid` equals the open leg's fee alone.
+Leverage-on only, so the flag-off parity goldens are unaffected.
