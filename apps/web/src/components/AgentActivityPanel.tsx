@@ -77,6 +77,9 @@ export function AgentActivityPanel() {
     useEffect(() => {
         if (!panelOpen) return;
         const handler = (e: MouseEvent) => {
+            // A toggle elsewhere (AgentActivityToggle in the trade toolbar)
+            // handles its own click; closing here would let it reopen.
+            if ((e.target as Element | null)?.closest?.("[data-agent-activity-toggle]")) return;
             if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
                 closePanel();
             }
@@ -91,7 +94,8 @@ export function AgentActivityPanel() {
                 type="button"
                 onClick={togglePanel}
                 aria-label="Agent Activity"
-                className="fixed bottom-4 right-4 z-[501] w-10 h-10 rounded-full bg-[#080808] border border-tradr-green/30 text-white/60 hover:text-tradr-green hover:border-tradr-green/60 transition-colors flex items-center justify-center"
+                data-agent-activity-toggle
+                className="agent-activity-fab fixed bottom-4 right-4 z-[501] w-10 h-10 rounded-full bg-[#080808] border border-tradr-green/30 text-white/60 hover:text-tradr-green hover:border-tradr-green/60 transition-colors flex items-center justify-center"
             >
                 <span className="text-base leading-none">◎</span>
                 {newCount > 0 && (
@@ -122,5 +126,33 @@ export function AgentActivityPanel() {
                 </div>
             </div>
         </div>
+    );
+}
+
+/**
+ * The same toggle as an inline control, for a toolbar. On phones the trade
+ * toolbar shows it and hides the floating button (TradeToolbar's CSS): fixed
+ * in the bottom-right corner, that button covered whatever scrolled under it
+ * (the margin input's USD label, summary values, the card's reverse link).
+ */
+export function AgentActivityToggle({ className }: { className?: string }) {
+    const { newCount, togglePanel } = useAgentActivityStore();
+    return (
+        <button
+            type="button"
+            onClick={togglePanel}
+            aria-label="Agent Activity"
+            title="Agent Activity"
+            data-agent-activity-toggle
+            className={className}
+            style={{ position: "relative" }}
+        >
+            <span style={{ fontSize: 15, lineHeight: 1 }}>◎</span>
+            {newCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {newCount > 9 ? "9+" : newCount}
+                </span>
+            )}
+        </button>
     );
 }
