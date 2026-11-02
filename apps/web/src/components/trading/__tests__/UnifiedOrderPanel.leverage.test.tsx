@@ -214,13 +214,12 @@ describe("the order: input = margin", () => {
 describe("the ISOLATED position card", () => {
   beforeEach(() => { lev.info = info({ positionLeverage: "10.00" }); });
 
-  it("leverage, mark, margin, liq price, health 100% at entry", async () => {
+  it("leverage, mark, margin, liq price + distance, health 100% at entry", async () => {
     await mount(ISO_LONG);
     expect(screen.getByTestId("position-leverage").textContent).toBe("10x");
-    expect(card().getByText("MARGIN").nextElementSibling!.textContent).toBe("$50.00");
-    const liq = card().getByText("LIQ PRICE").nextElementSibling!;
-    expect(liq.textContent).toBe("$75,075.38");
-    expect(liq.getAttribute("title")).toBe("Liquidation at $75,075.38 (-9.5% from entry)");
+    expect(card().getByText("MARGIN (AT RISK)").nextElementSibling!.textContent).toBe("$50.00");
+    // (83,000 − 75,075.38) / 83,000 = 9.5% away
+    expect(screen.getByTestId("pos-liq").textContent).toBe("$75,075.38 · 9.5% away");
     expect(card().getByText("MARK")).toBeTruthy();
     expect(screen.getByRole("meter", { name: "Margin health" }).getAttribute("aria-valuenow")).toBe("100");
   });
@@ -228,10 +227,10 @@ describe("the ISOLATED position card", () => {
   it("at $80,000: P&L −$18.07 (−36.14% of margin), health 62%; $78,000 amber; past bankruptcy: −$50.00 (−100%), red", async () => {
     await mount(ISO_LONG);
     setPrice("80000");
-    const pnl = () => card().getByText("P&L").nextElementSibling!.textContent;
-    const roe = () => card().getByText("ROE").nextElementSibling!.textContent;
-    expect(pnl()).toBe("$-18.07");
-    expect(roe()).toBe("-36.14%");
+    const pnl = () => screen.getByTestId("pos-pnl").textContent;
+    const roe = () => screen.getByTestId("pos-pnl-pct").textContent;
+    expect(pnl()).toBe("-$18.07");
+    expect(roe()).toBe("-36.14%ROE");
     // Health is linear from entry (100%) to liq (0%): (80,000 − 75,075.38) / 7,924.62 = 62%.
     const meterNow = () => Number(screen.getByRole("meter", { name: "Margin health" }).getAttribute("aria-valuenow"));
     expect(meterNow()).toBe(62);
@@ -239,20 +238,22 @@ describe("the ISOLATED position card", () => {
     expect(meterNow()).toBe(37);
     expect(screen.getByText("37%").style.color).toBe("rgb(245, 158, 11)");
     setPrice("70000");
-    expect(pnl()).toBe("$-50.00");
-    expect(roe()).toBe("-100.00%");
+    expect(pnl()).toBe("-$50.00");
+    expect(roe()).toBe("-100.00%ROE");
     const meter = screen.getByRole("meter", { name: "Margin health" });
     expect(meter.getAttribute("aria-valuenow")).toBe("0");
     expect(meter.className).toBe("margin-health-danger");
   });
 
-  it("a SPOT position keeps the old card (no badge, VALUE, no health)", async () => {
+  it("a SPOT position: no badge, margin, liq or health rows", async () => {
     const { margin_mode: _m, leverage: _l, isolated_margin: _i, liq_price: _q, mark_price: _k, margin_health: _h, ...spot } = ISO_LONG;
     lev.info = info({ marginMode: "SPOT", cap: 1 });
     await mount(spot as Position);
     expect(screen.queryByTestId("position-leverage")).toBeNull();
-    expect(screen.getByText("VALUE")).toBeTruthy();
+    expect(screen.queryByTestId("pos-liq")).toBeNull();
+    expect(screen.queryByTestId("pos-margin")).toBeNull();
     expect(screen.queryByRole("meter")).toBeNull();
+    expect(screen.getByTestId("pos-size").textContent).toBe("0.00602 BTC · $500");
   });
 });
 

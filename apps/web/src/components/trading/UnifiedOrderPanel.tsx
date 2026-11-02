@@ -14,8 +14,10 @@
  *     fee, est. liq price, free-USD AVAILABLE and account EQUITY. With
  *     leverage off or a 1x cap the panel and every request body are exactly
  *     as before (UnifiedOrderPanel.leverageOff.test.tsx).
- *   - ISOLATED position card: leverage, margin, liq price, mark, margin
- *     health, loss-capped P&L and return on margin.
+ *   - The open-position card (PositionCard): P&L first, liq distance and
+ *     margin health, break-even, TP/SL on the position, close / reverse.
+ *   - An order on the other side of an open position (CLOSE & REVERSE)
+ *     asks for confirmation first; never a one-click flip.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -38,8 +40,10 @@ import {
     maxMargin,
     isolatedPositionView,
     scopeEquity,
-    healthTone,
 } from "@/lib/leverageUi";
+import { addPreview, reverseSummary } from "@/lib/positionCard";
+import { PositionCard, fmtQty } from "@/components/trading/PositionCard";
+import { ConfirmBox } from "@/components/trading/ConfirmBox";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
 import type { V1ApiError } from "@/types/api";
@@ -59,9 +63,6 @@ const ERROR_MAP: Record<string, string> = {
     spot_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
     isolated_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
 };
-
-/** Margin-health bar colours (§4): green > 50%, amber 25–50%, red < 25% (pulses). */
-const HEALTH_COLORS = { ok: "#00ff41", warn: "#f59e0b", danger: "#ff3b3b" } as const;
 
 function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -140,6 +141,23 @@ export function openButtonLabel(args: {
     return `OPEN ${mode}`;
 }
 
+/**
+ * The CLOSE & REVERSE confirm text: what the order does to the open
+ * position (lib/positionCard reverseSummary), with its P&L now.
+ */
+export function reverseMessage(
+    r: { kind: "flip" | "close" | "reduce"; openSide: "LONG" | "SHORT"; openQty: number },
+    positionSide: "LONG" | "SHORT",
+    pnl: number,
+    orderQty: number,
+    baseSymbol: string,
+): string {
+    const pnlTxt = `${pnl >= 0 ? "+" : "-"}${fmtUsd(Math.abs(pnl))}`;
+    if (r.kind === "flip") return `This closes your ${positionSide} (${pnlTxt}) and opens a ${r.openSide}. Confirm?`;
+    if (r.kind === "close") return `This closes your ${positionSide} (${pnlTxt}). It opens no ${r.openSide}. Confirm?`;
+    return `This reduces your ${positionSide} by ${fmtQty(orderQty)} ${baseSymbol}. It opens no ${r.openSide}. Confirm?`;
+}
+
 interface UnifiedOrderPanelProps {
     pair: TradingPair;
     position: Position | null;
@@ -204,6 +222,9 @@ export function UnifiedOrderPanel({
     const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
     const [errorMsg, setErrorMsg] = useState("");
     const [closing, setClosing] = useState(false);
+    const [reversing, setReversing] = useState(false);
+    // CLOSE & REVERSE waits for a second, explicit click.
+    const [confirmReverse, setConfirmReverse] = useState(false);
     const [tpSlMsg, setTpSlMsg] = useState("");
     const [lastOrderUsd, setLastOrderUsd] = useState<number | null>(null);
     const [lastOrderFee, setLastOrderFee] = useState<number | null>(null);
@@ -212,10 +233,7 @@ export function UnifiedOrderPanel({
     const activeTriggers = useTradingStore((s) => s.activeTriggers);
     const fetchTriggers = useTradingStore((s) => s.refreshTriggers);
     const updateTrigger = useTradingStore((s) => s.updateTrigger);
-    const [editingTp, setEditingTp] = useState(false);
-    const [editingSl, setEditingSl] = useState(false);
-    const [editTpVal, setEditTpVal] = useState("");
-    const [editSlVal, setEditSlVal] = useState("");
+    const cancelTrigger = useTradingStore((s) => s.cancelTrigger);
 
     // Fetch triggers for the current pair, and re-fetch whenever the server
     // fires or cancels one (e.g. canceled because the position closed) or a
@@ -237,8 +255,7 @@ export function UnifiedOrderPanel({
         setSlPrice("");
         setTslOffset("");
         setTpSlMsg("");
-        setEditingTp(false);
-        setEditingSl(false);
+        setConfirmReverse(false);
     }, [selectedPairId]);
 
     const [baseSymbol] = pair.symbol.split("/") as [string, string];
@@ -301,7 +318,6 @@ export function UnifiedOrderPanel({
     const posAbsQty = Math.abs(posQty);
     const posEntryPrice = position ? parseFloat(position.avg_entry_price) : 0;
     const posUsdSize = posAbsQty * posEntryPrice;
-    const posCurrentValue = posAbsQty * currentPrice;
     const engineMarks = useMarkPriceStore((s) => s.marks);
     // An ISOLATED position: margin, liq, health, P&L capped at the margin,
     // return on margin (lib/leverageUi). Health uses the pair's maintenance
@@ -364,7 +380,6 @@ export function UnifiedOrderPanel({
     const tpTrigger = activeTriggers.find((t) => t.kind === "TAKE_PROFIT_MARKET");
     const slTrigger = activeTriggers.find((t) => t.kind === "STOP_MARKET");
     const tslTrigger = activeTriggers.find((t) => t.kind === "TRAILING_STOP_MARKET");
-    const tslCurrentStop = tslTrigger ? parseFloat(tslTrigger.trigger_price) : 0;
 
     // TP/SL estimates
     const tpNum = tpPrice ? parseFloat(tpPrice) : 0;
@@ -401,9 +416,34 @@ export function UnifiedOrderPanel({
                 : null)
         : null;
 
+    // EST. LIQ PRICE with a position open is the POSITION's after this
+    // order, not the order alone: an add books into one position (engine
+    // math, lib/positionCard addPreview); a reduce leaves its liq price where
+    // it is; a full close leaves none; a flip opens the rest on its own (the
+    // order-alone preview). No position: the order alone, as before.
+    const reverse = hasPosition && posDirection !== activeMode && baseQty > 0
+        ? reverseSummary({ positionSide: posDirection!, positionQty: posAbsQty, orderQty: baseQty })
+        : null;
+    const estLiq: { price: number | null; note: string } | null = (() => {
+        if (!preview || !preview.qty) return null;
+        if (!isoView) return { price: preview.liqPrice ? preview.liqPrice.toNumber() : null, note: "this order" };
+        if (posDirection === activeMode) {
+            const after = addPreview(
+                { baseQty: position!.base_qty, entry: position!.avg_entry_price, margin: position!.isolated_margin ?? "0",
+                  leverage: position!.leverage ?? "1", mmrBps: levInfo?.mmrBps ?? 0 },
+                preview.qty, effectivePrice,
+            );
+            return after ? { price: after.liqPrice ? after.liqPrice.toNumber() : null, note: "your position after this add" } : null;
+        }
+        if (reverse?.kind === "reduce") return { price: isoView.liqPrice, note: "your position after this reduce" };
+        if (reverse?.kind === "close") return { price: null, note: "this closes the position" };
+        return { price: preview.liqPrice ? preview.liqPrice.toNumber() : null, note: `the ${activeMode} this opens` };
+    })();
+
     // Sync direction → store orderSide
     const handleModeChange = useCallback((mode: "LONG" | "SHORT") => {
         setActiveMode(mode);
+        setConfirmReverse(false);
         setOrderSide(mode === "LONG" ? "BUY" : "SELL");
     }, [setOrderSide]);
 
@@ -436,6 +476,13 @@ export function UnifiedOrderPanel({
 
     const handlePlaceOrder = async () => {
         if (!appInitialized || !marketReady || !baseQtyStr) return;
+        // An order against the open position: say what it does, then wait
+        // for CONFIRM (handleConfirmReverse). Never a one-click flip.
+        if (hasPosition && posDirection !== activeMode && !confirmReverse) {
+            setConfirmReverse(true);
+            return;
+        }
+        setConfirmReverse(false);
         setErrorMsg("");
         setTpSlMsg("");
         setBtnState("idle");
@@ -556,19 +603,74 @@ export function UnifiedOrderPanel({
         }
     };
 
-    const handleEditTrigger = async (oldTrigger: TriggerOrder, newPrice: string) => {
+    /** The card's error text for a failed trigger call. */
+    const triggerError = (err: unknown, fallback: string) => {
+        const data = (err as AxiosError<{ message?: string; error?: string }>).response?.data;
+        return data?.message ?? fallback;
+    };
+
+    const handleEditTrigger = async (oldTrigger: TriggerOrder, newPrice: string): Promise<string | null> => {
         // One atomic PATCH: the trigger keeps its id and OCO link (the old
         // cancel-then-create orphaned the other leg). On failure the old
         // trigger is untouched, so just say so and keep the edit open.
         try {
             await updateTrigger(oldTrigger.id, { triggerPrice: newPrice });
-        } catch (err: any) {
-            const msg = err?.response?.data?.message;
-            addToast("error", msg ?? "Couldn't update trigger — the old one is still active. Try again.");
-            return;
+            return null;
+        } catch (err) {
+            return triggerError(err, "Couldn't update trigger — the old one is still active. Try again.");
         }
-        setEditingTp(false);
-        setEditingSl(false);
+    };
+
+    /** A TP or SL on the whole open position (reduce-only on the server). */
+    const handleSetTrigger = async (kind: "TAKE_PROFIT_MARKET" | "STOP_MARKET", price: string): Promise<string | null> => {
+        if (!hasPosition || !selectedPairId) return "No open position";
+        try {
+            await createTrigger({
+                pairId: selectedPairId, kind, side: posQty > 0 ? "SELL" : "BUY",
+                triggerPrice: price, qty: posAbsQty.toFixed(8),
+            });
+            await fetchTriggers();
+            return null;
+        } catch (err) {
+            return triggerError(err, kind === "TAKE_PROFIT_MARKET" ? "Couldn't set the take profit" : "Couldn't set the stop loss");
+        }
+    };
+
+    const handleRemoveTrigger = async (t: TriggerOrder): Promise<string | null> => {
+        try {
+            await cancelTrigger(t.id);
+            return null;
+        } catch (err) {
+            return triggerError(err, "Couldn't remove it. Try again.");
+        }
+    };
+
+    /**
+     * The card's "reverse to …": one MARKET order of twice the size on the
+     * other side, so the close and the new position fill together. Leveraged,
+     * at the position's leverage (the new side opens from flat with it).
+     */
+    const handleReverse = async () => {
+        if (!hasPosition || !selectedPairId) return;
+        setReversing(true);
+        try {
+            await placeOrder(
+                {
+                    pairId: selectedPairId, side: posQty > 0 ? "SELL" : "BUY", type: "MARKET",
+                    qty: (posAbsQty * 2).toFixed(8),
+                    ...(leveraged && isoView ? { leverage: isoView.leverage } : {}),
+                },
+                crypto.randomUUID(),
+            );
+            onOrderFilled();
+            fetchTriggers();
+        } catch (err) {
+            const data = (err as AxiosError<{ error?: string; message?: string }>).response?.data;
+            const code = data?.error ?? "";
+            addToast("error", ERROR_MAP[code] ?? data?.message ?? "Reverse failed");
+        } finally {
+            setReversing(false);
+        }
     };
 
     // 25/50/75/MAX quick-amount buttons (#15). MAX is just frac 1.
@@ -590,9 +692,6 @@ export function UnifiedOrderPanel({
         if (btnState === "error") return `${p}-place-btn error`;
         return `${p}-place-btn ${isLong ? "buy" : "sell"}`;
     })();
-
-    const smallLabel: React.CSSProperties = { color: "rgba(255,255,255,0.3)", letterSpacing: 2, fontSize: 8 };
-    const smallVal: React.CSSProperties = { color: "rgba(255,255,255,0.7)", fontSize: 10 };
 
     return (
         <div className={`${p}-order-section`}>
@@ -718,7 +817,7 @@ export function UnifiedOrderPanel({
                     </span>
                 </label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
+                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); setConfirmReverse(false); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
@@ -816,13 +915,17 @@ export function UnifiedOrderPanel({
                         <span className={`${p}-sum-lbl`}>EST. LIQ PRICE</span>
                         <span
                             className={`${p}-sum-val`}
-                            style={{ color: preview?.liqPrice ? "#f59e0b" : undefined }}
-                            title={preview?.liqPrice
-                                ? `Liquidation at ${fmtUsd(preview.liqPrice.toNumber())} (${preview.liqDistancePct! >= 0 ? "+" : ""}${preview.liqDistancePct!.toFixed(1)}% from entry): the margin, less the maintenance margin, used up`
-                                : "A 1x long can't be liquidated"}
+                            data-testid="est-liq"
+                            style={{ color: estLiq?.price ? "#f59e0b" : undefined }}
+                            title={!estLiq
+                                ? undefined
+                                : estLiq.price !== null && effectivePrice > 0
+                                    ? `Liquidation at ${fmtUsd(estLiq.price)} (${estLiq.price >= effectivePrice ? "+" : ""}${((estLiq.price / effectivePrice - 1) * 100).toFixed(1)}% from entry) for ${estLiq.note}: the margin, less the maintenance margin, used up`
+                                    : reverse?.kind === "close" ? "This closes the position" : "A 1x long can't be liquidated"}
                         >
-                            {preview?.liqPrice
-                                ? fmtUsd(preview.liqPrice.toNumber())
+                            {estLiq?.price
+                                ? fmtUsd(estLiq.price)
+                                : estLiq && reverse?.kind === "close" ? "—"
                                 : usdNum > 0 ? "NONE" : <span className={`${p}-sum-empty`}>--</span>}
                         </span>
                     </div>
@@ -853,6 +956,15 @@ export function UnifiedOrderPanel({
                     waiting for market data…
                 </div>
             )}
+            {confirmReverse && reverse ? (
+                <ConfirmBox
+                    message={reverseMessage(reverse, posDirection!, pnlValue, baseQty, baseSymbol)}
+                    confirmLabel="CONFIRM"
+                    busy={orderSubmitting}
+                    onConfirm={() => { void handlePlaceOrder(); }}
+                    onCancel={() => setConfirmReverse(false)}
+                />
+            ) : (
             <button
                 className={btnClass}
                 style={btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined}
@@ -861,221 +973,39 @@ export function UnifiedOrderPanel({
             >
                 {btnLabel}
             </button>
+            )}
 
-            {/* ── OPEN POSITION CARD — last in the pinned footer group ── */}
+            {/* ── OPEN POSITION CARD — last in the footer group ── */}
             {hasPosition && (
-                <div className={`${p}-position-card-sticky`}>
-                    <div
-                        key={cardKey}
-                        className={cardEntering ? "position-card-enter" : undefined}
-                        style={{
-                            padding: "12px",
-                            border: `1px solid ${posDirection === "LONG" ? "rgba(0,255,65,0.2)" : "rgba(255,59,59,0.2)"}`,
-                            background: posDirection === "LONG" ? "rgba(0,255,65,0.03)" : "rgba(255,59,59,0.03)",
-                            "--card-accent": posDirection === "LONG" ? "#00ff41" : "#ff3b3b",
-                        } as React.CSSProperties}
-                    >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: posDirection === "LONG" ? "#00ff41" : "#ff3b3b" }}>
-                                {baseSymbol} {posDirection}
-                                {isoView && (
-                                    <span
-                                        data-testid="position-leverage"
-                                        style={{
-                                            marginLeft: 6, padding: "0 4px", fontSize: 9, letterSpacing: 1,
-                                            border: `1px solid ${leverageRisk(isoView.leverage).color}`,
-                                            color: leverageRisk(isoView.leverage).color,
-                                        }}
-                                    >
-                                        {isoView.leverage}x
-                                    </span>
-                                )}
-                            </span>
-                            {isoView ? (
-                                // What the user has at stake: margin + capped uPnL.
-                                <span style={{ textAlign: "right" }} title="Margin + unrealized P&L (the loss is capped at the margin)">
-                                    <span style={{ ...smallLabel, marginRight: 6 }}>EQUITY</span>
-                                    <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: 1 }}>
-                                        {fmtUsd(isoView.margin + isoView.unrealizedPnl)}
-                                    </span>
-                                </span>
-                            ) : (
-                                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 1 }}>
-                                    {fmtUsd(posUsdSize)}
-                                </span>
-                            )}
-                        </div>
-
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 10, marginBottom: 8 }}>
-                            <div>
-                                <span style={smallLabel}>ENTRY</span>
-                                <div style={smallVal}>{fmtUsd(posEntryPrice)}</div>
-                            </div>
-                            <div>
-                                <span style={smallLabel}>{isoView ? "MARK" : "CURRENT"}</span>
-                                <div style={smallVal}>
-                                    {fmtUsd(isoView ? liqMark.mark : currentPrice)}
-                                    {isoView && liqMark.stale && (
-                                        <span
-                                            title="Price feed stale: liquidations are paused on this pair. Showing the last good mark."
-                                            style={{ marginLeft: 4, padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
-                                        >
-                                            STALE
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                            {isoView ? (<>
-                                <div>
-                                    <span style={smallLabel} title="Position size at entry: size × entry price">NOTIONAL</span>
-                                    <div style={smallVal}>{fmtUsd(isoView.notional)}</div>
-                                </div>
-                                <div>
-                                    <span style={smallLabel}>MARGIN</span>
-                                    <div style={smallVal}>{fmtUsd(isoView.margin)}</div>
-                                </div>
-                                <div style={{ gridColumn: "1 / -1" }}>
-                                    <span style={smallLabel}>LIQ PRICE</span>
-                                    <div
-                                        style={{ ...smallVal, color: isoView.liqPrice ? "#f59e0b" : smallVal.color }}
-                                        title={isoView.liqPrice
-                                            ? `Liquidation at ${fmtUsd(isoView.liqPrice)} (${((isoView.liqPrice / posEntryPrice - 1) * 100).toFixed(1)}% from entry)`
-                                            : "A 1x long can't be liquidated"}
-                                    >
-                                        {isoView.liqPrice ? fmtUsd(isoView.liqPrice) : "NONE"}
-                                    </div>
-                                </div>
-                            </>) : (
-                            <div>
-                                <span style={smallLabel}>VALUE</span>
-                                <div style={smallVal}>{fmtUsd(posCurrentValue)}</div>
-                            </div>
-                            )}
-                            <div>
-                                <span style={smallLabel}>P&L</span>
-                                <div
-                                    key={pnlFlash.key}
-                                    className={pnlFlash.dir ? "pnl-flash" : undefined}
-                                    style={{
-                                        color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b",
-                                        fontWeight: 700, fontSize: 10,
-                                        // ISOLATED: on its own line under the label (the
-                                        // SPOT card's layout is unchanged).
-                                        display: isoView ? "table" : "inline-block",
-                                        padding: "1px 4px", margin: "-1px -4px",
-                                        borderRadius: 2,
-                                        "--pnl-flash-tint": pnlFlash.dir === "up"
-                                            ? "rgba(0,255,65,0.45)"
-                                            : "rgba(255,59,59,0.45)",
-                                    } as React.CSSProperties}
-                                >
-                                    {pnlValue >= 0 ? "+" : ""}{fmtUsd(pnlValue)}{!isoView && <> ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%)</>}
-                                </div>
-                            </div>
-                            {isoView && (
-                                <div>
-                                    <span style={smallLabel} title="Unrealized P&L as a % of the position's margin">ROE</span>
-                                    <div style={{ ...smallVal, color: pnlValue >= 0 ? "#00ff41" : "#ff3b3b", fontWeight: 700 }}>
-                                        {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* TP display */}
-                            <div>
-                                <span style={smallLabel}>TP</span>
-                                {editingTp && tpTrigger ? (
-                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                        <input type="number" autoFocus value={editTpVal} onChange={(e) => setEditTpVal(e.target.value)}
-                                            style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
-                                        <span style={{ cursor: "pointer", color: "#00ff41", fontSize: 10 }} onClick={() => handleEditTrigger(tpTrigger, editTpVal)}>OK</span>
-                                        <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingTp(false)}>X</span>
-                                    </div>
-                                ) : (
-                                    <div style={{ color: tpTrigger ? "#00ff41" : "rgba(255,255,255,0.2)" }}>
-                                        {tpTrigger ? fmtUsd(parseFloat(tpTrigger.trigger_price)) : "--"}
-                                        {tpTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditTpVal(tpTrigger.trigger_price); setEditingTp(true); }}>✏️</span>}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* SL display */}
-                            <div>
-                                <span style={smallLabel}>SL</span>
-                                {editingSl && slTrigger ? (
-                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                                        <input type="number" autoFocus value={editSlVal} onChange={(e) => setEditSlVal(e.target.value)}
-                                            style={{ width: 70, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 10, padding: "2px 4px", fontFamily: "inherit" }} />
-                                        <span style={{ cursor: "pointer", color: "#ff3b3b", fontSize: 10 }} onClick={() => handleEditTrigger(slTrigger, editSlVal)}>OK</span>
-                                        <span style={{ cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 10 }} onClick={() => setEditingSl(false)}>X</span>
-                                    </div>
-                                ) : (
-                                    <div style={{ color: slTrigger ? "#ff3b3b" : "rgba(255,255,255,0.2)" }}>
-                                        {slTrigger ? fmtUsd(parseFloat(slTrigger.trigger_price)) : "--"}
-                                        {slTrigger && <span style={{ cursor: "pointer", marginLeft: 6, fontSize: 9, color: "rgba(255,255,255,0.3)" }} onClick={() => { setEditSlVal(slTrigger.trigger_price); setEditingSl(true); }}>✏️</span>}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Trailing stop display */}
-                            {tslTrigger && (
-                                <div style={{ gridColumn: "1 / -1" }}>
-                                    <span style={smallLabel}>TSL</span>
-                                    <div style={{ color: "#f59e0b", fontSize: 10 }}>
-                                        ${parseFloat(tslTrigger.trailing_offset ?? "0").toFixed(2)} offset (stop: {fmtUsd(tslCurrentStop)})
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {isoView && (
-                            <div style={{ marginBottom: 8 }} data-testid="margin-health">
-                                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 8, letterSpacing: 2, marginBottom: 3 }}>
-                                    <span style={{ color: "rgba(255,255,255,0.3)" }}>MARGIN HEALTH</span>
-                                    <span style={{ color: HEALTH_COLORS[healthTone(isoHealth)] }}>{Math.round(isoHealth * 100)}%</span>
-                                </div>
-                                <div
-                                    role="meter"
-                                    aria-label="Margin health"
-                                    aria-valuemin={0}
-                                    aria-valuemax={100}
-                                    aria-valuenow={Math.round(isoHealth * 100)}
-                                    className={healthTone(isoHealth) === "danger" ? "margin-health-danger" : undefined}
-                                    style={{ height: 4, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}
-                                >
-                                    <div style={{
-                                        width: `${Math.max(0, Math.min(1, isoHealth)) * 100}%`, height: "100%",
-                                        background: HEALTH_COLORS[healthTone(isoHealth)], transition: "width 0.3s",
-                                    }} />
-                                </div>
-                                {isoView.liqPrice !== null && healthTone(isoHealth) === "danger" && (
-                                    <div role="alert" style={{ marginTop: 4, fontSize: 8, letterSpacing: 2, color: HEALTH_COLORS.danger }}>
-                                        ⚠ NEAR LIQUIDATION · LIQ {fmtUsd(isoView.liqPrice)}
-                                    </div>
-                                )}
-                                {liqMark.stale && (
-                                    <div style={{ marginTop: 4, fontSize: 8, letterSpacing: 2, color: "#f59e0b" }}>
-                                        FEED STALE · LIQUIDATIONS PAUSED
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        <button
-                            disabled={closing}
-                            onClick={handleClosePosition}
-                            style={{
-                                width: "100%", padding: "8px 0",
-                                background: "rgba(255,59,59,0.15)", border: "1px solid rgba(255,59,59,0.4)",
-                                color: "#ff3b3b", fontSize: 10, letterSpacing: 3,
-                                cursor: closing ? "not-allowed" : "pointer",
-                                opacity: closing ? 0.5 : 1, fontFamily: "inherit",
-                            }}
-                        >
-                            {closing ? "CLOSING..." : "CLOSE POSITION"}
-                        </button>
-                    </div>
-                </div>
+                <PositionCard
+                    key={`${pair.id}:${cardKey}`}
+                    classPrefix={p}
+                    pair={pair}
+                    baseSymbol={baseSymbol}
+                    position={position!}
+                    direction={posDirection!}
+                    qty={posAbsQty}
+                    entry={posEntryPrice}
+                    mark={isoView ? liqMark.mark : currentPrice}
+                    markStale={!!isoView && liqMark.stale}
+                    isoView={isoView}
+                    health={isoHealth}
+                    mmrBps={levInfo?.mmrBps ?? 0}
+                    pnl={pnlValue}
+                    pnlPct={pnlPct}
+                    pnlFlash={pnlFlash}
+                    entering={cardEntering}
+                    tpTrigger={tpTrigger}
+                    slTrigger={slTrigger}
+                    tslTrigger={tslTrigger}
+                    onSetTrigger={handleSetTrigger}
+                    onEditTrigger={handleEditTrigger}
+                    onRemoveTrigger={handleRemoveTrigger}
+                    closing={closing}
+                    onClose={handleClosePosition}
+                    reversing={reversing}
+                    onReverse={handleReverse}
+                />
             )}
             </div>{/* /order-footer */}
         </div>

@@ -15,6 +15,16 @@
  *     never open a position);
  *   - with a position open, the card sits inside the order footer, which
  *     gets tr-order-footer-with-position (the clipped-summary bug fix).
+ *
+ * Re-recorded for the position-card redesign: A and B (no position) and
+ * every request body are byte-identical to the previous golden; only C's
+ * card markup changed, on purpose. The SPOT card was
+ *   BTC LONG | $830.00 | ENTRY | CURRENT | VALUE | P&L +$9.50 (+1.14%) | TP -- | SL -- | CLOSE POSITION
+ * and is now
+ *   BTC LONG | UNREALIZED P&L +$9.50 +1.14% | ENTRY | MARK | SIZE 0.01000 BTC · $830 |
+ *   + SET TAKE PROFIT | + SET STOP LOSS | CLOSE POSITION | equity $839.50 | reverse to short…
+ * (the card itself moved into PositionCard.tsx). The two transforms below
+ * are no-ops on the re-recorded golden.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
