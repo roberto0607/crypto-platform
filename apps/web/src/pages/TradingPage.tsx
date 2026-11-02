@@ -18,6 +18,7 @@ import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
 import { chartLiqPrice } from "@/lib/leverageUi";
+import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -1191,7 +1192,9 @@ export default function TradingPage() {
   // Fetch funding rate from basis endpoint. We display fundingRateHourly
   // (Deribit current_funding) — the rate actually applied each hour — to
   // pair honestly with the Market Context Bar's hourly countdown.
+  // Not fetched while the header hides it (SHOW_FUNDING_IN_CHART_HEADER).
   useEffect(() => {
+    if (!SHOW_FUNDING_IN_CHART_HEADER) return;
     const fetchFunding = async () => {
       try {
         const res = await client.get<{
