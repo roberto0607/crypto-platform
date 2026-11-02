@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated from docs/designs/2026-10-13-leverage-design.md \u00a73 by an independent Decimal (prec 50) oracle. Values rounded half-up to 8 dp. Shared by apps/api and apps/web (copy must stay identical).",
+  "_comment": "Generated from docs/designs/2026-10-13-leverage-design.md \u00a73 by an independent Decimal (prec 50) oracle. Values rounded half-up to 8 dp. Shared by apps/api and apps/web (copy must stay identical). \"adds\" (an add to an open position, design \u00a72.2) is rounded DOWN to 8 dp at each step, like the NUMERIC(28, 8) columns the engine writes.",
   "positions": [
     {
       "name": "$50 @ 10x long BTC @ 83,000 (doc worked example)",
@@ -479,6 +479,93 @@
       "leverage": 2,
       "cap": 1,
       "valid": false
+    }
+  ],
+  "adds": [
+    {
+      "name": "add to the doc long: +0.00602409 at 85,000 (10x)",
+      "side": "LONG",
+      "qty": "0.00602409",
+      "entry": "83000",
+      "margin": "49.99994700",
+      "leverage": "10",
+      "mmrBps": 50,
+      "addQty": "0.00602409",
+      "price": "85000",
+      "expected": {
+        "qty": "0.01204818",
+        "entry": "84000.00000000",
+        "margin": "101.20471200",
+        "liq": "75979.89949748"
+      }
+    },
+    {
+      "name": "add to a 10x short: +0.01 at 77,000",
+      "side": "SHORT",
+      "qty": "0.06500000",
+      "entry": "76673.90000000",
+      "margin": "498.38035000",
+      "leverage": "10",
+      "mmrBps": 50,
+      "addQty": "0.01000000",
+      "price": "77000",
+      "expected": {
+        "qty": "0.07500000",
+        "entry": "76717.38000000",
+        "margin": "575.38035000",
+        "liq": "83969.27164179"
+      }
+    },
+    {
+      "name": "add to a 10x SOL long below entry (mmr 1%)",
+      "side": "LONG",
+      "qty": "3.33333333",
+      "entry": "150",
+      "margin": "49.99999995",
+      "leverage": "10",
+      "mmrBps": 100,
+      "addQty": "1.00000000",
+      "price": "140",
+      "expected": {
+        "qty": "4.33333333",
+        "entry": "147.69230769",
+        "margin": "63.99999995",
+        "liq": "134.26573426"
+      }
+    },
+    {
+      "name": "add to a 1x long: still can't be liquidated",
+      "side": "LONG",
+      "qty": "0.01000000",
+      "entry": "83000",
+      "margin": "830.00000000",
+      "leverage": "1",
+      "mmrBps": 50,
+      "addQty": "0.01000000",
+      "price": "80000",
+      "expected": {
+        "qty": "0.02000000",
+        "entry": "81500.00000000",
+        "margin": "1630.00000000",
+        "liq": "0.00000000"
+      }
+    },
+    {
+      "name": "add to a 5x short above entry",
+      "side": "SHORT",
+      "qty": "0.50000000",
+      "entry": "3000",
+      "margin": "300.00000000",
+      "leverage": "5",
+      "mmrBps": 50,
+      "addQty": "0.25000000",
+      "price": "3100",
+      "expected": {
+        "qty": "0.75000000",
+        "entry": "3033.33333333",
+        "margin": "455.00000000",
+        "liq": "3621.89054726"
+      }
     }
   ]
 }
