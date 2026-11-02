@@ -18,6 +18,8 @@ const summaryQuery = z.object({
     pairId: z.string().uuid().optional(),
 });
 
+// A bad query string is the caller's mistake: 400 invalid_input (a thrown
+// ZodError would reach the error handler as a 500).
 const v1Journal: FastifyPluginAsync = async (app) => {
     // GET /trades/journal — paginated trade journal
     app.get("/trades/journal", {
@@ -25,7 +27,11 @@ const v1Journal: FastifyPluginAsync = async (app) => {
         handler: async (req, reply) => {
             const userId = req.user!.id;
             const competitionId = req.headers["x-competition-id"] as string | undefined;
-            const q = journalQuery.parse(req.query);
+            const parsed = journalQuery.safeParse(req.query);
+            if (!parsed.success) {
+                return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+            }
+            const q = parsed.data;
 
             const result = await listClosedTrades({
                 userId,
@@ -49,7 +55,11 @@ const v1Journal: FastifyPluginAsync = async (app) => {
         handler: async (req, reply) => {
             const userId = req.user!.id;
             const competitionId = req.headers["x-competition-id"] as string | undefined;
-            const q = summaryQuery.parse(req.query);
+            const parsed = summaryQuery.safeParse(req.query);
+            if (!parsed.success) {
+                return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
+            }
+            const q = parsed.data;
 
             const summary = await getJournalSummary(
                 userId,

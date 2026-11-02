@@ -95,6 +95,28 @@ export function marginHealth(pos: MarginPosition, mark: Decimal): Decimal {
   return min(ONE, max(ZERO, buffer.div(full)));
 }
 
+const dp8 = (d: Decimal) => d.todp(8, Decimal.ROUND_DOWN);
+
+/**
+ * An add of `addQty` at `price` to an open position, the way the engine
+ * books it (apps/api isolatedPosition.applyIsolatedFill, increase):
+ * Q += Δq, E = size-weighted average, M += Δq·p / L, each rounded down to
+ * 8 dp like the position columns; then the liq price of the result
+ * (0 = can't be liquidated). L is the position's leverage (an add must match it).
+ */
+export function increasePosition(
+  pos: MarginPosition,
+  addQty: Decimal,
+  price: Decimal,
+  leverage: Decimal,
+): { qty: Decimal; entry: Decimal; margin: Decimal; liqPrice: Decimal } {
+  const qty = pos.qty.plus(addQty);
+  const entry = dp8(pos.qty.mul(pos.entry).plus(addQty.mul(price)).div(qty));
+  const margin = pos.margin.plus(dp8(addQty.mul(price).div(leverage)));
+  const liqPrice = dp8(liquidationPrice({ side: pos.side, qty, entry, margin, mmrBps: pos.mmrBps }));
+  return { qty, entry, margin, liqPrice };
+}
+
 /** M·Δq/Q. */
 export function releasedMargin(margin: Decimal, closeQty: Decimal, posQty: Decimal): Decimal {
   if (closeQty.gte(posQty)) return margin;

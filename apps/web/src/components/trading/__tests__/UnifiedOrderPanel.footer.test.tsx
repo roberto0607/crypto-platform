@@ -9,6 +9,12 @@
  * group (the footer, with the card as its last child), so nothing can be
  * scrolled under the card. jsdom has no layout, so this pins the structure;
  * the overlap itself is checked in the browser (see the PR's screenshots).
+ *
+ * Follow-up (position-card redesign): pinned, that group (~440px) covered the
+ * top of a ~600px panel, hiding the MARKET/LIMIT row and the inputs behind
+ * the summary. Now the card is the panel's first child (above LONG/SHORT,
+ * visible without scrolling) and the summary + submit footer is in normal
+ * flow (-order-footer-with-position: position:static); nothing is pinned.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, act } from "@testing-library/react";
@@ -44,16 +50,20 @@ async function mount(prefix: "tr" | "lmv", position: Position | null) {
   return r.container;
 }
 
-describe.each(["tr", "lmv"] as const)("%s: summary + OPEN can't sit behind the position card", (p) => {
-  it("with a position open, summary, OPEN and the card are one pinned group (card last)", async () => {
+describe.each(["tr", "lmv"] as const)("%s: the card, the form and summary + OPEN don't overlap", (p) => {
+  it("with a position open, the card is first in the panel (above LONG/SHORT); summary + OPEN close it, in flow", async () => {
     const c = await mount(p, POS);
+    const section = c.querySelector(`.${p}-order-section`)!;
+    const kids = [...section.children].map((el) => el.className);
+    expect(kids[0]).toBe(`${p}-position-card-sticky`);
+    expect(kids[1]).toContain(`${p}-dir-toggle`);
     const footer = c.querySelector(`.${p}-order-footer`)!;
     expect(footer.classList.contains(`${p}-order-footer-with-position`)).toBe(true);
-    const kids = [...footer.children].map((el) => el.className);
-    expect(kids[0]).toBe(`${p}-summary`);
-    expect(kids.some((k) => k.includes(`${p}-place-btn`))).toBe(true);
-    expect(kids.at(-1)).toBe(`${p}-position-card-sticky`);
-    // Nothing of the order form after the group.
+    const fkids = [...footer.children].map((el) => el.className);
+    expect(fkids[0]).toBe(`${p}-summary`);
+    expect(fkids.some((k) => k.includes(`${p}-place-btn`))).toBe(true);
+    expect(footer.querySelector(`.${p}-position-card-sticky`)).toBeNull();
+    // The footer closes the panel: nothing of the order form after it.
     expect(footer.nextElementSibling).toBeNull();
   });
 

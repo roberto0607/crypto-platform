@@ -12,6 +12,7 @@ import { TierBadge } from "./TierBadge";
 import AssetTab from "./AssetTab";
 import { NavIcon } from "@/components/NavIcon";
 import { MarketStatusBadge } from "@/components/MarketStatusBadge";
+import { AgentActivityToggle } from "@/components/AgentActivityPanel";
 import type { Timeframe } from "@/api/endpoints/candles";
 import type { TradingPair } from "@/types/api";
 
@@ -142,6 +143,21 @@ const TOOLBAR_CSS = `
   .tr-tb-tier-fill-PRO    { background:#3b82f6; }
   .tr-tb-tier-fill-ELITE  { background:#a855f7; }
   .tr-tb-tier-fill-LEGEND { background:#FFD700; }
+
+  /* Phone: the toolbar wraps onto more rows (its dropdowns rule out an
+     overflow scroller); dividers would dangle at row ends. */
+  .tr-tb-agent-btn { display:none; }
+  @media (max-width: 768px) {
+    .tr-toolbar { flex-wrap:wrap;height:auto;row-gap:6px;column-gap:8px;padding:6px 10px; }
+    .tr-toolbar-divider { display:none; }
+    /* The floating Agent Activity button is fixed in the bottom-right corner,
+       so on a phone it covers whatever scrolls under it (the margin input's
+       USD label, summary values, the card's reverse link). While this toolbar
+       is on the page it moves into the toolbar instead, which scrolls away
+       with the page and covers nothing. */
+    .tr-tb-agent-btn { display:flex; }
+    body:has(.tr-toolbar) .agent-activity-fab { display:none; }
+  }
 `;
 
 interface TradeToolbarProps {
@@ -451,6 +467,8 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
         <button type="button" className="tr-tb-icon-btn" onClick={() => navigate("/history")} title="History" aria-label="History">
           <NavIcon name="history" />
         </button>
+        {/* Phone only: replaces the floating Agent Activity button (see CSS). */}
+        <AgentActivityToggle className="tr-tb-icon-btn tr-tb-agent-btn" />
       </div>
 
       <span className="tr-toolbar-divider" />

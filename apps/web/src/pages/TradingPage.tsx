@@ -18,6 +18,7 @@ import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
 import { chartLiqPrice } from "@/lib/leverageUi";
+import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 
 /* ─────────────────────────────────────────
    TRADE PAGE CSS — Circuit Noir
@@ -698,15 +699,46 @@ const TRADE_CSS = `
     background:#050505;
     border-top:1px solid rgba(255,255,255,0.08);
   }
-  /* With a position open, the summary + submit + card pin together (the card
-     is the group's last child), so the card can never cover the summary rows
-     or the submit button. Inside the group the card isn't sticky on its own. */
+  /* With a position open, the summary + submit are in normal flow (the card
+     is at the top of the panel): the panel scrolls, nothing is pinned. Pinned
+     with the card, the group (~440px) sat over the top of a ~600px panel and
+     hid the MARKET/LIMIT row and the inputs behind the summary. */
   .tr-order-footer-with-position {
-    display:block;position:sticky;bottom:0;z-index:2;
+    display:block;position:static;
     margin:0 -16px;padding:8px 16px 0;
     background:#050505;border-top:1px solid var(--borderW);
   }
-  .tr-order-footer-with-position .tr-position-card-sticky { position:static;margin:10px -16px 0; }
+  /* The card at the top of the panel (above LONG/SHORT): in flow, edge to
+     edge, separated from the form below. Not sticky: at ~400px it would
+     cover the form while scrolling. */
+  .tr-order-section > .tr-position-card-sticky {
+    position:static;margin:-10px -16px 10px;padding:12px 16px;
+    border-top:none;border-bottom:1px solid var(--borderW);
+  }
+
+  /* ── PHONE (≤ 768px) ── one column that scrolls: the chart at a usable
+     height, then the order panel and book; the toolbar wraps onto more
+     rows (it has dropdowns, so it can't be an overflow scroller). */
+  @media (max-width: 768px) {
+    .tr-wrap { overflow-x:hidden;overflow-y:auto;max-height:100%; }
+    .tr-body {
+      display:flex;flex-direction:column;
+      flex:0 0 auto;overflow:visible;
+    }
+    .tr-chart-area { flex:0 0 auto;height:max(320px, 56svh); }
+    .tr-body > .tr-chart-area + div { display:none; } /* the panel-width drag handle */
+    .tr-order-panel {
+      height:auto;max-height:none;overflow:visible;
+      border-left:none;border-top:1px solid var(--border);
+    }
+    .tr-order-panel-top { flex:0 0 auto;overflow:visible; }
+    .tr-order-panel-book { flex:0 0 auto;height:260px; }
+    .tr-order-dock { flex-shrink:0; }
+    /* The position card's equity / "reverse to …" row: stacked and
+       left-aligned, so the link never sits under the fixed Agent Activity
+       button in the bottom-right corner (AgentActivityPanel). */
+    .tr-wrap .tr-pos-foot { flex-direction:column !important;align-items:flex-start !important; }
+  }
 
   /* ticker provided by AppLayout */
 `;
@@ -1191,7 +1223,9 @@ export default function TradingPage() {
   // Fetch funding rate from basis endpoint. We display fundingRateHourly
   // (Deribit current_funding) — the rate actually applied each hour — to
   // pair honestly with the Market Context Bar's hourly countdown.
+  // Not fetched while the header hides it (SHOW_FUNDING_IN_CHART_HEADER).
   useEffect(() => {
+    if (!SHOW_FUNDING_IN_CHART_HEADER) return;
     const fetchFunding = async () => {
       try {
         const res = await client.get<{

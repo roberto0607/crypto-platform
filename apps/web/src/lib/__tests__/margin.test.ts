@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import Decimal from "decimal.js-light";
 import {
   bankruptcyPrice,
+  increasePosition,
   isLiquidatable,
   isValidLeverage,
   liquidationPrice,
@@ -77,5 +78,18 @@ describe("margin (shared with the API)", () => {
 
   it.each(cases.leverage)("$leverage x under a $cap x cap → $valid", (c) => {
     expect(isValidLeverage(c.leverage, c.cap)).toBe(c.valid);
+  });
+
+  it.each(cases.adds)("add: $name", (c) => {
+    const next = increasePosition(
+      { side: c.side as "LONG" | "SHORT", qty: d(c.qty), entry: d(c.entry), margin: d(c.margin), mmrBps: c.mmrBps },
+      d(c.addQty), d(c.price), d(c.leverage),
+    );
+    expect({
+      qty: next.qty.toFixed(8),
+      entry: next.entry.toFixed(8),
+      margin: next.margin.toFixed(8),
+      liq: next.liqPrice.toFixed(8),
+    }).toEqual(c.expected);
   });
 });

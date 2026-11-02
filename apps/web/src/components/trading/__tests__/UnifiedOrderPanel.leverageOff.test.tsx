@@ -13,8 +13,25 @@
  * still has to match the golden byte for byte:
  *   - CLOSE POSITION sends reduceOnly: true (a close that loses a race can
  *     never open a position);
- *   - with a position open, the card sits inside the order footer, which
- *     gets tr-order-footer-with-position (the clipped-summary bug fix).
+ *   - with a position open, the order footer gets
+ *     tr-order-footer-with-position (the clipped-summary bug fix).
+ *
+ * Re-recorded for the position-card redesign: A and B (no position) and
+ * every request body are byte-identical to the previous golden; only C's
+ * card markup changed, on purpose. The SPOT card was
+ *   BTC LONG | $830.00 | ENTRY | CURRENT | VALUE | P&L +$9.50 (+1.14%) | TP -- | SL -- | CLOSE POSITION
+ * and is now
+ *   BTC LONG | UNREALIZED P&L +$9.50 +1.14% | ENTRY | MARK | SIZE 0.01000 BTC · $830 |
+ *   + SET TAKE PROFIT | + SET STOP LOSS | CLOSE POSITION | equity $839.50 | reverse to short…
+ * (the card itself moved into PositionCard.tsx).
+ *
+ * Re-recorded again when the card moved to the TOP of the panel (above
+ * LONG/SHORT, so it's visible without scrolling): in C the card element
+ * is now the order section's first child instead of the footer's last,
+ * with identical card markup; the footer keeps -with-position and holds
+ * only the summary + submit. A, B and every body are unchanged. The old
+ * withFooterFix transform (card into the footer) is gone; C is compared
+ * to the golden as recorded.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
@@ -151,19 +168,6 @@ async function record() {
 
 type Golden = Awaited<ReturnType<typeof record>>;
 
-/**
- * The golden's position-open markup with the footer fix applied: the card
- * moved to the end of the footer, the footer marked -with-position.
- */
-function withFooterFix(html: string): string {
-  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
-  const footer = doc.querySelector(".tr-order-footer")!;
-  const card = doc.querySelector(".tr-position-card-sticky")!;
-  footer.classList.add("tr-order-footer-with-position");
-  footer.appendChild(card);
-  return doc.body.innerHTML;
-}
-
 async function golden(): Promise<Golden> {
   return JSON.parse((await nodeFs()).readFileSync(GOLDEN, "utf8"));
 }
@@ -183,7 +187,7 @@ describe("leverage off: the order panel is unchanged", () => {
     const g = await golden();
     expect(got.A).toEqual(g.A);
     expect(got.B).toEqual(g.B);
-    expect(got.C.html).toEqual(withFooterFix(g.C.html));
+    expect(got.C.html).toEqual(g.C.html);
     // The one difference: CLOSE is reduce-only.
     expect(got.C.closeBody).toEqual({ ...(g.C.closeBody as object), reduceOnly: true });
   });
@@ -194,7 +198,7 @@ describe("leverage off: the order panel is unchanged", () => {
     const g = await golden();
     expect(got.A).toEqual(g.A);
     expect(got.B).toEqual(g.B);
-    expect(got.C.html).toEqual(withFooterFix(g.C.html));
+    expect(got.C.html).toEqual(g.C.html);
   });
 
   it("ISOLATED at a 1x cap: the order form and bodies are unchanged too (no selector, no leverage sent)", async () => {

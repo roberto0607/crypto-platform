@@ -26,6 +26,7 @@ import {
     type MarginPosition,
 } from "../margin";
 import cases from "./marginCases.json";
+import { applyIsolatedFill } from "../isolatedPosition";
 
 /** Half-up to 8 dp: how the cases are written (the API default rounding is DOWN). */
 const r8 = (d: Decimal) => d.toFixed(8, Decimal.ROUND_HALF_UP);
@@ -132,6 +133,24 @@ describe("sizeForMargin / releasedMargin / isValidLeverage (shared cases)", () =
     it("rejects non-finite leverage", () => {
         expect(isValidLeverage(Number.NaN, 10)).toBe(false);
         expect(isValidLeverage(Number.POSITIVE_INFINITY, 10)).toBe(false);
+    });
+});
+
+// The engine's own add (isolatedPosition.applyIsolatedFill): the web's
+// after-add liq preview (lib/margin increasePosition) runs the same cases.
+describe("adds (shared cases)", () => {
+    it.each(cases.adds)("$name", (c) => {
+        const signed = c.side === "LONG" ? D(c.qty) : D(c.qty).neg();
+        const { next } = applyIsolatedFill(
+            { qty: signed, entry: D(c.entry), margin: D(c.margin), leverage: D(c.leverage), epoch: 1, liqPrice: null },
+            c.side === "LONG" ? "BUY" : "SELL", D(c.addQty), D(c.price), D(0), D(c.leverage), c.mmrBps,
+        );
+        expect({
+            qty: next.qty.abs().toFixed(8),
+            entry: next.entry.toFixed(8),
+            margin: next.margin.toFixed(8),
+            liq: (next.liqPrice ?? D(0)).toFixed(8),
+        }).toEqual(c.expected);
     });
 });
 

@@ -170,6 +170,10 @@ export interface Position {
   /** True when the liquidation engine's mark (Kraken book mid) was paused and mark_price is the ticker. */
   mark_stale?: boolean;
   margin_health?: DecimalString;
+  /** When this position opened from flat (ISOLATED rows; null if unknown). */
+  opened_at?: ISODateString | null;
+  /** Fees paid on this position so far (ISOLATED rows); fees_paid_quote is the row's lifetime total. */
+  position_fees_paid?: DecimalString;
 }
 
 /** GET /leverage: what the user's next order on a pair may use (the server decides). */

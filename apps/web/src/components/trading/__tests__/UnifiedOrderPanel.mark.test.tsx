@@ -114,8 +114,8 @@ describe("the ISOLATED card uses the engine's mark", () => {
     engineMark(79919);
     expect(markText()).toBe("$79,919.00");
     // 0.00602409 × (79,919 − 83,000) = −18.56; on $50 margin −37.12%.
-    expect(card().getByText("P&L").nextElementSibling!.textContent).toBe("$-18.56");
-    expect(card().getByText("ROE").nextElementSibling!.textContent).toBe("-37.12%");
+    expect(screen.getByTestId("pos-pnl").textContent).toBe("-$18.56");
+    expect(screen.getByTestId("pos-pnl-pct").textContent).toBe("-37.12%ROE");
     expect(health()).toBe(61); // (79,919 − 75,075.38) / 7,924.62
     expect(sumVal("EQUITY")).toBe("$1,031.44 USD");
     expect(card().queryByText("STALE")).toBeNull();
@@ -149,23 +149,29 @@ describe("the ISOLATED card uses the engine's mark", () => {
     expect(markText()).toBe("$79,905.00");
   });
 
-  it("a SPOT position ignores it: CURRENT is the ticker", async () => {
+  it("a SPOT position ignores it: MARK is the ticker", async () => {
     const { margin_mode: _m, leverage: _l, isolated_margin: _i, liq_price: _q, mark_price: _k, margin_health: _h, ...spot } = ISO_LONG;
     lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
     await mount(spot as Position);
     engineMark(79919);
-    expect(card().getByText("CURRENT").nextElementSibling!.textContent).toBe("$79,905.00");
+    expect(markText()).toBe("$79,905.00");
     expect(card().queryByText("STALE")).toBeNull();
   });
 });
 
 describe("near liquidation", () => {
-  it("health under 25%: NEAR LIQUIDATION with the liq price; not at 30%", async () => {
+  it("health under 25%: the card turns red with a near-liquidation box; not at 30%", async () => {
     await mount(ISO_LONG);
     engineMark(77500); // ~31%
-    expect(card().queryByText(/NEAR LIQUIDATION/)).toBeNull();
+    expect(screen.queryByTestId("pos-at-risk")).toBeNull();
+    expect(screen.getByTestId("position-card").dataset.atRisk).toBeUndefined();
     engineMark(77000); // ~24%
-    expect(card().getByText(/NEAR LIQUIDATION/).textContent).toContain("$75,075.38");
+    // (77,000 − 75,075.38) / 77,000 = 2.5%; left at liq ≈ 0.00602409 × 75,075.38 × 0.5% = $2.26
+    expect(screen.getByTestId("pos-at-risk").textContent).toBe(
+      "Near liquidation. A 2.5% move closes this trade and you keep about $2.26. Close it or reduce size.");
+    expect(screen.getByTestId("position-card").dataset.atRisk).toBe("true");
+    expect(screen.getByTestId("position-card").style.borderColor).toBe("rgb(255, 59, 59)");
+    expect(screen.getByTestId("pos-liq-distance").style.color).toBe("rgb(255, 59, 59)");
   });
 
   it("position.margin_warning shows a toast", async () => {
@@ -180,24 +186,22 @@ describe("near liquidation", () => {
   });
 });
 
-describe("the card header: EQUITY (what the user has at stake), NOTIONAL as a row", () => {
-  it("EQUITY = margin + capped uPnL at the engine mark; NOTIONAL = size × entry", async () => {
+describe("the card's equity and size", () => {
+  it("equity = margin + capped uPnL at the engine mark; SIZE = qty · notional at entry", async () => {
     await mount(ISO_LONG);
     engineMark(79919);
-    const eq = card().getByText("EQUITY").nextElementSibling!;
-    expect(eq.textContent).toBe("$31.44"); // 49.999947 − 18.56
-    expect(card().getByText("NOTIONAL").nextElementSibling!.textContent).toBe("$500.00"); // 0.00602409 × 83,000
+    expect(screen.getByTestId("pos-equity").textContent).toBe("equity $31.44"); // 49.999947 − 18.56
+    expect(screen.getByTestId("pos-size").textContent).toBe("0.00602 BTC · $500"); // 0.00602409 × 83,000
     engineMark(70000); // past bankruptcy: the loss is capped at the margin
-    expect(card().getByText("EQUITY").nextElementSibling!.textContent).toBe("$0.00");
+    expect(screen.getByTestId("pos-equity").textContent).toBe("equity $0.00");
   });
 
-  it("a SPOT card keeps its header (position size, no EQUITY / NOTIONAL labels)", async () => {
+  it("a SPOT card: equity = cost + uPnL at the ticker", async () => {
     const { margin_mode: _m, leverage: _l, isolated_margin: _i, liq_price: _q, mark_price: _k, margin_health: _h, ...spot } = ISO_LONG;
     lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
     await mount(spot as Position);
-    expect(card().queryByText("EQUITY")).toBeNull();
-    expect(card().queryByText("NOTIONAL")).toBeNull();
-    expect(card().getByText("$500.00")).toBeTruthy();
+    expect(screen.getByTestId("pos-equity").textContent).toBe("equity $481.35"); // 0.00602409 × 79,905
+    expect(card().queryByText("MARGIN (AT RISK)")).toBeNull();
   });
 });
 

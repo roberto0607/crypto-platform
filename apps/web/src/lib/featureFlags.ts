@@ -10,3 +10,11 @@
  * panel never shows leverage and never sends it (orders trade at 1x).
  */
 export const SHOW_LEVERAGE_SELECTOR = true;
+
+/**
+ * The FUNDING rate in the chart's header row (the market's perp funding,
+ * from FundingRatePanel's source). Hidden: TRADR charges no funding (leverage
+ * v1), so showing a rate next to a leveraged position reads as a cost the
+ * user pays. The FUNDING RATE sub-panel indicator is unaffected.
+ */
+export const SHOW_FUNDING_IN_CHART_HEADER = false;
