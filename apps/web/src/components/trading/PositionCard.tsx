@@ -393,7 +393,9 @@ export function PositionCard(props: PositionCardProps) {
             onCancel={() => setConfirmReverse(false)}
           />
         ) : (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, fontSize: 9, letterSpacing: 1 }}>
+          // ${p}-pos-foot: at phone width the page's CSS stacks this row
+          // left-aligned, clear of the fixed Agent Activity button (bottom-right).
+          <div className={`${p}-pos-foot`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, marginTop: 6, fontSize: 9, letterSpacing: 1 }}>
             <span style={{ color: "rgba(255,255,255,0.4)" }} data-testid="pos-equity"
               title={isoView ? "Margin + unrealized P&L (a loss counts at most the margin)" : "Cost + unrealized P&L"}>
               equity {fmtUsd(equity)}

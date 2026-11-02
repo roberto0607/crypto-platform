@@ -229,6 +229,13 @@ describe("reverse from the card", () => {
     });
   });
 
+  it("the equity / reverse row carries tr-pos-foot (phone CSS stacks it clear of the fixed Agent Activity button)", async () => {
+    await mount(ISO_SHORT);
+    const link = screen.getByRole("button", { name: "reverse to long…" });
+    expect(link.parentElement!.classList.contains("tr-pos-foot")).toBe(true);
+    expect(link.parentElement!.contains(screen.getByTestId("pos-equity"))).toBe(true);
+  });
+
   it("CANCEL sends nothing", async () => {
     await mount(ISO_SHORT);
     const user = userEvent.setup();

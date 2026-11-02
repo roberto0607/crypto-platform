@@ -729,6 +729,10 @@ const TRADE_CSS = `
     .tr-order-panel-book { flex:0 0 auto;height:260px; }
     .tr-order-dock { flex-shrink:0; }
     .tr-wrap .tr-chart-legend-row { flex-wrap:wrap;max-width:100%;row-gap:2px; }
+    /* The position card's equity / "reverse to …" row: stacked and
+       left-aligned, so the link never sits under the fixed Agent Activity
+       button in the bottom-right corner (AgentActivityPanel). */
+    .tr-wrap .tr-pos-foot { flex-direction:column !important;align-items:flex-start !important; }
   }
 
   /* ticker provided by AppLayout */

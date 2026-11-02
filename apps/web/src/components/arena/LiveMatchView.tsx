@@ -307,6 +307,12 @@ const LMV_CSS = `
   }
   .lmv-order-footer-with-position .lmv-position-card-sticky { position: static; margin: 10px -16px 0; }
 
+  /* Phone: the card's equity / "reverse to …" row stacks left-aligned, clear
+     of the fixed Agent Activity button (see .tr-pos-foot). */
+  @media (max-width: 768px) {
+    .lmv-pos-foot { flex-direction: column !important; align-items: flex-start !important; }
+  }
+
   /* Order form inline styles */
   .lmv-dir-toggle {
     display: flex;
