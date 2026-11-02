@@ -699,16 +699,22 @@ const TRADE_CSS = `
     background:#050505;
     border-top:1px solid rgba(255,255,255,0.08);
   }
-  /* With a position open, the summary + submit + card are one group (the card
-     last) in normal flow: the panel scrolls, nothing is pinned. Pinned, the
-     group (~440px with the card) sat over the top of a ~600px panel and hid
-     the MARKET/LIMIT row and the inputs behind the summary. */
+  /* With a position open, the summary + submit are in normal flow (the card
+     is at the top of the panel): the panel scrolls, nothing is pinned. Pinned
+     with the card, the group (~440px) sat over the top of a ~600px panel and
+     hid the MARKET/LIMIT row and the inputs behind the summary. */
   .tr-order-footer-with-position {
     display:block;position:static;
     margin:0 -16px;padding:8px 16px 0;
     background:#050505;border-top:1px solid var(--borderW);
   }
-  .tr-order-footer-with-position .tr-position-card-sticky { position:static;margin:10px -16px 0; }
+  /* The card at the top of the panel (above LONG/SHORT): in flow, edge to
+     edge, separated from the form below. Not sticky: at ~400px it would
+     cover the form while scrolling. */
+  .tr-order-section > .tr-position-card-sticky {
+    position:static;margin:-10px -16px 10px;padding:12px 16px;
+    border-top:none;border-bottom:1px solid var(--borderW);
+  }
 
   /* ── PHONE (≤ 768px) ── one column that scrolls: the chart at a usable
      height, then the order panel and book; the toolbar wraps onto more

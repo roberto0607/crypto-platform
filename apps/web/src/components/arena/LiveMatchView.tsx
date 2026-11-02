@@ -295,8 +295,9 @@ const LMV_CSS = `
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  /* Position open: summary + submit + card in normal flow, card last (see
-     .tr-order-footer-with-position): pinned, the group hid the form above it. */
+  /* Position open: summary + submit in normal flow, the card at the top of
+     the panel (see .tr-order-footer-with-position): pinned, the group hid the
+     form above it. */
   .lmv-order-footer-with-position {
     display: block;
     position: static;
@@ -305,7 +306,14 @@ const LMV_CSS = `
     background: #040404;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .lmv-order-footer-with-position .lmv-position-card-sticky { position: static; margin: 10px -16px 0; }
+  /* The card at the top of the panel, above LONG/SHORT (see the trade page's
+     .tr-order-section > .tr-position-card-sticky). */
+  .lmv-order-section > .lmv-position-card-sticky {
+    position: static;
+    margin: -12px -16px 12px;
+    border-top: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
 
   /* Phone: the card's equity / "reverse to …" row stacks left-aligned, clear
      of the fixed Agent Activity button (see .tr-pos-foot). */

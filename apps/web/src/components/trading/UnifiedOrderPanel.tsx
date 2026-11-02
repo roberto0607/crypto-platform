@@ -695,6 +695,40 @@ export function UnifiedOrderPanel({
 
     return (
         <div className={`${p}-order-section`}>
+            {/* ── OPEN POSITION CARD — first in the panel, above LONG/SHORT, so
+                it's visible without scrolling; the form follows in normal flow. ── */}
+            {hasPosition && (
+                <PositionCard
+                    key={`${pair.id}:${cardKey}`}
+                    classPrefix={p}
+                    pair={pair}
+                    baseSymbol={baseSymbol}
+                    position={position!}
+                    direction={posDirection!}
+                    qty={posAbsQty}
+                    entry={posEntryPrice}
+                    mark={isoView ? liqMark.mark : currentPrice}
+                    markStale={!!isoView && liqMark.stale}
+                    isoView={isoView}
+                    health={isoHealth}
+                    mmrBps={levInfo?.mmrBps ?? 0}
+                    pnl={pnlValue}
+                    pnlPct={pnlPct}
+                    pnlFlash={pnlFlash}
+                    entering={cardEntering}
+                    tpTrigger={tpTrigger}
+                    slTrigger={slTrigger}
+                    tslTrigger={tslTrigger}
+                    onSetTrigger={handleSetTrigger}
+                    onEditTrigger={handleEditTrigger}
+                    onRemoveTrigger={handleRemoveTrigger}
+                    closing={closing}
+                    onClose={handleClosePosition}
+                    reversing={reversing}
+                    onReverse={handleReverse}
+                />
+            )}
+
             {/* ── DIRECTION ── */}
             <div className={`${p}-dir-toggle`}>
                 <div
@@ -873,12 +907,11 @@ export function UnifiedOrderPanel({
                 )}
             </div>
 
-            {/* Sticky footer. No open position (trade page): keeps the cost summary +
-                submit button always visible while TP/SL/TSL scroll above (display:contents
-                in the arena). With a position open (both pages): the summary, submit AND
-                the position card are one bottom-pinned group, the card last. The card
-                used to be pinned on its own over a flowing summary, so it covered the
-                FEE / AVAILABLE rows and the submit button whenever they scrolled under it. */}
+            {/* Footer. No open position (trade page): pinned, so the cost summary +
+                submit button stay visible while TP/SL/TSL scroll above (display:contents
+                in the arena). With a position open: in normal flow (-with-position) and
+                the card sits at the top of the panel instead. Pinned with the card, the
+                group covered the form above it (MARKET/LIMIT clipped). */}
             <div className={`${p}-order-footer${hasPosition ? ` ${p}-order-footer-with-position` : ` ${p}-order-footer-pinned`}`}>
             {/* ── SUMMARY ── */}
             <div className={`${p}-summary`}>
@@ -975,38 +1008,6 @@ export function UnifiedOrderPanel({
             </button>
             )}
 
-            {/* ── OPEN POSITION CARD — last in the footer group ── */}
-            {hasPosition && (
-                <PositionCard
-                    key={`${pair.id}:${cardKey}`}
-                    classPrefix={p}
-                    pair={pair}
-                    baseSymbol={baseSymbol}
-                    position={position!}
-                    direction={posDirection!}
-                    qty={posAbsQty}
-                    entry={posEntryPrice}
-                    mark={isoView ? liqMark.mark : currentPrice}
-                    markStale={!!isoView && liqMark.stale}
-                    isoView={isoView}
-                    health={isoHealth}
-                    mmrBps={levInfo?.mmrBps ?? 0}
-                    pnl={pnlValue}
-                    pnlPct={pnlPct}
-                    pnlFlash={pnlFlash}
-                    entering={cardEntering}
-                    tpTrigger={tpTrigger}
-                    slTrigger={slTrigger}
-                    tslTrigger={tslTrigger}
-                    onSetTrigger={handleSetTrigger}
-                    onEditTrigger={handleEditTrigger}
-                    onRemoveTrigger={handleRemoveTrigger}
-                    closing={closing}
-                    onClose={handleClosePosition}
-                    reversing={reversing}
-                    onReverse={handleReverse}
-                />
-            )}
             </div>{/* /order-footer */}
         </div>
     );
