@@ -111,6 +111,29 @@ describe("with the engine", () => {
         expect(Number(p.margin_health)).toBe(1);
     });
 
+    it("GET /positions: an ISOLATED row carries opened_at and this position's fees (not the row's lifetime total)", async () => {
+        Object.assign(config.leverage, { enabled: true, maxFreePlay: 10, allowlist: [] });
+        const positions = async () => (await app.inject({ method: "GET", url: "/positions", headers: auth(userId) })).json().positions;
+
+        // Open ($0.25 taker fee on ~$500 notional), then close: the row's
+        // lifetime fees keep growing.
+        expect((await post({ side: "BUY", type: "MARKET", qty: "0.00602409", leverage: 10 })).statusCode).toBe(201);
+        let [p] = await positions();
+        expect(p.position_fees_paid).toBe("0.24999973");
+        expect(Date.now() - Date.parse(p.opened_at)).toBeLessThan(60_000);
+        expect((await post({ side: "SELL", type: "MARKET", qty: "0.00602409", reduceOnly: true })).statusCode).toBe(201);
+
+        // A new position: only its own opening fee, then the add's.
+        expect((await post({ side: "SELL", type: "MARKET", qty: "0.00602409", leverage: 10 })).statusCode).toBe(201);
+        [p] = await positions();
+        expect(Number(p.base_qty)).toBeLessThan(0);
+        expect(Number(p.fees_paid_quote)).toBeCloseTo(0.75, 5); // open + close + this open
+        expect(p.position_fees_paid).toBe("0.24999973");
+        expect((await post({ side: "SELL", type: "MARKET", qty: "0.00100000", leverage: 10 })).statusCode).toBe(201);
+        [p] = await positions();
+        expect(p.position_fees_paid).toBe(new Decimal("0.24999973").plus("0.0415").toFixed(8));
+    });
+
     it("GET /positions: a SPOT row has exactly the keys it had before leverage", async () => {
         expect((await post({ side: "BUY", type: "MARKET", qty: "0.00100000" })).statusCode).toBe(201);
         const list = await app.inject({ method: "GET", url: "/positions", headers: auth(userId) });
