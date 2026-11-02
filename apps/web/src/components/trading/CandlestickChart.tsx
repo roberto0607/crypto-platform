@@ -272,6 +272,16 @@ const CONTEXT_BAR_CSS = `
     border-color:var(--g, #00ff41);
     background:rgba(0,255,65,0.08);
   }
+
+  /* Phone: the legend is absolute from the left with no right bound, and the
+     O/H/L/C strip doesn't wrap, so at 390px the close value ran onto the
+     price axis. Stop the legend short of the axis (~80px wide at BTC
+     prices; 96px leaves room) and let both rows wrap. */
+  @media (max-width: 768px) {
+    .tr-chart-legend { right:96px; }
+    .tr-chart-legend-row { flex-wrap:wrap;row-gap:2px; }
+    .tr-cr-ohlc { flex-wrap:wrap;row-gap:2px; }
+  }
 `;
 
 interface CandlestickChartProps {
