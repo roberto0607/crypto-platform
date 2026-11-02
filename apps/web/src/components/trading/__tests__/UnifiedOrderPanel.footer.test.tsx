@@ -9,6 +9,11 @@
  * group (the footer, with the card as its last child), so nothing can be
  * scrolled under the card. jsdom has no layout, so this pins the structure;
  * the overlap itself is checked in the browser (see the PR's screenshots).
+ *
+ * Follow-up (position-card redesign): pinned, that group (~440px) covered the
+ * top of a ~600px panel, hiding the MARKET/LIMIT row and the inputs behind
+ * the summary. The group is now in normal flow (CSS: position:static on
+ * -order-footer-with-position) and the panel scrolls; same structure.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, act } from "@testing-library/react";
@@ -45,7 +50,7 @@ async function mount(prefix: "tr" | "lmv", position: Position | null) {
 }
 
 describe.each(["tr", "lmv"] as const)("%s: summary + OPEN can't sit behind the position card", (p) => {
-  it("with a position open, summary, OPEN and the card are one pinned group (card last)", async () => {
+  it("with a position open, summary, OPEN and the card are one group (card last)", async () => {
     const c = await mount(p, POS);
     const footer = c.querySelector(`.${p}-order-footer`)!;
     expect(footer.classList.contains(`${p}-order-footer-with-position`)).toBe(true);

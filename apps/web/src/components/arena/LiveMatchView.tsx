@@ -295,13 +295,11 @@ const LMV_CSS = `
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  /* Position open: summary + submit + card pin together, card last (see
-     .tr-order-footer-with-position), so the card never covers the summary. */
+  /* Position open: summary + submit + card in normal flow, card last (see
+     .tr-order-footer-with-position): pinned, the group hid the form above it. */
   .lmv-order-footer-with-position {
     display: block;
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
+    position: static;
     margin: 0 -16px;
     padding: 8px 16px 0;
     background: #040404;

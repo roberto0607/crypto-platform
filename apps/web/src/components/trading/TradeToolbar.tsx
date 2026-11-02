@@ -142,6 +142,13 @@ const TOOLBAR_CSS = `
   .tr-tb-tier-fill-PRO    { background:#3b82f6; }
   .tr-tb-tier-fill-ELITE  { background:#a855f7; }
   .tr-tb-tier-fill-LEGEND { background:#FFD700; }
+
+  /* Phone: the toolbar wraps onto more rows (its dropdowns rule out an
+     overflow scroller); dividers would dangle at row ends. */
+  @media (max-width: 768px) {
+    .tr-toolbar { flex-wrap:wrap;height:auto;row-gap:6px;column-gap:8px;padding:6px 10px; }
+    .tr-toolbar-divider { display:none; }
+  }
 `;
 
 interface TradeToolbarProps {

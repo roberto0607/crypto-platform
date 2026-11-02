@@ -699,15 +699,37 @@ const TRADE_CSS = `
     background:#050505;
     border-top:1px solid rgba(255,255,255,0.08);
   }
-  /* With a position open, the summary + submit + card pin together (the card
-     is the group's last child), so the card can never cover the summary rows
-     or the submit button. Inside the group the card isn't sticky on its own. */
+  /* With a position open, the summary + submit + card are one group (the card
+     last) in normal flow: the panel scrolls, nothing is pinned. Pinned, the
+     group (~440px with the card) sat over the top of a ~600px panel and hid
+     the MARKET/LIMIT row and the inputs behind the summary. */
   .tr-order-footer-with-position {
-    display:block;position:sticky;bottom:0;z-index:2;
+    display:block;position:static;
     margin:0 -16px;padding:8px 16px 0;
     background:#050505;border-top:1px solid var(--borderW);
   }
   .tr-order-footer-with-position .tr-position-card-sticky { position:static;margin:10px -16px 0; }
+
+  /* ── PHONE (≤ 768px) ── one column that scrolls: the chart at a usable
+     height, then the order panel and book; the toolbar wraps onto more
+     rows (it has dropdowns, so it can't be an overflow scroller). */
+  @media (max-width: 768px) {
+    .tr-wrap { overflow-x:hidden;overflow-y:auto;max-height:100%; }
+    .tr-body {
+      display:flex;flex-direction:column;
+      flex:0 0 auto;overflow:visible;
+    }
+    .tr-chart-area { flex:0 0 auto;height:max(320px, 56svh); }
+    .tr-body > .tr-chart-area + div { display:none; } /* the panel-width drag handle */
+    .tr-order-panel {
+      height:auto;max-height:none;overflow:visible;
+      border-left:none;border-top:1px solid var(--border);
+    }
+    .tr-order-panel-top { flex:0 0 auto;overflow:visible; }
+    .tr-order-panel-book { flex:0 0 auto;height:260px; }
+    .tr-order-dock { flex-shrink:0; }
+    .tr-wrap .tr-chart-legend-row { flex-wrap:wrap;max-width:100%;row-gap:2px; }
+  }
 
   /* ticker provided by AppLayout */
 `;
