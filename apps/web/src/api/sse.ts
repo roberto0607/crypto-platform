@@ -6,8 +6,19 @@ import type { SSEEvent } from "@/types/api";
 
 const SSE_URL = `${import.meta.env.VITE_API_BASE ?? "/api"}/v1/events`;
 
-// Exponential backoff: 1s → 2s → 4s → 8s → 30s cap
-const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 30_000];
+// Exponential backoff: 1s → 2s → 4s → 8s → 10s cap, each ±20% jitter so
+// every open tab doesn't reconnect in lockstep after a deploy. Never above
+// the cap: the longest a tab waits once the API is back is ~10 s.
+const BACKOFF_STEPS = [1_000, 2_000, 4_000, 8_000, 10_000];
+export const BACKOFF_MAX_MS = 10_000;
+const BACKOFF_JITTER = 0.2;
+
+/** Delay before retry `attempt` (0-based); `random` is injectable for tests. */
+export function backoffDelay(attempt: number, random: () => number = Math.random): number {
+  const base = BACKOFF_STEPS[Math.min(attempt, BACKOFF_STEPS.length - 1)]!;
+  const jittered = base * (1 - BACKOFF_JITTER + 2 * BACKOFF_JITTER * random());
+  return Math.round(Math.min(BACKOFF_MAX_MS, jittered));
+}
 
 // If no message (including pings, every 5s) received for this long, treat connection as dead
 const HEARTBEAT_TIMEOUT_MS = 30_000;
@@ -401,8 +412,8 @@ export function connectSSE(
         armWatchdog();
       }
 
-      // Exponential backoff: 1s → 2s → 4s → 8s → 30s (never give up)
-      const delay = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
+      // Exponential backoff with jitter, 10 s cap (never give up)
+      const delay = backoffDelay(reconnectAttempt);
       reconnectAttempt++;
       return delay;
     },
