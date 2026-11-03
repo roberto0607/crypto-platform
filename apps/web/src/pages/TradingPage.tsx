@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useChartLayoutStore } from "@/stores/chartLayoutStore";
 import { useDailyOpenStore } from "@/stores/dailyOpenStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { TradeToolbar } from "@/components/trading/TradeToolbar";
 import { getPositions } from "@/api/endpoints/analytics";
-import { getCandles, type Timeframe } from "@/api/endpoints/candles";
+import { getCandles } from "@/api/endpoints/candles";
 import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
@@ -1139,8 +1140,14 @@ export default function TradingPage() {
   // passed down to CandlestickChart. Both used to be internal chart state;
   // lifted so the timeframe buttons and indicators dropdown could move into
   // the unified toolbar (a sibling of the chart, not a child).
-  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
-  const [vpvrMode, setVpvrMode] = useState<"visible" | "weekly" | "daily">("visible");
+  // Now in chartLayoutStore so a saved layout can set them. The store resets
+  // when /trade unmounts, so a revisit starts at 1h/"visible" as before
+  // (or at the default layout's values, if the user has one).
+  const timeframe = useChartLayoutStore((s) => s.timeframe);
+  const setTimeframe = useChartLayoutStore((s) => s.setTimeframe);
+  const vpvrMode = useChartLayoutStore((s) => s.vpvrMode);
+  const setVpvrMode = useChartLayoutStore((s) => s.setVpvrMode);
+  useEffect(() => () => useChartLayoutStore.getState().resetSession(), []);
 
   // Order panel resize (Gate 1) — same load-lazily/save-on-drag-end pattern
   // as CandlestickChart's panelHeights, adapted for a single width value.

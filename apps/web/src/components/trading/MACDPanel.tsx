@@ -11,6 +11,7 @@ import {
 import type { MACDResult } from "@/lib/indicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface MACDPanelProps {
     data: MACDResult;
@@ -24,7 +25,7 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     const macdSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const signalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const histSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("macd");
     const [hovered, setHovered] = useState<{ macd: number; signal: number; hist: number } | null>(null);
 
     useEffect(() => {

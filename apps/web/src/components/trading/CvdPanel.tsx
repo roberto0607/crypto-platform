@@ -9,6 +9,7 @@ import {
 } from "lightweight-charts";
 import type { CvdPoint, CvdDivergence, CvdDataSource } from "@/lib/cvd";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface CvdPanelProps {
     cvdData: CvdPoint[];
@@ -30,7 +31,7 @@ export function CvdPanel({ cvdData, divergences: _divergences, dataSource, mainC
     const chartRef = useRef<IChartApi | null>(null);
     const posSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
     const negSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("cvd");
     const [hovered, setHovered] = useState<number | null>(null);
 
     const lastValue = cvdData.length > 0 ? cvdData[cvdData.length - 1]!.value : 0;
