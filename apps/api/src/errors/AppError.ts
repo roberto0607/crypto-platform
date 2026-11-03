@@ -18,6 +18,7 @@ const ERROR_STATUS: Record<string, number> = {
   trigger_not_editable: 400,
   alert_not_cancelable: 400,
   alert_limit_exceeded: 400,
+  chart_layout_limit_exceeded: 400,
   invite_required: 400,
   invite_invalid: 400,
   cannot_friend_self: 400,
@@ -55,6 +56,7 @@ const ERROR_STATUS: Record<string, number> = {
   replay_not_found: 404,
   trigger_not_found: 404,
   alert_not_found: 404,
+  chart_layout_not_found: 404,
   run_not_found: 404,
   api_key_not_found: 404,
   stream_not_found: 404,
@@ -78,6 +80,7 @@ const ERROR_STATUS: Record<string, number> = {
   role_unchanged: 409,
   risk_check_failed: 409,
   friendship_already_exists: 409,
+  chart_layout_name_taken: 409,
   // 409 (repair)
   repair_has_high_findings: 409,
   // 404 (repair)

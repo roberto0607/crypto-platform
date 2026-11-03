@@ -26,6 +26,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   trigger_not_editable: "Only an active trigger order can be edited.",
   alert_not_cancelable: "This alert cannot be canceled.",
   alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
+  chart_layout_limit_exceeded: "You've reached the maximum of 20 saved chart layouts.",
   cannot_friend_self: "You can't send a friend request to yourself.",
   friendship_not_pending: "This friend request is not pending.",
   message_contains_profanity: "Message contains inappropriate language.",
@@ -55,6 +56,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   replay_not_found: "The requested replay was not found.",
   trigger_not_found: "The requested trigger order was not found.",
   alert_not_found: "The requested alert was not found.",
+  chart_layout_not_found: "The requested chart layout was not found.",
   stream_not_found: "The SSE stream was not found or does not belong to this user.",
   friendship_not_found: "The requested friend request was not found.",
   conversation_not_found: "The requested conversation was not found.",
@@ -67,6 +69,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   role_unchanged: "The user already has the requested role.",
   risk_check_failed: "The order was rejected by risk controls.",
   friendship_already_exists: "A friend request or friendship already exists with this user.",
+  chart_layout_name_taken: "You already have a chart layout with this name.",
   governance_check_failed: "The order was rejected by account governance controls.",
   // matches
   match_already_active: "You already have an active or pending match.",
