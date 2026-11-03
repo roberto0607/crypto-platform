@@ -82,7 +82,10 @@ const defaultIndicatorConfig = {
   cotReport: false,
 };
 
-type IndicatorConfig = typeof defaultIndicatorConfig;
+export type IndicatorConfig = typeof defaultIndicatorConfig;
+
+/** Today's defaults (all off). Exported for the chart-layout catalog check. */
+export const DEFAULT_INDICATOR_CONFIG: Readonly<IndicatorConfig> = defaultIndicatorConfig;
 
 function loadIndicatorConfig(): IndicatorConfig {
   try {
@@ -144,6 +147,8 @@ interface TradingState {
   // Indicator config (persisted to localStorage)
   indicatorConfig: IndicatorConfig;
   toggleIndicator: (key: keyof IndicatorConfig) => void;
+  /** Replace every toggle at once (applying a chart layout). Persisted like toggleIndicator. */
+  setIndicatorConfig: (config: IndicatorConfig) => void;
 
   // Actions
   setActiveCompetition: (id: string | null) => void;
@@ -207,6 +212,13 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(config));
     localStorage.setItem(INDICATOR_VERSION_KEY, String(INDICATOR_CONFIG_VERSION));
     set({ indicatorConfig: config });
+  },
+
+  setIndicatorConfig: (config: IndicatorConfig) => {
+    const next = { ...config };
+    localStorage.setItem(INDICATOR_STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(INDICATOR_VERSION_KEY, String(INDICATOR_CONFIG_VERSION));
+    set({ indicatorConfig: next });
   },
 
   setActiveCompetition: (id: string | null) => {

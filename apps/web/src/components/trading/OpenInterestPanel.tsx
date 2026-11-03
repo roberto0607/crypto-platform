@@ -9,6 +9,7 @@ import {
 import { fetchOpenInterest, type OIHistoryPoint } from "@/api/endpoints/marketData";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface OpenInterestPanelProps {
     mainChart: IChartApi | null;
@@ -35,7 +36,7 @@ export function OpenInterestPanel({ mainChart, pairSymbol, height: externalHeigh
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("openInterest");
     const [currentOI, setCurrentOI] = useState(0);
     const [history, setHistory] = useState<OIHistoryPoint[]>([]);
     const [hovered, setHovered] = useState<number | null>(null);

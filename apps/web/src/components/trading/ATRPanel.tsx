@@ -11,6 +11,7 @@ import {
 import type { Point } from "@/lib/indicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface ATRPanelProps {
     atrData: Point[];
@@ -23,7 +24,7 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const avgLineRef = useRef<IPriceLine | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("atr");
     const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {

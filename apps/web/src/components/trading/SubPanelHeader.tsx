@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { PaneMoveButtons } from "./PaneMoveControls";
 
 interface SubPanelHeaderProps {
     collapsed: boolean;
@@ -25,6 +26,7 @@ export function SubPanelHeader({ collapsed, onToggle, label, rightContent }: Sub
                 <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", letterSpacing: 2 }}>
                     {label}
                 </span>
+                <PaneMoveButtons />
             </div>
             {rightContent && (
                 <div style={{ fontSize: 9 }}>{rightContent}</div>

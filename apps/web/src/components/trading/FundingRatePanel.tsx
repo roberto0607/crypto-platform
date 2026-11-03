@@ -10,6 +10,7 @@ import {
 import { fetchFundingRate, type FundingRateEntry } from "@/api/endpoints/marketData";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface FundingRatePanelProps {
     mainChart: IChartApi | null;
@@ -35,7 +36,7 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("fundingRate");
     const [entry, setEntry] = useState<FundingRateEntry | null>(null);
     const [hovered, setHovered] = useState<number | null>(null);
 

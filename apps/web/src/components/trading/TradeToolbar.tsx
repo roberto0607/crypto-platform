@@ -6,6 +6,7 @@ import { useAppStore } from "@/stores/appStore";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import { searchPairs } from "@/api/endpoints/trading";
 import { IndicatorToolbar } from "./IndicatorToolbar";
+import { LayoutsMenu } from "./LayoutsMenu";
 import { AlertPanel } from "./AlertPanel";
 import { MessagesPanel } from "./MessagesPanel";
 import { TierBadge } from "./TierBadge";
@@ -443,7 +444,8 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
 
       <span className="tr-toolbar-divider" />
 
-      {/* 4 — Indicators */}
+      {/* 4 — Chart layouts (saved indicator/pane setups) + Indicators */}
+      <LayoutsMenu />
       <IndicatorToolbar vpvrMode={vpvrMode} onVpvrModeChange={onVpvrModeChange} />
 
       {/* 5 — Alerts / Notifications */}

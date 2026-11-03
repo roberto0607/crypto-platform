@@ -10,6 +10,7 @@ import {
 import type { Point } from "@/lib/indicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface DeltaPanelProps {
     deltaData: Point[];
@@ -21,7 +22,7 @@ export function DeltaPanel({ deltaData, mainChart, height: externalHeight }: Del
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("delta");
     const [hovered, setHovered] = useState<number | null>(null);
 
     useEffect(() => {

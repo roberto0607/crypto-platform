@@ -10,6 +10,7 @@ import {
 import type { Point } from "@/lib/indicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface RsiPanelProps {
     rsiData: Point[];
@@ -21,7 +22,7 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("rsi");
     const [hoveredRsi, setHoveredRsi] = useState<number | null>(null);
 
     useEffect(() => {

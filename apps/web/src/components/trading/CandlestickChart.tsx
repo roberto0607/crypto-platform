@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
     CandlestickSeries,
@@ -56,7 +56,10 @@ import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import { BollingerFillPrimitive } from "@/lib/bollingerFillPrimitive";
 import { usePairChange } from "@/hooks/usePairChange";
 import { dayDirection } from "@/lib/priceChange";
-import { DragHandle, loadPanelHeights, savePanelHeights } from "./DragHandle";
+import { DragHandle } from "./DragHandle";
+import { PaneMoveContext } from "./PaneMoveControls";
+import { useChartLayoutStore } from "@/stores/chartLayoutStore";
+import type { ChartPaneId } from "@/lib/chartLayouts/catalog";
 import { FundingRatePanel } from "./FundingRatePanel";
 import { OpenInterestPanel } from "./OpenInterestPanel";
 import { useDrawingStore, DRAWING_TOOL_SPECS, type StoredDrawing, type DrawingPoint } from "@/stores/drawingStore";
@@ -544,19 +547,20 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const [atrData, setAtrData] = useState<Point[]>([]);
     const [deltaData, setDeltaData] = useState<Point[]>([]);
 
-    const [panelHeights, setPanelHeights] = useState(() => loadPanelHeights());
+    // Pane heights + order live in chartLayoutStore so a layout can set them
+    // (heights still persist to localStorage `tradr_panel_heights` on drag end).
+    const panelHeights = useChartLayoutStore((st) => st.paneHeights);
+    const paneOrder = useChartLayoutStore((st) => st.paneOrder);
+    const setPaneHeight = useChartLayoutStore((st) => st.setPaneHeight);
+    const commitPaneHeight = useChartLayoutStore((st) => st.commitPaneHeight);
 
     const handleHeightChange = useCallback((key: string, h: number) => {
-        setPanelHeights((prev) => ({ ...prev, [key]: h }));
-    }, []);
+        setPaneHeight(key as ChartPaneId, h);
+    }, [setPaneHeight]);
 
     const handleDragEnd = useCallback((key: string, h: number) => {
-        setPanelHeights((prev) => {
-            const next = { ...prev, [key]: h };
-            savePanelHeights(next);
-            return next;
-        });
-    }, []);
+        commitPaneHeight(key as ChartPaneId, h);
+    }, [commitPaneHeight]);
 
     const [crosshairData, setCrosshairData] = useState<{ open: number; high: number; low: number; close: number; time: number; volume: number | null } | null>(null);
 
@@ -2757,59 +2761,46 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 );
             })()}
 
-            {/* Volume sub-panel */}
-            {indicatorConfig.volume && rawCandlesRef.current.length > 0 && (<>
-                <DragHandle panelKey="volume" currentHeight={panelHeights.volume ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} height={panelHeights.volume} />
-            </>)}
-
-            {/* MACD sub-panel */}
-            {indicatorConfig.macd && macdData.macd.length > 0 && (<>
-                <DragHandle panelKey="macd" currentHeight={panelHeights.macd ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <MACDPanel data={macdData} mainChart={chartRef.current} height={panelHeights.macd} />
-            </>)}
-
-            {/* RSI sub-panel */}
-            {indicatorConfig.rsi && rsiData.length > 0 && (<>
-                <DragHandle panelKey="rsi" currentHeight={panelHeights.rsi ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <RsiPanel rsiData={rsiData} mainChart={chartRef.current} height={panelHeights.rsi} />
-            </>)}
-
-            {/* ATR sub-panel */}
-            {indicatorConfig.atr && atrData.length > 0 && (<>
-                <DragHandle panelKey="atr" currentHeight={panelHeights.atr ?? 120} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <ATRPanel atrData={atrData} mainChart={chartRef.current} height={panelHeights.atr} />
-            </>)}
-
-            {/* Delta sub-panel */}
-            {indicatorConfig.delta && deltaData.length > 0 && (<>
-                <DragHandle panelKey="delta" currentHeight={panelHeights.delta ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <DeltaPanel deltaData={deltaData} mainChart={chartRef.current} height={panelHeights.delta} />
-            </>)}
-
-            {/* CVD sub-panel */}
-            {indicatorConfig.cvd && cvdData.length > 0 && (<>
-                <DragHandle panelKey="cvd" currentHeight={panelHeights.cvd ?? 60} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <CvdPanel cvdData={cvdData} divergences={cvdDivergences} dataSource={cvdDataSource} mainChart={chartRef.current} height={panelHeights.cvd} />
-            </>)}
-
-            {/* Funding Rate sub-panel */}
-            {indicatorConfig.fundingRate && (<>
-                <DragHandle panelKey="fundingRate" currentHeight={panelHeights.fundingRate ?? 80} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <FundingRatePanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.fundingRate} />
-            </>)}
-
-            {/* Open Interest sub-panel */}
-            {indicatorConfig.openInterest && (<>
-                <DragHandle panelKey="openInterest" currentHeight={panelHeights.openInterest ?? 100} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <OpenInterestPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.openInterest} />
-            </>)}
-
-            {/* COT Report sub-panel */}
-            {indicatorConfig.cotReport && (<>
-                <DragHandle panelKey="cotReport" currentHeight={panelHeights.cotReport ?? 120} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
-                <COTPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={panelHeights.cotReport} />
-            </>)}
+            {/* Sub-panes, in the layout's order (chartLayoutStore.paneOrder;
+                default = the fixed order they had before layouts). Keyed
+                Fragments so a reorder MOVES the panes instead of remounting
+                their charts. */}
+            {(() => {
+                const shown: Partial<Record<ChartPaneId, boolean>> = {
+                    volume: indicatorConfig.volume && rawCandlesRef.current.length > 0,
+                    macd: indicatorConfig.macd && macdData.macd.length > 0,
+                    rsi: indicatorConfig.rsi && rsiData.length > 0,
+                    atr: indicatorConfig.atr && atrData.length > 0,
+                    delta: indicatorConfig.delta && deltaData.length > 0,
+                    cvd: indicatorConfig.cvd && cvdData.length > 0,
+                    fundingRate: indicatorConfig.fundingRate,
+                    openInterest: indicatorConfig.openInterest,
+                    cotReport: indicatorConfig.cotReport,
+                };
+                const visible = paneOrder.filter((p) => shown[p]);
+                const renderPane = (pane: ChartPaneId) => {
+                    const h = panelHeights[pane];
+                    switch (pane) {
+                        case "volume": return <VolumePanel candles={rawCandlesRef.current} mainChart={chartRef.current} height={h} />;
+                        case "macd": return <MACDPanel data={macdData} mainChart={chartRef.current} height={h} />;
+                        case "rsi": return <RsiPanel rsiData={rsiData} mainChart={chartRef.current} height={h} />;
+                        case "atr": return <ATRPanel atrData={atrData} mainChart={chartRef.current} height={h} />;
+                        case "delta": return <DeltaPanel deltaData={deltaData} mainChart={chartRef.current} height={h} />;
+                        case "cvd": return <CvdPanel cvdData={cvdData} divergences={cvdDivergences} dataSource={cvdDataSource} mainChart={chartRef.current} height={h} />;
+                        case "fundingRate": return <FundingRatePanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
+                        case "openInterest": return <OpenInterestPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
+                        case "cotReport": return <COTPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
+                    }
+                };
+                return visible.map((pane) => (
+                    <Fragment key={pane}>
+                        <DragHandle panelKey={pane} currentHeight={panelHeights[pane]} onHeightChange={handleHeightChange} onDragEnd={handleDragEnd} />
+                        <PaneMoveContext.Provider value={{ pane, visible }}>
+                            {renderPane(pane)}
+                        </PaneMoveContext.Provider>
+                    </Fragment>
+                ));
+            })()}
         </div>
     );
 }

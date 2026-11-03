@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
     createChart,
     HistogramSeries,
@@ -8,6 +8,7 @@ import {
 } from "lightweight-charts";
 import type { Candle } from "@/api/endpoints/candles";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 const TZ_OFFSET_SEC = new Date().getTimezoneOffset() * -60;
 
@@ -21,7 +22,7 @@ export function VolumePanel({ candles, mainChart, height: externalHeight }: Volu
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("volume");
 
     useEffect(() => {
         if (!containerRef.current) return;

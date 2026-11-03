@@ -11,6 +11,7 @@ import {
 import { fetchCOT, type COTWeek } from "@/api/endpoints/marketData";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
+import { usePaneCollapsed } from "@/stores/chartLayoutStore";
 
 interface COTPanelProps {
     mainChart: IChartApi | null;
@@ -37,7 +38,7 @@ export function COTPanel({ mainChart: _mainChart, pairSymbol, height: externalHe
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
-    const [collapsed, setCollapsed] = useState(true);
+    const [collapsed, setCollapsed] = usePaneCollapsed("cotReport");
     const [weeks, setWeeks] = useState<COTWeek[]>([]);
     const [hovered, setHovered] = useState<number | null>(null);
 
