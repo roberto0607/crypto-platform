@@ -31,6 +31,7 @@ import { shutdownQueues } from "./queue/queueManager";
 import { runMigrationGuard, getDbVersion } from "./db/migrationGuard";
 import { getWorkerDisableFlags, startOrchestrator, stopOrchestrator } from "./coordination/jobOrchestrator";
 import { initRedis, shutdownRedis } from "./db/redis";
+import { closeAllEventStreams } from "./routes/v1/v1Events";
 import { startEventBus, stopEventBus } from "./events/eventBus";
 import { initRedisQueue } from "./queue/redisQueue";
 import { initEmailTransport } from "./email/emailTransport";
@@ -152,6 +153,11 @@ async function start() {
   // ── Graceful shutdown ──
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "Shutdown signal received, closing server…");
+    // First: end every open SSE stream so browsers see the close now and
+    // reconnect to the next process, instead of sitting on a stream that
+    // stays open (and pinging) through the whole drain below.
+    const endedStreams = closeAllEventStreams();
+    app.log.info({ endedStreams }, "SSE streams closed for shutdown");
     // Before the orchestrator releases every advisory lock (incl. ours).
     await stopLiquidationEngine();
     await stopOrchestrator();

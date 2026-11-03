@@ -55,6 +55,27 @@ interface StreamEntry {
 
 const streamInterestSets = new Map<string, StreamEntry>();
 
+// streamId → ends that stream (cleanup + close the response). Shutdown uses
+// it so clients see the close at once (audit 2026-11 H-01): otherwise
+// app.close() waits on the long-lived streams while their pings keep them
+// looking alive, and browsers sit on a dead feed for minutes.
+const streamEnders = new Map<string, () => void>();
+let shuttingDown = false;
+
+/**
+ * End every open SSE stream and refuse new ones (503) from now on, so a
+ * client retrying during the rest of shutdown waits for the next process
+ * instead of reattaching to this one. Called first thing on SIGTERM and
+ * again by the preClose hook. Returns how many streams it ended.
+ */
+export function closeAllEventStreams(): number {
+  shuttingDown = true;
+  const enders = [...streamEnders.values()];
+  streamEnders.clear();
+  for (const end of enders) end();
+  return enders.length;
+}
+
 /**
  * True when `event` should be written to a stream with the given interest
  * set. Extracted as a pure function so the filtering decision is directly
@@ -122,6 +143,7 @@ export function __getStreamForTest(streamId: string): StreamEntry | undefined {
 /** TEST-ONLY — see __setStreamForTest. Resets all stream state between tests. */
 export function __clearStreamsForTest(): void {
   streamInterestSets.clear();
+  shuttingDown = false;
 }
 
 /**
@@ -147,6 +169,13 @@ export function getStreamSpectatingMatch(streamId: string): string | null {
 }
 
 const v1Events: FastifyPluginAsync = async (app) => {
+  shuttingDown = false; // a fresh app (tests build several per process)
+  // app.close() would otherwise wait on every open stream.
+  app.addHook("preClose", (done) => {
+    closeAllEventStreams();
+    done();
+  });
+
   app.get("/events", {
     schema: {
       tags: ["Events"],
@@ -158,10 +187,18 @@ const v1Events: FastifyPluginAsync = async (app) => {
           description: "SSE event stream (text/event-stream)",
           type: "string",
         },
+        503: {
+          description: "Server is shutting down — retry (another instance will answer)",
+          type: "object",
+          properties: { ok: { type: "boolean" }, error: { type: "string", enum: ["shutting_down"] } },
+        },
       },
     },
     preHandler: requireUser,
   }, async (req, reply) => {
+    if (shuttingDown) {
+      return reply.code(503).send({ ok: false, error: "shutting_down" });
+    }
     const userId = req.user!.id;
 
     // Set SSE headers via Fastify so CORS headers are preserved
@@ -253,8 +290,13 @@ const v1Events: FastifyPluginAsync = async (app) => {
         });
       }
       streamInterestSets.delete(streamId);
+      streamEnders.delete(streamId);
       eventConnectionsActive.dec();
     };
+    streamEnders.set(streamId, () => {
+      cleanup();
+      try { reply.raw.end(); } catch { /* socket already gone */ }
+    });
 
     // Handle client disconnect
     req.raw.on("close", cleanup);
