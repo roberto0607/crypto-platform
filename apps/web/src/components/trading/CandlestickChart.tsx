@@ -73,6 +73,7 @@ import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
+import { formatFundingRate } from "@/lib/fundingFormat";
 
 // VWAP line + legend color. Brightened lavender: VWAP is the key intraday
 // benchmark, so it must read clearly over candle bodies — but it's
@@ -2250,7 +2251,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             >
                                 {fundingRateHourly === null
                                     ? "—"
-                                    : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
+                                    : formatFundingRate(fundingRateHourly)}
                             </span>
                         </div>
                         </>}

@@ -11,6 +11,7 @@ import { fetchFundingRate, type FundingRateEntry } from "@/api/endpoints/marketD
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 import { usePaneCollapsed } from "@/stores/chartLayoutStore";
+import { formatFundingRate } from "@/lib/fundingFormat";
 
 interface FundingRatePanelProps {
     mainChart: IChartApi | null;
@@ -53,7 +54,11 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
                 horzLine: { visible: false },
             },
         });
-        const series = chart.addSeries(HistogramSeries, { priceScaleId: "fr", priceLineVisible: false, lastValueVisible: false });
+        const series = chart.addSeries(HistogramSeries, {
+            priceScaleId: "fr", priceLineVisible: false, lastValueVisible: false,
+            // Values are raw fractions; the axis reads in the same % as the header.
+            priceFormat: { type: "custom", formatter: formatFundingRate, minMove: 0.000001 },
+        });
         series.createPriceLine({ price: 0, color: "#444444", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
         chartRef.current = chart;
         seriesRef.current = series;
@@ -136,7 +141,7 @@ export function FundingRatePanel({ mainChart, pairSymbol, height: externalHeight
     const shownRate = hovered ?? rate;
     const nextTime = entry?.nextFundingTime ?? 0;
     const countdown = nextTime > 0 ? formatCountdown(nextTime - Date.now()) : "--";
-    const rateStr = (shownRate >= 0 ? "+" : "") + (shownRate * 100).toFixed(4) + "%";
+    const rateStr = formatFundingRate(shownRate);
 
     const histLen = entry?.history?.length ?? 0;
 
