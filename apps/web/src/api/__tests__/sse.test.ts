@@ -94,6 +94,41 @@ describe("sse connection lifecycle", () => {
     vi.advanceTimersByTime(GRACE_MS);
     expect(state()).toBe("reconnecting");
   });
+
+  it("a server close throws into the retry path and shows 'reconnecting' at once", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    expect(() => capturedOpts().onclose()).toThrow(/closed by server/);
+    expect(state()).toBe("reconnecting");
+  });
+
+  it("the watchdog stays armed after a close: no stream back in 30s → fresh connect", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    expect(() => capturedOpts().onclose()).toThrow();
+    // The library's retries keep failing; each error must not push the watchdog out.
+    vi.advanceTimersByTime(10_000);
+    capturedOpts().onerror(new Error("network"));
+    expect(fetchEventSourceMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(20_000);
+    expect(fetchEventSourceMock).toHaveBeenCalledTimes(2); // forceReconnectSSE
+    expect(state()).toBe("reconnecting");
+  });
+
+  it("a close before the first connect still retries but keeps the cold-load display", () => {
+    connectSSE("tok", {});
+    expect(() => capturedOpts().onclose()).toThrow();
+    expect(state()).toBe("initializing");
+  });
+
+  it("our own teardown's close does not retry", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    const opts = capturedOpts();
+    disconnectSSE();
+    expect(() => opts.onclose()).not.toThrow();
+    expect(state()).toBe("disconnected");
+  });
 });
 
 describe("sse stream identity across reconnects", () => {

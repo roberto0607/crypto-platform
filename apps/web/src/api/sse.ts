@@ -147,6 +147,23 @@ function clearHeartbeatTimer(): void {
   }
 }
 
+/** Keep the watchdog armed through a drop: if the library's retry loop never
+ *  gets a stream back, the timeout restarts it with a fresh connectSSE. Armed
+ *  once per drop (not re-armed by each retry error), so it fires 30 s after
+ *  the drop at the latest. */
+function armWatchdog(): void {
+  if (!heartbeatTimer) resetHeartbeatTimer();
+}
+
+/** Thrown from onclose so fetch-event-source routes a server close into
+ *  onerror's backoff instead of ending its loop. */
+class StreamClosedError extends Error {
+  constructor() {
+    super("SSE stream closed by server");
+    this.name = "StreamClosedError";
+  }
+}
+
 function clearInitialConnectTimers(): void {
   if (graceTimer) {
     clearTimeout(graceTimer);
@@ -169,6 +186,7 @@ export function connectSSE(
   teardown();
 
   abortController = new AbortController();
+  const ownController = abortController; // this loop's, even after a later teardown
   wasConnected = false;
   lastToken = token;
   lastHandlers = handlers;
@@ -328,22 +346,28 @@ export function connectSSE(
     },
 
     onclose() {
-      clearHeartbeatTimer();
       streamDropped();
-      // A close before the first successful connect must not flash red OFFLINE —
-      // let the cold-load timers govern. After a successful connect, a server
-      // close surfaces "disconnected" (the library then retries with backoff).
-      if (wasConnected) setSseState("disconnected");
+      if (ownController.signal.aborted) return; // our own teardown
+      // The server ended the stream (deploy, restart, proxy idle close). A
+      // normal return here ENDS fetch-event-source's loop for good — it only
+      // retries when onclose throws (→ onerror → backoff). So: show
+      // "reconnecting" now and throw into the retry path. Before a first
+      // successful connect the cold-load timers keep governing the display.
+      if (wasConnected) {
+        setSseState("reconnecting");
+        armWatchdog();
+      }
+      throw new StreamClosedError();
     },
 
     onerror(err) {
-      clearHeartbeatTimer();
       streamDropped();
       const status = (err as Error & { status?: number }).status;
       console.error("[sse] onerror:", { message: (err as Error)?.message, status, reconnectAttempt });
 
       // If aborted intentionally, don't reconnect
       if (abortController?.signal.aborted) {
+        clearHeartbeatTimer();
         clearInitialConnectTimers();
         setSseState("disconnected");
         throw err;
@@ -351,6 +375,7 @@ export function connectSSE(
 
       // If token is gone (logged out), don't reconnect
       if (!useAuthStore.getState().isAuthenticated) {
+        clearHeartbeatTimer();
         clearInitialConnectTimers();
         setSseState("disconnected");
         throw err;
@@ -359,6 +384,7 @@ export function connectSSE(
       // 401 = auth expired. Stop retrying, emit event so UI can redirect.
       if (status === 401) {
         console.warn("[sse] 401 unauthorized — stopping retries");
+        clearHeartbeatTimer();
         clearInitialConnectTimers();
         window.dispatchEvent(new CustomEvent("sse:unauthorized"));
         setSseState("disconnected");
@@ -369,7 +395,11 @@ export function connectSSE(
       // surface "reconnecting" (yellow). On the FIRST connect we instead leave
       // the cold-load display states (initializing/connecting) in place — they
       // fall through to red "disconnected" only after INITIAL_CONNECT_TIMEOUT_MS.
-      if (wasConnected) setSseState("reconnecting");
+      // The watchdog stays armed through the retries (see armWatchdog).
+      if (wasConnected) {
+        setSseState("reconnecting");
+        armWatchdog();
+      }
 
       // Exponential backoff: 1s → 2s → 4s → 8s → 30s (never give up)
       const delay = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
