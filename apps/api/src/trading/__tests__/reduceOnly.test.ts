@@ -192,11 +192,14 @@ describe("the user's close vs a liquidation (10x long past its liq price)", () =
         const release = await holdPairLock();
         const liq = liquidate(u, 1, SIZE);
         await waitBlocked(1);
-        const close = order(u, "SELL", SIZE, { reduceOnly: true });
+        // Expect the rejection now, not after `await liq`: once the lock is
+        // released the close can reject first, and an unobserved rejection in
+        // between leaks as an unhandled error (CI failure on PR #225).
+        const closeRejected = expect(order(u, "SELL", SIZE, { reduceOnly: true })).rejects.toThrow("reduce_only_no_position");
         await waitBlocked(2);
         await release();
         await liq;
-        await expect(close).rejects.toThrow("reduce_only_no_position");
+        await closeRejected;
         const p = await position(u);
         expect(p.base_qty).toBe("0.00000000");
         expect(p.epoch).toBe(1);
@@ -207,11 +210,11 @@ describe("the user's close vs a liquidation (10x long past its liq price)", () =
         const release = await holdPairLock();
         const close = order(u, "SELL", SIZE, { reduceOnly: true });
         await waitBlocked(1);
-        const liq = liquidate(u, 1, SIZE);
+        const liqRejected = expect(liquidate(u, 1, SIZE)).rejects.toMatchObject({ reason: "flat" }); // observed at once (see above)
         await waitBlocked(2);
         await release();
         await close;
-        await expect(liq).rejects.toMatchObject({ reason: "flat" });
+        await liqRejected;
         expect((await position(u)).base_qty).toBe("0.00000000");
         const { rows } = await pool.query(`SELECT 1 FROM liquidations WHERE mode = 'EXECUTED'`);
         expect(rows).toEqual([]);
@@ -237,11 +240,11 @@ describe("the user's close vs match end (ISOLATED match)", () => {
         const release = await holdPairLock();
         const end = completeMatch(matchId);
         await waitBlocked(1);
-        const close = order(alice, "SELL", QTY, { reduceOnly: true, matchId });
+        const closeRejected = expect(order(alice, "SELL", QTY, { reduceOnly: true, matchId })).rejects.toThrow("match_ended"); // observed at once (see above)
         await waitBlocked(2);
         await release();
         await end;
-        await expect(close).rejects.toThrow("match_ended");
+        await closeRejected;
         expect((await position(alice, matchId)).base_qty).toBe("0.00000000");
         await noNegativeUsd();
     });

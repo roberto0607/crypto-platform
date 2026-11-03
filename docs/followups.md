@@ -1074,7 +1074,7 @@ Leverage-on only, so the flag-off parity goldens are unaffected.
 
 ---
 
-## 🔵 LOW — `reduceOnly.test.ts` flaky unhandled `match_ended` rejection (test-only)
+## ✅ RESOLVED (PR #225) — `reduceOnly.test.ts` flaky unhandled `match_ended` rejection (test-only)
 
 **Discovered:** 2026-11-03, full API suite for the audit PR 1 (wrong numbers + SSE reconnect).
 
@@ -1093,9 +1093,16 @@ runs of the file alone; 0 of 2 on the PR branch. Intermittent, so it looks like
 an order placement that outlives its test (a match ends while an un-awaited
 placement is still in flight) rather than a product bug.
 
-**Scope of fix:** find the placement the test doesn't await (or the match-end
-path it races) and await/expect the `match_ended` rejection explicitly, so the
-suite exits 0 deterministically.
+**Root cause:** the three lock-race tests ("liquidation first", "close first"
+vs a liquidation, "match end first") created the order/liquidation promise
+that is EXPECTED to reject, then awaited the other side before attaching
+`expect(...).rejects`. Once the pair lock is released the expected rejection
+can land first; for those few ticks it has no handler, so Node reports it
+unhandled even though the later assertion passes. It failed CI on PR #225.
+
+**Fix (PR #225):** attach `expect(p).rejects…` the moment the promise is
+created and await that assertion at the end. Proven with the race forced
+(200 ms pause after the lock release): 3 unhandled errors before, 0 after.
 
 ---
 
