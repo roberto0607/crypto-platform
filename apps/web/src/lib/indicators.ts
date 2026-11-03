@@ -12,35 +12,43 @@ export interface Point {
   value: number;
 }
 
+const DAY_SEC = 86_400;
+const WEEK_SEC = 7 * DAY_SEC;
+/** UTC weeks start Monday 00:00 (1970-01-05 = epoch + 4 days), like the 1w candles. */
+const WEEK_ANCHOR_SEC = 4 * DAY_SEC;
+
+export type KeyLevelPeriod = "day" | "week";
+
 /**
- * Previous Day High / Low
- * Scans for the last completed day boundary and returns its high/low
+ * Previous-period high/low (PDH/PDL, or the previous week's on 1w): the last
+ * FULLY closed UTC day/week before the one the forming bar is in.
+ *
+ * - `tzOffsetSec`: the display shift baked into `candle.time` (the chart adds
+ *   the viewer's UTC offset). It's subtracted before bucketing, so levels are
+ *   the same in every timezone (audit 2026-11 B-02).
+ * - "Now" is the forming bar's start = last closed candle + `candleSec`, not
+ *   the clock: right after midnight yesterday stays the previous day, on 1d it
+ *   is yesterday's candle (not the day before), and replay works (B-03).
  */
-export function prevDayHighLow(
+export function prevPeriodHighLow(
   candles: Candle[],
+  opts: { candleSec: number; period: KeyLevelPeriod; tzOffsetSec?: number },
 ): { pdh: number; pdl: number } | null {
-  if (candles.length === 0) return null;
+  const last = candles[candles.length - 1];
+  if (!last) return null;
+  const tz = opts.tzOffsetSec ?? 0;
+  const [len, anchor] = opts.period === "week" ? [WEEK_SEC, WEEK_ANCHOR_SEC] : [DAY_SEC, 0];
+  const bucket = (utcSec: number) => Math.floor((utcSec - anchor) / len);
+  const prev = bucket(last.time - tz + opts.candleSec) - 1;
 
-  const days = new Map<number, { high: number; low: number }>();
+  let pdh = -Infinity;
+  let pdl = Infinity;
   for (const c of candles) {
-    const day = Math.floor(c.time / 86400);
-    const existing = days.get(day);
-    if (!existing) {
-      days.set(day, { high: c.high, low: c.low });
-    } else {
-      existing.high = Math.max(existing.high, c.high);
-      existing.low = Math.min(existing.low, c.low);
-    }
+    if (bucket(c.time - tz) !== prev) continue;
+    if (c.high > pdh) pdh = c.high;
+    if (c.low < pdl) pdl = c.low;
   }
-
-  const sortedDays = [...days.keys()].sort((a, b) => a - b);
-  if (sortedDays.length < 2) return null;
-
-  const prevDayKey = sortedDays[sortedDays.length - 2];
-  if (prevDayKey === undefined) return null;
-  const prevDay = days.get(prevDayKey);
-  if (!prevDay) return null;
-  return { pdh: prevDay.high, pdl: prevDay.low };
+  return pdh === -Infinity ? null : { pdh, pdl };
 }
 
 /**
@@ -136,9 +144,10 @@ export function detectEMACrosses(ema50: Point[], ema200: Point[]): EMACross[] {
 }
 
 /**
- * VWAP — resets at each UTC midnight boundary
+ * VWAP — resets at each UTC midnight boundary. `tzOffsetSec` = the display
+ * shift baked into `candle.time` (see prevPeriodHighLow); output times keep it.
  */
-export function computeVWAP(candles: Candle[]): Point[] {
+export function computeVWAP(candles: Candle[], tzOffsetSec = 0): Point[] {
   if (candles.length === 0) return [];
   const result: Point[] = [];
   let cumPV = 0;
@@ -146,7 +155,7 @@ export function computeVWAP(candles: Candle[]): Point[] {
   let currentDay = -1;
 
   for (const c of candles) {
-    const day = Math.floor(c.time / 86400);
+    const day = Math.floor((c.time - tzOffsetSec) / DAY_SEC);
     if (day !== currentDay) {
       cumPV = 0;
       cumVol = 0;

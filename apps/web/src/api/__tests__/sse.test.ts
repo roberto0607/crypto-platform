@@ -8,7 +8,7 @@ vi.mock("@microsoft/fetch-event-source", () => ({
   EventStreamContentType: "text/event-stream",
 }));
 
-import { connectSSE, disconnectSSE, forceReconnectSSE, getStreamId, waitForStreamId, onStreamReady, __resetSseForTest } from "@/api/sse";
+import { connectSSE, disconnectSSE, forceReconnectSSE, getStreamId, waitForStreamId, onStreamReady, __resetSseForTest, backoffDelay, BACKOFF_MAX_MS } from "@/api/sse";
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -93,6 +93,41 @@ describe("sse connection lifecycle", () => {
     // No grace→connecting sequence on a re-established session.
     vi.advanceTimersByTime(GRACE_MS);
     expect(state()).toBe("reconnecting");
+  });
+
+  it("a server close throws into the retry path and shows 'reconnecting' at once", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    expect(() => capturedOpts().onclose()).toThrow(/closed by server/);
+    expect(state()).toBe("reconnecting");
+  });
+
+  it("the watchdog stays armed after a close: no stream back in 30s → fresh connect", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    expect(() => capturedOpts().onclose()).toThrow();
+    // The library's retries keep failing; each error must not push the watchdog out.
+    vi.advanceTimersByTime(10_000);
+    capturedOpts().onerror(new Error("network"));
+    expect(fetchEventSourceMock).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(20_000);
+    expect(fetchEventSourceMock).toHaveBeenCalledTimes(2); // forceReconnectSSE
+    expect(state()).toBe("reconnecting");
+  });
+
+  it("a close before the first connect still retries but keeps the cold-load display", () => {
+    connectSSE("tok", {});
+    expect(() => capturedOpts().onclose()).toThrow();
+    expect(state()).toBe("initializing");
+  });
+
+  it("our own teardown's close does not retry", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    const opts = capturedOpts();
+    disconnectSSE();
+    expect(() => opts.onclose()).not.toThrow();
+    expect(state()).toBe("disconnected");
   });
 });
 
@@ -205,5 +240,35 @@ describe("event routing", () => {
     const envelope = { type: "position.liquidated", ts: 1, userId: "u1", data: { pairId: "p1", side: "LONG", leverage: "10.00", fillPrice: "75060", returnedEquity: "1.94" } };
     capturedOpts().onmessage({ event: "position.liquidated", data: JSON.stringify(envelope) });
     expect(onPositionLiquidated).toHaveBeenCalledWith(envelope);
+  });
+});
+
+describe("reconnect backoff: 10 s cap with jitter", () => {
+  beforeEach(() => {
+    fetchEventSourceMock.mockReset();
+    useAuthStore.setState({ isAuthenticated: true, accessToken: "tok" });
+  });
+  afterEach(() => disconnectSSE());
+
+  it("steps 1 → 2 → 4 → 8 → 10 s (no jitter at the midpoint) and stays at 10 s", () => {
+    expect([0, 1, 2, 3, 4, 5, 9].map((a) => backoffDelay(a, () => 0.5)))
+      .toEqual([1000, 2000, 4000, 8000, 10000, 10000, 10000]);
+  });
+
+  it("jitters ±20% and never exceeds the 10 s cap", () => {
+    expect([0, 1, 2, 3, 4].map((a) => backoffDelay(a, () => 0))).toEqual([800, 1600, 3200, 6400, 8000]);
+    expect([0, 1, 2, 3, 4].map((a) => backoffDelay(a, () => 1))).toEqual([1200, 2400, 4800, 9600, 10000]);
+    expect(BACKOFF_MAX_MS).toBe(10_000);
+  });
+
+  it("onerror's delays follow the schedule, jittered, capped", async () => {
+    connectSSE("tok", {});
+    await capturedOpts().onopen(okResponse());
+    const delays = Array.from({ length: 8 }, () => capturedOpts().onerror(new Error("network")) as number);
+    const steps = [1000, 2000, 4000, 8000, 10000, 10000, 10000, 10000];
+    delays.forEach((d, i) => {
+      expect(d).toBeGreaterThanOrEqual(steps[i]! * 0.8);
+      expect(d).toBeLessThanOrEqual(Math.min(steps[i]! * 1.2, 10_000));
+    });
   });
 });

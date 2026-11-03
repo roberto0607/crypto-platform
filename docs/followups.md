@@ -1071,3 +1071,56 @@ FEE, LIQUIDATION_SHORTFALL) with the position's epoch BEFORE the fill
 (`state.epoch`) and only the open leg's with `r.next.epoch`, plus a test that
 flips and checks `position_fees_paid` equals the open leg's fee alone.
 Leverage-on only, so the flag-off parity goldens are unaffected.
+
+---
+
+## ✅ RESOLVED (PR #225) — `reduceOnly.test.ts` flaky unhandled `match_ended` rejection (test-only)
+
+**Discovered:** 2026-11-03, full API suite for the audit PR 1 (wrong numbers + SSE reconnect).
+
+**Symptom:** the file's 21 tests pass, but Vitest reports one unhandled
+rejection and the run exits 1:
+
+```
+Error: match_ended
+ ❯ placeOrderInternal src/trading/matchingEngine.ts:259
+ ❯ src/trading/phase6OrderService.ts:224 → txWithEvents → placeOrderWithSnapshot
+This error originated in "src/trading/__tests__/reduceOnly.test.ts"
+```
+
+**Pre-existing:** reproduced on untouched `origin/main` (`037eea9`) in 1 of 2
+runs of the file alone; 0 of 2 on the PR branch. Intermittent, so it looks like
+an order placement that outlives its test (a match ends while an un-awaited
+placement is still in flight) rather than a product bug.
+
+**Root cause:** the three lock-race tests ("liquidation first", "close first"
+vs a liquidation, "match end first") created the order/liquidation promise
+that is EXPECTED to reject, then awaited the other side before attaching
+`expect(...).rejects`. Once the pair lock is released the expected rejection
+can land first; for those few ticks it has no handler, so Node reports it
+unhandled even though the later assertion passes. It failed CI on PR #225.
+
+**Fix (PR #225):** attach `expect(p).rejects…` the moment the promise is
+created and await that assertion at the end. Proven with the race forced
+(200 ms pause after the lock release): 3 unhandled errors before, 0 after.
+
+---
+
+## 🔵 LOW — Login lockout test fails when `apps/api/.env` carries dev rate-limit overrides (test-env only)
+
+**Discovered:** 2026-11-03, same run.
+
+**Symptom:** `src/routes/__tests__/clientIpRateLimit.test.ts` › "blocks the
+visitor who failed, not everyone behind the same edge" fails with
+`expected 401 to be 429` — on untouched `origin/main` too.
+
+**Cause:** the test relies on the code defaults (`MAX_LOGIN_ATTEMPTS_PER_EMAIL=5`,
+`MAX_LOGIN_ATTEMPTS_PER_IP=20`, rate limiting on), but the local dev `.env`
+sets `MAX_LOGIN_ATTEMPTS_PER_EMAIL=999`, `MAX_LOGIN_ATTEMPTS_PER_IP=999` and
+`DISABLE_RATE_LIMIT=true`, and dotenv loads it into the test process. The suite
+passes with those three set to the defaults in the shell (env vars win over
+dotenv).
+
+**Scope of fix:** make the test independent of the developer's `.env`: have
+the test setup (`src/test/setupEnv.ts`) pin those three to their defaults, or
+have the test build its app with explicit limits instead of reading `config`.

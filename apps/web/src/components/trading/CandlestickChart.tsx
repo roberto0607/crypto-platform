@@ -23,7 +23,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import {
-    prevDayHighLow,
+    prevPeriodHighLow,
     computeEMA,
     computeVWAP,
     computeBollingerBands,
@@ -38,7 +38,8 @@ import {
 } from "@/lib/indicators";
 import { useToast } from "@/components/ToastProvider";
 import { LiquidityZonesPrimitive, formatLiquidity, parseLiquidity } from "@/lib/liquidityZonesPrimitive";
-import { VPVRPrimitive, type VPVRCandle } from "@/lib/vpvrPrimitive";
+import { VPVRPrimitive } from "@/lib/vpvrPrimitive";
+import { useVpvrProfile } from "@/hooks/useVpvrProfile";
 import { OrderbookHeatmapPrimitive, type HeatmapLevel } from "@/lib/orderbookHeatmapPrimitive";
 import { FootprintPrimitive } from "@/lib/footprintPrimitive";
 import { useFootprint } from "@/lib/useFootprint";
@@ -73,6 +74,7 @@ import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { PressureCell } from "./PressureCell";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
+import { formatFundingRate } from "@/lib/fundingFormat";
 
 // VWAP line + legend color. Brightened lavender: VWAP is the key intraday
 // benchmark, so it must read clearly over candle bodies — but it's
@@ -494,8 +496,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         const y = series.priceToCoordinate(p.price);
         setDeleteIconPos(x != null && y != null ? { x, y } : null);
     }, []);
-    const vpvrDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const vpvrWeeklyLenRef = useRef(0);
+    // Bumped whenever a new candle history lands (pair/timeframe switch).
+    const [historyVersion, setHistoryVersion] = useState(0);
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
     const keyLevelsRef = useRef<{ pdh: number; pdl: number } | null>(null);
@@ -1202,17 +1204,17 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         // Lines + zone fills drawn by PdhPdlZonePrimitive; labels are DOM overlays.
         if (indicatorConfig.keyLevels) {
             candleSeries.applyOptions({ lastValueVisible: false, priceLineVisible: false });
-            const levels = prevDayHighLow(indCandles);
+            // Previous UTC day (previous week on 1w) — never the viewer's local day.
+            // timeframeRef, not the prop: renderOverlays must not re-run (on the
+            // old candles) when the timeframe changes — see the cross alert below.
+            const levelsTf = timeframeRef.current;
+            const levels = prevPeriodHighLow(indCandles, {
+                candleSec: TIMEFRAME_SECONDS[levelsTf],
+                period: levelsTf === "1w" ? "week" : "day",
+                tzOffsetSec: TZ_OFFSET_SEC,
+            });
             if (levels) {
                 keyLevelsRef.current = levels;
-                // Debug: log exact PDH/PDL values and source candle highs/lows
-                const days = new Map<number, { high: number; low: number }>();
-                for (const ic of indCandles) {
-                    const day = Math.floor(ic.time / 86400);
-                    const ex = days.get(day);
-                    if (!ex) days.set(day, { high: ic.high, low: ic.low });
-                    else { ex.high = Math.max(ex.high, ic.high); ex.low = Math.min(ex.low, ic.low); }
-                }
                 const lastCandle = candles[candles.length - 1];
                 const price = lastCandle ? parseFloat(lastCandle.close) : 0;
 
@@ -1365,7 +1367,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 if (!vwapSeriesRef.current) {
                     vwapSeriesRef.current = chart.addSeries(LineSeries, { color: VWAP_COLOR, lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
                 }
-                const vwapPts = computeVWAP(indCandles);
+                const vwapPts = computeVWAP(indCandles, TZ_OFFSET_SEC);
                 vwapSeriesRef.current.setData(toLineData(vwapPts));
                 // Latest VWAP feeds the legend chip. Keep it in a ref too so the
                 // per-tick bias recompute can read it without a stale closure.
@@ -1496,6 +1498,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             historyReadyRef.current = true;
 
             renderOverlaysRef.current(closed);
+            setHistoryVersion((v) => v + 1);
 
             // Fit the viewport on first load and on every pair/timeframe switch.
             // Show a recent window (~120 bars) rather
@@ -1609,99 +1612,11 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         };
     }, [selectedPairId, timeframe]);
 
-    // VPVR — recompute on visible range change (debounced) or weekly candle data
-    useEffect(() => {
-        const chart = chartRef.current;
-        const vpvr = vpvrPrimitiveRef.current;
-        if (!chart || !vpvr) return;
-
-        if (!indicatorConfig.vpvr) {
-            vpvr.update([]);
-            return;
-        }
-
-        const parseCandle = (c: { high: string; low: string; volume: string }): VPVRCandle =>
-            ({ high: parseFloat(c.high), low: parseFloat(c.low), volume: parseFloat(c.volume) });
-
-        // Weekly boundary: most recent Sunday 22:00 UTC
-        const getWeeklyOpen = (): Date => {
-            const now = new Date();
-            const day = now.getUTCDay();
-            const hour = now.getUTCHours();
-            let daysSinceSunday = day;
-            if (day === 0 && hour < 22) daysSinceSunday = 7;
-            const d = new Date(now);
-            d.setUTCDate(now.getUTCDate() - daysSinceSunday);
-            d.setUTCHours(22, 0, 0, 0);
-            return d;
-        };
-
-        const updateVisibleVPVR = () => {
-            const range = chart.timeScale().getVisibleLogicalRange();
-            if (!range || !rawCandlesRef.current.length) return;
-            const from = Math.max(0, Math.floor(range.from));
-            const to = Math.min(rawCandlesRef.current.length - 1, Math.ceil(range.to));
-            const visible: VPVRCandle[] = [];
-            for (let i = from; i <= to; i++) {
-                const c = rawCandlesRef.current[i];
-                if (c) visible.push(parseCandle(c));
-            }
-            vpvr.update(visible, "visible");
-        };
-
-        const updateWeeklyVPVR = () => {
-            if (!rawCandlesRef.current.length) return;
-            const weeklyOpen = getWeeklyOpen();
-            const weekly: VPVRCandle[] = [];
-            for (const c of rawCandlesRef.current) {
-                if (new Date(c.ts) >= weeklyOpen) weekly.push(parseCandle(c));
-            }
-            vpvr.update(weekly, "weekly");
-            vpvrWeeklyLenRef.current = rawCandlesRef.current.length;
-        };
-
-        // Daily boundary: current UTC midnight
-        const getDailyOpen = (): Date => {
-            const now = new Date();
-            const d = new Date(now);
-            d.setUTCHours(0, 0, 0, 0);
-            return d;
-        };
-
-        const updateDailyVPVR = () => {
-            if (!rawCandlesRef.current.length) return;
-            const dailyOpen = getDailyOpen();
-            const daily: VPVRCandle[] = [];
-            for (const c of rawCandlesRef.current) {
-                if (new Date(c.ts) >= dailyOpen) daily.push(parseCandle(c));
-            }
-            vpvr.update(daily, "daily");
-            vpvrWeeklyLenRef.current = rawCandlesRef.current.length;
-        };
-
-        if (vpvrMode === "visible") {
-            updateVisibleVPVR();
-            const handler = () => {
-                if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
-                vpvrDebounceRef.current = setTimeout(updateVisibleVPVR, 50);
-            };
-            chart.timeScale().subscribeVisibleLogicalRangeChange(handler);
-            return () => {
-                chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
-                if (vpvrDebounceRef.current) clearTimeout(vpvrDebounceRef.current);
-            };
-        } else {
-            // Fixed mode (weekly or daily): compute once, recalc only on new candle
-            const updateFixed = vpvrMode === "weekly" ? updateWeeklyVPVR : updateDailyVPVR;
-            updateFixed();
-            const checkNewCandle = setInterval(() => {
-                if (rawCandlesRef.current.length !== vpvrWeeklyLenRef.current) {
-                    updateFixed();
-                }
-            }, 5000);
-            return () => clearInterval(checkNewCandle);
-        }
-    }, [indicatorConfig.vpvr, vpvrMode]);
+    // VPVR — recompute on visible-range change, and on every new history (pair/TF switch).
+    useVpvrProfile({
+        chartRef, vpvrRef: vpvrPrimitiveRef, rawCandlesRef,
+        enabled: indicatorConfig.vpvr, mode: vpvrMode, historyVersion,
+    });
 
     // Order book heatmap — update from live order book data
     useEffect(() => {
@@ -2250,7 +2165,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             >
                                 {fundingRateHourly === null
                                     ? "—"
-                                    : `${fundingRateHourly > 0 ? "+" : ""}${(fundingRateHourly * 100).toFixed(4)}%`}
+                                    : formatFundingRate(fundingRateHourly)}
                             </span>
                         </div>
                         </>}
@@ -2316,7 +2231,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                                         color: "unset",
                                     }}>
                                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                                            <span style={{ color: pdhR, WebkitTextFillColor: pdhR, fontWeight: 900, fontSize: 11, letterSpacing: 2 }}>PDH</span>
+                                            <span style={{ color: pdhR, WebkitTextFillColor: pdhR, fontWeight: 900, fontSize: 11, letterSpacing: 2 }}>{timeframe === "1w" ? "PWH" : "PDH"}</span>
                                             <span style={{ background: pdhBadgeBg, color: pdhR, WebkitTextFillColor: pdhR, fontSize: 7, padding: "1px 5px", borderRadius: 3, letterSpacing: 1 }}>RESISTANCE</span>
                                         </div>
                                         <div style={{ color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: 700, fontSize: 13, letterSpacing: 0.3, opacity: 1, textShadow: "none" }}>{fmtP(levels.pdh)}</div>
@@ -2366,7 +2281,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                                         color: "unset",
                                     }}>
                                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                                            <span style={{ color: pdlG, WebkitTextFillColor: pdlG, fontWeight: 900, fontSize: 11, letterSpacing: 2 }}>PDL</span>
+                                            <span style={{ color: pdlG, WebkitTextFillColor: pdlG, fontWeight: 900, fontSize: 11, letterSpacing: 2 }}>{timeframe === "1w" ? "PWL" : "PDL"}</span>
                                             <span style={{ background: pdlBadgeBg, color: pdlG, WebkitTextFillColor: pdlG, fontSize: 7, padding: "1px 5px", borderRadius: 3, letterSpacing: 1 }}>SUPPORT</span>
                                         </div>
                                         <div style={{ color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: 700, fontSize: 13, letterSpacing: 0.3, opacity: 1, textShadow: "none" }}>{fmtP(levels.pdl)}</div>
@@ -2404,7 +2319,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             color: pdhProximity === "pdh" ? "#ff4d4d" : "#00e676",
                             textTransform: "uppercase", whiteSpace: "nowrap", fontWeight: 600,
                         }}>
-                            APPROACHING {pdhProximity === "pdh" ? "PDH" : "PDL"}
+                            APPROACHING {timeframe === "1w" ? "PW" : "PD"}{pdhProximity === "pdh" ? "H" : "L"}
                         </span>
                     </div>
                 )}

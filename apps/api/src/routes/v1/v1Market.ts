@@ -73,6 +73,14 @@ async function fetchWithTimeout(url: string, timeoutMs = FETCH_TIMEOUT): Promise
 }
 
 // ── Gate.io: Funding rate history ──
+/** Gate.io history → chart points. `value` is the RAW fraction (0.0001 =
+ *  0.01%), the same unit as `rate`; clients format it (web lib/fundingFormat). */
+export function parseGateFundingHistory(histData: Array<{ r: string; t: number }>): Array<{ time: number; value: number }> {
+    return histData
+        .map((d) => ({ time: d.t, value: parseFloat(d.r) }))
+        .reverse(); // oldest first for charting
+}
+
 async function fetchFundingHistory(contract: string): Promise<{ rate: number; nextFundingTime: number; history: Array<{ time: number; value: number }> }> {
     try {
         // Fetch history (200 most recent 8h periods)
@@ -82,9 +90,7 @@ async function fetchFundingHistory(contract: string): Promise<{ rate: number; ne
         if (!histRes.ok) throw new Error(`Gate.io funding history ${histRes.status}`);
         const histData = await histRes.json() as Array<{ r: string; t: number }>;
 
-        const history = histData
-            .map((d) => ({ time: d.t, value: parseFloat(d.r) * 100 }))
-            .reverse(); // oldest first for charting
+        const history = parseGateFundingHistory(histData);
 
         // Fetch current contract info for next funding time
         const infoRes = await fetchWithTimeout(
