@@ -130,15 +130,14 @@ BUY_STATUS=$(echo "$BUY" | python3 -c "import sys,json; print(json.load(sys.stdi
 BUY_FILLS=$(echo "$BUY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['fills']))")
 check "Small MARKET BUY filled" "$([[ "$BUY_STATUS" == "FILLED" ]] && echo true || echo false)" "status=$BUY_STATUS fills=$BUY_FILLS"
 
-echo "=== 9. Over-liquidity MARKET BUY → rejected (insufficient_liquidity) ==="
-# qty=1.5 → notional=75000 (within 100K risk limit, but > 50K liquidity cap)
+echo "=== 9. MARKET BUY above the max order notional → rejected (order_too_large) ==="
 LARGE_HTTP=$(curl -s -o /tmp/sim-large-resp.json -w "%{http_code}" -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"1.5\"}")
+  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"99999\"}")
 LARGE_CODE=$(cat /tmp/sim-large-resp.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error', d.get('code','')))" 2>/dev/null || echo "")
-check "Over-liquidity MARKET BUY rejected 400" "$([[ "$LARGE_HTTP" == "400" ]] && echo true || echo false)" "http=$LARGE_HTTP code=$LARGE_CODE"
-check "Error code is insufficient_liquidity" "$([[ "$LARGE_CODE" == "insufficient_liquidity" ]] && echo true || echo false)"
+check "Oversized MARKET BUY rejected 400" "$([[ "$LARGE_HTTP" == "400" ]] && echo true || echo false)" "http=$LARGE_HTTP code=$LARGE_CODE"
+check "Error code is order_too_large" "$([[ "$LARGE_CODE" == "order_too_large" ]] && echo true || echo false)"
 
 echo "=== 10. Verify no order row for rejected case ==="
 ORDER_COUNT_BEFORE=$(docker exec cp_postgres psql -U cp -d cp -t -c \

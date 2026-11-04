@@ -152,7 +152,7 @@ export async function initRedisQueue(): Promise<void> {
       clearTimeout(entry.timer);
 
       if (parsed.error) {
-        entry.reject(new AppError(parsed.error.code ?? "queue_processing_error"));
+        entry.reject(new AppError(parsed.error.code ?? "queue_processing_error", parsed.error.details));
       } else {
         entry.resolve(parsed.result);
       }
@@ -429,6 +429,7 @@ async function processJob(
         // the in-memory path's route handler does (toAppError), or every
         // engine rejection reaches the client as a 500 queue_processing_error.
         code: toAppError(err)?.code ?? "queue_processing_error",
+        details: toAppError(err)?.details,
       },
     }));
   }

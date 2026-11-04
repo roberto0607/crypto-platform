@@ -114,7 +114,8 @@ export function crc32(s: string): number {
     return (c ^ 0xffffffff) >>> 0;
 }
 
-type Level = { price: string; qty: string };
+type RawText = { price: string; qty: string };
+type Level = RawText & { numeric: BookLevel };
 
 /**
  * One symbol's book, truncated to the subscribed depth after every message
@@ -151,26 +152,42 @@ export class KrakenBook {
 
     /** The numeric view stored in orderFlowFeatures.bookSnapshots for the collar and other readers. */
     toLevels(): { bids: BookLevel[]; asks: BookLevel[] } {
-        const num = (l: Level): BookLevel => ({ price: Number(l.price), qty: Number(l.qty) });
-        return { bids: this.bids.map(num), asks: this.asks.map(num) };
+        const numeric = (l: Level): BookLevel => l.numeric;
+        return { bids: this.bids.map(numeric), asks: this.asks.map(numeric) };
     }
 
     /** Top level per side as exact text — for mismatch logs. */
-    top(): { bid: Level | null; ask: Level | null } {
-        return { bid: this.bids[0] ?? null, ask: this.asks[0] ?? null };
+    top(): { bid: RawText | null; ask: RawText | null } {
+        const text = (l: Level | undefined) => (l ? { price: l.price, qty: l.qty } : null);
+        return { bid: text(this.bids[0]), ask: text(this.asks[0]) };
     }
 
-    private merge(current: Level[], changes: readonly RawBookLevel[], descending: boolean): Level[] {
-        const byPrice = new Map(current.map((l) => [l.price, l.qty]));
+    /**
+     * Applies changes in place, by binary search: an update touches a few
+     * levels of a book of hundreds, and this runs on every message.
+     */
+    private merge(levels: Level[], changes: readonly RawBookLevel[], descending: boolean): Level[] {
+        const sign = descending ? -1 : 1;
         for (const c of changes) {
             const price = canonicalDecimal(c.price);
             const qty = canonicalDecimal(c.qty);
-            if (qty === "0") byPrice.delete(price);
-            else byPrice.set(price, qty);
+            let lo = 0;
+            let hi = levels.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >>> 1;
+                if (sign * compareDecimal(levels[mid]!.price, price) < 0) lo = mid + 1;
+                else hi = mid;
+            }
+            const exists = lo < levels.length && levels[lo]!.price === price;
+            if (qty === "0") {
+                if (exists) levels.splice(lo, 1);
+                continue;
+            }
+            const level: Level = { price, qty, numeric: { price: Number(price), qty: Number(qty) } };
+            if (exists) levels[lo] = level;
+            else levels.splice(lo, 0, level);
         }
-        const sign = descending ? -1 : 1;
-        return Array.from(byPrice, ([price, qty]) => ({ price, qty }))
-            .sort((a, b) => sign * compareDecimal(a.price, b.price))
-            .slice(0, this.depth);
+        if (levels.length > this.depth) levels.length = this.depth;
+        return levels;
     }
 }

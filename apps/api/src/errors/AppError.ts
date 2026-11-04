@@ -13,7 +13,7 @@ const ERROR_STATUS: Record<string, number> = {
   insufficient_balance: 400,
   no_price_available: 400,
   order_not_cancelable: 400,
-  insufficient_liquidity: 400,
+  order_too_large: 400,
   trigger_not_cancelable: 400,
   trigger_not_editable: 400,
   alert_not_cancelable: 400,
@@ -120,6 +120,7 @@ const ERROR_STATUS: Record<string, number> = {
   read_only_mode: 503,
   agent_actions_disabled: 503,
   stale_price_source: 503,
+  book_stale_for_size: 503,
 };
 
 export class AppError extends Error {

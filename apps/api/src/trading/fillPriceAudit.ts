@@ -6,8 +6,8 @@
  *
  * Since B1 (2026-10) a MARKET order sweeps the internal resting book only
  * within the collar of the real Kraken touch, then system-fills any remainder
- * AT that touch — the fresh Kraken book, else the fresh Kraken ticker
- * bid/ask (priceCollar.getMarketReference). `reference*` records which one
+ * from that touch (walking the book past the touch band, marketFillPrice.ts) —
+ * the fresh Kraken book, else the fresh Kraken ticker bid/ask (priceCollar.getMarketReference). `reference*` records which one
  * priced the fill; the displayed book (bookSnapshots, served by
  * /market/book/:symbol) is recorded alongside so any gap between what the
  * user saw and what they got is attributable after the fact.
@@ -51,6 +51,8 @@ export interface FillPriceAudit {
     bookAgeMs: number | null;
     /** Signed: positive = filled WORSE than the displayed touch (ask for BUY, bid for SELL). */
     deviationBps: number | null;
+    /** The part of deviationBps that is the intended walk past the touch band. */
+    walkBps: number;
     offBook: "better" | "worse" | null;
 }
 
@@ -59,10 +61,12 @@ export function buildFillPriceAudit(input: {
     snapshot: Snapshot;
     reference: CollarReference | null;
     fills: AuditFill[];
+    /** What the system fill paid past the touch, on purpose: not off-book. */
+    systemFillSlippageBps?: number;
     book: AuditBook | undefined;
     now: number;
 }): FillPriceAudit {
-    const { side, snapshot, reference, fills, book, now } = input;
+    const { side, snapshot, reference, fills, book, now, systemFillSlippageBps = 0 } = input;
 
     let notional = 0;
     let qtySum = 0;
@@ -82,9 +86,13 @@ export function buildFillPriceAudit(input: {
         const raw = ((avgFillPrice - touch) / touch) * 10_000;
         deviationBps = Math.round((side === "BUY" ? raw : -raw) * 100) / 100;
     }
-    const offBook = deviationBps === null || Math.abs(deviationBps) <= OFF_BOOK_THRESHOLD_BPS
+    // The share of the average that is the intended walk.
+    const systemQty = fills.reduce((sum, f) => sum + (f.is_system_fill ? Number(f.qty) : 0), 0);
+    const walkBps = qtySum > 0 ? systemFillSlippageBps * (systemQty / qtySum) : 0;
+    const unexplainedBps = deviationBps === null ? null : deviationBps - walkBps;
+    const offBook = unexplainedBps === null || Math.abs(unexplainedBps) <= OFF_BOOK_THRESHOLD_BPS
         ? null
-        : deviationBps > 0 ? "worse" : "better";
+        : unexplainedBps > 0 ? "worse" : "better";
 
     const snapTs = Date.parse(snapshot.ts);
 
@@ -105,6 +113,7 @@ export function buildFillPriceAudit(input: {
         bookBestAsk,
         bookAgeMs: book ? now - book.ts : null,
         deviationBps,
+        walkBps,
         offBook,
     };
 }

@@ -158,12 +158,14 @@ function emptyFeatures(): Omit<OrderFlowFeatures, "ts"> {
 // In-memory caches (written by krakenWs, read by API + snapshot job)
 // ---------------------------------------------------------------------------
 
-/** Raw book snapshots: pairId → {bids, asks, ts} */
-export const bookSnapshots = new Map<string, {
-    bids: BookLevel[];
-    asks: BookLevel[];
-    ts: number;
-}>();
+export type BookDepth = { bids: BookLevel[]; asks: BookLevel[] };
+
+/**
+ * Raw book snapshots: pairId → {bids, asks, ts}. bids/asks are the top of the
+ * book every reader shows or derives features from; `depth` is the whole
+ * subscribed book, for pricing a large fill (priceCollar → marketFillPrice).
+ */
+export const bookSnapshots = new Map<string, BookDepth & { ts: number; depth?: BookDepth }>();
 
 /** Computed order flow features: pairId → features */
 export const orderFlowCache = new Map<string, OrderFlowFeatures>();

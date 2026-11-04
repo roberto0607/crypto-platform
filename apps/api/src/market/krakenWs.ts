@@ -304,7 +304,11 @@ function handleTradeMessage(data: any[]): void {
     }
 }
 
-const BOOK_DEPTH = 25;
+// The whole subscribed book, for pricing a large fill (trading/marketFillPrice.ts).
+// Kraken's checksum covers only the top 10 of it, at any depth.
+const BOOK_DEPTH = 500;
+// What everything else reads: the displayed book, the SSE wire, order-flow features.
+const TOP_OF_BOOK_LEVELS = 25;
 
 // ── Book checksum ──
 // Every book message is checked against Kraken's CRC32 (krakenBook.ts).
@@ -340,9 +344,11 @@ function handleInstrumentMessage(data: any): void {
 }
 
 function publishBook(pairId: string, book: KrakenBook): void {
-    const { bids, asks } = book.toLevels();
+    const depth = book.toLevels();
+    const bids = depth.bids.slice(0, TOP_OF_BOOK_LEVELS);
+    const asks = depth.asks.slice(0, TOP_OF_BOOK_LEVELS);
     const ts = Date.now();
-    bookSnapshots.set(pairId, { bids, asks, ts });
+    bookSnapshots.set(pairId, { bids, asks, ts, depth });
     const features = computeOrderFlowFeatures(bids, asks);
     orderFlowCache.set(pairId, { ...features, ts });
     scheduleBookPush(pairId, ts);

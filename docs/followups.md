@@ -1124,3 +1124,33 @@ dotenv).
 **Scope of fix:** make the test independent of the developer's `.env`: have
 the test setup (`src/test/setupEnv.ts`) pin those three to their defaults, or
 have the test build its app with explicit limits instead of reading `config`.
+
+---
+
+## 🔵 LOW — Slicing a large MARKET order avoids its slippage
+
+**Discovered:** 2026-11-03, PR 2a (realistic order sizing).
+
+Our orders don't move the real Kraken book, and each order gets its own
+$50k touch band (`liquidity_quote_per_tick`, `trading/marketFillPrice.ts`). So
+20 × $50k fills entirely at the touch where one $1M order walks the book. On
+the 2026-11-03 book that saves about 1 bps on BTC and 9 bps on SOL per $1M.
+It matters only for competitive fairness.
+
+**Decision:** leave it for now. A fix would charge the band per user per pair
+over a short window (recent filled notional counts against it), or decay our
+own consumed depth over a few seconds.
+
+---
+
+## 🔵 LOW — On a stale book, closes above the touch band pay no slippage
+
+**Discovered:** 2026-11-03, PR 2a.
+
+With no depth to walk (ticker reference, or an older fallback at match end),
+anything that only shrinks a position fills at the touch whatever its size: a
+CLOSE, a TP/SL/trailing fire, a plain reduce, a match-end close. That is
+deliberate: exits must never be refused or wait for the feed. Only orders that
+open or add reject (`book_stale_for_size`). The cost is that a large exit
+during a book outage skips its slippage. A player can't cause the outage, and
+closes on a live book walk normally.

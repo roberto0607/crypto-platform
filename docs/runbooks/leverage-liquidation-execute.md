@@ -6,7 +6,7 @@ Leverage Phase 2 (`docs/designs/2026-10-13-leverage-design.md` §6). Keep `LEVER
 
 | | `log_only` (now) | `execute` |
 |---|---|---|
-| Breach confirmed (2 evaluations ≥ 500 ms apart, Kraken book mid) | `liquidations` row `LOG_ONLY`, log `liquidation_would_fire`. Position untouched. | MARKET close at the touch (bid for a long, ask for a short) through the normal order pipeline (`orders.source = 'liquidation'`). |
+| Breach confirmed (2 evaluations ≥ 500 ms apart, Kraken book mid) | `liquidations` row `LOG_ONLY`, log `liquidation_would_fire`. Position untouched. | MARKET close off the book (bid for a long, ask for a short; above the $50k touch band it walks the book) through the normal order pipeline (`orders.source = 'liquidation'`). |
 | Money | Nothing moves. | Margin released, P&L booked with the loss cap, taker fee capped at what's left, the rest back to USD. A gap past bankruptcy books `LIQUIDATION_SHORTFALL`: USD never goes below 0. |
 | Records | `LOG_ONLY` row | `EXECUTED` row (fill price, P&L, fee, returned equity, shortfall), journal row with `close_reason = LIQUIDATION` |
 | User sees | Nothing | `position.liquidated` toast, bell notification, journal LIQUIDATED badge |

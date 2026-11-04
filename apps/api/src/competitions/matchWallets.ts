@@ -33,6 +33,9 @@ import Decimal from "decimal.js";
 import { D, toFixed8 } from "../utils/decimal.js";
 import { tradableSymbols } from "../market/marketSymbols.js";
 import { getMarketReference } from "../trading/priceCollar.js";
+import { priceMarketFill, fillModelOf } from "../trading/marketFillPrice.js";
+import { resolveSimulationConfig } from "../sim/simConfigRepo.js";
+import type { BookDepth } from "../market/orderFlowFeatures.js";
 import { getSnapshot } from "../market/snapshotStore.js";
 import { cancelOrderTx } from "../trading/matchingEngine.js";
 import { createEvent, type AppEvent } from "../events/eventTypes.js";
@@ -146,58 +149,69 @@ export type ClosePriceSource = "book" | "ticker" | "snapshot" | "trading_pairs.l
 
 /**
  * Prices a match-end close is booked at, shared by the positions force-close
- * and the wallet settlement so the score and the wallets agree. Keyed by
- * pair + direction; resolved once per pair per side for the whole match end.
+ * and the wallet settlement so the score and the wallets agree. The reference
+ * is resolved once per pair per side for the whole match end, so the same size
+ * prices the same in both places.
  */
 export class ClosePrices {
-    private cache = new Map<string, { price: Decimal; source: ClosePriceSource }>();
+    private cache = new Map<string, { touch: Decimal; source: ClosePriceSource; levels?: BookDepth }>();
 
     /**
-     * The fair price to close a position in `pairId`: closing a LONG sells at
-     * the bid, closing a SHORT buys at the ask — the live Kraken touch the
-     * matching engine prices a market close at (priceCollar, #190), never a
-     * last trade that a thin print could move. Fallbacks, in order: a ticker
-     * snapshot's bid/ask (or last), trading_pairs.last_price, then
+     * The price to close `qty` of a position in `pairId`: closing a LONG sells
+     * from the bid, closing a SHORT buys from the ask, priced like any market
+     * close (touch band, then the book, marketFillPrice) so holding to match
+     * end can't dodge exit slippage. Match end can't be refused, so with no
+     * depth to walk it closes at the touch. Fallbacks for the touch, in order:
+     * a ticker snapshot's bid/ask (or last), trading_pairs.last_price, then
      * `entryFallback` (the position's own entry — a flat close).
      */
     async get(
         client: PoolClient,
-        pairId: string,
-        closingLong: boolean,
-        entryFallback: string | null,
+        pos: { userId: string; pairId: string; closingLong: boolean; qty: Decimal; entryFallback: string | null },
     ): Promise<{ price: Decimal; source: ClosePriceSource }> {
+        const { userId, pairId, closingLong, qty, entryFallback } = pos;
         const key = `${pairId}:${closingLong ? "long" : "short"}`;
-        const hit = this.cache.get(key);
-        if (hit) return hit;
+        let found = this.cache.get(key) ?? null;
 
-        const { rows } = await client.query<{ symbol: string; last_price: string | null }>(
-            `SELECT symbol, last_price::text FROM trading_pairs WHERE id = $1`,
-            [pairId],
-        );
-        const pair = rows[0];
-        let found: { price: Decimal; source: ClosePriceSource } | null = null;
+        if (!found) {
+            const { rows } = await client.query<{ symbol: string; last_price: string | null }>(
+                `SELECT symbol, last_price::text FROM trading_pairs WHERE id = $1`,
+                [pairId],
+            );
+            const pair = rows[0];
+            if (pair) {
+                const ref = await getMarketReference(pairId, pair.symbol);
+                if (ref) {
+                    found = {
+                        touch: closingLong ? ref.bestBid : ref.bestAsk,
+                        source: ref.source === "book" ? "book" : "ticker",
+                        levels: ref.levels,
+                    };
+                }
+                if (!found) {
+                    const snap = await getSnapshot(pair.symbol, 60_000);
+                    const side = closingLong ? snap?.bid : snap?.ask;
+                    const px = side ?? snap?.last;
+                    if (px && Number(px) > 0) found = { touch: D(px), source: "snapshot" };
+                }
+                if (!found && pair.last_price && Number(pair.last_price) > 0) {
+                    found = { touch: D(pair.last_price), source: "trading_pairs.last_price" };
+                }
+            }
+            if (found) this.cache.set(key, found);
+        }
 
-        if (pair) {
-            const ref = await getMarketReference(pairId, pair.symbol);
-            if (ref) {
-                found = { price: closingLong ? ref.bestBid : ref.bestAsk, source: ref.source === "book" ? "book" : "ticker" };
-            }
-            if (!found) {
-                const snap = await getSnapshot(pair.symbol, 60_000);
-                const side = closingLong ? snap?.bid : snap?.ask;
-                const px = side ?? snap?.last;
-                if (px && Number(px) > 0) found = { price: D(px), source: "snapshot" };
-            }
-            if (!found && pair.last_price && Number(pair.last_price) > 0) {
-                found = { price: D(pair.last_price), source: "trading_pairs.last_price" };
-            }
-        }
-        if (found) {
-            this.cache.set(key, found);
-            return found;
-        }
         // Per-position fallback: not cached (each position has its own entry).
-        return { price: D(entryFallback ?? "0"), source: "avg_entry_price" };
+        if (!found) return { price: D(entryFallback ?? "0"), source: "avg_entry_price" };
+
+        const walked = priceMarketFill({
+            levels: closingLong ? found.levels?.bids : found.levels?.asks,
+            touch: found.touch,
+            side: closingLong ? "SELL" : "BUY",
+            qty: qty.abs(),
+            model: fillModelOf(await resolveSimulationConfig(userId, pairId, client)),
+        });
+        return { price: walked ? D(toFixed8(walked.price)) : found.touch, source: found.source };
     }
 }
 
@@ -235,7 +249,9 @@ export async function settleMatchWalletsTx(client: PoolClient, matchId: string, 
             `SELECT avg_entry_price::text FROM positions WHERE match_id = $1 AND user_id = $2 AND pair_id = $3`,
             [matchId, w.user_id, w.pair_id],
         );
-        const { price, source } = await prices.get(client, w.pair_id, qty.isPositive(), pos[0]?.avg_entry_price ?? null);
+        const { price, source } = await prices.get(client, {
+            userId: w.user_id, pairId: w.pair_id, closingLong: qty.isPositive(), qty, entryFallback: pos[0]?.avg_entry_price ?? null,
+        });
         const proceeds = toFixed8(qty.mul(price)); // negative when buying back a short
         const meta = JSON.stringify({ matchId, pairId: w.pair_id, qty: toFixed8(qty), price: toFixed8(price), priceSource: source });
 

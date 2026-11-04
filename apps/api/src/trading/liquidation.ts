@@ -71,7 +71,7 @@ export type LiquidationFill = {
     liqPrice: string;
     mark: string;
     bookAgeMs: number;
-    /** Qty-weighted average of the close's fills (the touch, or better). */
+    /** Qty-weighted average of the close's fills (marketFillPrice: the book walk past the touch band). */
     fillPrice: string;
     /** After the loss cap. */
     realizedPnl: string;

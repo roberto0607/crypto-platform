@@ -44,6 +44,7 @@ vi.mock("../../metrics", () => ({
 // Imported after the mocks (vi.mock is hoisted) so these pull in the mocked deps.
 import { enqueueRedis, initRedisQueue, shutdownRedisQueue } from "../redisQueue";
 import { placeOrderWithSnapshot } from "../../trading/phase6OrderService";
+import { AppError } from "../../errors/AppError";
 
 const FAKE_RESULT: PlaceOrderResult = {
   order: { id: "fake-order" } as any,
@@ -197,6 +198,14 @@ describe("redisQueue — matchId wire serialization (integration, real Redis; re
   // Engine rejections are plain `new Error("<code>")` — they must reach the
   // client with their code across Redis, not as a 500 queue_processing_error
   // (the in-memory path always preserved them via the route's toAppError).
+  it("preserves an error's details across Redis (the panel shows the cap from them)", async () => {
+    const details = { symbol: "BTC/USD", maxNotional: "5000000.00", requestedNotional: "10000000.00" };
+    vi.mocked(placeOrderWithSnapshot).mockRejectedValueOnce(new AppError("order_too_large", details));
+    await expect(
+      enqueueRedis(PAIR_ID, "u-err", payload(PAIR_ID), undefined, "req-err-details", undefined, undefined, null),
+    ).rejects.toMatchObject({ code: "order_too_large", statusCode: 400, details });
+  });
+
   it("preserves the code of a plain engine error (insufficient_balance, match_ended) across Redis", async () => {
     for (const code of ["insufficient_balance", "match_ended"]) {
       vi.mocked(placeOrderWithSnapshot).mockRejectedValueOnce(new Error(code));

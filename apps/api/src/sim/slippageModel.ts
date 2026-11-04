@@ -1,8 +1,11 @@
 import { D, toFixed8, BPS_DIVISOR } from "../utils/decimal";
 import type { SimulationConfig, MarketExecutionResult } from "./simTypes";
-import { computeAvailableLiquidity } from "./liquidityModel";
 import type { Snapshot } from "../market/snapshotStore";
 
+/**
+ * A solo replay session's MARKET fill, priced off the historical candle (it has
+ * no live book). Live orders are priced by trading/marketFillPrice.ts.
+ */
 export function computeMarketExecution(
     snapshot: Snapshot,
     side: "BUY" | "SELL",
@@ -11,19 +14,10 @@ export function computeMarketExecution(
     candleVolume: string | null,
     candleHigh: string | null,
     candleLow: string | null
-): MarketExecutionResult | null {
+): MarketExecutionResult {
     const last = D(snapshot.last);
     const quantity = D(qty);
     const requestedNotional = quantity.mul(last);
-
-    // Liquidity check (floor of $10,000 for paper trading)
-    const availStr = computeAvailableLiquidity(config, candleVolume, snapshot.last);
-    const MIN_LIQUIDITY = D("10000");
-    const availableLiquidityQuote = D(availStr).lt(MIN_LIQUIDITY) ? MIN_LIQUIDITY : D(availStr);
-
-    if (requestedNotional.gt(availableLiquidityQuote)) {
-        return null;
-    }
 
     // Spread (volatility-widened)
     let spreadBps = D(config.base_spread_bps);
@@ -55,6 +49,5 @@ export function computeMarketExecution(
         slippage_bps: toFixed8(slippageBps),
         spread_bps_effective: toFixed8(spreadBps),
         requestedNotional: toFixed8(requestedNotional),
-        availableLiquidityQuote: availStr,
     };
 }

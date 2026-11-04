@@ -61,7 +61,7 @@ import { pool } from "../../db/pool";
 import { config } from "../../config";
 import { resetTestData, ensureMigrations } from "../../testing/resetDb";
 import { createTestUser, createTestAssetAndPair, createTestWallets } from "../../testing/fixtures";
-import { seedReferenceBook, clearReferenceBooks } from "../../testing/referenceBook";
+import { seedReferenceBook, seedDepthBook, clearReferenceBooks } from "../../testing/referenceBook";
 import { placeOrderWithSnapshot } from "../../trading/phase6OrderService";
 import { createMatch, acceptMatch, completeMatch, forfeitMatch } from "../matchService";
 import { evaluateMatchPnlForPair } from "../matchPnlEngine";
@@ -320,6 +320,8 @@ describe("match end settles ISOLATED positions with the loss cap", () => {
         enableLeverage();
         const id = await acceptedMatch();
         // 2.5 BTC at 5x: 41,500 margin. Wiped by a gap: −41,603.75 = −83%.
+        // Past the touch band: a book deep enough to fill it all at 83,000.
+        seedDepthBook(pairId, [[83_000, 100]], [[83_000, 100]]);
         await inMatch(alice, id, "BUY", "2.50000000", 5);
         await inMatch(bob, id, "BUY", "0.01000000", 5);
         seedReferenceBook(pairId, "60000", "60000");

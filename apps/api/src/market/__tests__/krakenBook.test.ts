@@ -130,6 +130,26 @@ describe("book maintenance", () => {
         expect(book.toLevels().asks).toEqual([]);
     });
 
+    it("in-place updates match a plain rebuild over thousands of random changes", () => {
+        let seed = 42;
+        const rand = (n: number) => (seed = (seed * 1103515245 + 12345) % 2147483648) % n;
+        const book = new KrakenBook(20);
+        const model = new Map<string, string>();
+        const px = () => `${100 + rand(40)}.${rand(4)}`;
+        for (let i = 0; i < 5000; i++) {
+            const changes = Array.from({ length: 1 + rand(4) }, () => ({ price: px(), qty: rand(3) === 0 ? "0" : `${1 + rand(9)}.5` }));
+            book.applyUpdate(changes, []);
+            for (const c of changes) {
+                if (c.qty === "0") model.delete(c.price);
+                else model.set(c.price, c.qty);
+            }
+            const expected = [...model].sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, 20);
+            model.clear();
+            for (const [p, q] of expected) model.set(p, q);
+            expect(book.toLevels().bids).toEqual(expected.map(([p, q]) => ({ price: Number(p), qty: Number(q) })));
+        }
+    });
+
     it("truncates to depth after an insert pushes a level out of scope", () => {
         const book = new KrakenBook(2);
         book.applySnapshot([L("10", "1"), L("9", "1")], [L("11", "1"), L("12", "1")]);
