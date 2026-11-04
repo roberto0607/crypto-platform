@@ -1193,14 +1193,12 @@ run the API-key check in `optionalUserId` too.
 
 ---
 
-## 🟠 HIGH — The Arena season leaderboard can't have any rows
+## 🟡 MEDIUM — Ended competitions stay tradable
 
-**Discovered:** 2026-11-04, challenge-by-username PR B.
+**Discovered:** 2026-11-04, seasons plan.
 
-`ArenaPage` and `SeasonLeaderboard` ask for an ACTIVE `competition_type = 'SEASON'`
-competition, but none can exist. Migration 047's check allows only `CUSTOM` and
-`WEEKLY`; migration 057 assumed there was no check and never widened it, so
-`createNewSeason` would fail, and nothing calls it anyway. On a database built from
-migrations the tab shows "NO ACTIVE SEASON", so the ⚔️ buttons on leaderboard rows
-have no rows to appear on. The fix is either to widen the check and start seasons,
-or to point the tab at the active `WEEKLY` competition.
+Nothing in the order path checks a competition's status, so orders can still be
+placed on competition wallets after a `CUSTOM` or `WEEKLY` competition ends.
+Final ranks are already written, so results don't change, but the wallets keep
+moving. No page exposes this today (`CompetitionSelector` isn't mounted). Seasons
+aren't affected: they have no wallets.

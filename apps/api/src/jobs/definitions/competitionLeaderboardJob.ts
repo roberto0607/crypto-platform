@@ -2,6 +2,7 @@ import type { JobDefinition } from "../jobTypes";
 import { listActiveCompetitions } from "../../competitions/competitionRepo";
 import { refreshLeaderboard } from "../../competitions/competitionService";
 import { getLeaderboard } from "../../competitions/leaderboardRepo";
+import { refreshSeasonLeaderboard } from "../../competitions/seasonService";
 import { notifyRankChanged } from "../../notifications/notificationService";
 
 export const competitionLeaderboardJob: JobDefinition = {
@@ -13,6 +14,12 @@ export const competitionLeaderboardJob: JobDefinition = {
         const activeComps = await listActiveCompetitions();
         for (const comp of activeComps) {
             try {
+                // Seasons skip rank notifications: one match moves everyone below it.
+                if (comp.competition_type === "SEASON") {
+                    await refreshSeasonLeaderboard(comp.id);
+                    continue;
+                }
+
                 // Snapshot current ranks before refresh
                 const oldBoard = await getLeaderboard(comp.id);
                 const oldRanks = new Map<string, number>();

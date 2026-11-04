@@ -39,6 +39,8 @@
     "backfill:history": "tsx src/scripts/backfillMarketHistory.ts",
     "pairs:restrict": "tsx src/scripts/restrictPairs.ts",
     "candles:reroll": "tsx src/scripts/rerollCandles.ts",
+    "season:create": "tsx src/scripts/season.ts create",
+    "season:close": "tsx src/scripts/season.ts close",
     "fees:refund-overcharge": "tsx src/scripts/refundFeeOvercharge.ts",
     "triggers:cancel-orphans": "tsx src/scripts/cancelOrphanTriggers.ts",
     "matches:legacy-report": "tsx src/scripts/matchesLegacyReport.ts",
