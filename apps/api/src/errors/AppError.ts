@@ -70,8 +70,10 @@ const ERROR_STATUS: Record<string, number> = {
   run_not_paused: 400,
   run_not_active: 400,
   no_active_replay: 400,
+  username_reserved: 400,
   // 409
   email_taken: 409,
+  username_taken: 409,
   match_ended: 409,
   match_wallets_missing: 409,
   wallet_already_exists: 409,

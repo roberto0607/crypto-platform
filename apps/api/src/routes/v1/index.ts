@@ -16,6 +16,7 @@ import v1EventStream from "./v1EventStream";
 import v1Outbox from "./v1Outbox";
 import v1SystemAdmin from "./v1SystemAdmin";
 import v1Competitions from "./v1Competitions";
+import v1Users from "./v1Users";
 import v1Profile from "./v1Profile";
 import v1Notifications from "./v1Notifications";
 import v1Journal from "./v1Journal";
@@ -47,6 +48,7 @@ const v1Routes: FastifyPluginAsync = async (app) => {
     await app.register(v1SystemAdmin);
     await app.register(v1Competitions);
     await app.register(v1Profile);
+    await app.register(v1Users);
     await app.register(v1Notifications);
     await app.register(v1Journal);
     await app.register(v1Matches);

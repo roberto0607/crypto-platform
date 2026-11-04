@@ -11,7 +11,7 @@ export async function getLeaderboard(
                 lb.max_drawdown_pct, lb.current_drawdown_pct, lb.trades_count,
                 lb.win_rate, lb.consistency, lb.nuanced_score,
                 lb.updated_at,
-                COALESCE(u.display_name, SPLIT_PART(u.email, '@', 1)) AS display_name,
+                u.display_name,
                 COALESCE(ut.tier, 'ROOKIE') AS user_tier,
                 COALESCE(cp.qualified, false) AS qualified,
                 CASE WHEN ub.id IS NOT NULL THEN true ELSE false END AS has_champion_badge
@@ -28,6 +28,23 @@ export async function getLeaderboard(
         [competitionId, limit, offset],
     );
     return rows;
+}
+
+/** Ranks up to this one are named; the rest are shown as "Anonymous". */
+const NAMED_RANKS = 10;
+
+export type PublicLeaderboardRow = Omit<LeaderboardRow, "user_id"> & { user_id: string | null };
+
+/**
+ * Strip who an anonymous row belongs to, for any response leaving the API. A
+ * player still sees their own row, which needs a verified viewerId.
+ */
+export function maskAnonymousRows(rows: LeaderboardRow[], viewerId: string | null): PublicLeaderboardRow[] {
+    return rows.map((row) =>
+        row.rank > NAMED_RANKS && row.user_id !== viewerId
+            ? { ...row, user_id: null, display_name: null }
+            : row,
+    );
 }
 
 export async function upsertLeaderboardEntry(

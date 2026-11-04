@@ -7,6 +7,7 @@ import { pool } from "../db/pool";
 import { normalizeEmail } from "../auth/normalizeEmail";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { createUser, findUserByEmailNormalized, findUserById } from "../auth/userRepo";
+import { isReservedUsername, isUsernameConflict, usernameSchema } from "../auth/username";
 import { auditLog } from "../audit/log";
 import { requireUser } from "../auth/requireUser";
 import { newRefreshToken, storeRefreshToken } from "../auth/refreshTokens";
@@ -30,6 +31,9 @@ const registerBody = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(72),
   inviteCode: z.string().optional(),
+  // Optional at the API so scripts and API clients keep working: they get a
+  // generated trader_ name, and the web app asks the user to pick one.
+  username: usernameSchema.optional(),
 });
 
 const loginBody = z.object({
@@ -53,6 +57,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           email: { type: "string", description: "User email address" },
           password: { type: "string", description: "User password (8-72 chars)" },
           inviteCode: { type: "string", description: "Required when BETA_MODE is enabled" },
+          username: { type: "string", description: "Public username (3-30 chars: letters, numbers, underscores)" },
         },
       },
       response: {
@@ -99,6 +104,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const { username } = parsed.data;
+    if (username !== undefined && isReservedUsername(username)) {
+      return handleError(reply, new AppError("username_reserved"));
+    }
+
     // ── Beta invite gate ──
     if (config.betaMode) {
       if (!parsed.data.inviteCode) {
@@ -118,13 +128,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const { email, emailNormalized } = normalizeEmail(parsed.data.email);
         const passwordHash = await hashPassword(parsed.data.password);
 
-        const userResult = await client.query<{ id: string; email: string; role: string }>(
-          `INSERT INTO users (email, email_normalized, password_hash)
-           VALUES ($1, $2, $3)
-           RETURNING id, email, role`,
-          [email, emailNormalized, passwordHash],
-        );
-        const user = userResult.rows[0];
+        const user = await createUser({ email, emailNormalized, passwordHash, username }, client);
 
         await consumeInviteTx(client, invite.id);
 
@@ -162,6 +166,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         });
       } catch (err: any) {
         await client.query("ROLLBACK").catch(() => {});
+        if (isUsernameConflict(err)) return handleError(reply, new AppError("username_taken"));
         if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
         if (err?.message === "invite_invalid") return handleError(reply, new AppError("invite_invalid"));
         req.log.error({ err }, "register_failed");
@@ -176,7 +181,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     const passwordHash = await hashPassword(parsed.data.password);
 
     try {
-      const user = await createUser({ email, emailNormalized, passwordHash });
+      const user = await createUser({ email, emailNormalized, passwordHash, username });
 
       // Create free-play wallets + fund the USD wallet with starting capital.
       // Awaited (its own transaction) before the 201 so a registered user is
@@ -207,6 +212,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         user: { id: user.id, email: user.email, role: user.role },
       });
     } catch (err: any) {
+      if (isUsernameConflict(err)) return handleError(reply, new AppError("username_taken"));
       if (err?.code === "23505") return handleError(reply, new AppError("email_taken"));
       req.log.error({ err }, "register_failed");
       return handleError(reply, new AppError("server_error"));
@@ -240,6 +246,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 email: { type: "string" },
                 role: { type: "string", enum: ["USER", "ADMIN"] },
                 emailVerified: { type: "boolean" },
+                displayName: { type: "string" },
+                usernameChosen: { type: "boolean" },
               },
             },
           },
@@ -346,7 +354,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({
       ok: true,
       accessToken,
-      user: { id: user.id, email: user.email, role: user.role, emailVerified: !!user.email_verified_at },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        emailVerified: !!user.email_verified_at,
+        displayName: user.display_name,
+        usernameChosen: !!user.username_chosen_at,
+      },
     });
   });
 
@@ -475,6 +490,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 role: { type: "string", enum: ["USER", "ADMIN"] },
                 emailVerified: { type: "boolean" },
                 displayName: { type: "string", nullable: true },
+                usernameChosen: { type: "boolean" },
               },
             },
           },
@@ -492,8 +508,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
   }, async (req, reply) => {
     const user = req.user!;
 
-    const { rows } = await pool.query<{ email: string; email_verified_at: string | null; display_name: string | null }>(
-      "SELECT email, email_verified_at, display_name FROM users WHERE id = $1",
+    const { rows } = await pool.query<{
+      email: string;
+      email_verified_at: string | null;
+      display_name: string | null;
+      username_chosen_at: string | null;
+    }>(
+      "SELECT email, email_verified_at, display_name, username_chosen_at FROM users WHERE id = $1",
       [user.id]
     );
 
@@ -505,6 +526,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         role: user.role,
         emailVerified: !!rows[0]?.email_verified_at,
         displayName: rows[0]?.display_name ?? null,
+        usernameChosen: !!rows[0]?.username_chosen_at,
       },
     });
   });

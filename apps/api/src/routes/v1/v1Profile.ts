@@ -4,14 +4,10 @@ import { pool } from "../../db/pool.js";
 import { requireUser } from "../../auth/requireUser.js";
 import { getUserTier, getUserTierHistory } from "../../competitions/tierRepo.js";
 import { getUserBadges } from "../../competitions/badgeRepo.js";
+import { isReservedUsername, isUsernameConflict, usernameSchema } from "../../auth/username.js";
 
 
-const displayNameSchema = z.object({
-    displayName: z.string()
-        .min(3, "Display name must be at least 3 characters")
-        .max(30, "Display name must be at most 30 characters")
-        .regex(/^[a-zA-Z0-9_]+$/, "Display name can only contain letters, numbers, and underscores"),
-});
+const displayNameSchema = z.object({ displayName: usernameSchema });
 
 const v1Profile: FastifyPluginAsync = async (app) => {
     // PATCH /v1/profile — Update display name
@@ -19,7 +15,7 @@ const v1Profile: FastifyPluginAsync = async (app) => {
         schema: {
             tags: ["Profile"],
             summary: "Update user profile",
-            description: "Update the authenticated user's display name. 3-30 chars, alphanumeric + underscores.",
+            description: "Update the authenticated user's username. 3-30 chars, alphanumeric + underscores, unique in any case.",
             security: [{ bearerAuth: [] }],
             body: {
                 type: "object",
@@ -58,6 +54,7 @@ const v1Profile: FastifyPluginAsync = async (app) => {
                 },
             },
         },
+        config: { rateLimit: { max: 10, timeWindow: 60_000 } },
         preHandler: requireUser,
     }, async (req, reply) => {
         const parsed = displayNameSchema.safeParse(req.body);
@@ -72,20 +69,20 @@ const v1Profile: FastifyPluginAsync = async (app) => {
         const userId = req.user!.id;
         const { displayName } = parsed.data;
 
+        if (isReservedUsername(displayName)) {
+            return reply.code(400).send({ ok: false, error: "username_reserved" });
+        }
+
         try {
             await pool.query(
-                `UPDATE users SET display_name = $1 WHERE id = $2`,
+                `UPDATE users SET display_name = $1, username_chosen_at = now() WHERE id = $2`,
                 [displayName, userId],
             );
 
             return reply.send({ ok: true, displayName });
-        } catch (err: any) {
-            // If unique constraint on display_name exists:
-            if (err?.code === "23505") {
-                return reply.code(409).send({
-                    ok: false,
-                    error: "display_name_taken",
-                });
+        } catch (err) {
+            if (isUsernameConflict(err)) {
+                return reply.code(409).send({ ok: false, error: "username_taken" });
             }
             throw err;
         }
