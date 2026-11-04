@@ -56,6 +56,17 @@ describe("buildFillPriceAudit", () => {
         expect(sell.offBook).toBe("better");
     });
 
+    it("an intended walk past the touch is not off-book; anything beyond it still is", () => {
+        const snapshot: Snapshot = { bid: "100", ask: "100", last: "100", ts: new Date(NOW).toISOString(), source: "live" };
+        const audit = (systemFillSlippageBps: number) => buildFillPriceAudit({
+            side: "BUY", snapshot, reference: null, now: NOW, systemFillSlippageBps,
+            fills: [{ price: "101", qty: "1", is_system_fill: true }],
+            book: book(100, 100),
+        });
+        expect(audit(100)).toMatchObject({ deviationBps: 100, walkBps: 100, offBook: null });
+        expect(audit(50)).toMatchObject({ deviationBps: 100, offBook: "worse" });
+    });
+
     it("qty-weights the average across internal-book and system fills", () => {
         const snapshot: Snapshot = { bid: null, ask: null, last: "100", ts: new Date(NOW).toISOString(), source: "live" };
         const a = buildFillPriceAudit({

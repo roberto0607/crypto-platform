@@ -8,13 +8,9 @@ import { AppError } from "../../errors/AppError";
 import {
     getSimulationConfigForUser,
     upsertSimulationConfig,
-    resolveSimulationConfig,
 } from "../../sim/simConfigRepo";
-import { computeMarketExecution } from "../../sim/slippageModel";
-import { computeAvailableLiquidity } from "../../sim/liquidityModel";
-import { resolveSnapshot } from "../../trading/phase6OrderService";
-import { getLatestSimCandle } from "../../sim/simCandleRepo";
-import { D, toFixed8 } from "../../utils/decimal";
+import { quoteMarketOrder } from "../../trading/marketQuote";
+import { LEVERAGE_CEILING } from "../../trading/leverageConfig";
 
 const simConfigSchema = z.object({
     base_spread_bps: z.number().min(0),
@@ -33,8 +29,10 @@ const putConfigBody = z.object({
 const quoteQuery = z.object({
     pairId: z.string().uuid(),
     side: z.enum(["BUY", "SELL"]),
-    qty: z.string().regex(/^\d+(\.\d{1,8})?$/),
-});
+    qty: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+    budget: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
+    leverage: z.coerce.number().min(1).max(LEVERAGE_CEILING).optional(),
+}).refine((q) => (q.qty === undefined) !== (q.budget === undefined), { message: "Give exactly one of qty or budget" });
 
 const v1Sim: FastifyPluginAsync = async (app) => {
     // GET /v1/sim/config
@@ -121,16 +119,18 @@ const v1Sim: FastifyPluginAsync = async (app) => {
     app.get("/sim/quote", {
         schema: {
             tags: ["Trading"],
-            summary: "Get simulation quote",
-            description: "Simulates a market order execution and returns estimated price, slippage, and available liquidity.",
+            summary: "Quote a market order",
+            description: "What a MARKET order would do right now: average fill, slippage, notional and fee, priced exactly like the matching engine. Give qty, or budget (+ leverage) to get the largest qty that margin can open, leaving room for fees, slippage and price drift, under the pair's max order notional.",
             security: [{ bearerAuth: [] }],
             querystring: {
                 type: "object",
-                required: ["pairId", "side", "qty"],
+                required: ["pairId", "side"],
                 properties: {
                     pairId: { type: "string", format: "uuid" },
                     side: { type: "string", enum: ["BUY", "SELL"] },
                     qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                    budget: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                    leverage: { type: "number" },
                 },
             },
             response: {
@@ -138,10 +138,15 @@ const v1Sim: FastifyPluginAsync = async (app) => {
                     type: "object",
                     properties: {
                         executable: { type: "boolean" },
+                        reason: { type: "string", nullable: true },
+                        qty: { type: "string" },
+                        touchPrice: { type: "string" },
                         estimatedPrice: { type: "string" },
                         slippage_bps: { type: "string" },
+                        slippageQuote: { type: "string" },
                         requestedNotional: { type: "string" },
-                        availableLiquidity: { type: "string" },
+                        feeQuote: { type: "string" },
+                        maxOrderNotional: { type: "string" },
                     },
                 },
             },
@@ -149,51 +154,11 @@ const v1Sim: FastifyPluginAsync = async (app) => {
         preHandler: requireUser,
     }, async (req, reply) => {
         try {
-            const actor = req.user!;
             const parsed = quoteQuery.safeParse(req.query);
             if (!parsed.success) {
                 throw new AppError("invalid_input", parsed.error.flatten());
             }
-            const { pairId, side, qty } = parsed.data;
-
-            const snapshot = await resolveSnapshot(actor.id, pairId);
-            const simConfig = await resolveSimulationConfig(actor.id, pairId);
-
-            // 1m-pinned, index-served candle for the sim (same path as order
-            // placement). See simCandleRepo / docs/designs/2026-05-27-candles-query-index.md.
-            const candle = await getLatestSimCandle(pairId, snapshot.ts);
-
-            const simResult = computeMarketExecution(
-                snapshot,
-                side,
-                qty,
-                simConfig,
-                candle?.volume ?? null,
-                candle?.high ?? null,
-                candle?.low ?? null
-            );
-
-            if (!simResult) {
-                const availLiq = computeAvailableLiquidity(
-                    simConfig, candle?.volume ?? null, snapshot.last
-                );
-                const reqNotional = toFixed8(D(qty).mul(D(snapshot.last)));
-                return reply.send({
-                    executable: false,
-                    estimatedPrice: "0.00000000",
-                    slippage_bps: "0.00000000",
-                    requestedNotional: reqNotional,
-                    availableLiquidity: availLiq,
-                });
-            }
-
-            return reply.send({
-                executable: true,
-                estimatedPrice: simResult.execPrice,
-                slippage_bps: simResult.slippage_bps,
-                requestedNotional: simResult.requestedNotional,
-                availableLiquidity: simResult.availableLiquidityQuote,
-            });
+            return reply.send(await quoteMarketOrder({ userId: req.user!.id, ...parsed.data }));
         } catch (err) {
             return v1HandleError(reply, err);
         }

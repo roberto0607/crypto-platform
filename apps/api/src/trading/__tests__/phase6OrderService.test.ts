@@ -24,7 +24,6 @@ vi.mock("../../outbox/outboxRepo", () => ({ insertOutboxEventTx: vi.fn() }));
 vi.mock("../../portfolio/portfolioService", () => ({ writePortfolioSnapshotTx: vi.fn() }));
 vi.mock("../../sim/simConfigRepo", () => ({ resolveSimulationConfig: vi.fn() }));
 vi.mock("../../sim/slippageModel", () => ({ computeMarketExecution: vi.fn() }));
-vi.mock("../../sim/liquidityModel", () => ({ computeAvailableLiquidity: vi.fn() }));
 vi.mock("../../events/eventTypes", () => ({
   createEvent: vi.fn((_type: string, data: any) => ({ type: _type, data, ts: Date.now() })),
 }));
@@ -74,7 +73,6 @@ import { insertOutboxEventTx } from "../../outbox/outboxRepo";
 import { writePortfolioSnapshotTx } from "../../portfolio/portfolioService";
 import { resolveSimulationConfig } from "../../sim/simConfigRepo";
 import { computeMarketExecution } from "../../sim/slippageModel";
-import { computeAvailableLiquidity } from "../../sim/liquidityModel";
 
 /* ── Test data ──────────────────────────────────────────── */
 
@@ -124,6 +122,7 @@ const PAIR = {
   quote_asset_id: "usd-id",
   symbol: "BTC/USD",
   is_active: true,
+  max_order_notional: "5000000.00",
   last_price: "50000.00000000",
   fee_bps: 30,
   maker_fee_bps: 2,
@@ -187,8 +186,7 @@ function setupDefaultMocks() {
   vi.mocked(insertOutboxEventTx).mockResolvedValue(undefined);
   vi.mocked(writePortfolioSnapshotTx).mockResolvedValue(undefined);
   vi.mocked(resolveSimulationConfig).mockResolvedValue(SIM_CONFIG);
-  vi.mocked(computeMarketExecution).mockReturnValue({ execPrice: "50025.00000000", slippage_bps: "5", spread_bps_effective: "10", requestedNotional: "50025.00000000", availableLiquidityQuote: "500000.00000000" });
-  vi.mocked(computeAvailableLiquidity).mockReturnValue("500000.00000000");
+  vi.mocked(computeMarketExecution).mockReturnValue({ execPrice: "50025.00000000", slippage_bps: "5", spread_bps_effective: "10", requestedNotional: "50025.00000000" });
   vi.mocked(pool.query as any).mockResolvedValue({ rows: [{ volume: "100", high: "51000", low: "49000" }] });
 }
 
@@ -287,20 +285,15 @@ describe("placeOrderWithSnapshot", () => {
 
   describe("simulation", () => {
 
-    it("calls computeMarketExecution for MARKET orders", async () => {
+    it("a live MARKET order reads the fill model but no candle: the engine prices it", async () => {
       const marketBody = { ...BODY, type: "MARKET" as const, limitPrice: undefined };
 
       await placeOrderWithSnapshot("user-1", marketBody);
 
-      expect(computeMarketExecution).toHaveBeenCalledWith(
-        SNAPSHOT,
-        "BUY",
-        "1.00000000",
-        SIM_CONFIG,
-        "100", // candle volume
-        "51000", // candle high
-        "49000", // candle low
-      );
+      expect(resolveSimulationConfig).toHaveBeenCalled();
+      expect(computeMarketExecution).not.toHaveBeenCalled();
+      const fillModel = vi.mocked(placeOrderTx).mock.calls[0]![14]!;
+      expect(fillModel.touchBandQuote.toNumber()).toBe(SIM_CONFIG.liquidity_quote_per_tick);
     });
 
     it("skips simulation for LIMIT orders", async () => {
@@ -308,15 +301,6 @@ describe("placeOrderWithSnapshot", () => {
 
       expect(computeMarketExecution).not.toHaveBeenCalled();
       expect(resolveSimulationConfig).not.toHaveBeenCalled();
-    });
-
-    it("rejects when liquidity is insufficient", async () => {
-      const marketBody = { ...BODY, type: "MARKET" as const, limitPrice: undefined };
-      vi.mocked(computeMarketExecution).mockReturnValue(null as any);
-
-      await expect(
-        placeOrderWithSnapshot("user-1", marketBody),
-      ).rejects.toMatchObject({ code: "insufficient_liquidity" });
     });
 
     // B1: a live MARKET order is priced by the matching engine from the real

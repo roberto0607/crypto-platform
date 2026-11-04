@@ -25,6 +25,16 @@ export function seedReferenceBook(
     });
 }
 
+/** Seed a full Kraken book (best first per side) for the depth-walking fill tests. */
+export function seedDepthBook(
+    pairId: string,
+    bids: [price: number, qty: number][],
+    asks: [price: number, qty: number][],
+): void {
+    const levels = (side: [number, number][]) => side.map(([price, qty]) => ({ price, qty }));
+    bookSnapshots.set(pairId, { bids: levels(bids), asks: levels(asks), ts: Date.now() });
+}
+
 /** Seed a fresh book at each pair's current last_price (HTTP-level tests that create pairs via the API). */
 export async function seedReferenceBooksFromLastPrice(db: Pool): Promise<void> {
     const { rows } = await db.query<{ id: string; last_price: string }>(

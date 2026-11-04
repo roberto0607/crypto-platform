@@ -48,14 +48,6 @@ describe("slippageModel — computeMarketExecution", () => {
         expect(parseFloat(large!.slippage_bps)).toBeGreaterThan(parseFloat(small!.slippage_bps));
     });
 
-    it("rejects when requestedNotional > availableLiquidity", () => {
-        const result = computeMarketExecution(
-            defaultSnapshot, "BUY", "99999",
-            defaultConfig, "1", "50100.00000000", "49900.00000000"
-        );
-        expect(result).toBeNull();
-    });
-
     it("BUY execPrice > SELL execPrice for same inputs", () => {
         const buy = computeMarketExecution(
             defaultSnapshot, "BUY", "0.1",
@@ -70,13 +62,10 @@ describe("slippageModel — computeMarketExecution", () => {
         expect(parseFloat(buy!.execPrice)).toBeGreaterThan(parseFloat(sell!.execPrice));
     });
 
-    it("null candle volume → uses liquidity_quote_per_tick", () => {
-        const result = computeMarketExecution(
-            defaultSnapshot, "BUY", "0.1",
-            defaultConfig, null, null, null
-        );
-        expect(result).not.toBeNull();
-        expect(result!.availableLiquidityQuote).toBe("50000.00000000");
+    it("size never refuses a replay fill: a huge order just pays more", () => {
+        const small = computeMarketExecution(defaultSnapshot, "BUY", "0.1", defaultConfig, "100", null, null);
+        const huge = computeMarketExecution(defaultSnapshot, "BUY", "1000", defaultConfig, "0.001", null, null);
+        expect(Number(huge.execPrice)).toBeGreaterThan(Number(small.execPrice));
     });
 
     it("wide candle range → larger spread_bps_effective", () => {

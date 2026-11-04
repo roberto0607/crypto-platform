@@ -1,5 +1,5 @@
 import { pool } from "../db/pool";
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { timedQuery } from "../observability/dbTiming";
 
 export type OrderRow = {
@@ -220,7 +220,7 @@ export type BookCursor = {
  * @param batchSize      - Max rows to return (default 100)
  */
 export async function fetchRestingOrdersBatch(
-    client: PoolClient,
+    client: PoolClient | Pool,
     pairId: string,
     bookSide: "BUY" | "SELL",
     options: {

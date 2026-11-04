@@ -11,8 +11,9 @@
  *   log_only  breaches are recorded as liquidations rows (LOG_ONLY, at most
  *             one per position episode) and logged (liquidation_would_fire).
  *             Positions and wallets are never touched.
- *   execute   a confirmed breach is closed with a MARKET order at the Kraken
- *             touch (placeOrderWithSnapshot, source 'liquidation'): margin
+ *   execute   a confirmed breach is closed with a MARKET order off the Kraken
+ *             book, walked like any large close (marketFillPrice;
+ *             placeOrderWithSnapshot, source 'liquidation'): margin
  *             released, P&L booked with the loss cap, taker fee capped at
  *             what's left, the remainder returned to the user, triggers
  *             canceled (#202), an EXECUTED row, a position.liquidated event
@@ -33,7 +34,7 @@
  * the ticker or trading_pairs.last_price, ever. Breaches seen against the
  * stale book's mid during a pause are recorded as SKIPPED_STALE (once per
  * episode). On recovery the pair is evaluated at once; a position that gapped
- * through bankruptcy meanwhile closes at the touch and the loss cap absorbs it.
+ * through bankruptcy meanwhile closes off the book and the loss cap absorbs it.
  *
  * Glitch guard: a position must breach on two consecutive evaluations at
  * least CONFIRM_MS apart before anything is written or traded, so one bad

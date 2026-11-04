@@ -11,13 +11,4 @@ export type MarketExecutionResult = {
     slippage_bps: string;
     spread_bps_effective: string;
     requestedNotional: string;
-    availableLiquidityQuote: string;
-};
-
-export type SimQuoteResult = {
-    executable: boolean;
-    estimatedPrice: string;
-    slippage_bps: string;
-    requestedNotional: string;
-    availableLiquidity: string;
 };

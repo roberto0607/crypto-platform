@@ -118,6 +118,22 @@ describe("trigger + stale Kraken book", () => {
         expect(rows.map((r) => r.price)).toEqual(["48985.00000000"]); // ticker best bid
     });
 
+    it("a stop above the touch band with only the ticker re-arms instead of failing, and fires when depth is back", async () => {
+        await pool.query(`UPDATE positions SET base_qty = '2.00000000' WHERE user_id = $1`, [userId]);
+        await pool.query(`UPDATE wallets SET balance = 2 WHERE user_id = $1 AND balance = 1`, [userId]);
+        const stop = await createTriggerOrder({
+            userId, pairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "49000", qty: "2.00000000", matchId: null,
+        });
+        seedReferenceBook(pairId, "48990", "49000", 6_000);
+        await seedTicker("BTC/USD", "48985", "48995");
+        await fireTrigger(stop, { last: "48990" });
+        expect((await statusOf(stop.id)).status).toBe("ACTIVE");
+
+        seedReferenceBook(pairId, "48990", "49000");
+        await fireTrigger(stop, { last: "48990" });
+        expect((await statusOf(stop.id)).status).toBe("TRIGGERED");
+    });
+
     it("other order failures still mark the trigger FAILED", async () => {
         await pool.query(`UPDATE wallets SET balance = 0 WHERE user_id = $1`, [userId]);
         const stop = await createTriggerOrder({

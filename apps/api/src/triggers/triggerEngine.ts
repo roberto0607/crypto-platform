@@ -18,9 +18,9 @@ type PriceSnapshot = { last: string };
 let handler: EventHandler | null = null;
 
 /**
- * A MARKET order is rejected with stale_price_source while the Kraken book (the
- * price-collar reference) is stale — a transient feed condition, not a verdict
- * on the trigger. Such a trigger is re-armed rather than FAILED, and not
+ * A MARKET order is rejected with stale_price_source (or book_stale_for_size,
+ * above the touch band) while the Kraken book (the price-collar reference) is
+ * stale — a transient feed condition, not a verdict on the trigger. Such a trigger is re-armed rather than FAILED, and not
  * re-fired until this backoff passes so a feed outage doesn't turn every tick
  * into an order attempt.
  */
@@ -213,7 +213,7 @@ export async function fireTrigger(
             updateClient.release();
         }
     } catch (err) {
-        if (err instanceof Error && err.message === "stale_price_source") {
+        if (err instanceof Error && (err.message === "stale_price_source" || err.message === "book_stale_for_size")) {
             await rearmTrigger(trigger, canceledSibling);
             return; // not fired: no trigger.fired event, no notification
         }

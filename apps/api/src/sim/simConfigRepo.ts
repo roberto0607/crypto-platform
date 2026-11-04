@@ -1,19 +1,23 @@
+import type { Pool } from "pg";
 import { pool } from "../db/pool";
 import type { SimulationConfig } from "./simTypes";
 
-const DEFAULTS: SimulationConfig = {
+export const DEFAULT_SIM_CONFIG: SimulationConfig = {
     base_spread_bps: 5,
     base_slippage_bps: 2,
     impact_bps_per_10k_quote: 10,
-    liquidity_quote_per_tick: 500000,
+    liquidity_quote_per_tick: 50000,
     volatility_widening_k: 0.5,
 };
 
 export async function resolveSimulationConfig(
     userId: string,
-    pairId: string
+    pairId: string,
+    // A caller inside a transaction passes its client: waiting on the pool
+    // while holding locks can deadlock it.
+    db: Pick<Pool, "query"> = pool,
 ): Promise<SimulationConfig> {
-    const { rows } = await pool.query<{ config_json: SimulationConfig }>(
+    const { rows } = await db.query<{ config_json: SimulationConfig }>(
         `SELECT config_json
          FROM simulation_settings
          WHERE (user_id = $1 OR user_id IS NULL)
@@ -24,7 +28,7 @@ export async function resolveSimulationConfig(
          LIMIT 1`,
         [userId, pairId]
     );
-    return rows[0]?.config_json ?? DEFAULTS;
+    return rows[0]?.config_json ?? DEFAULT_SIM_CONFIG;
 }
 
 export async function upsertSimulationConfig(
@@ -55,5 +59,5 @@ export async function getSimulationConfigForUser(
          LIMIT 1`,
         [userId]
     );
-    return rows[0]?.config_json ?? DEFAULTS;
+    return rows[0]?.config_json ?? DEFAULT_SIM_CONFIG;
 }

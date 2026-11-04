@@ -31,7 +31,8 @@ import { writePortfolioSnapshotTx } from "../portfolio/portfolioService";
 import { walletUpdatedEventsTx } from "../wallets/walletRepo";
 import { resolveSimulationConfig } from "../sim/simConfigRepo";
 import { computeMarketExecution } from "../sim/slippageModel";
-import { computeAvailableLiquidity } from "../sim/liquidityModel";
+import { fillModelOf, type FillModel } from "./marketFillPrice";
+import { isSystemUser } from "./buyingPower";
 import { insertOutboxEventTx } from "../outbox/outboxRepo";
 import { timedQuery } from "../observability/dbTiming";
 import { txWithEvents } from "../utils/txWithEvents";
@@ -114,7 +115,7 @@ export async function placeOrderWithSnapshot(
     source?: string | null,
     // The liquidation engine's close (liquidationEngine.ts): a MARKET order
     // priced off the live Kraken book only (no replay pricing, no sim
-    // liquidity check, which could otherwise refuse it). The matching engine
+    // size cap, which could otherwise refuse it). The matching engine
     // re-checks the position under its locks; the liquidations row is
     // written in this same transaction.
     liquidation?: LiquidationRequest,
@@ -170,48 +171,48 @@ export async function placeOrderWithSnapshot(
 
     // ── 2. Resolve snapshot (outside transaction) ──
     const snapshot = await resolveSnapshot(userId, body.pairId);
-    // ── 2c. Simulation reads (MARKET only, outside transaction) ──
-    // Live MARKET orders are priced by the matching engine from the real Kraken
-    // touch (priceCollar.getMarketReference); the sim model here only sizes the
-    // liquidity check. A solo replay session is the exception: its orders price
-    // off the historical candle via the sim model, passed down as `replayPricing`.
-    let replayPricing: CollarReference | undefined;
-    if (body.type === "MARKET" && !liquidation) {
-        const simConfig = await resolveSimulationConfig(userId, body.pairId);
-
-        // 1m-pinned, index-served candle for the sim. null when the pair has no
-        // 1m candle; computeMarketExecution below handles null volume/high/low
-        // (falls back to default simulation) rather than rejecting the order.
-        // See simCandleRepo / docs/designs/2026-05-27-candles-query-index.md.
-        const candle = await getLatestSimCandle(body.pairId, snapshot.ts);
-
-        const simResult = computeMarketExecution(
-            snapshot,
-            body.side,
-            body.qty,
-            simConfig,
-            candle?.volume ?? null,
-            candle?.high ?? null,
-            candle?.low ?? null
-        );
-
-        if (!simResult) {
-            const reqNotional = D(body.qty).mul(D(snapshot.last));
-            const availLiq = computeAvailableLiquidity(
-                simConfig, candle?.volume ?? null, snapshot.last
-            );
-            ordersRejectedTotal.inc({ reason: "insufficient_liquidity" });
-            logger.warn({ ...logCtx, eventType: "order.rejected", reason: "insufficient_liquidity" },
-                "Order rejected: insufficient liquidity");
+    // ── 2b. Max order notional (stops typos; closing is never blocked) ──
+    if (!liquidation && !body.reduceOnly) {
+        const pair = await findPairById(body.pairId);
+        const notional = D(body.qty).mul(D(body.limitPrice ?? snapshot.last));
+        if (pair && notional.gt(D(pair.max_order_notional)) && !(await isSystemUser(userId))) {
+            ordersRejectedTotal.inc({ reason: "order_too_large" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: "order_too_large" },
+                "Order rejected: above the pair's max order notional");
             orderPlacementLatency.observe(performance.now() - startMs);
-            throw new AppError("insufficient_liquidity", {
-                requestedNotional: toFixed8(reqNotional),
-                availableLiquidity: availLiq,
+            throw new AppError("order_too_large", {
+                symbol: pair.symbol,
+                maxNotional: D(pair.max_order_notional).toFixed(2),
+                requestedNotional: notional.toFixed(2),
             });
         }
+    }
 
-        if (snapshot.source === "replay") {
-            const px = D(simResult.execPrice);
+    // ── 2c. Simulation reads (MARKET only, outside transaction) ──
+    // Live MARKET orders are priced by the matching engine from the real Kraken
+    // book (marketFillPrice) with these settings. A solo replay session is the
+    // exception: its orders price off the historical candle via the sim model,
+    // passed down as `replayPricing`. A liquidation is always live.
+    let replayPricing: CollarReference | undefined;
+    let fillModel: FillModel | undefined;
+    if (body.type === "MARKET") {
+        const simConfig = await resolveSimulationConfig(userId, body.pairId);
+        fillModel = fillModelOf(simConfig);
+
+        if (snapshot.source === "replay" && !liquidation) {
+            // 1m-pinned, index-served candle for the sim. null when the pair has
+            // no 1m candle; computeMarketExecution falls back to default
+            // simulation. See simCandleRepo / docs/designs/2026-05-27-candles-query-index.md.
+            const candle = await getLatestSimCandle(body.pairId, snapshot.ts);
+            const px = D(computeMarketExecution(
+                snapshot,
+                body.side,
+                body.qty,
+                simConfig,
+                candle?.volume ?? null,
+                candle?.high ?? null,
+                candle?.low ?? null,
+            ).execPrice);
             replayPricing = { bestBid: px, bestAsk: px, ageMs: 0, source: "replay" };
         }
     }
@@ -236,6 +237,7 @@ export async function placeOrderWithSnapshot(
             body.leverage ?? null,
             liquidation,
             body.reduceOnly ?? false,
+            fillModel,
         );
         // A reduce-only order may have been trimmed to the position.
         if (body.reduceOnly && matchResult.order.qty !== body.qty) {
@@ -637,6 +639,7 @@ export async function placeOrderWithSnapshot(
                 snapshot,
                 reference: result.reference,
                 fills: result.fills,
+                systemFillSlippageBps: result.systemFillSlippageBps,
                 book: bookSnapshots.get(body.pairId),
                 now: Date.now(),
             });

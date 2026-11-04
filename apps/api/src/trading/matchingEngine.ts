@@ -66,6 +66,8 @@ import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { lockPairForUpdate } from "./pairRepo";
 import { isTradableSymbol } from "../market/marketSymbols";
+import { priceMarketFill, fillModelOf, type FillModel } from "./marketFillPrice";
+import { DEFAULT_SIM_CONFIG } from "../sim/simConfigRepo";
 import { getMarketReference, getCollarReference, collarBand, systemFillPrice, isOnMarket, type CollarReference } from "./priceCollar";
 import { logger as rootLogger } from "../observability/logContext";
 
@@ -144,6 +146,8 @@ export type PlaceOrderResult = {
     order: OrderRow;
     fills: TradeRow[];
     reference: CollarReference | null;
+    /** How far the system fill paid past the touch (0 inside the touch band). */
+    systemFillSlippageBps?: number;
     /** Every wallet this order locked and may have changed (taker + makers), for wallet.updated after COMMIT. */
     walletIds: string[];
     /**
@@ -222,6 +226,9 @@ async function placeOrderInternal(
     // / TAKE_PROFIT_LIMIT fire) may rest: orders.reduce_only keeps it from
     // ever opening (the sweep caps its fills, a close cancels it).
     reduceOnly?: boolean,
+    // How a MARKET fill past the touch is priced (marketFillPrice.ts). Read
+    // by the caller, outside the transaction.
+    fillModel: FillModel = fillModelOf(DEFAULT_SIM_CONFIG),
 ): Promise<PlaceOrderResult> {
     // ── Phase A: Lock pair (Level 1) ──
     // Serializes all matching for this pair.  Every concurrent
@@ -448,12 +455,24 @@ async function placeOrderInternal(
     }
 
     let systemFill: SystemFillPlan | null = null;
+    let systemFillSlippageBps = ZERO;
     if (type === "MARKET" && remaining.gt(0)) {
-        // The real touch the taker crosses — no synthetic spread on top.
-        // Known limitation: the whole remainder fills at the touch whatever
-        // its size. There is no depth-based slippage (walking Kraken's book
-        // levels), so a large order gets top-of-book price for all of it.
-        const sysPrice = systemFillPrice(reference!, side);
+        // From the real touch the taker crosses, no synthetic spread on top:
+        // the touch band at the touch, the rest walks the Kraken book (one
+        // system trade at the average). A replay session's price is final.
+        // Above the band with no depth (ticker reference) there's nothing to
+        // price it from: reject rather than guess. A liquidation can't land
+        // here, its reference is always the book.
+        const touch = systemFillPrice(reference!, side);
+        const priced = reference!.source === "replay"
+            ? { price: touch, slippageBps: ZERO, beyondBookQty: ZERO }
+            : priceMarketFill({
+                levels: side === "BUY" ? reference!.levels?.asks : reference!.levels?.bids,
+                touch, side, qty: remaining, model: fillModel,
+            });
+        if (!priced) throw new Error("book_stale_for_size");
+        systemFillSlippageBps = priced.slippageBps;
+        const sysPrice = D(toFixed8(priced.price));
         const sysQuoteStr = toFixed8(remaining.mul(sysPrice));
         const sysQuote = D(sysQuoteStr);
         const sysFee = D(computeFee(sysQuoteStr, "TAKER", pair, userId).feeAmount);
@@ -979,7 +998,7 @@ async function placeOrderInternal(
         };
     }
 
-    return { order: updatedOrder, fills, reference, walletIds, isolatedLegs, canceledMakers, liquidation: liquidationFill };
+    return { order: updatedOrder, fills, reference, systemFillSlippageBps: systemFillSlippageBps.toNumber(), walletIds, isolatedLegs, canceledMakers, liquidation: liquidationFill };
 }
 
 /**
@@ -1033,8 +1052,9 @@ export async function placeOrderTx(
     leverage?: number | null,
     liquidation?: LiquidationRequest,
     reduceOnly?: boolean,
+    fillModel?: FillModel,
 ): Promise<PlaceOrderResult> {
-    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage, liquidation, reduceOnly);
+    return placeOrderInternal(client, userId, pairId, side, type, qty, limitPrice, competitionId, matchId, source, pricing, leverage, liquidation, reduceOnly, fillModel);
 }
 
 /**

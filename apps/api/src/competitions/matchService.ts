@@ -1087,15 +1087,22 @@ async function closeMatchScopedPositions(
     let closedCount = 0;
     let totalPnl = D("0");
     for (const pos of openPositions) {
-        // Fair close price (matchWallets.ClosePrices): closing a long sells at
-        // the bid, a short buys at the ask — the same price the wallet
-        // settlement uses, so the score and the match wallets agree.
+        // Close price (matchWallets.ClosePrices): closing a long sells from
+        // the bid, a short buys from the ask, size priced like any market
+        // close — the same price the wallet settlement uses, so the score and
+        // the match wallets agree.
         const { rows: pairRows } = await client.query<{ quote_asset_id: string }>(
             `SELECT quote_asset_id FROM trading_pairs WHERE id = $1`,
             [pos.pair_id],
         );
         const quoteAssetId = pairRows[0]?.quote_asset_id ?? null;
-        const close = await prices.get(client, pos.pair_id, D(pos.base_qty).isPositive(), pos.avg_entry_price);
+        const close = await prices.get(client, {
+            userId: pos.user_id,
+            pairId: pos.pair_id,
+            closingLong: D(pos.base_qty).isPositive(),
+            qty: D(pos.base_qty),
+            entryFallback: pos.avg_entry_price,
+        });
         const exitPrice = close.price.toNumber();
         const fallbackSource = close.source;
         if (fallbackSource === "avg_entry_price") {
