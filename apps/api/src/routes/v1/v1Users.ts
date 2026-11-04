@@ -14,7 +14,7 @@ const v1Users: FastifyPluginAsync = async (app) => {
         schema: {
             tags: ["Users"],
             summary: "Search players by username",
-            description: "**Rate limit:** 60 requests per minute per user.\n\nCase-insensitive username prefix match, at most 10 results. Public fields only. Excludes the caller and system accounts.",
+            description: "**Rate limit:** 60 requests per minute per user.\n\nCase-insensitive username prefix match, at most 10 results. Public fields only. Excludes the caller, system accounts and test-only email domains.",
             security: [{ bearerAuth: [] }],
             querystring: {
                 type: "object",

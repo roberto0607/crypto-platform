@@ -14,7 +14,7 @@ beforeAll(async () => {
     await resetTestData();
     await pool.query(
         `INSERT INTO users (email, email_normalized, password_hash, display_name)
-         SELECT 'u' || n || '@test.com', 'u' || n || '@test.com', 'x', 'player_' || n
+         SELECT 'u' || n || '@realmail.test', 'u' || n || '@realmail.test', 'x', 'player_' || n
            FROM generate_series(1, 20000) n`,
     );
     await pool.query("ANALYZE users");

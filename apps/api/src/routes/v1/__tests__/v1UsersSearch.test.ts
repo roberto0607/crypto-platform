@@ -115,6 +115,23 @@ describe("GET /v1/users/search", () => {
         expect(users.map((u: { id: string }) => u.id)).toEqual([human.id]);
     });
 
+    it.each(["test.local", "loadtest.local", "demo.local", "test.com", "example.com"])(
+        "excludes accounts on the test-only domain %s, in any case",
+        async (domain) => {
+            await named("seeded_one", `someone@${domain}`);
+            await named("seeded_two", `SOMEONE.ELSE@${domain.toUpperCase()}`);
+            const human = await named("seeded_real", "person@realmail.test");
+            const { users } = (await search("seeded")).json();
+            expect(users.map((u: { id: string }) => u.id)).toEqual([human.id]);
+        },
+    );
+
+    it("matches the whole domain, so a lookalike stays searchable", async () => {
+        const real = await named("lookalike", "person@mytest.com");
+        const { users } = (await search("lookalike")).json();
+        expect(users.map((u: { id: string }) => u.id)).toEqual([real.id]);
+    });
+
     it("rejects fewer than 2 characters, trimmed", async () => {
         expect((await search("a")).statusCode).toBe(400);
         expect((await search(" a ")).statusCode).toBe(400);

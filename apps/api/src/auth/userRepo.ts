@@ -102,6 +102,8 @@ export type PublicPlayer = {
  * Served by users_display_name_lower_uq, for the filter and the order: the
  * ~<~ operator is the order text_pattern_ops stores, so LIMIT stops at 10 rows.
  * $1 is a LIKE pattern, $2 the ids to leave out. Selects public columns only.
+ * The domains are system accounts and the ones seed and smoke scripts use, so
+ * only real players are found. That hides the seeded demo@demo.local too.
  */
 export const PLAYER_SEARCH_SQL = `
     SELECT u.id,
@@ -114,7 +116,9 @@ export const PLAYER_SEARCH_SQL = `
       LEFT JOIN user_tiers ut ON ut.user_id = u.id
      WHERE lower(u.display_name) LIKE $1
        AND u.id <> ALL($2::uuid[])
-       AND u.email_normalized NOT LIKE '%@system.local'
+       AND split_part(u.email_normalized, '@', 2) NOT IN (
+           'system.local', 'test.local', 'loadtest.local', 'demo.local', 'test.com', 'example.com'
+       )
      ORDER BY lower(u.display_name) USING ~<~
      LIMIT 10`;
 
