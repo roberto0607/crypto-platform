@@ -306,6 +306,16 @@ const LMV_CSS = `
     background: #040404;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
+  /* CLOSE and the confirms, pinned (see .tr-pos-actions). */
+  .lmv-pos-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    margin: 8px -16px -12px;
+    padding: 8px 16px 12px;
+    background: #040404;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
   /* The card at the top of the panel, above LONG/SHORT (see the trade page's
      .tr-order-section > .tr-position-card-sticky). */
   .lmv-order-section > .lmv-position-card-sticky {

@@ -85,6 +85,8 @@ export interface TradingPair {
   fee_bps: number;
   maker_fee_bps: number;
   taker_fee_bps: number;
+  /** Largest order on this pair, in quote (reduce-only is exempt). */
+  max_order_notional?: DecimalString;
   trading_enabled: boolean;
   created_at: ISODateString;
 }

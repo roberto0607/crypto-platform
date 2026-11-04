@@ -9,7 +9,17 @@
  * capped P&L and return on margin. CLOSE is reduce-only.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, within } from "@testing-library/react";
+import { render, screen, act, within, waitFor } from "@testing-library/react";
+
+const quote = vi.hoisted(() => ({ budgets: [] as string[] }));
+vi.mock("@/api/endpoints/quote", () => ({
+  // The solve itself is the server's: here, the whole budget at 10x (or 1x).
+  getMarketQuote: vi.fn(async (p: { budget?: string; leverage?: number }) => {
+    if (p.budget) quote.budgets.push(p.budget);
+    const notional = Number(p.budget ?? 0) * (p.leverage ?? 1);
+    return { data: { executable: true, reason: null, qty: "0.01000000", touchPrice: "1", estimatedPrice: "1", slippage_bps: "0", slippageQuote: "0", requestedNotional: String(notional), feeQuote: "0", maxOrderNotional: "5000000.00" } };
+  }),
+}));
 import userEvent from "@testing-library/user-event";
 
 const flags = vi.hoisted(() => ({ SHOW_LEVERAGE_SELECTOR: true }));
@@ -140,7 +150,7 @@ describe("the selector", () => {
     lev.info = info({ positionLeverage: "5.00" });
     await mount(ISO_LONG);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
     const checked = screen.getAllByRole("radio").filter((r) => r.getAttribute("aria-checked") === "true");
     expect(checked.map((r) => r.textContent)).toEqual(["5x"]);
     expect(screen.getByText("Close the position to change leverage")).toBeTruthy();
@@ -157,7 +167,7 @@ describe("the order: input = margin", () => {
   it("$50 at 10x: notional $500, fee on the notional, liq $75,075.38 (−9.5%); sends leverage 10", async () => {
     await mount();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
     expect(screen.getByText("MARGIN")).toBeTruthy();
     await user.type(screen.getByPlaceholderText("0.00"), "50");
 
@@ -176,28 +186,29 @@ describe("the order: input = margin", () => {
     await mount();
     const user = userEvent.setup();
     await user.click(screen.getByText("SHORT"));
-    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
     await user.type(screen.getByPlaceholderText("0.00"), "50");
     expect(sumVal("EST. LIQ PRICE")).toBe("$90,845.77");
     expect(screen.getByText("$90,845.77").getAttribute("title")).toContain("(+9.5% from entry)");
   });
 
-  it("1x long: NONE (can't be liquidated); still sends leverage 1 (the user chose it)", async () => {
+  it("1x long: None (can't be liquidated); still sends leverage 1 (the user chose it)", async () => {
     await mount();
     const user = userEvent.setup();
     await user.type(screen.getByPlaceholderText("0.00"), "50");
-    expect(sumVal("EST. LIQ PRICE")).toBe("NONE");
+    expect(sumVal("EST. LIQ PRICE")).toBe("None");
     await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
     expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ leverage: 1 });
   });
 
-  it("AVAILABLE is free USD (no 2× rule, base residue ignored); MAX leaves room for the fee", async () => {
+  it("AVAILABLE is free USD (no 2× rule, base residue ignored); MAX solves that budget at the leverage", async () => {
     await mount();
     expect(sumVal("AVAILABLE")).toBe("$1,000.00 USD");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "10x" }));
-    await user.click(screen.getByText("MAX"));
-    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("995.02");
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
+    await user.click(screen.getByRole("button", { name: /^MAX/ }));
+    await waitFor(() => expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("1000"));
+    expect(quote.budgets.at(-1)).toBe("1000.00000000");
   });
 
   it("EQUITY = USD + margin + capped uPnL", async () => {

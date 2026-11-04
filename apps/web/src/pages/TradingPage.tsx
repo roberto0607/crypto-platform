@@ -13,6 +13,7 @@ import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
+import { PRICE_HELP } from "@/lib/priceHelp";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
 import type { Position, OrderBook as OrderBookType, TradingPair, MatchPnlUpdateEvent } from "@/types/api";
 import Spinner from "@/components/Spinner";
@@ -516,6 +517,8 @@ const TRADE_CSS = `
     display:flex;justify-content:space-between;gap:6px;
     font-size:10px;padding:2px 0;min-width:0;
   }
+  /* SLIPPAGE: its value ("1.23% · $12,345.67") doesn't fit a half-width cell. */
+  .tr-sum-wide { grid-column:1 / -1; }
   /* Summary labels join the tier-3 recede (0.55 → 0.40, #53); values stay 0.9. */
   .tr-sum-lbl { color:rgba(255,255,255,0.4);letter-spacing:1px;white-space:nowrap; }
   .tr-sum-val { color:rgba(255,255,255,0.9);white-space:nowrap; }
@@ -707,6 +710,15 @@ const TRADE_CSS = `
   .tr-order-footer-with-position {
     display:block;position:static;
     margin:0 -16px;padding:8px 16px 0;
+    background:#050505;border-top:1px solid var(--borderW);
+  }
+  /* Always reachable (F-04): pinned to the bottom of the scrolling order panel,
+     so CLOSE and any confirm stay on screen however tall the card or the dock
+     (and above the book, which sits outside the scroller). Last in the
+     section, so the form scrolls clear of it. */
+  .tr-pos-actions {
+    position:sticky;bottom:0;z-index:3;
+    margin:8px -16px -10px;padding:8px 16px 10px;
     background:#050505;border-top:1px solid var(--borderW);
   }
   /* The card at the top of the panel (above LONG/SHORT): in flow, edge to
@@ -1037,7 +1049,7 @@ export function OrderBookPanel({
           }}>WAITING FOR BOOK DATA...</div>
         )}
         <div className="tr-ob-hdr" ref={headerRef}>
-          <span>PRICE</span>
+          <span title={PRICE_HELP.bidAsk}>ASK / BID</span>
           <span>QTY</span>
         </div>
         {asks.map((r) => (

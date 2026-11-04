@@ -59,6 +59,16 @@ export function orderPreview(p: {
   };
 }
 
+/** A new position's liq price at `entry` (est. fill); null when it has none (a 1x long). */
+export function estLiqPrice(p: { side: MarginSide; qty: string; entry: number; leverage: number; mmrBps: number }): number | null {
+  const qty = new Decimal(p.qty || 0);
+  if (qty.lte(0) || !(p.entry > 0)) return null;
+  const entry = new Decimal(p.entry);
+  const margin = qty.mul(entry).div(p.leverage);
+  const liq = liquidationPrice({ side: p.side, qty, entry, margin, mmrBps: p.mmrBps });
+  return liq.gt(0) ? liq.toNumber() : null;
+}
+
 /** The largest margin that, with the taker fee on its notional, fits in `free` USD. */
 export function maxMargin(free: number, leverage: number, takerBps: number): number {
   if (!(free > 0)) return 0;

@@ -3,10 +3,10 @@
  * safety around an open position:
  *   - header: how long the position has been open (hidden when unknown);
  *   - BREAK-EVEN from the position's own fees and the pair's taker fee;
- *   - liq "none" for a 1x long;
+ *   - liq "None" for a 1x long;
  *   - TP / SL on the whole position: set, edit, remove, side-checked;
  *   - "reverse to …": confirmed, one MARKET order of twice the size;
- *   - CLOSE & REVERSE (an order on the other side): a confirm step, never
+ *   - CLOSE & REVERSE (an order past the position): a confirm step, never
  *     one click;
  *   - EST. LIQ PRICE for an add is the combined position's.
  */
@@ -139,7 +139,7 @@ describe("the card", () => {
 
   it("a 1x long: liq none, no distance", async () => {
     await mount({ ...ISO_LONG, leverage: "1.00", isolated_margin: "499.99947000", liq_price: null });
-    expect(screen.getByTestId("pos-liq").textContent).toBe("none");
+    expect(screen.getByTestId("pos-liq").textContent).toBe("None");
   });
 
   it("SIZE, MARGIN, BREAK-EVEN ($81,018.94 at the pair's 5 bps) and FEES PAID", async () => {
@@ -251,7 +251,7 @@ describe("CLOSE & REVERSE: never one click", () => {
     const user = userEvent.setup();
     await user.click(screen.getByText("LONG"));
     await user.type(screen.getByPlaceholderText("0.00"), margin);
-    await user.click(screen.getByRole("button", { name: "CLOSE & REVERSE" }));
+    await user.click(screen.getByRole("button", { name: /^(CLOSE & REVERSE|CLOSE|REDUCE SHORT)$/ }));
     return user;
   }
 
@@ -267,11 +267,21 @@ describe("CLOSE & REVERSE: never one click", () => {
     expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET", leverage: 10 });
   });
 
-  it("smaller: says it only reduces", async () => {
+  it("smaller: one click, no confirm", async () => {
     await mount(ISO_SHORT);
     await orderLong("100"); // $1,000 notional
-    expect(screen.getByTestId("confirm-box").textContent).toContain(
-      "This reduces your SHORT by 0.01250 BTC. It opens no LONG. Confirm?");
+    await settle();
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET" });
+  });
+
+  it("the whole position: one click, no confirm", async () => {
+    await mount({ ...ISO_SHORT, base_qty: "-0.06250000" });
+    await orderLong("500"); // $5,000 notional at 80,000 = the short
+    await settle();
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
+    expect(placeOrder).toHaveBeenCalledTimes(1);
   });
 
   it("changing the amount drops the pending confirm", async () => {
@@ -313,7 +323,7 @@ describe("EST. LIQ PRICE when adding", () => {
     await mount(null);
     setPrice("85000");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
     await user.type(screen.getByPlaceholderText("0.00"), "50");
     expect(screen.getByTestId("est-liq").textContent).toBe("$76,884.42");
   });

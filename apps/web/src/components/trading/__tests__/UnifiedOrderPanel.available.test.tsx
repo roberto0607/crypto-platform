@@ -5,7 +5,17 @@
  * moves with price and wallet.updated without a reload.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, waitFor, screen, act } from "@testing-library/react";
+
+const quote = vi.hoisted(() => ({ budgets: [] as string[] }));
+vi.mock("@/api/endpoints/quote", () => ({
+  // The solve itself is the server's: here, the whole budget at 10x (or 1x).
+  getMarketQuote: vi.fn(async (p: { budget?: string; leverage?: number }) => {
+    if (p.budget) quote.budgets.push(p.budget);
+    const notional = Number(p.budget ?? 0) * (p.leverage ?? 1);
+    return { data: { executable: true, reason: null, qty: "0.01000000", touchPrice: "1", estimatedPrice: "1", slippage_bps: "0", slippageQuote: "0", requestedNotional: String(notional), feeQuote: "0", maxOrderNotional: "5000000.00" } };
+  }),
+}));
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/api/endpoints/trading", () => ({
@@ -64,8 +74,9 @@ describe("AVAILABLE after a short", () => {
     renderPanel();
 
     expect(screen.getByText("$99,950.00 USD")).toBeTruthy();
-    await userEvent.setup().click(screen.getByText("MAX"));
-    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("99950");
+    await userEvent.setup().click(screen.getByRole("button", { name: /^MAX/ }));
+    await waitFor(() => expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("99950"));
+    expect(quote.budgets.at(-1)).toBe("99950.00000000");
   });
 
   it("is marked to market: a short losing value lowers it, live", () => {
