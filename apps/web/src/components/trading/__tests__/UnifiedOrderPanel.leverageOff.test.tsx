@@ -32,6 +32,18 @@
  * only the summary + submit. A, B and every body are unchanged. The old
  * withFooterFix transform (card into the footer) is gone; C is compared
  * to the golden as recorded.
+ *
+ * Re-recorded for order panel truth (audit PR 2b; the html now waits past the
+ * quote debounce, against a fixed quote). Every request body is byte-identical
+ * to the previous golden. What changed in the html, all three scenarios:
+ *   - ENTRY PRICE → EST. FILL (from the quote; `--` with no amount), with a
+ *     tooltip; on MARKET a full-width SLIPPAGE row after POSITION SIZE (class
+ *     tr-sum-wide); POSITION SIZE and FEE come from the quote;
+ *   - the 25/50/75/MAX spans left the AMOUNT label: real buttons in their own
+ *     row, with the notional each would place.
+ * In C only: CLOSE POSITION moved out of the card into the pinned
+ * -pos-actions bar after the footer; the card's MARK reads LAST (a SPOT card
+ * values at the last trade) and its equity row lost a 6px top margin.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
@@ -42,14 +54,25 @@ const http = vi.hoisted(() => ({
   posts: [] as { url: string; body: unknown }[],
 }));
 
+/** GET /v1/sim/quote, a fixed book: 83,960 average, at any size. */
+const fixedQuote = vi.hoisted(() => (p: { qty?: string; budget?: string }) => {
+  const notional = p.budget ? Number(p.budget) * 0.99 : Number(p.qty) * 83960;
+  return {
+    executable: true, reason: null, qty: (notional / 83960).toFixed(8), touchPrice: "83950.00000000",
+    estimatedPrice: "83960.00000000", slippage_bps: "1.19000000", slippageQuote: (notional * 0.000119).toFixed(8),
+    requestedNotional: notional.toFixed(8), feeQuote: (notional * 0.0005).toFixed(8), maxOrderNotional: "5000000.00",
+  };
+});
+
 vi.mock("@/api/client", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/api/client")>();
   const fake = {
-    get: vi.fn(async (url: string) => {
+    get: vi.fn(async (url: string, cfg?: { params: { qty?: string; budget?: string } }) => {
       if (url.startsWith("/leverage")) {
         if (!http.leverage) throw Object.assign(new Error("unavailable"), { response: { status: 500, data: {} } });
         return { data: http.leverage };
       }
+      if (url === "/v1/sim/quote") return { data: fixedQuote(cfg!.params) };
       if (url.includes("trigger")) return { data: { ok: true, data: [], nextCursor: null } };
       return { data: { ok: true } };
     }),
@@ -95,6 +118,8 @@ const SPOT = { ok: true, pairId: "p1", enabled: false, marginMode: "SPOT", cap: 
 const ISOLATED_1X = { ...SPOT, enabled: true, marginMode: "ISOLATED" };
 
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+/** Past the quote debounce, so the html has the preview and the chips. */
+const quoted = () => act(async () => { await new Promise((r) => setTimeout(r, 300)); });
 
 function setup() {
   cleanup();
@@ -128,7 +153,7 @@ async function scenarioA() {
   await settle();
   const user = userEvent.setup();
   await user.type(screen.getByPlaceholderText("0.00"), "50");
-  await settle();
+  await quoted();
   const html = container.innerHTML;
   await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
   await settle();
@@ -144,7 +169,7 @@ async function scenarioB() {
   await user.click(screen.getByText("LIMIT"));
   act(() => { useTradingStore.setState({ limitPrice: "84000" }); });
   await user.type(screen.getByPlaceholderText("0.00"), "50");
-  await settle();
+  await quoted();
   const html = container.innerHTML;
   await user.click(screen.getByRole("button", { name: /OPEN SHORT/ }));
   await settle();
@@ -154,7 +179,7 @@ async function scenarioB() {
 async function scenarioC() {
   setup();
   const { container } = mount(POSITION);
-  await settle();
+  await quoted();
   const html = container.innerHTML;
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: /CLOSE POSITION/ }));

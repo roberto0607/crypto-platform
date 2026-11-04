@@ -154,7 +154,8 @@ describe("the ISOLATED card uses the engine's mark", () => {
     lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
     await mount(spot as Position);
     engineMark(79919);
-    expect(markText()).toBe("$79,905.00");
+    expect(card().getByText("LAST").nextElementSibling!.textContent).toBe("$79,905.00");
+    expect(card().queryByText("MARK")).toBeNull();
     expect(card().queryByText("STALE")).toBeNull();
   });
 });
@@ -206,18 +207,18 @@ describe("the card's equity and size", () => {
 });
 
 describe("the order preview uses the engine mark (leveraged MARKET orders)", () => {
-  const entry = () => screen.getByText("ENTRY PRICE").parentElement!.querySelector("span:last-child")!;
+  const entry = () => screen.getByText("EST. FILL").parentElement!.querySelector("span:last-child")!;
   const noPosition = async () => {
     lev.info = { ...info, positionLeverage: null };
     render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={null} positions={[]} onOrderFilled={() => {}} /></ToastProvider>);
     await settle();
   };
 
-  it("ENTRY PRICE and EST. LIQ PRICE from the book mid, not the last trade", async () => {
+  it("EST. FILL and EST. LIQ PRICE from the book mid, not the last trade", async () => {
     await noPosition();
     engineMark(79919);
     const user = userEvent.setup();
-    await user.click(screen.getByRole("radio", { name: "10x" }));
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
     await user.type(screen.getByPlaceholderText("0.00"), "50");
     expect(entry().textContent).toBe("$79,919.00");
     const want = orderPreview({ margin: 50, leverage: 10, price: 79919, takerBps: 5, mmrBps: 50, side: "LONG" });
@@ -230,6 +231,7 @@ describe("the order preview uses the engine mark (leveraged MARKET orders)", () 
     await noPosition();
     engineMark(79919);
     expect(screen.queryByText("PRICE FEED")).toBeNull();
+    await userEvent.setup().type(screen.getByPlaceholderText("0.00"), "50");
     engineMark(null, true);
     expect(entry().textContent).toBe("$79,905.00");
     expect((entry() as HTMLElement).style.color).toBe("rgb(245, 158, 11)");
@@ -244,11 +246,12 @@ describe("the order preview uses the engine mark (leveraged MARKET orders)", () 
     expect(entry().textContent).toBe("$78,000.00");
   });
 
-  it("not leveraged (SPOT): ENTRY PRICE stays the ticker", async () => {
+  it("not leveraged (SPOT): EST. FILL stays the ticker", async () => {
     lev.info = { ...info, marginMode: "SPOT", cap: 1, positionLeverage: null };
     render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={null} positions={[]} onOrderFilled={() => {}} /></ToastProvider>);
     await settle();
     engineMark(79919);
+    await userEvent.setup().type(screen.getByPlaceholderText("0.00"), "50");
     expect(entry().textContent).toBe("$79,905.00");
   });
 });

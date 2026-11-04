@@ -8,7 +8,8 @@
  *            amber box says what a liquidation leaves
  *   grid     ENTRY, MARK, SIZE, MARGIN, BREAK-EVEN, FEES PAID
  *   TP / SL  set, edit or remove a trigger on the whole position
- *   CLOSE POSITION; equity, and a confirmed reverse to the other side
+ *   foot     equity, and "reverse to …" (the confirm and CLOSE POSITION are in
+ *            the panel's pinned action bar: this card scrolls, they can't)
  * A SPOT position has no margin, liq price or health, and GET /positions
  * doesn't report its own fees, so MARGIN / BREAK-EVEN / FEES PAID hide too.
  * Every number comes from the props (the panel's one mark).
@@ -19,7 +20,7 @@ import type { IsolatedPositionView } from "@/lib/leverageUi";
 import type { PnlFlash } from "@/hooks/usePnlFlash";
 import { healthTone } from "@/lib/leverageUi";
 import { breakEvenPrice, equityAtLiq, isAtRisk, liqDistancePct, openDuration } from "@/lib/positionCard";
-import { ConfirmBox } from "@/components/trading/ConfirmBox";
+import { PRICE_HELP } from "@/lib/priceHelp";
 
 const GREEN = "#00ff41";
 const RED = "#ff3b3b";
@@ -29,7 +30,7 @@ const HEALTH_COLORS = { ok: GREEN, warn: AMBER, danger: RED } as const;
 export function fmtUsd(n: number): string {
   return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-const fmtSigned = (n: number) => (n >= 0 ? "+" : "-") + fmtUsd(Math.abs(n));
+export const fmtSigned = (n: number) => (n >= 0 ? "+" : "-") + fmtUsd(Math.abs(n));
 const fmtPct = (n: number, dp = 2) => `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
 const fmtWholeUsd = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 export const fmtQty = (q: number) => q.toFixed(q >= 1 ? 4 : 5);
@@ -81,9 +82,8 @@ export interface PositionCardProps {
   onSetTrigger: (kind: "TAKE_PROFIT_MARKET" | "STOP_MARKET", price: string) => Promise<string | null>;
   onEditTrigger: (trigger: TriggerOrder, price: string) => Promise<string | null>;
   onRemoveTrigger: (trigger: TriggerOrder) => Promise<string | null>;
-  closing: boolean;
-  onClose: () => void;
   reversing: boolean;
+  /** Asks to reverse: the panel confirms, then sends it. */
   onReverse: () => void;
 }
 
@@ -117,7 +117,6 @@ export function PositionCard(props: PositionCardProps) {
   const [editVal, setEditVal] = useState("");
   const [triggerErr, setTriggerErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmReverse, setConfirmReverse] = useState(false);
 
   const triggerOf = (k: TriggerKind) => (k === "TAKE_PROFIT_MARKET" ? tpTrigger : slTrigger);
   const startEdit = (k: TriggerKind) => {
@@ -264,7 +263,7 @@ export function PositionCard(props: PositionCardProps) {
               <span style={smallLabel}>LIQ PRICE</span>
               <span data-testid="pos-liq" style={{ color: liq ? AMBER : smallVal.color }}
                 title={liq ? `Liquidated if the mark reaches ${fmtUsd(liq)}` : "A 1x long can't be liquidated"}>
-                {liq ? fmtUsd(liq) : "none"}
+                {liq ? fmtUsd(liq) : "None"}
                 {distance !== null && (
                   <span data-testid="pos-liq-distance" style={{ color: atRisk ? RED : "rgba(255,255,255,0.45)" }}>
                     {" "}· {distance.toFixed(1)}% away
@@ -318,7 +317,7 @@ export function PositionCard(props: PositionCardProps) {
             <div style={smallVal}>{fmtUsd(entry)}</div>
           </div>
           <div>
-            <span style={smallLabel} title={isoView ? "The liquidation engine's mark (Kraken book mid)" : "Last trade"}>MARK</span>
+            <span style={smallLabel} title={isoView ? PRICE_HELP.mark : PRICE_HELP.last}>{isoView ? "MARK" : "LAST"}</span>
             <div style={smallVal} data-testid="pos-mark">
               {fmtUsd(mark)}
               {isoView && markStale && (
@@ -368,44 +367,18 @@ export function PositionCard(props: PositionCardProps) {
           {triggerErr && <div role="alert" style={{ fontSize: 9, color: RED }}>{triggerErr}</div>}
         </div>
 
-        {/* ── CLOSE ── */}
-        <button
-          type="button"
-          disabled={props.closing}
-          onClick={props.onClose}
-          style={{
-            width: "100%", padding: "10px 0",
-            background: "rgba(255,59,59,0.18)", border: "1px solid rgba(255,59,59,0.55)",
-            color: RED, fontSize: 11, fontWeight: 700, letterSpacing: 3,
-            cursor: props.closing ? "not-allowed" : "pointer",
-            opacity: props.closing ? 0.5 : 1, fontFamily: "inherit",
-          }}
-        >
-          {props.closing ? "CLOSING..." : "CLOSE POSITION"}
-        </button>
-
-        {confirmReverse ? (
-          <ConfirmBox
-            message={`This closes your ${direction} (${fmtSigned(pnl)}) and opens a ${reverseTo} of ${fmtQty(qty)} ${baseSymbol}. Confirm?`}
-            confirmLabel={`REVERSE TO ${reverseTo}`}
-            busy={props.reversing}
-            onConfirm={() => { setConfirmReverse(false); props.onReverse(); }}
-            onCancel={() => setConfirmReverse(false)}
-          />
-        ) : (
-          // ${p}-pos-foot: at phone width the page's CSS stacks this row
-          // left-aligned, clear of the fixed Agent Activity button (bottom-right).
-          <div className={`${p}-pos-foot`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, marginTop: 6, fontSize: 9, letterSpacing: 1 }}>
-            <span style={{ color: "rgba(255,255,255,0.4)" }} data-testid="pos-equity"
-              title={isoView ? "Margin + unrealized P&L (a loss counts at most the margin)" : "Cost + unrealized P&L"}>
-              equity {fmtUsd(equity)}
-            </span>
-            <button type="button" disabled={props.reversing} onClick={() => setConfirmReverse(true)}
-              style={{ ...linkBtn, color: "rgba(255,255,255,0.45)", fontSize: 9, textDecoration: "underline" }}>
-              reverse to {reverseTo.toLowerCase()}…
-            </button>
-          </div>
-        )}
+        {/* ${p}-pos-foot: at phone width the page's CSS stacks this row
+            left-aligned, clear of the fixed Agent Activity button (bottom-right). */}
+        <div className={`${p}-pos-foot`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, fontSize: 9, letterSpacing: 1 }}>
+          <span style={{ color: "rgba(255,255,255,0.4)" }} data-testid="pos-equity"
+            title={isoView ? "Margin + unrealized P&L (a loss counts at most the margin)" : "Cost + unrealized P&L"}>
+            equity {fmtUsd(equity)}
+          </span>
+          <button type="button" disabled={props.reversing} onClick={props.onReverse}
+            style={{ ...linkBtn, color: "rgba(255,255,255,0.45)", fontSize: 9, textDecoration: "underline" }}>
+            reverse to {reverseTo.toLowerCase()}…
+          </button>
+        </div>
       </div>
     </div>
   );

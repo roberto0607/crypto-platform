@@ -1,3 +1,4 @@
+import { PRICE_HELP } from "@/lib/priceHelp";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
@@ -243,6 +244,7 @@ const CONTEXT_BAR_CSS = `
     letter-spacing:2px;line-height:1;
     transition:filter 0.15s ease-out, text-shadow 0.15s ease-out;
   }
+  .tr-price-tag { margin-left:6px;font-size:8px;letter-spacing:2px;color:rgba(255,255,255,0.4);cursor:help;align-self:center; }
   .tr-price-big.up { color:var(--g,#00ff41);text-shadow:0 0 20px var(--g25,rgba(0,255,65,0.25)); }
   .tr-price-big.down { color:var(--red,#ff3b3b);text-shadow:0 0 20px var(--red25,rgba(255,59,59,0.25)); }
   .tr-price-big.flat { color:#fff; }
@@ -2102,9 +2104,10 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     beneath it (see CHART_LEGEND_HEIGHT). */}
                 <div className="tr-chart-legend">
                     <div className="tr-chart-legend-row">
-                        <span className={`tr-price-big ${dayDir} ${heroTickFlash}`}>
+                        <span className={`tr-price-big ${dayDir} ${heroTickFlash}`} title={PRICE_HELP.last}>
                             ${heroPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
+                        <span className="tr-price-tag" title={PRICE_HELP.last}>LAST</span>
                         <div className="tr-price-meta">
                             <div className="tr-pm-item">
                                 <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>

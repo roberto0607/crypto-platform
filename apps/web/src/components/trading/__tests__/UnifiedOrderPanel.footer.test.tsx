@@ -14,7 +14,11 @@
  * top of a ~600px panel, hiding the MARKET/LIMIT row and the inputs behind
  * the summary. Now the card is the panel's first child (above LONG/SHORT,
  * visible without scrolling) and the summary + submit footer is in normal
- * flow (-order-footer-with-position: position:static); nothing is pinned.
+ * flow (-order-footer-with-position: position:static).
+ *
+ * Follow-up (audit F-04): CLOSE sat at the bottom of that card, under the book
+ * at 1280×720. It and the confirms are now a small bar (-pos-actions) after
+ * the footer, the one thing pinned; see the truth test and the CSS test there.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, act } from "@testing-library/react";
@@ -63,8 +67,9 @@ describe.each(["tr", "lmv"] as const)("%s: the card, the form and summary + OPEN
     expect(fkids[0]).toBe(`${p}-summary`);
     expect(fkids.some((k) => k.includes(`${p}-place-btn`))).toBe(true);
     expect(footer.querySelector(`.${p}-position-card-sticky`)).toBeNull();
-    // The footer closes the panel: nothing of the order form after it.
-    expect(footer.nextElementSibling).toBeNull();
+    // Then the pinned actions, and nothing of the order form after it.
+    expect(footer.nextElementSibling?.className).toBe(`${p}-pos-actions`);
+    expect(footer.nextElementSibling?.nextElementSibling).toBeNull();
   });
 
   it("without a position: unchanged (no card, no with-position class)", async () => {

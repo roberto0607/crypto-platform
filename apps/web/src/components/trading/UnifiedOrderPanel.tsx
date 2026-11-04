@@ -16,8 +16,13 @@
  *     as before (UnifiedOrderPanel.leverageOff.test.tsx).
  *   - The open-position card (PositionCard): P&L first, liq distance and
  *     margin health, break-even, TP/SL on the position, close / reverse.
- *   - An order on the other side of an open position (CLOSE & REVERSE)
- *     asks for confirmation first; never a one-click flip.
+ *   - An order on the other side of an open position (REDUCE / CLOSE /
+ *     CLOSE & REVERSE) asks for confirmation first; never a one-click flip.
+ *   - MARKET preview from GET /v1/sim/quote (est. fill, slippage, notional,
+ *     fee, est. liq at that fill); 25/50/75/MAX from its budget solve.
+ *   - A rejection stays under the submit button until the next edit.
+ *   - CLOSE POSITION and every confirm sit in a bar pinned to the bottom of
+ *     the scrolling panel, so nothing can push them out of reach.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -25,6 +30,7 @@ import { useAppStore } from "@/stores/appStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import { placeOrder } from "@/api/endpoints/trading";
+import { getMarketQuote, type QuoteParams } from "@/api/endpoints/quote";
 import { createTrigger, createOco } from "@/api/endpoints/triggers";
 import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
@@ -32,37 +38,29 @@ import { usePnlFlash } from "@/hooks/usePnlFlash";
 import { useBuyingPower, useOrderWallets } from "@/hooks/useBuyingPower";
 import { useLeverageInfo } from "@/hooks/useLeverageInfo";
 import { useLiquidationMark } from "@/hooks/useLiquidationMark";
+import { useMarketQuotes } from "@/hooks/useMarketQuotes";
 import { useMarkPriceStore } from "@/stores/markPriceStore";
 import { SHOW_LEVERAGE_SELECTOR } from "@/lib/featureFlags";
 import {
     leverageOptions,
     orderPreview,
     maxMargin,
+    estLiqPrice,
     isolatedPositionView,
     scopeEquity,
 } from "@/lib/leverageUi";
 import { addPreview, reverseSummary } from "@/lib/positionCard";
-import { PositionCard, fmtQty } from "@/components/trading/PositionCard";
+import { orderErrorText, quoteReasonText, fmtCompactUsd, type OrderErrorContext } from "@/lib/orderErrors";
+import { PRICE_HELP } from "@/lib/priceHelp";
+import { PositionCard, fmtQty, fmtSigned } from "@/components/trading/PositionCard";
 import { ConfirmBox } from "@/components/trading/ConfirmBox";
 import type { Position, TradingPair, TriggerOrder } from "@/types/api";
 import type { AxiosError } from "axios";
-import type { V1ApiError } from "@/types/api";
 
-const ERROR_MAP: Record<string, string> = {
-    INSUFFICIENT_BALANCE: "INSUFFICIENT BALANCE",
-    POSITION_LIMIT: "POSITION LIMIT REACHED",
-    PAIR_DISABLED: "PAIR DISABLED",
-    RATE_LIMITED: "RATE LIMITED",
-    insufficient_balance: "INSUFFICIENT BALANCE",
-    insufficient_liquidity: "INSUFFICIENT LIQUIDITY",
-    stale_price_source: "PRICE FEED DELAYED — RETRY",
-    match_ended: "MATCH ENDED",
-    reduce_only_no_position: "POSITION ALREADY CLOSED",
-    leverage_exceeds_cap: "LEVERAGE ABOVE YOUR LIMIT",
-    leverage_mismatch: "CLOSE THE POSITION TO CHANGE LEVERAGE",
-    spot_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
-    isolated_orders_open: "CANCEL YOUR OPEN ORDERS ON THIS PAIR FIRST",
-};
+const PRESETS = [0.25, 0.5, 0.75, 1] as const;
+/** A preview left open re-quotes this often, so est. fill follows the book. */
+const QUOTE_REFRESH_MS = 5_000;
+const DIM: React.CSSProperties = { opacity: 0.45 };
 
 function fmtUsd(n: number): string {
     return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -219,12 +217,22 @@ export function UnifiedOrderPanel({
     const [tpPrice, setTpPrice] = useState("");
     const [slPrice, setSlPrice] = useState("");
     const [tslOffset, setTslOffset] = useState("");
-    const [btnState, setBtnState] = useState<"idle" | "success" | "error">("idle");
-    const [errorMsg, setErrorMsg] = useState("");
+    const [btnState, setBtnState] = useState<"idle" | "success">("idle");
+    // The last rejection, until the next edit (under the submit button).
+    const [orderError, setOrderError] = useState<string | null>(null);
+    const orderErrorRef = useRef<HTMLDivElement>(null);
+    // A failed CLOSE or reverse (next to CLOSE).
+    const [positionError, setPositionError] = useState<string | null>(null);
     const [closing, setClosing] = useState(false);
     const [reversing, setReversing] = useState(false);
-    // CLOSE & REVERSE waits for a second, explicit click.
+    // An order against the position waits for a second, explicit click;
+    // so does the card's "reverse to …".
     const [confirmReverse, setConfirmReverse] = useState(false);
+    const [confirmCardReverse, setConfirmCardReverse] = useState(false);
+    // A preset's solved size. The amount field shows its margin, but the order
+    // sends this qty: amount / price would ignore the slippage the solve paid for.
+    const [preset, setPreset] = useState<{ frac: number; budget: string; qty: string; notional: number } | null>(null);
+    const presetRun = useRef(0);
     const [tpSlMsg, setTpSlMsg] = useState("");
     const [lastOrderUsd, setLastOrderUsd] = useState<number | null>(null);
     const [lastOrderFee, setLastOrderFee] = useState<number | null>(null);
@@ -249,14 +257,22 @@ export function UnifiedOrderPanel({
     // Reset on pair change
     useEffect(() => {
         setBtnState("idle");
-        setErrorMsg("");
+        setOrderError(null);
+        setPositionError(null);
+        setPreset(null);
         setUsdAmount("");
         setTpPrice("");
         setSlPrice("");
         setTslOffset("");
         setTpSlMsg("");
         setConfirmReverse(false);
+        setConfirmCardReverse(false);
     }, [selectedPairId]);
+
+    // The CONFIRM that sent a rejected order is pinned; the error may be off-screen.
+    useEffect(() => {
+        if (orderError) orderErrorRef.current?.scrollIntoView?.({ block: "nearest" });
+    }, [orderError]);
 
     const [baseSymbol] = pair.symbol.split("/") as [string, string];
     // The snapshot-first ordering is load-bearing for replay mode:
@@ -297,11 +313,13 @@ export function UnifiedOrderPanel({
             mmrBps: levInfo!.mmrBps, side: activeMode,
         })
         : null;
-    const effectiveUsd = preview ? preview.notional : usdNum;
-    const baseQty = preview
-        ? (preview.qty ? parseFloat(preview.qty) : 0)
-        : effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
-    const baseQtyStr = preview ? preview.qty : baseQty > 0 ? baseQty.toFixed(8) : "";
+    const effectiveUsd = preset ? preset.notional : preview ? preview.notional : usdNum;
+    const baseQty = preset
+        ? parseFloat(preset.qty)
+        : preview
+            ? (preview.qty ? parseFloat(preview.qty) : 0)
+            : effectiveUsd > 0 && effectivePrice > 0 ? effectiveUsd / effectivePrice : 0;
+    const baseQtyStr = preset ? preset.qty : preview ? preview.qty : baseQty > 0 ? baseQty.toFixed(8) : "";
 
     // Fee estimate (on order size). A MARKET order is always the taker.
     // A LIMIT order pays the taker rate if it crosses now and the maker rate
@@ -424,28 +442,84 @@ export function UnifiedOrderPanel({
     const reverse = hasPosition && posDirection !== activeMode && baseQty > 0
         ? reverseSummary({ positionSide: posDirection!, positionQty: posAbsQty, orderQty: baseQty })
         : null;
+
+    // ── MARKET preview: the quote. Until the first answer, the local estimate
+    // (dimmed); on failure "—", never the last number. ──
+    const sideParam = activeMode === "LONG" ? "BUY" : "SELL";
+    const quoting = orderType === "MARKET" && usdNum > 0;
+    const reduces = reverse?.kind === "reduce" || reverse?.kind === "close";
+    const qtyRef = useRef(baseQtyStr);
+    qtyRef.current = baseQtyStr;
+    const { quotes, loading: quoteLoading } = useMarketQuotes(
+        quoting ? `${pair.id}:${activeMode}:${usdAmount}:${leverage}:${preset?.qty ?? ""}:${reduces}` : null,
+        () => (qtyRef.current
+            ? [{ pairId: pair.id, side: sideParam, qty: qtyRef.current, ...(reduces ? { reduces } : {}) }]
+            : []),
+        QUOTE_REFRESH_MS,
+    );
+    const answer = quoting && quotes ? quotes[0] ?? null : undefined;  // undefined = none yet
+    const quote = answer?.executable ? answer : null;
+    const quoteDash = quoting && answer !== undefined && !quote;
+    const dim = quoting && quoteLoading ? DIM : undefined;
+
+    const errorContext: OrderErrorContext = {
+        leveraged, cap: levCap, available: quoteBalance, baseSymbol,
+        maxNotional: pair.max_order_notional ? Number(pair.max_order_notional) : null,
+    };
+    const quoteHint = answer && !answer.executable ? quoteReasonText(answer.reason, errorContext) : null;
+
+    const estFill = quoteDash ? null : quote ? parseFloat(quote.estimatedPrice) : effectivePrice;
+    const shownNotional = quote ? parseFloat(quote.requestedNotional) : effectiveUsd;
+    const shownFee = quote ? parseFloat(quote.feeQuote) : estFee;
+    const slipPct = quote ? parseFloat(quote.slippage_bps) / 100 : null;
+    const slipUsd = quote ? parseFloat(quote.slippageQuote) : 0;
+
+    const newLiq = () => estLiqPrice({
+        side: activeMode, qty: baseQtyStr, entry: estFill ?? 0, leverage, mmrBps: levInfo?.mmrBps ?? 0,
+    });
     const estLiq: { price: number | null; note: string } | null = (() => {
-        if (!preview || !preview.qty) return null;
-        if (!isoView) return { price: preview.liqPrice ? preview.liqPrice.toNumber() : null, note: "this order" };
+        if (!preview || !baseQtyStr) return null;
+        if (!isoView) return { price: newLiq(), note: "this order" };
         if (posDirection === activeMode) {
             const after = addPreview(
                 { baseQty: position!.base_qty, entry: position!.avg_entry_price, margin: position!.isolated_margin ?? "0",
                   leverage: position!.leverage ?? "1", mmrBps: levInfo?.mmrBps ?? 0 },
-                preview.qty, effectivePrice,
+                baseQtyStr, estFill ?? effectivePrice,
             );
             return after ? { price: after.liqPrice ? after.liqPrice.toNumber() : null, note: "your position after this add" } : null;
         }
         if (reverse?.kind === "reduce") return { price: isoView.liqPrice, note: "your position after this reduce" };
         if (reverse?.kind === "close") return { price: null, note: "this closes the position" };
-        return { price: preview.liqPrice ? preview.liqPrice.toNumber() : null, note: `the ${activeMode} this opens` };
+        return { price: newLiq(), note: `the ${activeMode} this opens` };
     })();
+
+    /** Any change to the order: the rejection and the confirm were for the old one. */
+    const onEdit = useCallback(() => {
+        setOrderError(null);
+        setPositionError(null);
+        setConfirmReverse(false);
+        setConfirmCardReverse(false);
+    }, []);
+    /** The same, for a change a preset's solved size doesn't survive. */
+    const onResize = useCallback(() => {
+        onEdit();
+        presetRun.current += 1;
+        setPreset(null);
+    }, [onEdit]);
+
+    // The confirms are for this position: none survive it.
+    useEffect(() => {
+        if (hasPosition) return;
+        setConfirmCardReverse(false);
+        setPositionError(null);
+    }, [hasPosition]);
 
     // Sync direction → store orderSide
     const handleModeChange = useCallback((mode: "LONG" | "SHORT") => {
         setActiveMode(mode);
-        setConfirmReverse(false);
+        onResize();
         setOrderSide(mode === "LONG" ? "BUY" : "SELL");
-    }, [setOrderSide]);
+    }, [setOrderSide, onResize]);
 
     useEffect(() => {
         setOrderSide(activeMode === "LONG" ? "BUY" : "SELL");
@@ -461,9 +535,10 @@ export function UnifiedOrderPanel({
     const btnLabel = (() => {
         if (orderSubmitting) return "PLACING...";
         if (btnState === "success") return tpSlMsg || "ORDER PLACED";
-        if (btnState === "error") return errorMsg || "FAILED";
         if (hasPosition && posDirection === activeMode) return `ADD TO ${activeMode}`;
-        if (hasPosition && posDirection !== activeMode) return "CLOSE & REVERSE";
+        if (reverse?.kind === "flip") return "CLOSE & REVERSE";
+        if (reverse?.kind === "close") return "CLOSE";
+        if (hasPosition) return `REDUCE ${posDirection}`;
         return openButtonLabel({
             mode: isLong ? "LONG" : "SHORT",
             baseQty, effectiveUsd, baseSymbol, fmtUsd,
@@ -479,17 +554,30 @@ export function UnifiedOrderPanel({
         // An order against the open position: say what it does, then wait
         // for CONFIRM (handleConfirmReverse). Never a one-click flip.
         if (hasPosition && posDirection !== activeMode && !confirmReverse) {
+            setConfirmCardReverse(false);
             setConfirmReverse(true);
             return;
         }
         setConfirmReverse(false);
-        setErrorMsg("");
+        setOrderError(null);
         setTpSlMsg("");
         setBtnState("idle");
         try {
-            // `leverage` only for a leveraged order: otherwise the body is
-            // exactly the pre-leverage one.
-            const result = await submitOrder(leveraged ? { leverage } : undefined);
+            // A preset, solved again now: the book may have moved since its
+            // click, past what the solve's drift buffer covers.
+            let solvedQty: string | undefined;
+            if (preset && orderType === "MARKET") {
+                const fresh = await getMarketQuote(budgetParams(preset.budget)).then((r) => r.data).catch(() => null);
+                if (fresh && !(fresh.executable && parseFloat(fresh.qty) > 0)) {
+                    setOrderError(quoteReasonText(fresh.reason, errorContext));
+                    return;
+                }
+                solvedQty = fresh?.qty ?? preset.qty;
+            }
+            // `leverage` only for a leveraged order, `qty` only for a preset:
+            // otherwise the body is exactly the pre-leverage one.
+            const opts = { ...(leveraged ? { leverage } : {}), ...(solvedQty ? { qty: solvedQty } : {}) };
+            const result = await submitOrder(Object.keys(opts).length ? opts : undefined);
             const fills = result?.fills ?? [];
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
 
@@ -548,8 +636,9 @@ export function UnifiedOrderPanel({
             }
 
             setBtnState("success");
-            setLastOrderUsd(effectiveUsd);
-            setLastOrderFee(estFee);
+            setLastOrderUsd(shownNotional);
+            setLastOrderFee(shownFee);
+            setPreset(null);
             setUsdAmount("");
             setTpPrice("");
             setSlPrice("");
@@ -558,23 +647,14 @@ export function UnifiedOrderPanel({
             fetchTriggers();
             setTimeout(() => { setBtnState("idle"); setTpSlMsg(""); }, 2500);
         } catch (err) {
-            const axErr = err as AxiosError<V1ApiError | { error: string }>;
-            const data = axErr.response?.data;
-            let msg = "FAILED";
-            if (data) {
-                const code = "code" in data ? data.code : "error" in data ? data.error : "";
-                const message = "message" in data ? data.message : "";
-                msg = ERROR_MAP[code] ?? (typeof message === "string" && message ? message : "FAILED");
-            }
-            setErrorMsg(msg);
-            setBtnState("error");
-            setTimeout(() => setBtnState("idle"), 3000);
+            setOrderError(orderErrorText(err, errorContext));
         }
     };
 
     const handleClosePosition = async () => {
         if (!hasPosition || !selectedPairId) return;
         setClosing(true);
+        setPositionError(null);
         try {
             const closeSide = posQty > 0 ? "SELL" : "BUY";
             // Reduce-only: if the position is already gone (liquidated, a
@@ -594,9 +674,7 @@ export function UnifiedOrderPanel({
                 onOrderFilled();
                 fetchTriggers();
             } else {
-                setErrorMsg(code && ERROR_MAP[code] ? ERROR_MAP[code] : "Close failed");
-                setBtnState("error");
-                setTimeout(() => setBtnState("idle"), 3000);
+                setPositionError(orderErrorText(err, errorContext));
             }
         } finally {
             setClosing(false);
@@ -653,6 +731,7 @@ export function UnifiedOrderPanel({
     const handleReverse = async () => {
         if (!hasPosition || !selectedPairId) return;
         setReversing(true);
+        setPositionError(null);
         try {
             await placeOrder(
                 {
@@ -665,31 +744,79 @@ export function UnifiedOrderPanel({
             onOrderFilled();
             fetchTriggers();
         } catch (err) {
-            const data = (err as AxiosError<{ error?: string; message?: string }>).response?.data;
-            const code = data?.error ?? "";
-            addToast("error", ERROR_MAP[code] ?? data?.message ?? "Reverse failed");
+            setPositionError(orderErrorText(err, errorContext));
         } finally {
             setReversing(false);
         }
     };
 
-    // 25/50/75/MAX quick-amount buttons (#15). MAX is just frac 1.
-    const setQuickAmount = (frac: number) => {
-        // Leveraged, the amount is margin: leave room for the fee on its notional.
-        const pool = leveraged ? maxMargin(quoteBalance, leverage, pair.taker_fee_bps) : quoteBalance;
-        const v = computeQuickAmount(pool, frac);
-        if (v > 0) {
-            setUsdAmount(v + "");
-            setLastOrderUsd(null);
-            setLastOrderFee(null);
+    // ── 25/50/75/MAX: a share of what's free, solved by the server so the
+    // order fits with its margin, fee, slippage and drift, under the pair's
+    // max. MARKET asks the quote; a LIMIT knows its price, so it's arithmetic. ──
+    const budgetParams = (budget: string): QuoteParams => ({
+        pairId: pair.id, side: sideParam, budget, ...(leveraged ? { leverage } : {}),
+    });
+    const budgetFor = (frac: number) => computeQuickAmount(quoteBalance, frac).toFixed(8);
+    // Keyed on 3 significant figures: buying power moves with every tick while
+    // a short is open, and a chip only needs to be close (a click solves anew).
+    const { quotes: presetQuotes } = useMarketQuotes(
+        orderType === "MARKET" && quoteBalance > 0 ? `${pair.id}:${activeMode}:${leverage}:${quoteBalance.toPrecision(3)}` : null,
+        () => PRESETS.map((frac) => budgetParams(budgetFor(frac))),
+    );
+    /** A LIMIT preset's margin: fee at the higher rate (the engine reserves that), under the cap. */
+    const limitAmount = (frac: number) => {
+        const pool = maxMargin(quoteBalance, leverage, Math.max(pair.taker_fee_bps, pair.maker_fee_bps));
+        const cap = errorContext.maxNotional;
+        return Math.min(computeQuickAmount(pool, frac), cap !== null ? Math.floor(cap / leverage) : Infinity);
+    };
+    const presetNotional = (frac: number, i: number): number | null => {
+        if (orderType === "LIMIT") return limitAmount(frac) * leverage;
+        const q = presetQuotes?.[i];
+        return q?.executable ? parseFloat(q.requestedNotional) : null;
+    };
+
+    const pickPreset = async (frac: number) => {
+        onResize();
+        setLastOrderUsd(null);
+        setLastOrderFee(null);
+        if (orderType === "LIMIT") {
+            const v = limitAmount(frac);
+            if (v > 0) setUsdAmount(v + "");
+            return;
         }
+        const run = presetRun.current;
+        const budget = budgetFor(frac);
+        try {
+            const q = (await getMarketQuote(budgetParams(budget))).data;
+            if (run !== presetRun.current) return;
+            if (!q.executable || !(parseFloat(q.qty) > 0)) {
+                setOrderError(quoteReasonText(q.reason, errorContext));
+                return;
+            }
+            const notional = parseFloat(q.requestedNotional);
+            setPreset({ frac, budget, qty: q.qty, notional });
+            setUsdAmount(computeQuickAmount(notional / leverage, 1) + "");
+        } catch {
+            if (run === presetRun.current) setOrderError("Couldn't size the order — retry");
+        }
+    };
+
+    /** Arrow keys walk the leverage group (one tab stop, like any radio group). */
+    const onLeverageKey = (e: React.KeyboardEvent<HTMLButtonElement>, lv: number) => {
+        const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!step || lockedLeverage !== null) return;
+        e.preventDefault();
+        const next = levOptions[(levOptions.indexOf(lv) + step + levOptions.length) % levOptions.length]!;
+        onResize();
+        setLeverage(next);
+        const group = e.currentTarget.parentElement;
+        group?.querySelector<HTMLButtonElement>(`[data-lv="${next}"]`)?.focus();
     };
 
     const p = classPrefix;
 
     const btnClass = (() => {
         if (btnState === "success") return `${p}-place-btn success`;
-        if (btnState === "error") return `${p}-place-btn error`;
         return `${p}-place-btn ${isLong ? "buy" : "sell"}`;
     })();
 
@@ -722,10 +849,8 @@ export function UnifiedOrderPanel({
                     onSetTrigger={handleSetTrigger}
                     onEditTrigger={handleEditTrigger}
                     onRemoveTrigger={handleRemoveTrigger}
-                    closing={closing}
-                    onClose={handleClosePosition}
                     reversing={reversing}
-                    onReverse={handleReverse}
+                    onReverse={() => { onEdit(); setConfirmCardReverse(true); }}
                 />
             )}
 
@@ -752,6 +877,7 @@ export function UnifiedOrderPanel({
                         key={t}
                         className={`${p}-tt${orderType === t ? " active" : ""}`}
                         onClick={() => {
+                            onResize();
                             setOrderType(t);
                             if (t === "LIMIT" && !limitPrice && snapshot?.last) setLimitPrice(snapshot.last);
                         }}
@@ -770,15 +896,20 @@ export function UnifiedOrderPanel({
                     const selected = leverage === lv;
                     const locked = lockedLeverage !== null && !selected;
                     return (
-                        <div
+                        <button
                             key={lv}
+                            type="button"
                             role="radio"
+                            data-lv={lv}
+                            aria-label={`${lv}x leverage`}
                             aria-checked={selected}
-                            aria-disabled={locked}
-                            onClick={() => { if (lockedLeverage === null) setLeverage(lv); }}
+                            disabled={locked}
+                            tabIndex={selected ? 0 : -1}
+                            onClick={() => { if (lockedLeverage === null) { onResize(); setLeverage(lv); } }}
+                            onKeyDown={(e) => onLeverageKey(e, lv)}
                             style={{
                                 flex: 1, textAlign: "center", padding: "5px 0",
-                                fontSize: 10, letterSpacing: 1,
+                                fontSize: 10, letterSpacing: 1, fontFamily: "inherit",
                                 cursor: lockedLeverage === null ? "pointer" : "not-allowed",
                                 opacity: locked ? 0.35 : 1,
                                 // Selected → tier color; unselected risky → faint tier tint
@@ -789,7 +920,7 @@ export function UnifiedOrderPanel({
                             }}
                         >
                             {lv}x
-                        </div>
+                        </button>
                     );
                 })}
             </div>
@@ -820,7 +951,7 @@ export function UnifiedOrderPanel({
                 <div className={`${p}-field`}>
                     <label>LIMIT PRICE</label>
                     <div className={`${p}-field-wrap`}>
-                        <input type="number" placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"} value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
+                        <input type="number" placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"} value={limitPrice} onChange={(e) => { onEdit(); setLimitPrice(e.target.value); }} />
                         <span className={`${p}-field-unit`}>USD</span>
                     </div>
                     {limitWarn && <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 4, letterSpacing: 1 }}>{limitWarn}</div>}
@@ -829,29 +960,9 @@ export function UnifiedOrderPanel({
 
             {/* ── AMOUNT (USD) ── */}
             <div className={`${p}-field`}>
-                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>{leveraged ? "MARGIN" : "AMOUNT"}</span>
-                    {/* 25/50/75/MAX quick-amount row (#15) — right-aligned on the label
-                        row so panel height stays stable. Inert at zero balance. */}
-                    <span style={{ display: "flex", gap: 8 }}>
-                        {([0.25, 0.5, 0.75, 1] as const).map((frac) => (
-                            <span
-                                key={frac}
-                                onClick={() => setQuickAmount(frac)}
-                                style={{
-                                    color: "var(--ar-orange, var(--g, #00ff41))",
-                                    cursor: quoteBalance > 0 ? "pointer" : "default",
-                                    opacity: quoteBalance > 0 ? 1 : 0.4,
-                                    fontSize: 9, letterSpacing: 1,
-                                }}
-                            >
-                                {frac === 1 ? "MAX" : `${frac * 100}%`}
-                            </span>
-                        ))}
-                    </span>
-                </label>
+                <label>{leveraged ? "MARGIN" : "AMOUNT"}</label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); setConfirmReverse(false); }} />
+                    <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { onResize(); setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
@@ -859,6 +970,34 @@ export function UnifiedOrderPanel({
                 </div>}
             </div>
             </div>{/* /tr-pa-row */}
+
+            {/* 25/50/75/MAX: their own row, full width even beside LIMIT PRICE,
+                and outside the <label> (a click on it would press the first chip). */}
+            <div role="group" aria-label="Order size presets" style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+                {PRESETS.map((frac, i) => {
+                    const name = frac === 1 ? "MAX" : `${frac * 100}%`;
+                    const notional = presetNotional(frac, i);
+                    return (
+                        <button
+                            key={frac}
+                            type="button"
+                            disabled={!(quoteBalance > 0)}
+                            aria-pressed={preset?.frac === frac}
+                            aria-label={`${name}: use ${frac === 1 ? "all" : name + " of"} available${notional ? `, about ${fmtUsd(notional)} notional` : ""}`}
+                            onClick={() => { void pickPreset(frac); }}
+                            style={{
+                                flex: 1, minWidth: 0, padding: "3px 0", fontSize: 9, letterSpacing: 0.5, fontFamily: "inherit", whiteSpace: "nowrap",
+                                color: "var(--ar-orange, var(--g, #00ff41))", background: "transparent",
+                                border: `1px solid ${preset?.frac === frac ? "var(--ar-orange, var(--g, #00ff41))" : "rgba(255,255,255,0.08)"}`,
+                                cursor: quoteBalance > 0 ? "pointer" : "default",
+                                opacity: quoteBalance > 0 ? 1 : 0.4,
+                            }}
+                        >
+                            {name}{notional ? ` · ${fmtCompactUsd(notional)}` : ""}
+                        </button>
+                    );
+                })}
+            </div>
 
             {/* TAKE PROFIT + STOP LOSS share one 2-col row (same :has() mechanism as
                 the LIMIT PRICE|AMOUNT tr-pa-row). Pairing the two stacked fields into
@@ -873,7 +1012,7 @@ export function UnifiedOrderPanel({
             <div className={`${p}-field`}>
                 <label>TAKE PROFIT</label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => setTpPrice(e.target.value)} />
+                    <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => { onEdit(); setTpPrice(e.target.value); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {tpError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tpError}</div>}
@@ -884,7 +1023,7 @@ export function UnifiedOrderPanel({
             <div className={`${p}-field`}>
                 <label>STOP LOSS</label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => setSlPrice(e.target.value)} />
+                    <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => { onEdit(); setSlPrice(e.target.value); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
@@ -896,7 +1035,7 @@ export function UnifiedOrderPanel({
             <div className={`${p}-field`}>
                 <label>TRAILING STOP</label>
                 <div className={`${p}-field-wrap`}>
-                    <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => setTslOffset(e.target.value)} />
+                    <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => { onEdit(); setTslOffset(e.target.value); }} />
                     <span className={`${p}-field-unit`}>USD</span>
                 </div>
                 {tslError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tslError}</div>}
@@ -916,9 +1055,9 @@ export function UnifiedOrderPanel({
             {/* ── SUMMARY ── */}
             <div className={`${p}-summary`}>
                 <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`}>ENTRY PRICE</span>
-                    <span className={`${p}-sum-val`} style={previewStale ? { color: "#f59e0b" } : undefined}>
-                        {orderType === "LIMIT" && limitPrice ? fmtUsd(parseFloat(limitPrice)) : marketPrice > 0 ? fmtUsd(marketPrice) : "MARKET"}
+                    <span className={`${p}-sum-lbl`} title={PRICE_HELP.estFill}>EST. FILL</span>
+                    <span className={`${p}-sum-val`} style={{ ...dim, ...(previewStale ? { color: "#f59e0b" } : undefined) }}>
+                        {quoteDash ? "—" : quoting || (orderType === "LIMIT" && limitPrice) ? fmtUsd(estFill ?? 0) : <span className={`${p}-sum-empty`}>--</span>}
                     </span>
                 </div>
                 {/* Its own row: a chip beside the price overflows the cell at panel width. */}
@@ -937,11 +1076,19 @@ export function UnifiedOrderPanel({
                 )}
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
-                    <span className={`${p}-sum-val`}>{effectiveUsd > 0 ? fmtUsd(effectiveUsd) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
+                    <span className={`${p}-sum-val`} style={dim}>{quoteDash ? "—" : shownNotional > 0 ? fmtUsd(shownNotional) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
+                {orderType === "MARKET" && (
+                    <div className={`${p}-sum-row ${p}-sum-wide`}>
+                        <span className={`${p}-sum-lbl`} title="Est. fill vs the best bid / ask, for this size">SLIPPAGE</span>
+                        <span className={`${p}-sum-val`} style={dim}>
+                            {quoteDash ? "—" : slipPct !== null ? `${slipPct.toFixed(2)}% · ${slipUsd < 0 ? "-" : ""}${fmtUsd(Math.abs(slipUsd))}` : <span className={`${p}-sum-empty`}>--</span>}
+                        </span>
+                    </div>
+                )}
                 <div className={`${p}-sum-row`}>
                     <span className={`${p}-sum-lbl`}>{feeLabel}</span>
-                    <span className={`${p}-sum-val`}>{estFee > 0 ? fmtFee(estFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
+                    <span className={`${p}-sum-val`} style={dim}>{quoteDash ? "—" : shownFee > 0 ? fmtFee(shownFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
                 </div>
                 {leveraged && (
                     <div className={`${p}-sum-row`}>
@@ -949,17 +1096,17 @@ export function UnifiedOrderPanel({
                         <span
                             className={`${p}-sum-val`}
                             data-testid="est-liq"
-                            style={{ color: estLiq?.price ? "#f59e0b" : undefined }}
+                            style={{ ...dim, color: estLiq?.price ? "#f59e0b" : undefined }}
                             title={!estLiq
                                 ? undefined
-                                : estLiq.price !== null && effectivePrice > 0
-                                    ? `Liquidation at ${fmtUsd(estLiq.price)} (${estLiq.price >= effectivePrice ? "+" : ""}${((estLiq.price / effectivePrice - 1) * 100).toFixed(1)}% from entry) for ${estLiq.note}: the margin, less the maintenance margin, used up`
+                                : estLiq.price !== null && estFill
+                                    ? `Liquidation at ${fmtUsd(estLiq.price)} (${estLiq.price >= estFill ? "+" : ""}${((estLiq.price / estFill - 1) * 100).toFixed(1)}% from entry) for ${estLiq.note}: the margin, less the maintenance margin, used up`
                                     : reverse?.kind === "close" ? "This closes the position" : "A 1x long can't be liquidated"}
                         >
-                            {estLiq?.price
-                                ? fmtUsd(estLiq.price)
+                            {quoteDash && reverse?.kind !== "reduce" ? "—"
+                                : estLiq?.price ? fmtUsd(estLiq.price)
                                 : estLiq && reverse?.kind === "close" ? "—"
-                                : usdNum > 0 ? "NONE" : <span className={`${p}-sum-empty`}>--</span>}
+                                : usdNum > 0 ? "None" : <span className={`${p}-sum-empty`}>--</span>}
                         </span>
                     </div>
                 )}
@@ -989,15 +1136,7 @@ export function UnifiedOrderPanel({
                     waiting for market data…
                 </div>
             )}
-            {confirmReverse && reverse ? (
-                <ConfirmBox
-                    message={reverseMessage(reverse, posDirection!, pnlValue, baseQty, baseSymbol)}
-                    confirmLabel="CONFIRM"
-                    busy={orderSubmitting}
-                    onConfirm={() => { void handlePlaceOrder(); }}
-                    onCancel={() => setConfirmReverse(false)}
-                />
-            ) : (
+            {!(confirmReverse && reverse) && (
             <button
                 className={btnClass}
                 style={btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined}
@@ -1007,8 +1146,57 @@ export function UnifiedOrderPanel({
                 {btnLabel}
             </button>
             )}
+            {orderError ? (
+                <div ref={orderErrorRef} role="alert" data-testid="order-error"
+                    style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginTop: 6, scrollMarginBottom: 120 }}>
+                    {orderError}
+                </div>
+            ) : quoteHint && (
+                <div data-testid="quote-hint" style={{ fontSize: 10, lineHeight: 1.4, color: "#f59e0b", marginTop: 6 }}>
+                    {quoteHint}
+                </div>
+            )}
 
             </div>{/* /order-footer */}
+
+            {/* ── Pinned actions ── (see .tr-pos-actions) */}
+            {hasPosition && (
+                <div className={`${p}-pos-actions`} data-testid="position-actions">
+                    {confirmReverse && reverse && (
+                        <ConfirmBox
+                            message={reverseMessage(reverse, posDirection!, pnlValue, baseQty, baseSymbol)}
+                            confirmLabel="CONFIRM"
+                            busy={orderSubmitting}
+                            onConfirm={() => { void handlePlaceOrder(); }}
+                            onCancel={() => setConfirmReverse(false)}
+                        />
+                    )}
+                    {confirmCardReverse && (
+                        <ConfirmBox
+                            message={`This closes your ${posDirection} (${fmtSigned(pnlValue)}) and opens a ${posDirection === "LONG" ? "SHORT" : "LONG"} of ${fmtQty(posAbsQty)} ${baseSymbol}. Confirm?`}
+                            confirmLabel={`REVERSE TO ${posDirection === "LONG" ? "SHORT" : "LONG"}`}
+                            busy={reversing}
+                            onConfirm={() => { setConfirmCardReverse(false); void handleReverse(); }}
+                            onCancel={() => setConfirmCardReverse(false)}
+                        />
+                    )}
+                    {positionError && <div role="alert" style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginBottom: 6 }}>{positionError}</div>}
+                    <button
+                        type="button"
+                        disabled={closing}
+                        onClick={() => { void handleClosePosition(); }}
+                        style={{
+                            width: "100%", padding: "10px 0", marginTop: confirmReverse || confirmCardReverse ? 6 : 0,
+                            background: "rgba(255,59,59,0.18)", border: "1px solid rgba(255,59,59,0.55)",
+                            color: "#ff3b3b", fontSize: 11, fontWeight: 700, letterSpacing: 3,
+                            cursor: closing ? "not-allowed" : "pointer",
+                            opacity: closing ? 0.5 : 1, fontFamily: "inherit",
+                        }}
+                    >
+                        {closing ? "CLOSING..." : "CLOSE POSITION"}
+                    </button>
+                </div>
+            )}
         </div>
     );
 }
