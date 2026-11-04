@@ -49,6 +49,7 @@ const ERROR_STATUS: Record<string, number> = {
   insufficient_scope: 403,
   // 404
   user_not_found: 404,
+  player_not_found: 404,
   asset_not_found: 404,
   wallet_not_found: 404,
   order_not_found: 404,
@@ -71,6 +72,8 @@ const ERROR_STATUS: Record<string, number> = {
   run_not_active: 400,
   no_active_replay: 400,
   username_reserved: 400,
+  self_challenge: 400,
+  player_not_challengeable: 400,
   // 409
   email_taken: 409,
   username_taken: 409,
@@ -110,6 +113,7 @@ const ERROR_STATUS: Record<string, number> = {
   suspicious_activity: 429,
   login_blocked: 429,
   api_key_rate_limit: 429,
+  challenge_limit_reached: 429,
   // 500
   server_error: 500,
   // 503 — queue backpressure / timeout / shutdown / load shedding / kill switches

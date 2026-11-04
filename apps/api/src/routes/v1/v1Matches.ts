@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../../auth/requireUser.js";
+import { AppError } from "../../errors/AppError.js";
 import { v1HandleError } from "../../http/v1Error.js";
 import {
     createMatch,
@@ -13,6 +14,8 @@ import {
     listActiveMatches,
     canViewMatch,
 } from "../../competitions/matchService.js";
+import { assertCanChallenge, publishChallengeClosed } from "../../competitions/challenges.js";
+import { notifyChallengeReceived } from "../../notifications/notificationService.js";
 import { getMatchReplay, ReplayError } from "../../competitions/replay/replayService.js";
 import { getMatchBreakdown, BreakdownError } from "../../competitions/breakdown/breakdownService.js";
 import { getSpectatorCount } from "../../competitions/matchSpectatorStore.js";
@@ -23,7 +26,9 @@ import { listMatchWalletsForUser } from "../../wallets/walletRepo.js";
 import { parseIntParam } from "../../http/pagination.js";
 
 const challengeBody = z.object({
-    opponentId: z.string().uuid(),
+    // guid, not uuid: uuid() refuses the bots' fixed ids before the route can
+    // say they aren't challengeable.
+    opponentId: z.guid(),
     durationHours: z.number().int().refine((v) => [24, 168, 336, 504, 672].includes(v), {
         message: "Duration must be 24, 168, 336, 504, or 672 hours",
     }),
@@ -42,14 +47,18 @@ const v1Matches: FastifyPluginAsync = async (app) => {
         preHandler: requireUser,
     }, async (req, reply) => {
         try {
-            const body = challengeBody.parse(req.body);
+            const parsed = challengeBody.safeParse(req.body);
+            if (!parsed.success) throw new AppError("invalid_input");
+            const body = parsed.data;
             const userId = req.user!.id;
+            const challengerName = await assertCanChallenge(userId, body.opponentId);
             const match = await createMatch(
                 userId,
                 body.opponentId,
                 body.durationHours,
                 body.allowedPairIds,
             );
+            await notifyChallengeReceived(body.opponentId, challengerName, match.id);
             return reply.code(201).send({ ok: true, match });
         } catch (err) {
             return v1HandleError(reply, err);
@@ -414,6 +423,8 @@ const v1Matches: FastifyPluginAsync = async (app) => {
         try {
             const userId = req.user!.id;
             const match = await cancelActiveMatch(userId);
+            // Never started: this was a pending challenge, declined or withdrawn.
+            if (match.started_at === null) await publishChallengeClosed(match, userId);
             return reply.send({ ok: true, match });
         } catch (err) {
             return v1HandleError(reply, err);

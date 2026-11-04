@@ -98,6 +98,16 @@ export type PublicPlayer = {
     losses: number;
 };
 
+const PUBLIC_PLAYER_FROM = `
+    SELECT u.id,
+           u.display_name AS username,
+           COALESCE(ut.tier, 'ROOKIE') AS tier,
+           u.elo_rating AS elo,
+           u.win_count AS wins,
+           u.loss_count AS losses
+      FROM users u
+      LEFT JOIN user_tiers ut ON ut.user_id = u.id`;
+
 /**
  * Served by users_display_name_lower_uq, for the filter and the order: the
  * ~<~ operator is the order text_pattern_ops stores, so LIMIT stops at 10 rows.
@@ -106,14 +116,7 @@ export type PublicPlayer = {
  * only real players are found. That hides the seeded demo@demo.local too.
  */
 export const PLAYER_SEARCH_SQL = `
-    SELECT u.id,
-           u.display_name AS username,
-           COALESCE(ut.tier, 'ROOKIE') AS tier,
-           u.elo_rating AS elo,
-           u.win_count AS wins,
-           u.loss_count AS losses
-      FROM users u
-      LEFT JOIN user_tiers ut ON ut.user_id = u.id
+    ${PUBLIC_PLAYER_FROM}
      WHERE lower(u.display_name) LIKE $1
        AND u.id <> ALL($2::uuid[])
        AND split_part(u.email_normalized, '@', 2) NOT IN (
@@ -130,4 +133,15 @@ export function playerSearchPattern(prefix: string): string {
 export async function searchPlayers(prefix: string, excludeIds: string[]): Promise<PublicPlayer[]> {
     const { rows } = await pool.query<PublicPlayer>(PLAYER_SEARCH_SQL, [playerSearchPattern(prefix), excludeIds]);
     return rows;
+}
+
+/** Any case. System accounts don't exist as far as players can tell. */
+export async function findPlayerByUsername(username: string): Promise<PublicPlayer | null> {
+    const { rows } = await pool.query<PublicPlayer>(
+        `${PUBLIC_PLAYER_FROM}
+         WHERE lower(u.display_name) = $1
+           AND u.email_normalized NOT LIKE '%@system.local'`,
+        [username.toLowerCase()],
+    );
+    return rows[0] ?? null;
 }
