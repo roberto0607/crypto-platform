@@ -10,8 +10,9 @@
  * maker quotes that had gone stale while the real market moved. The internal
  * book alone can't tell a stale quote from a live one; the external book can.
  *
- * The same reference prices the system-fill remainder (best ask for a BUY,
- * best bid for a SELL — no synthetic spread) and gates which fills may move
+ * The same reference prices the system-fill remainder (from the best ask for a
+ * BUY, the best bid for a SELL — no synthetic spread; size past the touch band
+ * walks the book, marketFillPrice.ts) and gates which fills may move
  * trading_pairs.last_price. Resolution (getMarketReference):
  *   1. the Kraken WS `book` channel state (orderFlowFeatures.bookSnapshots,
  *      in-process, updated on every book message), if ≤ MARKET_COLLAR_MAX_BOOK_AGE_MS;
@@ -21,7 +22,7 @@
  *      trading_pairs.last_price, which has no staleness bound at all.
  */
 import Decimal from "decimal.js";
-import { bookSnapshots } from "../market/orderFlowFeatures";
+import { bookSnapshots, type BookDepth } from "../market/orderFlowFeatures";
 import { getSnapshot } from "../market/snapshotStore";
 import { config } from "../config";
 import { D, BPS_DIVISOR } from "../utils/decimal";
@@ -32,6 +33,8 @@ export type CollarReference = {
     ageMs: number;
     /** book/ticker = live Kraken; replay = a solo replay session's historical price. */
     source: "book" | "ticker" | "replay";
+    /** The book the touch came from, for walking (marketFillPrice). Only source "book" has one. */
+    levels?: BookDepth;
 };
 
 export type CollarBand = { min: Decimal; max: Decimal };
@@ -56,7 +59,7 @@ export function getCollarReference(
     if (!(bid > 0) || !(ask > 0)) return null;
     if (bid > ask) return null; // crossed — the book state is wrong, not the market
 
-    return { bestBid: D(String(bid)), bestAsk: D(String(ask)), ageMs, source: "book" };
+    return { bestBid: D(String(bid)), bestAsk: D(String(ask)), ageMs, source: "book", levels: book.depth ?? book };
 }
 
 /**
@@ -85,7 +88,7 @@ export async function getMarketReference(
     };
 }
 
-/** Price a system fill takes: the touch the taker crosses (best ask for BUY, best bid for SELL). */
+/** The touch a taker crosses: best ask for BUY, best bid for SELL. */
 export function systemFillPrice(ref: CollarReference, takerSide: "BUY" | "SELL"): Decimal {
     return takerSide === "BUY" ? ref.bestAsk : ref.bestBid;
 }

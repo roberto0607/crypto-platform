@@ -107,7 +107,7 @@ const sentSince = (from: number, socket = current()) => socket.sent.slice(from).
 
 /** Kraken's side of one symbol's book: emits frames with the checksum Kraken would send. */
 class Exchange {
-    readonly book = new KrakenBook(25);
+    readonly book = new KrakenBook(500);
     constructor(readonly symbol: string) {}
     snapshot(socket = current()) {
         this.book.applySnapshot(toRaw(BIDS), toRaw(ASKS));
@@ -207,6 +207,22 @@ describe("krakenWs book checksum", () => {
         expect(logged("warn", "kraken_book_checksum_mismatch")).toEqual([]);
     });
 
+    it("keeps the deep book for pricing; every other reader still sees the top 25", async () => {
+        await boot();
+        const btc = new Exchange("BTC/USD");
+        btc.snapshot();
+        const deeper: [string, string][] = Array.from({ length: 40 }, (_, i) => [String(40000 - i), "1.00000000"]);
+        btc.update(deeper, []);
+
+        const snap = bookSnapshots.get("pair-BTC/USD")!;
+        expect(snap.bids).toHaveLength(25);
+        expect(snap.depth!.bids.length).toBeGreaterThan(40);
+        expect(snap.depth!.bids.slice(0, 25)).toEqual(snap.bids);
+        expect(snap.depth!.bids.at(-1)!.price).toBe(39961);
+        expect(logged("warn", "kraken_book_checksum_mismatch")).toEqual([]);
+        expect((await getMarketReference("pair-BTC/USD", "BTC/USD"))!.levels).toBe(snap.depth);
+    });
+
     it("no precision yet → accepted unverified and counted", async () => {
         await boot(false);
         new Exchange("BTC/USD").snapshot();
@@ -284,8 +300,8 @@ describe("krakenWs book checksum", () => {
             expect(bookSnapshots.has("pair-ETH/USD")).toBe(true);
             expect((await getMarketReference("pair-BTC/USD", "BTC/USD"))!.source).toBe("ticker");
             expect(sentSince(mark)).toEqual([
-                { method: "unsubscribe", params: { channel: "book", depth: 25, symbol: ["BTC/USD"], snapshot: true } },
-                { method: "subscribe", params: { channel: "book", depth: 25, symbol: ["BTC/USD"], snapshot: true } },
+                { method: "unsubscribe", params: { channel: "book", depth: 500, symbol: ["BTC/USD"], snapshot: true } },
+                { method: "subscribe", params: { channel: "book", depth: 500, symbol: ["BTC/USD"], snapshot: true } },
             ]);
             expect(logged("warn", "kraken_book_checksum_mismatch")).toEqual([expect.objectContaining({ symbol: "BTC/USD", enforce: true })]);
             expect(logged("warn", "kraken_book_resync_requested")).toEqual([expect.objectContaining({ symbol: "BTC/USD" })]);
