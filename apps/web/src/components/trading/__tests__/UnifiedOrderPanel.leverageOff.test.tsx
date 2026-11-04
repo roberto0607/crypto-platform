@@ -8,6 +8,7 @@
  *   A  MARKET LONG, $50 entered → submit
  *   B  LIMIT SHORT at 84,000, $50 entered → submit
  *   C  an open SPOT long (position card) → CLOSE POSITION
+ *   D  the same long, SHORT $100 → REDUCE LONG, one click, no confirm
  *
  * Deliberate differences, each applied explicitly below so everything else
  * still has to match the golden byte for byte:
@@ -44,6 +45,9 @@
  * In C only: CLOSE POSITION moved out of the card into the pinned
  * -pos-actions bar after the footer; the card's MARK reads LAST (a SPOT card
  * values at the last trade) and its equity row lost a 6px top margin.
+ * D is new: REDUCE and CLOSE dropped their confirm (one click to exit, only
+ * CLOSE & REVERSE still asks). A, B and C don't reach a confirm, so that
+ * change left them as they were; D pins the label and the plain body.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";
@@ -187,8 +191,22 @@ async function scenarioC() {
   return { html, closeBody: lastOrderBody() };
 }
 
+async function scenarioD() {
+  setup();
+  const { container } = mount(POSITION);
+  await settle();
+  const user = userEvent.setup();
+  await user.click(screen.getByText("SHORT"));
+  await user.type(screen.getByPlaceholderText("0.00"), "100");
+  await quoted();
+  const html = container.innerHTML;
+  await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+  await settle();
+  return { html, body: lastOrderBody(), confirm: screen.queryByTestId("confirm-box") !== null };
+}
+
 async function record() {
-  return { A: await scenarioA(), B: await scenarioB(), C: await scenarioC() };
+  return { A: await scenarioA(), B: await scenarioB(), C: await scenarioC(), D: await scenarioD() };
 }
 
 type Golden = Awaited<ReturnType<typeof record>>;
@@ -213,6 +231,8 @@ describe("leverage off: the order panel is unchanged", () => {
     expect(got.A).toEqual(g.A);
     expect(got.B).toEqual(g.B);
     expect(got.C.html).toEqual(g.C.html);
+    expect(got.D).toEqual(g.D);
+    expect(got.D.confirm).toBe(false);
     // The one difference: CLOSE is reduce-only.
     expect(got.C.closeBody).toEqual({ ...(g.C.closeBody as object), reduceOnly: true });
   });

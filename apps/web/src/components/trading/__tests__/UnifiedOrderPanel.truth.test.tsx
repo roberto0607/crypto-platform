@@ -356,13 +356,19 @@ describe("submit label on the other side of a position", () => {
     return user;
   }
   // The position's 5x is locked: margin × 5 = notional. Position = $10,000.
-  it("a smaller order reduces", async () => {
-    await against("1000");
-    expect(screen.getByRole("button", { name: "REDUCE LONG" })).toBeTruthy();
+  it("a smaller order reduces, in one click", async () => {
+    const user = await against("1000");
+    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await settle();
+    expect(http.orders).toHaveLength(1);
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
   });
-  it("the same size closes", async () => {
-    await against("2000");
-    expect(screen.getByRole("button", { name: "CLOSE" })).toBeTruthy();
+  it("the same size closes, in one click", async () => {
+    const user = await against("2000");
+    await user.click(screen.getByRole("button", { name: "CLOSE" }));
+    await settle();
+    expect(http.orders).toHaveLength(1);
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
   });
   it("a bigger order flips, and still asks first", async () => {
     const user = await against("3000");
@@ -446,8 +452,8 @@ describe("F-04: the actions live outside the scrolled card", () => {
     await user.click(within(bar).getByRole("button", { name: "CANCEL" }));
 
     await user.click(screen.getByText("SHORT"));
-    await user.type(amount(), "1000");
-    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await user.type(amount(), "20000");
+    await user.click(screen.getByRole("button", { name: "CLOSE & REVERSE" }));
     expect(within(bar).getByRole("button", { name: "CONFIRM" })).toBeTruthy();
   });
 
@@ -456,8 +462,8 @@ describe("F-04: the actions live outside the scrolled card", () => {
     const { rerender } = mount(isoPosition("0.10000000"));
     await settle();
     await user.click(screen.getByText("SHORT"));
-    await user.type(amount(), "1000");
-    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await user.type(amount(), "20000");
+    await user.click(screen.getByRole("button", { name: "CLOSE & REVERSE" }));
     await user.click(screen.getByRole("button", { name: "reverse to short…" }));
     expect(screen.getAllByTestId("confirm-box")).toHaveLength(1);
 

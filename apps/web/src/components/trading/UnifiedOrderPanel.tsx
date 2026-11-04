@@ -16,8 +16,9 @@
  *     as before (UnifiedOrderPanel.leverageOff.test.tsx).
  *   - The open-position card (PositionCard): P&L first, liq distance and
  *     margin health, break-even, TP/SL on the position, close / reverse.
- *   - An order on the other side of an open position (REDUCE / CLOSE /
- *     CLOSE & REVERSE) asks for confirmation first; never a one-click flip.
+ *   - An order on the other side of an open position is labelled for what it
+ *     does: REDUCE and CLOSE are one click, like any exchange; CLOSE & REVERSE
+ *     asks for confirmation first, never a one-click flip.
  *   - MARKET preview from GET /v1/sim/quote (est. fill, slippage, notional,
  *     fee, est. liq at that fill); 25/50/75/MAX from its budget solve.
  *   - A rejection stays under the submit button until the next edit.
@@ -139,21 +140,10 @@ export function openButtonLabel(args: {
     return `OPEN ${mode}`;
 }
 
-/**
- * The CLOSE & REVERSE confirm text: what the order does to the open
- * position (lib/positionCard reverseSummary), with its P&L now.
- */
-export function reverseMessage(
-    r: { kind: "flip" | "close" | "reduce"; openSide: "LONG" | "SHORT"; openQty: number },
-    positionSide: "LONG" | "SHORT",
-    pnl: number,
-    orderQty: number,
-    baseSymbol: string,
-): string {
+/** The CLOSE & REVERSE confirm text, with the position's P&L now. */
+export function reverseMessage(positionSide: "LONG" | "SHORT", openSide: "LONG" | "SHORT", pnl: number): string {
     const pnlTxt = `${pnl >= 0 ? "+" : "-"}${fmtUsd(Math.abs(pnl))}`;
-    if (r.kind === "flip") return `This closes your ${positionSide} (${pnlTxt}) and opens a ${r.openSide}. Confirm?`;
-    if (r.kind === "close") return `This closes your ${positionSide} (${pnlTxt}). It opens no ${r.openSide}. Confirm?`;
-    return `This reduces your ${positionSide} by ${fmtQty(orderQty)} ${baseSymbol}. It opens no ${r.openSide}. Confirm?`;
+    return `This closes your ${positionSide} (${pnlTxt}) and opens a ${openSide}. Confirm?`;
 }
 
 interface UnifiedOrderPanelProps {
@@ -225,8 +215,8 @@ export function UnifiedOrderPanel({
     const [positionError, setPositionError] = useState<string | null>(null);
     const [closing, setClosing] = useState(false);
     const [reversing, setReversing] = useState(false);
-    // An order against the position waits for a second, explicit click;
-    // so does the card's "reverse to …".
+    // A flip waits for a second, explicit click; so does the card's "reverse
+    // to …". A reduce or close doesn't: getting out is one click.
     const [confirmReverse, setConfirmReverse] = useState(false);
     const [confirmCardReverse, setConfirmCardReverse] = useState(false);
     // A preset's solved size. The amount field shows its margin, but the order
@@ -448,6 +438,7 @@ export function UnifiedOrderPanel({
     const sideParam = activeMode === "LONG" ? "BUY" : "SELL";
     const quoting = orderType === "MARKET" && usdNum > 0;
     const reduces = reverse?.kind === "reduce" || reverse?.kind === "close";
+    const confirmingFlip = confirmReverse && reverse?.kind === "flip";
     const qtyRef = useRef(baseQtyStr);
     qtyRef.current = baseQtyStr;
     const { quotes, loading: quoteLoading } = useMarketQuotes(
@@ -551,9 +542,8 @@ export function UnifiedOrderPanel({
 
     const handlePlaceOrder = async () => {
         if (!appInitialized || !marketReady || !baseQtyStr) return;
-        // An order against the open position: say what it does, then wait
-        // for CONFIRM (handleConfirmReverse). Never a one-click flip.
-        if (hasPosition && posDirection !== activeMode && !confirmReverse) {
+        // A flip: say what it does, then wait for CONFIRM. Never one click.
+        if (reverse?.kind === "flip" && !confirmReverse) {
             setConfirmCardReverse(false);
             setConfirmReverse(true);
             return;
@@ -1136,7 +1126,7 @@ export function UnifiedOrderPanel({
                     waiting for market data…
                 </div>
             )}
-            {!(confirmReverse && reverse) && (
+            {!confirmingFlip && (
             <button
                 className={btnClass}
                 style={btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined}
@@ -1162,9 +1152,9 @@ export function UnifiedOrderPanel({
             {/* ── Pinned actions ── (see .tr-pos-actions) */}
             {hasPosition && (
                 <div className={`${p}-pos-actions`} data-testid="position-actions">
-                    {confirmReverse && reverse && (
+                    {confirmingFlip && (
                         <ConfirmBox
-                            message={reverseMessage(reverse, posDirection!, pnlValue, baseQty, baseSymbol)}
+                            message={reverseMessage(posDirection!, activeMode, pnlValue)}
                             confirmLabel="CONFIRM"
                             busy={orderSubmitting}
                             onConfirm={() => { void handlePlaceOrder(); }}
@@ -1186,7 +1176,7 @@ export function UnifiedOrderPanel({
                         disabled={closing}
                         onClick={() => { void handleClosePosition(); }}
                         style={{
-                            width: "100%", padding: "10px 0", marginTop: confirmReverse || confirmCardReverse ? 6 : 0,
+                            width: "100%", padding: "10px 0", marginTop: confirmingFlip || confirmCardReverse ? 6 : 0,
                             background: "rgba(255,59,59,0.18)", border: "1px solid rgba(255,59,59,0.55)",
                             color: "#ff3b3b", fontSize: 11, fontWeight: 700, letterSpacing: 3,
                             cursor: closing ? "not-allowed" : "pointer",

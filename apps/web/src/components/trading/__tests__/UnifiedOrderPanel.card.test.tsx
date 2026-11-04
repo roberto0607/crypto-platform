@@ -6,7 +6,7 @@
  *   - liq "None" for a 1x long;
  *   - TP / SL on the whole position: set, edit, remove, side-checked;
  *   - "reverse to …": confirmed, one MARKET order of twice the size;
- *   - CLOSE & REVERSE (an order on the other side): a confirm step, never
+ *   - CLOSE & REVERSE (an order past the position): a confirm step, never
  *     one click;
  *   - EST. LIQ PRICE for an add is the combined position's.
  */
@@ -267,11 +267,21 @@ describe("CLOSE & REVERSE: never one click", () => {
     expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET", leverage: 10 });
   });
 
-  it("smaller: says it only reduces", async () => {
+  it("smaller: one click, no confirm", async () => {
     await mount(ISO_SHORT);
     await orderLong("100"); // $1,000 notional
-    expect(screen.getByTestId("confirm-box").textContent).toContain(
-      "This reduces your SHORT by 0.01250 BTC. It opens no LONG. Confirm?");
+    await settle();
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
+    expect(placeOrder).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET" });
+  });
+
+  it("the whole position: one click, no confirm", async () => {
+    await mount({ ...ISO_SHORT, base_qty: "-0.06250000" });
+    await orderLong("500"); // $5,000 notional at 80,000 = the short
+    await settle();
+    expect(screen.queryByTestId("confirm-box")).toBeNull();
+    expect(placeOrder).toHaveBeenCalledTimes(1);
   });
 
   it("changing the amount drops the pending confirm", async () => {
