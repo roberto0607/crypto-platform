@@ -73,6 +73,13 @@ function fmtFee(n: number): string {
     return n >= 1 ? fmtUsd(n) : "$" + n.toFixed(4);
 }
 
+/** Two decimals, three under 0.01% (a real cost on a big order), never a false 0.000%. */
+export function fmtSlippagePct(pct: number): string {
+    const abs = Math.abs(pct);
+    if (abs === 0 || abs >= 0.01) return `${pct.toFixed(2)}%`;
+    return abs < 0.0005 ? `${pct < 0 ? "-" : ""}<0.001%` : `${pct.toFixed(3)}%`;
+}
+
 /**
  * Quick-amount (#15): a fraction of the quote balance, floored to whole cents.
  * Non-positive balance or fraction → 0 (so 25/50/75/MAX never set NaN).
@@ -464,6 +471,13 @@ export function UnifiedOrderPanel({
     const shownFee = quote ? parseFloat(quote.feeQuote) : estFee;
     const slipPct = quote ? parseFloat(quote.slippage_bps) / 100 : null;
     const slipUsd = quote ? parseFloat(quote.slippageQuote) : 0;
+
+    // What the engine will draw: margin on the notional at the fill, plus the
+    // fee. Only an order that opens or adds: a reduce or close frees margin, a
+    // flip frees it first. A warning, not a block: the server has the final say.
+    const orderCost = shownNotional / leverage + shownFee;
+    const short = available !== null && !reverse && usdNum > 0 && orderCost > quoteBalance;
+    const balanceWarning = short && !quoteHint ? `Not enough available: need ${fmtUsd(orderCost)} incl. fee — use MAX` : null;
 
     const newLiq = () => estLiqPrice({
         side: activeMode, qty: baseQtyStr, entry: estFill ?? 0, leverage, mmrBps: levInfo?.mmrBps ?? 0,
@@ -1072,7 +1086,7 @@ export function UnifiedOrderPanel({
                     <div className={`${p}-sum-row ${p}-sum-wide`}>
                         <span className={`${p}-sum-lbl`} title="Est. fill vs the best bid / ask, for this size">SLIPPAGE</span>
                         <span className={`${p}-sum-val`} style={dim}>
-                            {quoteDash ? "—" : slipPct !== null ? `${slipPct.toFixed(2)}% · ${slipUsd < 0 ? "-" : ""}${fmtUsd(Math.abs(slipUsd))}` : <span className={`${p}-sum-empty`}>--</span>}
+                            {quoteDash ? "—" : slipPct !== null ? `${fmtSlippagePct(slipPct)} · ${slipUsd < 0 ? "-" : ""}${fmtUsd(Math.abs(slipUsd))}` : <span className={`${p}-sum-empty`}>--</span>}
                         </span>
                     </div>
                 )}
@@ -1129,7 +1143,10 @@ export function UnifiedOrderPanel({
             {!confirmingFlip && (
             <button
                 className={btnClass}
-                style={btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined}
+                style={{
+                    ...(btnLabelEnriched ? { letterSpacing: 1, fontSize: 11, whiteSpace: "normal", lineHeight: 1.3 } : undefined),
+                    ...(balanceWarning ? { opacity: 0.55 } : undefined),
+                }}
                 disabled={orderSubmitting || !usdAmount || usdNum <= 0 || !appInitialized || !marketReady || hasValidationError}
                 onClick={handlePlaceOrder}
             >
@@ -1141,9 +1158,9 @@ export function UnifiedOrderPanel({
                     style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginTop: 6, scrollMarginBottom: 120 }}>
                     {orderError}
                 </div>
-            ) : quoteHint && (
-                <div data-testid="quote-hint" style={{ fontSize: 10, lineHeight: 1.4, color: "#f59e0b", marginTop: 6 }}>
-                    {quoteHint}
+            ) : (quoteHint || balanceWarning) && (
+                <div data-testid={quoteHint ? "quote-hint" : "balance-warning"} style={{ fontSize: 10, lineHeight: 1.4, color: "#f59e0b", marginTop: 6 }}>
+                    {quoteHint ?? balanceWarning}
                 </div>
             )}
 

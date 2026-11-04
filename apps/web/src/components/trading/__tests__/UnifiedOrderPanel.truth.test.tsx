@@ -43,7 +43,7 @@ vi.mock("@/api/client", async (importOriginal) => {
   return { ...orig, default: fake };
 });
 
-import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
+import { UnifiedOrderPanel, fmtSlippagePct } from "@/components/trading/UnifiedOrderPanel";
 import ToastProvider from "@/components/ToastProvider";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useAppStore } from "@/stores/appStore";
@@ -190,6 +190,95 @@ describe("preview", () => {
     await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
     await settle();
     expect(http.orders[0]).toEqual({ pairId: "p1", side: "BUY", type: "MARKET", qty: "0.01000000" });
+  });
+});
+
+describe("not enough available", () => {
+  const warning = () => screen.queryByTestId("balance-warning");
+  const submit = () => screen.getByRole("button", { name: /OPEN LONG/ }) as HTMLButtonElement;
+  async function typed(usd: string) {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
+    await user.type(amount(), usd);
+    await debounced();
+    return user;
+  }
+
+  it("warns before submit: margin at the est. fill + fee, and dims the button", async () => {
+    await typed("100000");
+    // $1,005,000 at the fill: margin $100,500 + fee $502.50
+    expect(warning()!.textContent).toBe("Not enough available: need $101,002.50 incl. fee — use MAX");
+    expect(submit().style.opacity).toBe("0.55");
+  });
+
+  it("the server still has the final say: the button works", async () => {
+    const user = await typed("100000");
+    expect(submit().disabled).toBe(false);
+    await user.click(submit());
+    await settle();
+    expect(http.orders).toHaveLength(1);
+  });
+
+  it("counts the slippage: the typed margin + fee would fit, the fill's doesn't", async () => {
+    await typed("99500");  // 99,500 + 497.50 fits; 99,997.50 + 499.99 doesn't
+    expect(warning()).not.toBeNull();
+  });
+
+  it("nothing when it fits", async () => {
+    await typed("50000");
+    expect(warning()).toBeNull();
+    expect(submit().style.opacity).toBe("");
+  });
+
+  it("MAX never warns", async () => {
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await user.click(screen.getByRole("radio", { name: "10x leverage" }));
+    await debounced();
+    await user.click(screen.getByRole("button", { name: /^MAX/ }));
+    await debounced();
+    expect(warning()).toBeNull();
+  });
+
+  it("nothing on a reduce: it costs no margin", async () => {
+    http.leverage = { ...LEV, positionLeverage: "5" };
+    useAppStore.setState({ wallets: [{ id: "w-usd", user_id: "u1", asset_id: "a-usd", balance: "1", reserved: "0", created_at: "", updated_at: "" }] });
+    const user = userEvent.setup();
+    mount(isoPosition("0.10000000"));
+    await settle();
+    await user.click(screen.getByText("SHORT"));
+    await user.type(amount(), "1000");
+    await debounced();
+    expect(warning()).toBeNull();
+  });
+
+  it("the quote's own reason comes first", async () => {
+    http.quote = (p) => ({ ...quoteFor(p), executable: false, reason: "order_too_large" });
+    await typed("900000");
+    expect(screen.getByTestId("quote-hint")).toBeTruthy();
+    expect(warning()).toBeNull();
+  });
+});
+
+describe("slippage %", () => {
+  it.each([
+    [0, "0.00%"], [0.5, "0.50%"], [0.01, "0.01%"], [0.00295, "0.003%"], [0.0096, "0.010%"],
+    [-0.00295, "-0.003%"], [0.0001, "<0.001%"], [-0.0001, "-<0.001%"],
+  ])("%d → %s", (pct, text) => {
+    expect(fmtSlippagePct(pct)).toBe(text);
+  });
+
+  it("$29.50 on $1M reads 0.003%, not 0.00%", async () => {
+    http.quote = (p) => ({ ...quoteFor(p), slippage_bps: "0.29500000", slippageQuote: "29.50000000" });
+    const user = userEvent.setup();
+    mount();
+    await settle();
+    await user.type(amount(), "1000");
+    await debounced();
+    expect(row("SLIPPAGE").textContent).toBe("0.003% · $29.50");
   });
 });
 
