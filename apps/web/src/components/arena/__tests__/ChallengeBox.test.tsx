@@ -65,6 +65,13 @@ describe("ChallengeBox", () => {
     expect(challengeButton()).toBeEnabled();
   });
 
+  it("waits for the pairs to load before allowing a challenge", async () => {
+    useAppStore.setState({ pairs: [] });
+    renderBox("/arena?challenge=bob");
+    await screen.findByTestId("player-chip");
+    expect(challengeButton()).toBeDisabled();
+  });
+
   it("says a player wasn't found, in plain words", async () => {
     api.getPlayer.mockRejectedValue({ response: { status: 404, data: { code: "player_not_found" } } });
     renderBox("/arena?challenge=ghost");

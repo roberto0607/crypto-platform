@@ -29,6 +29,7 @@ export function ChallengeBox({ onChanged }: ChallengeBoxProps) {
     const pairs = useAppStore((s) => s.pairs);
     const [searchParams, setSearchParams] = useSearchParams();
     const prefill = searchParams.get("challenge");
+    const activePairIds = pairs.filter((p) => p.is_active).map((p) => p.id);
 
     const [opponent, setOpponent] = useState<PublicPlayer | null>(null);
     const [duration, setDuration] = useState(24);
@@ -80,7 +81,6 @@ export function ChallengeBox({ onChanged }: ChallengeBoxProps) {
         setError(null);
         setMatchBlocked(false);
         try {
-            const activePairIds = pairs.filter((p) => p.is_active).map((p) => p.id);
             await challengeUser({
                 opponentId: opponent.id,
                 durationHours: duration,
@@ -139,7 +139,7 @@ export function ChallengeBox({ onChanged }: ChallengeBoxProps) {
                         <option key={d.value} value={d.value}>{d.label}</option>
                     ))}
                 </select>
-                <button className="ar-btn ar-btn-orange" disabled={submitting || !opponent} onClick={handleChallenge}>
+                <button className="ar-btn ar-btn-orange" disabled={submitting || !opponent || activePairIds.length === 0} onClick={handleChallenge}>
                     {submitting ? "..." : "CHALLENGE"}
                 </button>
             </div>

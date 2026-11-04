@@ -209,7 +209,7 @@ export default function LoginPage() {
         </div>
 
         {/* Terminal Status */}
-        <div className="absolute bottom-12 left-8 md:left-12 right-8 md:right-12 text-[9px] text-tradr-green/30 tracking-[2px] flex items-center gap-2 border-t border-tradr-green/[0.06] pt-3">
+        <div className="pointer-events-none absolute bottom-12 left-8 md:left-12 right-8 md:right-12 text-[9px] text-tradr-green/30 tracking-[2px] flex items-center gap-2 border-t border-tradr-green/[0.06] pt-3">
           <span className="animate-blink">{"\u2588"}</span>
           <span>{terminalText}</span>
         </div>
