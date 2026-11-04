@@ -3,6 +3,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
 import { getMatchHistory, type Match } from "@/api/endpoints/matches";
 import { getTierForElo, TIER_COLORS } from "@/lib/tiers";
+import { CopyInviteLink } from "@/components/arena/CopyInviteLink";
 
 const PROFILE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
@@ -144,6 +145,7 @@ export default function ProfilePage() {
                             <span className={`pf-tier-badge pf-tier-${userTier}`}>{userTier}</span>
                             <span className="pf-elo">{eloRating} ELO</span>
                         </div>
+                        <CopyInviteLink />
                     </div>
                 </div>
 

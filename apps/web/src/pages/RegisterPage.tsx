@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AxiosError } from "axios";
 import { useAppStore } from "@/stores/appStore";
 import { register } from "@/api/endpoints/auth";
 import { getSystemStatus } from "@/api/endpoints/status";
 import { normalizeApiError } from "@/lib/errors";
+import { withRedirect } from "@/lib/safeRedirect";
 import type { LegacyApiError, V1ApiError } from "@/types/api";
 import Input from "@/components/Input";
 import Button from "@/components/Button";
@@ -12,6 +13,7 @@ import ErrorBanner from "@/components/ErrorBanner";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const redirect = useSearchParams()[0].get("redirect");
   const systemStatus = useAppStore((s) => s.systemStatus);
   const setSystemStatus = useAppStore((s) => s.setSystemStatus);
 
@@ -63,7 +65,7 @@ export default function RegisterPage() {
     setSubmitting(true);
     try {
       await register(email, password, betaMode ? inviteCode.trim() : undefined, username);
-      navigate("/login?registered=1", { replace: true });
+      navigate(withRedirect("/login?registered=1", redirect), { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
         err as AxiosError<LegacyApiError | V1ApiError>,
@@ -152,7 +154,7 @@ export default function RegisterPage() {
 
       <p className="text-center text-sm text-gray-400">
         Already have an account?{" "}
-        <Link to="/login" className="text-blue-400 hover:text-blue-300">
+        <Link to={withRedirect("/login", redirect)} className="text-blue-400 hover:text-blue-300">
           Log in
         </Link>
       </p>

@@ -4,7 +4,7 @@ import { AxiosError } from "axios";
 import { useAuthStore } from "@/stores/authStore";
 import { login } from "@/api/endpoints/auth";
 import { normalizeApiError } from "@/lib/errors";
-import { safeRedirectTarget } from "@/lib/safeRedirect";
+import { safeRedirectTarget, withRedirect } from "@/lib/safeRedirect";
 import type { LegacyApiError, V1ApiError } from "@/types/api";
 
 export default function LoginPage() {
@@ -201,7 +201,7 @@ export default function LoginPage() {
         <div className="flex items-center justify-between pt-6 border-t border-white/[0.06]">
           <span className="text-[9px] text-white/20 tracking-[2px]">NO ACCOUNT YET?</span>
           <Link
-            to="/register"
+            to={withRedirect("/register", searchParams.get("redirect"))}
             className="text-[9px] text-tradr-green tracking-[2px] uppercase hover:opacity-70 transition-opacity flex items-center gap-1.5"
           >
             CREATE ONE FREE &rarr;

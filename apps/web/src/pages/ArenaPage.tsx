@@ -1,13 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
-import { useAppStore } from "@/stores/appStore";
 import {
-    challengeUser,
     acceptMatch,
     forfeitMatch,
-    cancelActiveMatch,
     getActiveMatch,
     getMatchHistory,
     getActiveMatches,
@@ -18,6 +15,8 @@ import { listCompetitions, getLeaderboard, type LeaderboardEntry } from "@/api/e
 import { LiveMatchView } from "@/components/arena/LiveMatchView";
 import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
+import { ChallengeBox } from "@/components/arena/ChallengeBox";
+import { PendingChallengeCard } from "@/components/arena/PendingChallengeCard";
 
 /* ─────────────────────────────────────────
    ARENA PAGE CSS — Trade Wars
@@ -115,7 +114,23 @@ const ARENA_CSS = `
   .ar-replay-btn:hover { background:rgba(255,107,0,0.12); }
 
   /* Challenge form */
-  .ar-challenge-form { display:flex;gap:8px;align-items:center;margin-bottom:16px; }
+  .ar-challenge-form { display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px; }
+  .ar-ps { position:relative;flex:1 1 220px;display:flex;min-width:0; }
+  .ar-ps .ar-input { width:100%; }
+  .ar-ps-list {
+    position:absolute;top:100%;left:0;right:0;z-index:30;margin:4px 0 0;padding:0;list-style:none;
+    background:#0b0b0b;border:1px solid var(--ar-orange);max-height:320px;overflow-y:auto;
+  }
+  .ar-ps-message { padding:10px 12px;font-size:10px;letter-spacing:1px;color:var(--ar-muted); }
+  .ar-ps-option { display:flex;justify-content:space-between;gap:12px;padding:8px 12px;cursor:pointer; }
+  .ar-ps-option.active { background:rgba(255,107,0,0.14); }
+  .ar-ps-name { font-size:11px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+  .ar-ps-rank { font-size:9px;letter-spacing:1px;color:var(--ar-muted);white-space:nowrap; }
+  .ar-ps-chip {
+    flex:1 1 220px;display:flex;align-items:center;gap:10px;min-width:0;padding:7px 12px;
+    background:rgba(255,107,0,0.1);border:1px solid var(--ar-orange);
+  }
+  .ar-ps-clear { margin-left:auto;background:transparent;border:0;color:#fff;cursor:pointer;font-size:14px;line-height:1; }
   .ar-input {
     flex:1;background:rgba(255,255,255,0.04);border:1px solid var(--ar-borderW);
     padding:8px 12px;font-family:var(--ar-mono);font-size:11px;color:#fff;
@@ -147,14 +162,6 @@ const ARENA_CSS = `
   .ar-live-footer { display:flex;justify-content:space-between;align-items:center;margin-top:14px; }
 `;
 
-const DURATION_OPTIONS = [
-    { value: 24, label: "24H" },
-    { value: 168, label: "1 WEEK" },
-    { value: 336, label: "2 WEEKS" },
-    { value: 504, label: "3 WEEKS" },
-    { value: 672, label: "4 WEEKS" },
-];
-
 function formatTimeRemaining(endsAt: string): string {
     const diff = new Date(endsAt).getTime() - Date.now();
     if (diff <= 0) return "ENDED";
@@ -176,8 +183,9 @@ export default function ArenaPage() {
     const navigate = useNavigate();
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
-    const pairs = useAppStore((s) => s.pairs);
     const { addToast } = useToast();
+
+    const prefill = useSearchParams()[0].get("challenge");
 
     const [tab, setTab] = useState<"SEASON" | "1V1" | "LIVE">("1V1");
     const [activeMatch, setActiveMatch] = useState<Match | null>(null);
@@ -189,13 +197,6 @@ export default function ArenaPage() {
     const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
     const [seasonInfo, setSeasonInfo] = useState<{ id: string; name: string; end_at: string; season_number?: number } | null>(null);
 
-    // Challenge form
-    const [challengeInput, setChallengeInput] = useState("");
-    const [duration, setDuration] = useState(24);
-    const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [matchBlocked, setMatchBlocked] = useState(false);
-    const [cancelling, setCancelling] = useState(false);
     const [seasonLoading, setSeasonLoading] = useState(true);
     const [seasonError, setSeasonError] = useState(false);
 
@@ -276,60 +277,24 @@ export default function ArenaPage() {
         return () => { window.removeEventListener("sse:challenge.received", handler); };
     }, [loadActiveMatch]);
 
+    // The other player declined or withdrew
+    useEffect(() => {
+        const handler = () => { loadActiveMatch(); };
+        window.addEventListener("sse:challenge.closed", handler);
+        return () => { window.removeEventListener("sse:challenge.closed", handler); };
+    }, [loadActiveMatch]);
+
+    // A pre-filled challenge lives on the 1V1 tab, wherever it came from
+    useEffect(() => {
+        if (prefill) setTab("1V1");
+    }, [prefill]);
+
     // Re-sync match state after SSE reconnects (may have missed events)
     useEffect(() => {
         const handler = () => { loadActiveMatch(); loadMatchHistory(); };
         window.addEventListener("sse:reconnected", handler);
         return () => { window.removeEventListener("sse:reconnected", handler); };
     }, [loadActiveMatch, loadMatchHistory]);
-
-    async function handleChallenge() {
-        if (!challengeInput.trim()) return;
-        setSubmitting(true);
-        setError(null);
-        setMatchBlocked(false);
-        try {
-            const activePairIds = pairs.filter((p) => p.is_active).map((p) => p.id);
-            await challengeUser({
-                opponentId: challengeInput.trim(),
-                durationHours: duration,
-                allowedPairIds: activePairIds.slice(0, 3),
-            });
-            setChallengeInput("");
-            await loadActiveMatch();
-        } catch (err: any) {
-            const code = err?.response?.data?.code;
-            if (code === "match_already_active") {
-                setError("You have a stuck match blocking new challenges.");
-                setMatchBlocked(true);
-            } else {
-                setError(err?.response?.data?.message ?? code ?? "Challenge failed");
-            }
-        } finally {
-            setSubmitting(false);
-        }
-    }
-
-    async function handleCancelActiveMatch() {
-        setCancelling(true);
-        try {
-            await cancelActiveMatch();
-            setError(null);
-            setMatchBlocked(false);
-            await loadActiveMatch();
-            await loadMatchHistory();
-        } catch (err: any) {
-            const code = err?.response?.data?.code;
-            if (code === "match_has_trades") {
-                setError("Match has trades — use FORFEIT instead.");
-                await loadActiveMatch();
-            } else {
-                setError(err?.response?.data?.message ?? "Cancel failed");
-            }
-        } finally {
-            setCancelling(false);
-        }
-    }
 
     async function handleAccept() {
         if (!activeMatch) return;
@@ -457,13 +422,20 @@ export default function ArenaPage() {
                 {/* ═══ 1V1 TAB ═══ */}
                 {tab === "1V1" && (
                     <>
+                        {activeMatch?.status === "PENDING" && userId && (
+                            <PendingChallengeCard
+                                match={activeMatch}
+                                userId={userId}
+                                onAccept={handleAccept}
+                                onClosed={loadActiveMatch}
+                            />
+                        )}
+
                         {/* Active Match */}
-                        {activeMatch && (activeMatch.status === "ACTIVE" || activeMatch.status === "PENDING") && (
+                        {activeMatch?.status === "ACTIVE" && (
                             <div className="ar-match-card">
                                 <div className="ar-mc-header">
-                                    <div className="ar-mc-vs">
-                                        {activeMatch.status === "PENDING" ? "CHALLENGE SENT" : "MATCH LIVE"}
-                                    </div>
+                                    <div className="ar-mc-vs">MATCH LIVE</div>
                                     {activeMatch.ends_at && (
                                         <div className="ar-mc-timer">
                                             {formatTimeRemaining(activeMatch.ends_at)}
@@ -494,9 +466,6 @@ export default function ArenaPage() {
                                 )}
 
                                 <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-                                    {activeMatch.status === "PENDING" && activeMatch.opponent_id === userId && (
-                                        <button className="ar-btn ar-btn-orange" onClick={handleAccept}>ACCEPT</button>
-                                    )}
                                     {activeMatch.status === "ACTIVE" && (
                                         <button className="ar-btn ar-btn-red" onClick={handleForfeit}>FORFEIT</button>
                                     )}
@@ -504,52 +473,13 @@ export default function ArenaPage() {
                             </div>
                         )}
 
-                        {/* Challenge Form */}
                         {!activeMatch && (
-                            <>
-                                <div style={{ marginBottom: 16 }}>
-                                    <div style={{ fontSize: 9, color: "var(--ar-muted)", letterSpacing: 3, marginBottom: 8 }}>
-                                        CHALLENGE A TRADER
-                                    </div>
-                                    <div className="ar-challenge-form">
-                                        <input
-                                            className="ar-input"
-                                            placeholder="OPPONENT USER ID"
-                                            value={challengeInput}
-                                            onChange={(e) => setChallengeInput(e.target.value)}
-                                        />
-                                        <select
-                                            className="ar-select"
-                                            value={duration}
-                                            onChange={(e) => setDuration(parseInt(e.target.value, 10))}
-                                        >
-                                            {DURATION_OPTIONS.map((d) => (
-                                                <option key={d.value} value={d.value}>{d.label}</option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            className="ar-btn ar-btn-orange"
-                                            disabled={submitting || !challengeInput.trim()}
-                                            onClick={handleChallenge}
-                                        >
-                                            {submitting ? "..." : "CHALLENGE"}
-                                        </button>
-                                    </div>
-                                    {error && (
-                                        <div style={{ fontSize: 10, color: "var(--ar-red)", marginTop: 4 }}>{error}</div>
-                                    )}
-                                    {matchBlocked && (
-                                        <button
-                                            className="ar-btn ar-btn-red"
-                                            style={{ marginTop: 8 }}
-                                            disabled={cancelling}
-                                            onClick={handleCancelActiveMatch}
-                                        >
-                                            {cancelling ? "CANCELLING..." : "CANCEL STUCK MATCH"}
-                                        </button>
-                                    )}
-                                </div>
-                            </>
+                            <ChallengeBox
+                                onChanged={async () => {
+                                    await loadActiveMatch();
+                                    await loadMatchHistory();
+                                }}
+                            />
                         )}
 
                         {/* Match History */}

@@ -576,9 +576,16 @@ export type SSEEvent =
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateEvent>
   | EventEnvelope<"match.spectator_count", MatchSpectatorCountEvent>
   | EventEnvelope<"challenge.received", ChallengeReceivedEvent>
+  | EventEnvelope<"challenge.closed", ChallengeClosedEvent>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedEvent>
   | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedEvent>
   | EventEnvelope<"message.received", MessageReceivedEvent>;
+
+export interface ChallengeClosedEvent {
+  matchId: string;
+  reason: "declined" | "withdrawn";
+  byName: string;
+}
 
 export interface ChallengeReceivedEvent {
   matchId: string;

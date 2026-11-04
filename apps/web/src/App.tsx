@@ -32,6 +32,8 @@ import MatchBreakdownPage from "@/pages/MatchBreakdownPage";
 import SpectateMatchPage from "@/pages/SpectateMatchPage";
 import JournalPage from "@/pages/JournalPage";
 import ProfilePage from "@/pages/ProfilePage";
+import PlayerProfilePage from "@/pages/PlayerProfilePage";
+import ChallengeInvitePage from "@/pages/ChallengeInvitePage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import LandingPage from "@/pages/LandingPage";
 
@@ -253,6 +255,8 @@ export default function App() {
           <Route path="/cycle" element={<CyclesPage />} />
           <Route path="/history" element={<JournalPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/players/:username" element={<PlayerProfilePage />} />
+          <Route path="/challenge/:username" element={<ChallengeInvitePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           {/* Legacy redirects — renamed feature URLs that may be bookmarked */}
           <Route path="/competitions" element={<Navigate to="/arena" replace />} />

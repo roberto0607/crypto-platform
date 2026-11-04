@@ -1,3 +1,5 @@
+import { Link, useNavigate } from "react-router-dom";
+
 /* ─────────────────────────────────────────
    LEADERBOARD ROW — Single row component
 ───────────────────────────────────────── */
@@ -49,6 +51,7 @@ interface LeaderboardRowProps {
 }
 
 export function LeaderboardRow({ entry, isCurrentUser, rank }: LeaderboardRowProps) {
+    const navigate = useNavigate();
     const isAnonymous = rank > 10 && !isCurrentUser;
     const isTop3 = rank <= 3;
 
@@ -65,6 +68,7 @@ export function LeaderboardRow({ entry, isCurrentUser, rank }: LeaderboardRowPro
     // Name display
     const displayName = isAnonymous ? "Anonymous" : (entry.display_name ?? `Trader #${rank}`);
     const nameLabel = isCurrentUser ? "YOU" : displayName;
+    const playerName = !isAnonymous && !isCurrentUser ? entry.display_name : null;
 
     // Score
     const score = entry.nuanced_score != null ? parseFloat(String(entry.nuanced_score)) : 0;
@@ -165,7 +169,9 @@ export function LeaderboardRow({ entry, isCurrentUser, rank }: LeaderboardRowPro
                                 whiteSpace: "nowrap",
                             }}
                         >
-                            {nameLabel}
+                            {playerName
+                                ? <Link to={`/players/${encodeURIComponent(playerName)}`} style={{ color: "inherit" }}>{nameLabel}</Link>
+                                : nameLabel}
                         </div>
                         {/* Tier badge — only for visible users */}
                         {!isAnonymous && (
@@ -181,6 +187,17 @@ export function LeaderboardRow({ entry, isCurrentUser, rank }: LeaderboardRowPro
                             </span>
                         )}
                     </div>
+                {playerName && (
+                        <button
+                            type="button"
+                            aria-label={`Challenge ${playerName}`}
+                            title={`Challenge ${playerName}`}
+                            onClick={() => navigate(`/arena?challenge=${encodeURIComponent(playerName)}`)}
+                            style={{ marginLeft: "auto", background: "transparent", border: 0, cursor: "pointer", fontSize: 14, flexShrink: 0 }}
+                        >
+                            ⚔️
+                        </button>
+                    )}
                 </div>
             </td>
 

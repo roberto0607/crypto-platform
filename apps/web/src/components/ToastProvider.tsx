@@ -8,7 +8,7 @@ import {
 } from "react";
 import Toast from "./Toast";
 import { useAppStore } from "@/stores/appStore";
-import type { PositionLiquidatedEvent, PositionMarginWarningEvent } from "@/types/api";
+import type { ChallengeClosedEvent, ChallengeReceivedEvent, PositionLiquidatedEvent, PositionMarginWarningEvent } from "@/types/api";
 
 type ToastVariant = "success" | "error" | "info" | "warning";
 
@@ -143,6 +143,21 @@ export default function ToastProvider({
       addToast("warning", marginWarningMessage(d, symbol));
     }
 
+    function onChallengeReceived(e: Event) {
+      const d = (e as CustomEvent<ChallengeReceivedEvent>).detail;
+      if (d) addToast("info", `⚔️ ${d.challengerName} challenged you. Open the Arena to respond.`);
+    }
+
+    function onChallengeClosed(e: Event) {
+      const d = (e as CustomEvent<ChallengeClosedEvent>).detail;
+      if (!d) return;
+      addToast("info", d.reason === "declined"
+        ? `${d.byName} declined your challenge.`
+        : `${d.byName} withdrew their challenge.`);
+    }
+
+    window.addEventListener("sse:challenge.received", onChallengeReceived);
+    window.addEventListener("sse:challenge.closed", onChallengeClosed);
     window.addEventListener("sse:trade.created", onTradeCreated);
     window.addEventListener("sse:trigger.fired", onTriggerFired);
     window.addEventListener("sse:trigger.canceled", onTriggerCanceled);
@@ -150,6 +165,8 @@ export default function ToastProvider({
     window.addEventListener("sse:position.margin_warning", onMarginWarning);
 
     return () => {
+      window.removeEventListener("sse:challenge.received", onChallengeReceived);
+      window.removeEventListener("sse:challenge.closed", onChallengeClosed);
       window.removeEventListener("sse:trade.created", onTradeCreated);
       window.removeEventListener("sse:trigger.fired", onTriggerFired);
       window.removeEventListener("sse:trigger.canceled", onTriggerCanceled);
