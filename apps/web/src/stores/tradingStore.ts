@@ -167,7 +167,7 @@ interface TradingState {
   /** Edit in place (PATCH) — keeps the trigger's id and OCO link. */
   updateTrigger: (triggerId: string, patch: { triggerPrice?: string; trailingOffset?: string }) => Promise<void>;
   /** `leverage` is added to the body only when given (an ISOLATED order above 1x). */
-  submitOrder: (opts?: { leverage?: number; qty?: string }) => Promise<{ order: Order; fills: Fill[] }>;
+  submitOrder: (opts?: { leverage?: number; qty?: string; reduceOnly?: boolean }) => Promise<{ order: Order; fills: Fill[] }>;
   cancelOrder: (orderId: string) => Promise<void>;
 
   // SSE-driven setters
@@ -383,6 +383,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
           qty,
           limitPrice: orderType === "LIMIT" ? limitPrice : undefined,
           ...(opts?.leverage !== undefined ? { leverage: opts.leverage } : {}),
+          ...(opts?.reduceOnly ? { reduceOnly: true } : {}),
         },
         idempotencyKey,
       );

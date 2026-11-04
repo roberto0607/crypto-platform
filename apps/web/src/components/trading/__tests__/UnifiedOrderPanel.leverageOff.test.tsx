@@ -47,7 +47,13 @@
  * values at the last trade) and its equity row lost a 6px top margin.
  * D is new: REDUCE and CLOSE dropped their confirm (one click to exit, only
  * CLOSE & REVERSE still asks). A, B and C don't reach a confirm, so that
- * change left them as they were; D pins the label and the plain body.
+ * change left them as they were; D pins the label and the body.
+ *
+ * Re-recorded when the form's MARKET REDUCE / CLOSE became reduce-only: D's
+ * body gains reduceOnly: true, on purpose (the one leverage-off body that
+ * changes: a stale panel could sell through a shrunken position and open the
+ * other side). D's html and all of A, B and C are unchanged. A flip and a
+ * LIMIT stay plain.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, act, cleanup } from "@testing-library/react";

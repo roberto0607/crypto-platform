@@ -273,7 +273,7 @@ describe("CLOSE & REVERSE: never one click", () => {
     await settle();
     expect(screen.queryByTestId("confirm-box")).toBeNull();
     expect(placeOrder).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET" });
+    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toMatchObject({ side: "BUY", type: "MARKET", reduceOnly: true });
   });
 
   it("the whole position: one click, no confirm", async () => {
