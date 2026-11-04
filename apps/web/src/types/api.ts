@@ -11,6 +11,8 @@ export interface User {
   role: "USER" | "ADMIN";
   displayName?: string | null;
   emailVerified?: boolean;
+  /** False while the user still holds a generated trader_ name. */
+  usernameChosen?: boolean;
 }
 
 export interface LoginResponse {

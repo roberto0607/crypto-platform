@@ -16,6 +16,7 @@ export default function RegisterPage() {
   const setSystemStatus = useAppStore((s) => s.setSystemStatus);
 
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -39,6 +40,9 @@ export default function RegisterPage() {
   }, []);
 
   function validate(): string | null {
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+      return "Username must be 3-30 letters, numbers or underscores";
+    }
     if (password.length < 8) return "Password must be at least 8 characters";
     if (password.length > 72) return "Password must be at most 72 characters";
     if (password !== confirmPassword) return "Passwords do not match";
@@ -58,7 +62,7 @@ export default function RegisterPage() {
 
     setSubmitting(true);
     try {
-      await register(email, password, betaMode ? inviteCode.trim() : undefined);
+      await register(email, password, betaMode ? inviteCode.trim() : undefined, username);
       navigate("/login?registered=1", { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
@@ -87,6 +91,18 @@ export default function RegisterPage() {
         autoComplete="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+      />
+
+      <Input
+        id="username"
+        label="Username"
+        type="text"
+        required
+        maxLength={30}
+        autoComplete="username"
+        placeholder="How other players find you"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
       />
 
       <Input

@@ -20,14 +20,15 @@ export interface Competition {
 
 export interface LeaderboardEntry {
     competition_id: string;
-    user_id: string;
+    /** Null, with display_name, on a row shown as "Anonymous". */
+    user_id: string | null;
     rank: number;
     equity: string;
     return_pct: string;
     max_drawdown_pct: string;
     current_drawdown_pct: string;
     trades_count: number;
-    display_name: string;
+    display_name: string | null;
     updated_at: string;
     user_tier?: string;
     qualified?: boolean;

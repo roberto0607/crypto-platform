@@ -8,6 +8,7 @@ import { useSystemStatusPolling } from "@/hooks/useSystemStatusPolling";
 import { useRefreshTokenKeepAlive } from "@/hooks/useRefreshTokenKeepAlive";
 import { useConnectionStatus } from "@/hooks/useConnectionStatus";
 import SystemBanner from "@/components/SystemBanner";
+import UsernamePromptBanner from "@/components/UsernamePromptBanner";
 import { NotificationBell } from "@/components/NotificationBell";
 import { NavIcon } from "@/components/NavIcon";
 import TickerBar from "@/components/TickerBar";
@@ -145,6 +146,7 @@ export default function AppLayout() {
       <div className="fixed inset-0 pointer-events-none z-[2] scanlines-bg" />
 
       <SystemBanner />
+      <UsernamePromptBanner />
 
       {sessionExpired && (
         <div
@@ -325,7 +327,7 @@ export default function AppLayout() {
                     aria-expanded={userMenuOpen}
                   >
                     <span className="text-[9px] text-white/50 tracking-[1px] hover:text-white/80 transition-colors">
-                      {user.displayName || user.email?.split("@")[0] || "user"}
+                      {user.displayName ?? "user"}
                     </span>
                     <span className="text-[9px] text-yellow-400 tracking-[2px] border border-yellow-400/30 px-1.5 py-0.5 bg-yellow-400/[0.06]"
                       style={{ clipPath: "polygon(3px 0%,100% 0%,calc(100% - 3px) 100%,0% 100%)" }}>

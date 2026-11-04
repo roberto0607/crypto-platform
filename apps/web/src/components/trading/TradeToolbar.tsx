@@ -178,11 +178,7 @@ export function TradeToolbar({ timeframe, onTimeframeChange, vpvrMode, onVpvrMod
   const selectedPair = pairs.find((p) => p.id === selectedPairId);
   const { sseConnectionState, priceStale, isHardOffline } = useConnectionStatus();
 
-  const initials = user?.displayName
-    ? user.displayName.slice(0, 2).toUpperCase()
-    : user?.email
-      ? user.email.slice(0, 2).toUpperCase()
-      : "??";
+  const initials = user?.displayName ? user.displayName.slice(0, 2).toUpperCase() : "??";
 
   /* ── Profile dropdown (Gate 1) — replaces the old direct /profile link.
      Same outside-click-close pattern as the timeframe picker below and

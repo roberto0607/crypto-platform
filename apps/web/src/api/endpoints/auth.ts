@@ -9,11 +9,13 @@ import type {
 export function register(
   email: string,
   password: string,
-  inviteCode?: string,
+  inviteCode: string | undefined,
+  username: string,
 ) {
   return client.post<RegisterResponse>("/auth/register", {
     email,
     password,
+    username,
     ...(inviteCode ? { inviteCode } : {}),
   });
 }

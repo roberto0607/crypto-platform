@@ -33,7 +33,7 @@ const RANK_AVATAR_BGS: Record<number, string> = {
 
 export interface LeaderboardRowEntry {
     rank: number;
-    user_id: string;
+    user_id: string | null;
     display_name: string | null;
     user_tier?: string;
     nuanced_score?: number | string | null;
