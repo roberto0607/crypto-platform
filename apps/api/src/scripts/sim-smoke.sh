@@ -135,7 +135,7 @@ LARGE_HTTP=$(curl -s -o /tmp/sim-large-resp.json -w "%{http_code}" -X POST "$BAS
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"99999\"}")
-LARGE_CODE=$(cat /tmp/sim-large-resp.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || echo "")
+LARGE_CODE=$(cat /tmp/sim-large-resp.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error', d.get('code','')))" 2>/dev/null || echo "")
 check "Oversized MARKET BUY rejected 400" "$([[ "$LARGE_HTTP" == "400" ]] && echo true || echo false)" "http=$LARGE_HTTP code=$LARGE_CODE"
 check "Error code is order_too_large" "$([[ "$LARGE_CODE" == "order_too_large" ]] && echo true || echo false)"
 
