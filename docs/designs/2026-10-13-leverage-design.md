@@ -195,7 +195,7 @@ WHERE pair_id = $1 AND margin_mode = 'ISOLATED'
 
 At today's user count that's trivially cheap, and it's stateless: no in-memory index that can drift from the DB.
 
-**Mark price:** the mid of the **Kraken book only** (`getCollarReference`, ≤ `MARKET_COLLAR_MAX_BOOK_AGE_MS`, not crossed). No ticker fallback for liquidation, which is stricter than orders. **Stale ⇒ pause that pair:** if there's no book reference or `krakenWs` reports the symbol `stale/waiting/disconnected`, skip the pair, log `liquidation_paused_stale_feed {pair, bookAgeMs}` once per episode, set the gauge `liquidation_paused{pair}=1`, and on recovery log `liquidation_resumed {pausedMs}` and evaluate immediately. Positions that crossed bankruptcy during the pause are liquidated at the touch on resume; the loss cap absorbs any gap.
+**Mark price:** the mid of the **Kraken book only** (`getCollarReference`, ≤ `MARKET_COLLAR_MAX_BOOK_AGE_MS`, not crossed). No ticker fallback for liquidation, which is stricter than orders. **Stale ⇒ pause that pair:** if there's no book reference or `krakenWs` reports the symbol `stale/waiting/disconnected`, skip the pair, log `liquidation_paused_stale_feed {pair, bookAgeMs}` once per episode, set the gauge `liquidation_paused{pair}=1`, and on recovery log `liquidation_resumed {pausedMs}` and evaluate immediately. Positions that crossed bankruptcy during the pause are liquidated off the book on resume; the loss cap absorbs any gap.
 
 **Glitch guard:** a candidate must breach on **two consecutive evaluations ≥ 500 ms apart** (state kept per `user:pair:scope:epoch`). One bad book print can't liquidate anyone. The cost is ≤ ~0.5 s of extra gap, which the loss cap covers.
 
@@ -204,7 +204,7 @@ At today's user count that's trivially cheap, and it's stateless: no in-memory i
 2. the liq condition still holds against the reference fetched **under the pair lock**;
 3. qty = the current `|Q|` read under the lock (never the stale candidate qty).
 
-If any check fails, it's a silent no-op. The fill is at the touch (bid for long, ask for short) via the normal collar/system-fill path. The fee is the taker rate, capped at the remaining equity. The leftover equity (≈ MMR − fee) **returns to the user** (recommended; see open question 2). Then the `liquidations` row (`EXECUTED`), the `position.liquidated` SSE event, and a notification.
+If any check fails, it's a silent no-op. The fill comes off the book (bid for long, ask for short) via the normal collar/system-fill path: at the touch inside the touch band, walking the book above it (`marketFillPrice.ts`, PR 2a of the 2026-11 audit). The fee is the taker rate, capped at the remaining equity. The leftover equity (≈ MMR − fee) **returns to the user** (recommended; see open question 2). Then the `liquidations` row (`EXECUTED`), the `position.liquidated` SSE event, and a notification.
 
 **Mode `log_only`:** same evaluation, glitch guard and stale pause. Instead of the order it writes a `liquidations` row (`LOG_ONLY`, at most one per position epoch) and logs `liquidation_would_fire {user, pair, scope, side, qty, entry, L, margin, liqPrice, mark, bid, ask, bookAgeMs}`.
 
@@ -342,7 +342,7 @@ Engine (DB tests, the existing `phase6OrderService.test.ts` style):
 - Reduce-only uses positions. System user (MM bot) fills: wallet base moves exactly as today, and its positions stay SPOT (**bot unaffected**). Snapshot-compare the bot's ledger before and after.
 
 Liquidation engine:
-- Breach → liquidated at the touch (bid for long, ask for short). Fee capped. Leftover returned. `liquidations` row. Triggers canceled (#202). Event + notification.
+- Breach → liquidated off the book (bid for long, ask for short), walked past the touch band. Fee capped. Leftover returned. `liquidations` row. Triggers canceled (#202). Event + notification.
 - **Price gap past liq**: liquidated at the gapped touch, shortfall recorded, USD ≥ 0
 - **Stale feed**: book age > max, or symbol `stale` → no liquidation, one `paused` log, then resume → liquidation
 - Glitch guard: a single breach followed by recovery → no liquidation
