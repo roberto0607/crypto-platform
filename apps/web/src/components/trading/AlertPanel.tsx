@@ -4,6 +4,8 @@ import { useNotificationStore } from "@/stores/notificationStore";
 import { resendVerification } from "@/api/endpoints/auth";
 import { createAlert, listAlerts, cancelAlert } from "@/api/endpoints/alerts";
 import type { Alert, AlertConditionType } from "@/types/api";
+import { useNavigate } from "react-router-dom";
+import { notificationLink } from "@/lib/notificationLink";
 
 // Gate 1 — this bell icon now hosts two tabs: PRICE ALERTS (this file's
 // original content, unchanged) and NOTIFICATIONS (ported from
@@ -39,6 +41,7 @@ interface AlertPanelProps {
 }
 
 export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"alerts" | "notifications">("alerts");
   const ref = useRef<HTMLDivElement>(null);
@@ -227,7 +230,11 @@ export function AlertPanel({ pairId, pairSymbol }: AlertPanelProps) {
                   <button
                     key={n.id}
                     type="button"
-                    onClick={() => { if (!n.read_at) markNotificationRead(n.id); }}
+                    onClick={() => {
+                      if (!n.read_at) markNotificationRead(n.id);
+                      const link = notificationLink(n.kind);
+                      if (link) navigate(link);
+                    }}
                     style={{
                       display: "flex", alignItems: "flex-start", gap: 8, width: "100%",
                       textAlign: "left", padding: "8px 12px",

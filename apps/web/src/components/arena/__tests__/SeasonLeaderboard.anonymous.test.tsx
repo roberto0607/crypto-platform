@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 const getLeaderboard = vi.hoisted(() => vi.fn());
 vi.mock("@/api/endpoints/competitions", () => ({ getLeaderboard }));
@@ -35,11 +36,13 @@ describe("SeasonLeaderboard anonymous rows", () => {
 
   it("renders rows the API stripped of id and name, with no duplicate React keys", async () => {
     render(
-      <SeasonLeaderboard
-        seasonInfo={{ id: "c1", name: "S1", end_at: "2099-01-01T00:00:00Z" }}
-        seasonLoading={false}
-        seasonError={false}
-      />,
+      <MemoryRouter>
+        <SeasonLeaderboard
+          seasonInfo={{ id: "c1", name: "S1", end_at: "2099-01-01T00:00:00Z" }}
+          seasonLoading={false}
+          seasonError={false}
+        />
+      </MemoryRouter>,
     );
     expect(await screen.findByText("top_trader")).toBeInTheDocument();
     expect(screen.getAllByText("Anonymous")).toHaveLength(2);

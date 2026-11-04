@@ -26,3 +26,10 @@ export function loginUrlFor(location: { pathname: string; search: string; hash?:
   const here = location.pathname + location.search + (location.hash ?? "");
   return `/login?redirect=${encodeURIComponent(here)}`;
 }
+
+/** Adds a safe ?redirect= to `path`, so the destination survives signup and login. */
+export function withRedirect(path: string, raw: string | null): string {
+  const target = safeRedirectTarget(raw, "");
+  if (!target) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}redirect=${encodeURIComponent(target)}`;
+}

@@ -1190,3 +1190,17 @@ counts as logged out, so their own row past rank 10 comes back with `user_id` an
 `display_name` null, like everyone else's. An expired JWT does the same until the
 client refreshes. Nothing leaks; the caller just can't spot themselves. A fix would
 run the API-key check in `optionalUserId` too.
+
+---
+
+## 🟠 HIGH — The Arena season leaderboard can't have any rows
+
+**Discovered:** 2026-11-04, challenge-by-username PR B.
+
+`ArenaPage` and `SeasonLeaderboard` ask for an ACTIVE `competition_type = 'SEASON'`
+competition, but none can exist. Migration 047's check allows only `CUSTOM` and
+`WEEKLY`; migration 057 assumed there was no check and never widened it, so
+`createNewSeason` would fail, and nothing calls it anyway. On a database built from
+migrations the tab shows "NO ACTIVE SEASON", so the ⚔️ buttons on leaderboard rows
+have no rows to appear on. The fix is either to widen the check and start seasons,
+or to point the tab at the active `WEEKLY` competition.

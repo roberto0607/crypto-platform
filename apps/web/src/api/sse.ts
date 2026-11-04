@@ -64,6 +64,7 @@ export interface SSEHandlers {
   onMatchPnlUpdate?: (event: Extract<SSEEvent, { type: "match.pnl.update" }>) => void;
   onMatchSpectatorCount?: (event: Extract<SSEEvent, { type: "match.spectator_count" }>) => void;
   onChallengeReceived?: (event: Extract<SSEEvent, { type: "challenge.received" }>) => void;
+  onChallengeClosed?: (event: Extract<SSEEvent, { type: "challenge.closed" }>) => void;
   onFriendRequestReceived?: (event: Extract<SSEEvent, { type: "friend_request.received" }>) => void;
   onFriendRequestAccepted?: (event: Extract<SSEEvent, { type: "friend_request.accepted" }>) => void;
   onMessageReceived?: (event: Extract<SSEEvent, { type: "message.received" }>) => void;
@@ -343,6 +344,9 @@ export function connectSSE(
           break;
         case "challenge.received":
           handlers.onChallengeReceived?.(event);
+          break;
+        case "challenge.closed":
+          handlers.onChallengeClosed?.(event);
           break;
         case "friend_request.received":
           handlers.onFriendRequestReceived?.(event);

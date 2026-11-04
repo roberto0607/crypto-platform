@@ -93,6 +93,20 @@ export async function notifyTriggerFired(
     });
 }
 
+export async function notifyChallengeReceived(
+    userId: string,
+    challengerName: string,
+    matchId: string,
+): Promise<void> {
+    await notify({
+        userId,
+        kind: "CHALLENGE_RECEIVED",
+        title: `${challengerName} challenged you to a 1v1`,
+        body: "Open the Arena to accept or decline.",
+        metadata: { matchId },
+    });
+}
+
 export async function notifyPositionLiquidated(
     userId: string,
     pairSymbol: string,

@@ -49,6 +49,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   incident_not_found: "The requested incident was not found.",
   // 404
   user_not_found: "The requested user was not found.",
+  player_not_found: "That player doesn't exist.",
+  self_challenge: "You can't challenge yourself.",
+  player_not_challengeable: "That account can't be challenged.",
+  challenge_limit_reached: "You've sent 10 challenges in the last hour. Try again later.",
   asset_not_found: "The requested asset was not found.",
   wallet_not_found: "The requested wallet was not found.",
   order_not_found: "The requested order was not found.",

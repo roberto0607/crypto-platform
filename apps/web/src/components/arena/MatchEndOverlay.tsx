@@ -48,6 +48,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
     }, [match.id]);
 
     const isChallenger = match.challenger_id === userId;
+    const opponentName = isChallenger ? match.opponent_name : match.challenger_name;
     const yourPnl = isChallenger ? match.challenger_pnl_pct : match.opponent_pnl_pct;
     const oppPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
     const won = match.winner_id === userId;
@@ -244,6 +245,17 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                     <button className="ar-btn ar-btn-outline" onClick={() => navigate(`/matches/${match.id}/breakdown`)}>
                         VIEW TRADE BREAKDOWN
                     </button>
+                    {opponentName && (
+                        <button
+                            className="ar-btn ar-btn-outline"
+                            onClick={() => {
+                                onBackToArena();
+                                navigate(`/arena?challenge=${encodeURIComponent(opponentName)}`);
+                            }}
+                        >
+                            REMATCH
+                        </button>
+                    )}
                     <button className="ar-btn ar-btn-orange" onClick={onBackToArena}>
                         BACK TO ARENA
                     </button>

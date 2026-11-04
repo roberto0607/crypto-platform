@@ -201,6 +201,12 @@ export function useSSE() {
         );
       },
 
+      onChallengeClosed: (event) => {
+        window.dispatchEvent(
+          new CustomEvent("sse:challenge.closed", { detail: event.data }),
+        );
+      },
+
       // Friend requests go straight to the global chat store (badge must be
       // correct regardless of what page is open) — same pattern as
       // onNotificationCreated above, not the window-CustomEvent pattern used

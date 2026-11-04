@@ -214,6 +214,12 @@ export interface ChallengeReceivedData {
   createdAt: string;
 }
 
+export interface ChallengeClosedData {
+  matchId: string;
+  reason: "declined" | "withdrawn";
+  byName: string;
+}
+
 export interface FriendRequestReceivedData {
   friendshipId: string;
   requesterId: string;
@@ -433,6 +439,7 @@ export type AppEvent =
   | EventEnvelope<"match.pnl.update", MatchPnlUpdateData>
   | EventEnvelope<"match.spectator_count", MatchSpectatorCountData>
   | EventEnvelope<"challenge.received", ChallengeReceivedData>
+  | EventEnvelope<"challenge.closed", ChallengeClosedData>
   | EventEnvelope<"friend_request.received", FriendRequestReceivedData>
   | EventEnvelope<"friend_request.accepted", FriendRequestAcceptedData>
   | EventEnvelope<"message.received", MessageReceivedData>

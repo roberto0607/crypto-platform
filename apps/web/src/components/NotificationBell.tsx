@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useNotificationStore } from "@/stores/notificationStore";
+import { notificationLink } from "@/lib/notificationLink";
 
 const KIND_ICONS: Record<string, string> = {
     COMPETITION_STARTED: "!",
@@ -8,6 +10,7 @@ const KIND_ICONS: Record<string, string> = {
     TRIGGER_FIRED: "T",
     ORDER_FILLED: "$",
     POSITION_LIQUIDATED: "!",
+    CHALLENGE_RECEIVED: "⚔",
     SYSTEM: "i",
 };
 
@@ -15,6 +18,7 @@ export function NotificationBell() {
     const { unreadCount, notifications, panelOpen, togglePanel, closePanel, markRead, markAllRead, fetch } =
         useNotificationStore();
     const panelRef = useRef<HTMLDivElement>(null);
+    const navigate = useNavigate();
 
     // Fetch on mount
     useEffect(() => {
@@ -82,6 +86,11 @@ export function NotificationBell() {
                                     key={n.id}
                                     onClick={() => {
                                         if (!n.read_at) markRead(n.id);
+                                        const link = notificationLink(n.kind);
+                                        if (link) {
+                                            closePanel();
+                                            navigate(link);
+                                        }
                                     }}
                                     className={`w-full text-left px-4 py-3 border-b border-gray-800/50 hover:bg-gray-800/50 transition-colors ${
                                         !n.read_at ? "bg-gray-800/30" : ""

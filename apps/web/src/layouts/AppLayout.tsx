@@ -50,6 +50,7 @@ function breadcrumbLabel(pathname: string): string {
   if (pathname.startsWith("/cycle")) return "CYCLES";
   if (pathname.startsWith("/history")) return "HISTORY";
   if (pathname.startsWith("/profile")) return "PROFILE";
+  if (pathname.startsWith("/players")) return "PLAYER";
   if (pathname.startsWith("/settings")) return "SETTINGS";
   return "TRADE";
 }
