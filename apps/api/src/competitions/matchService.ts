@@ -605,9 +605,9 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
 export async function getMatchById(matchId: string): Promise<MatchWithPlayers | null> {
     const { rows } = await pool.query<MatchWithPlayers>(
         `SELECT m.*,
-                COALESCE(NULLIF(c.display_name, ''), split_part(c.email, '@', 1)) AS challenger_name,
+                c.display_name AS challenger_name,
                 c.elo_rating AS challenger_elo,
-                COALESCE(NULLIF(o.display_name, ''), split_part(o.email, '@', 1)) AS opponent_name,
+                o.display_name AS opponent_name,
                 o.elo_rating AS opponent_elo
          FROM matches m
          JOIN users c ON c.id = m.challenger_id
@@ -667,9 +667,9 @@ export async function getActiveMatchIdForUser(
 export async function getActiveMatchForUser(userId: string): Promise<MatchWithPlayers | null> {
     const { rows } = await pool.query<MatchWithPlayers>(
         `SELECT m.*,
-                COALESCE(NULLIF(c.display_name, ''), split_part(c.email, '@', 1)) AS challenger_name,
+                c.display_name AS challenger_name,
                 c.elo_rating AS challenger_elo,
-                COALESCE(NULLIF(o.display_name, ''), split_part(o.email, '@', 1)) AS opponent_name,
+                o.display_name AS opponent_name,
                 o.elo_rating AS opponent_elo
          FROM matches m
          JOIN users c ON c.id = m.challenger_id
@@ -765,9 +765,9 @@ export async function getMatchHistory(
 
     const { rows } = await pool.query<MatchWithPlayers>(
         `SELECT m.*,
-                COALESCE(NULLIF(c.display_name, ''), split_part(c.email, '@', 1)) AS challenger_name,
+                c.display_name AS challenger_name,
                 c.elo_rating AS challenger_elo,
-                COALESCE(NULLIF(o.display_name, ''), split_part(o.email, '@', 1)) AS opponent_name,
+                o.display_name AS opponent_name,
                 o.elo_rating AS opponent_elo,
                 mer.winner_delta AS winner_elo_delta,
                 mer.loser_delta AS loser_elo_delta
@@ -795,9 +795,9 @@ export async function getMatchHistory(
 export async function listActiveMatches(limit = 50): Promise<MatchWithPlayers[]> {
     const { rows } = await pool.query<MatchWithPlayers>(
         `SELECT m.*,
-                COALESCE(NULLIF(c.display_name, ''), split_part(c.email, '@', 1)) AS challenger_name,
+                c.display_name AS challenger_name,
                 c.elo_rating AS challenger_elo,
-                COALESCE(NULLIF(o.display_name, ''), split_part(o.email, '@', 1)) AS opponent_name,
+                o.display_name AS opponent_name,
                 o.elo_rating AS opponent_elo
          FROM matches m
          JOIN users c ON c.id = m.challenger_id

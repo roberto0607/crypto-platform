@@ -8,7 +8,7 @@ import {
   create as createApiKey,
   revoke as revokeApiKey,
 } from "@/api/endpoints/apiKeys";
-import type { ApiKey } from "@/types/api";
+import type { ApiKey, LegacyApiError, V1ApiError } from "@/types/api";
 import { updateDisplayName } from "@/api/endpoints/profile";
 import { normalizeApiError } from "@/lib/errors";
 import { AxiosError } from "axios";
@@ -24,12 +24,14 @@ const SCOPES = ["read", "trade", "admin"] as const;
 
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
+  const updateUser = useAuthStore((s) => s.updateUser);
   const userStatus = useAppStore((s) => s.userStatus);
 
-  // Display name
+  // Username
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [dnSaving, setDnSaving] = useState(false);
   const [dnStatus, setDnStatus] = useState<"idle" | "success" | "error">("idle");
+  const [dnError, setDnError] = useState("");
 
   // API Keys
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -126,8 +128,10 @@ export default function SettingsPage() {
     setDnStatus("idle");
     try {
       await updateDisplayName(displayName);
+      updateUser({ displayName, usernameChosen: true });
       setDnStatus("success");
-    } catch {
+    } catch (err) {
+      setDnError(normalizeApiError(err as AxiosError<LegacyApiError | V1ApiError>).message);
       setDnStatus("error");
     } finally {
       setDnSaving(false);
@@ -170,18 +174,19 @@ export default function SettingsPage() {
         )}
       </Card>
 
-      {/* Section 1b: Display Name */}
+      {/* Section 1b: Username */}
       <Card>
-        <h2 className="text-sm font-medium text-gray-300 mb-1">Display Name</h2>
+        <h2 className="text-sm font-medium text-gray-300 mb-1">Username</h2>
         <p className="text-gray-500 text-xs mb-3">
-          This name appears on leaderboards. 3-30 chars, letters/numbers/underscores only.
+          Other players find and challenge you by this name. 3-30 chars, letters/numbers/underscores only.
         </p>
         <div className="flex gap-3 items-center">
           <input
             type="text"
+            aria-label="Username"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="your_display_name"
+            placeholder="your_username"
             className="bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-700 focus:outline-none focus:border-blue-500 w-64"
             maxLength={30}
           />
@@ -196,7 +201,7 @@ export default function SettingsPage() {
             <span className="text-green-400 text-sm">Saved!</span>
           )}
           {dnStatus === "error" && (
-            <span className="text-red-400 text-sm">Failed to save</span>
+            <span className="text-red-400 text-sm">{dnError}</span>
           )}
         </div>
       </Card>

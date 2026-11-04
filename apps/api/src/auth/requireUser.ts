@@ -60,6 +60,19 @@ export async function requireUser(req: FastifyRequest, reply: FastifyReply) {
 }
 
 /**
+ * The verified JWT user on a public route, or null. Never trusts an unverified
+ * token: the rate limiter's decode is fine for bucketing, not for identity.
+ */
+export async function optionalUserId(req: FastifyRequest): Promise<string | null> {
+  try {
+    const payload = (await req.jwtVerify()) as JwtPayload;
+    return payload.sub ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Middleware factory: require a specific API key scope.
  * Only applies when authType is API_KEY; JWT users pass through.
  */

@@ -1154,3 +1154,39 @@ deliberate: exits must never be refused or wait for the feed. Only orders that
 open or add reject (`book_stale_for_size`). The cost is that a large exit
 during a book outage skips its slippage. A player can't cause the outage, and
 closes on a live book walk normally.
+
+---
+
+## 🟡 MEDIUM — Registration reveals whether an email has an account
+
+**Discovered:** 2026-11-04, username search PR A.
+
+`POST /auth/register` answers `409 email_taken` for an email that already has an
+account, so anyone can test addresses against it (3 requests a minute per IP).
+Login (`invalid_credentials`) and forgot-password (always the same message)
+don't leak this. The fix changes the signup flow: always answer as if it worked,
+and email the existing owner instead. Left out of the username work on purpose.
+
+---
+
+## 🔵 LOW — `POST /auth/register` doesn't require a username
+
+**Discovered:** 2026-11-04, username search PR A.
+
+The signup form requires one, but the API falls back to a generated `trader_`
+name, because ~20 smoke scripts register without one. Those accounts get the
+"Pick your username" banner. Make it required once the scripts are updated or
+deleted.
+
+---
+
+## 🔵 LOW — An API-key caller sees their own leaderboard row as anonymous
+
+**Discovered:** 2026-11-04, username search PR A.
+
+`GET /v1/competitions/:id/leaderboard` is public and identifies the viewer with
+`optionalUserId`, which only verifies a JWT. A caller using an `ApiKey` header
+counts as logged out, so their own row past rank 10 comes back with `user_id` and
+`display_name` null, like everyone else's. An expired JWT does the same until the
+client refreshes. Nothing leaks; the caller just can't spot themselves. A fix would
+run the API-key check in `optionalUserId` too.

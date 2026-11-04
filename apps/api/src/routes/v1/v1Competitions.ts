@@ -15,7 +15,8 @@ import {
     joinCompetition,
     withdrawFromCompetition,
 } from "../../competitions/competitionService";
-import { getLeaderboard } from "../../competitions/leaderboardRepo";
+import { getLeaderboard, maskAnonymousRows } from "../../competitions/leaderboardRepo";
+import { optionalUserId } from "../../auth/requireUser";
 import {
     listUserCompetitions,
     updateParticipantStatus,
@@ -218,7 +219,7 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
         schema: {
             tags: ["Competitions"],
             summary: "Competition leaderboard",
-            description: "Returns cached leaderboard for a competition.",
+            description: "Returns cached leaderboard for a competition. Rows past rank 10 are anonymous: user_id and display_name are null, except on the caller's own row when a valid token is sent.",
             params: {
                 type: "object",
                 properties: { id: { type: "string", format: "uuid" } },
@@ -249,7 +250,7 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
                 query.limit !== undefined ? parseIntParam(query.limit, 100, 1, 500) : undefined,
                 query.offset !== undefined ? parseIntParam(query.offset, 0, 0, 1_000_000) : undefined,
             );
-            return reply.send({ data });
+            return reply.send({ data: maskAnonymousRows(data, await optionalUserId(req)) });
         } catch (err) {
             return v1HandleError(reply, err);
         }
@@ -413,7 +414,7 @@ const v1Competitions: FastifyPluginAsync = async (app) => {
                 display_name: string;
             }>(
                 `SELECT lb.user_id, lb.rank,
-                        COALESCE(u.display_name, SPLIT_PART(u.email, '@', 1)) AS display_name
+                        u.display_name
                  FROM competition_leaderboard lb
                  JOIN users u ON u.id = lb.user_id
                  WHERE lb.competition_id = $1

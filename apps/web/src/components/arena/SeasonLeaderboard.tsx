@@ -532,7 +532,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                             const isCurrentUser = entry.user_id === userId;
                             return (
                                 <LeaderboardRow
-                                    key={entry.user_id}
+                                    key={entry.user_id ?? `rank-${rank}`}
                                     entry={{
                                         rank,
                                         user_id: entry.user_id,

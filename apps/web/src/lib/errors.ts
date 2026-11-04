@@ -75,6 +75,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
 
   // 409
   email_taken: "This email address is already registered",
+  username_taken: "That username is taken",
+  username_reserved: "That username is reserved",
   wallet_already_exists: "You already have a wallet for this asset",
   asset_already_exists: "An asset with this symbol already exists",
   pair_already_exists: "This trading pair already exists",

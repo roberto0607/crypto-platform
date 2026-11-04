@@ -26,6 +26,8 @@ const PROFILE_CSS = `
     background:rgba(255,107,0,0.06);
   }
   .pf-name { font-family:var(--pf-bebas);font-size:32px;letter-spacing:4px;color:#fff; }
+  .pf-username { font-size:12px;color:var(--pf-orange);margin-top:2px; }
+  .pf-username-hint { color:var(--pf-muted);font-size:10px;margin-left:8px; }
   .pf-tier-row { display:flex;align-items:center;gap:10px;margin-top:4px; }
   .pf-tier-badge {
     font-family:var(--pf-bebas);font-size:14px;letter-spacing:3px;
@@ -119,7 +121,7 @@ export default function ProfilePage() {
         } catch { /* ignore */ }
     }
 
-    const displayName = user?.displayName || user?.email?.split("@")[0] || "trader";
+    const displayName = user?.displayName ?? "trader";
     const initials = displayName.slice(0, 2).toUpperCase();
     const tier = getTierForElo(eloRating);
     const winRate = stats.total > 0 ? ((stats.wins / stats.total) * 100).toFixed(1) : "0.0";
@@ -134,6 +136,10 @@ export default function ProfilePage() {
                     <div className="pf-avatar">{initials}</div>
                     <div>
                         <div className="pf-name">{displayName.toUpperCase()}</div>
+                        <div className="pf-username">
+                            @{displayName}
+                            <span className="pf-username-hint">players find you by this name</span>
+                        </div>
                         <div className="pf-tier-row">
                             <span className={`pf-tier-badge pf-tier-${userTier}`}>{userTier}</span>
                             <span className="pf-elo">{eloRating} ELO</span>

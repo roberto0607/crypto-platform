@@ -20,6 +20,7 @@ interface AuthState {
   isInitializing: boolean;
   isAdmin: boolean;
   setAuth: (token: string, user: User) => void;
+  updateUser: (changes: Partial<User>) => void;
   clearAuth: () => void;
   initialize: () => Promise<void>;
 }
@@ -54,6 +55,11 @@ export const useAuthStore = create<AuthState>((set, get) => {
         isAuthenticated: true,
         isAdmin: user.role === "ADMIN",
       });
+    },
+
+    updateUser: (changes: Partial<User>) => {
+      const user = get().user;
+      if (user) set({ user: { ...user, ...changes } });
     },
 
     clearAuth: () => {
