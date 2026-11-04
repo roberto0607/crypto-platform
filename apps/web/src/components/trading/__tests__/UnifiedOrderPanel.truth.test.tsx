@@ -472,6 +472,74 @@ describe("submit label on the other side of a position", () => {
   });
 });
 
+describe("REDUCE and CLOSE can never open or flip", () => {
+  async function against(usd: string, onFilled: () => void = () => {}) {
+    http.leverage = { ...LEV, positionLeverage: "5" };
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <UnifiedOrderPanel pair={PAIR} position={isoPosition("0.10000000")} onOrderFilled={onFilled} />
+      </ToastProvider>,
+    );
+    await settle();
+    await user.click(screen.getByText("SHORT"));
+    await user.type(amount(), usd);
+    return user;
+  }
+  const last = () => http.orders.at(-1) as Record<string, unknown>;
+
+  it("the position shrinks between render and click: the order trims, never opens the other side", async () => {
+    // The panel still shows 0.10. The engine holds 0.02 by the time the order
+    // lands: reduce-only trims to it, a plain order sells through it.
+    let engine = 0.02;
+    http.post = (body) => {
+      const qty = Number(body.qty);
+      engine -= (body as unknown as { reduceOnly?: boolean }).reduceOnly ? Math.min(qty, engine) : qty;
+    };
+    const user = await against("1000");  // 0.05 BTC at 5x
+    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await settle();
+    expect(engine).toBe(0);
+  });
+
+  it("CLOSE is reduce-only too", async () => {
+    const user = await against("2000");
+    await user.click(screen.getByRole("button", { name: "CLOSE" }));
+    await settle();
+    expect(last().reduceOnly).toBe(true);
+  });
+
+  it("CLOSE & REVERSE stays a normal order", async () => {
+    const user = await against("3000");
+    await user.click(screen.getByRole("button", { name: "CLOSE & REVERSE" }));
+    await user.click(screen.getByRole("button", { name: "CONFIRM" }));
+    await settle();
+    expect(last()).not.toHaveProperty("reduceOnly");
+  });
+
+  it("a LIMIT reduce doesn't send it: the API takes reduceOnly on MARKET only", async () => {
+    const user = await against("1000");
+    await user.click(screen.getByText("LIMIT"));
+    act(() => { useTradingStore.setState({ limitPrice: "101000" }); });
+    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await settle();
+    expect(last().type).toBe("LIMIT");
+    expect(last()).not.toHaveProperty("reduceOnly");
+  });
+
+  it("nothing left to reduce: says so and refreshes, so the stale card goes", async () => {
+    const refreshed = vi.fn();
+    http.post = () => {
+      throw Object.assign(new Error("x"), { response: { status: 400, data: { ok: false, error: "reduce_only_no_position" } } });
+    };
+    const user = await against("1000", refreshed);
+    await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await settle();
+    expect(screen.getByTestId("order-error").textContent).toBe("No position to reduce — it's already closed");
+    expect(refreshed).toHaveBeenCalled();
+  });
+});
+
 describe("a 1x long has no liq price", () => {
   it("preview and card both say None", async () => {
     const user = userEvent.setup();

@@ -18,7 +18,9 @@
  *     margin health, break-even, TP/SL on the position, close / reverse.
  *   - An order on the other side of an open position is labelled for what it
  *     does: REDUCE and CLOSE are one click, like any exchange; CLOSE & REVERSE
- *     asks for confirmation first, never a one-click flip.
+ *     asks for confirmation first, never a one-click flip. A MARKET REDUCE or
+ *     CLOSE is reduce-only: the panel's position can be stale by the time the
+ *     order lands, and the server trims it rather than open the other side.
  *   - MARKET preview from GET /v1/sim/quote (est. fill, slippage, notional,
  *     fee, est. liq at that fill); 25/50/75/MAX from its budget solve.
  *   - A rejection stays under the submit button until the next edit.
@@ -578,9 +580,14 @@ export function UnifiedOrderPanel({
                 }
                 solvedQty = fresh?.qty ?? preset.qty;
             }
-            // `leverage` only for a leveraged order, `qty` only for a preset:
-            // otherwise the body is exactly the pre-leverage one.
-            const opts = { ...(leveraged ? { leverage } : {}), ...(solvedQty ? { qty: solvedQty } : {}) };
+            // `leverage` only for a leveraged order, `qty` only for a preset,
+            // `reduceOnly` only for a MARKET reduce or close (the API refuses
+            // it on a LIMIT): otherwise the body is the pre-leverage one.
+            const opts = {
+                ...(leveraged ? { leverage } : {}),
+                ...(solvedQty ? { qty: solvedQty } : {}),
+                ...(reduces && orderType === "MARKET" ? { reduceOnly: true } : {}),
+            };
             const result = await submitOrder(Object.keys(opts).length ? opts : undefined);
             const fills = result?.fills ?? [];
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
@@ -652,6 +659,11 @@ export function UnifiedOrderPanel({
             setTimeout(() => { setBtnState("idle"); setTpSlMsg(""); }, 2500);
         } catch (err) {
             setOrderError(orderErrorText(err, errorContext));
+            // The position this order was for is gone: drop the stale card.
+            if ((err as AxiosError<{ error?: string }>).response?.data?.error === "reduce_only_no_position") {
+                onOrderFilled();
+                fetchTriggers();
+            }
         }
     };
 

@@ -34,7 +34,8 @@
       "pairId": "p1",
       "side": "SELL",
       "type": "MARKET",
-      "qty": "0.00119119"
+      "qty": "0.00119119",
+      "reduceOnly": true
     },
     "confirm": false
   }
