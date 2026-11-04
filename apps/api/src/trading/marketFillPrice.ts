@@ -16,8 +16,9 @@
  *      because reduce-only closes have no size cap, and a SELL must stay > 0.
  *
  * The result is one volume-weighted price, deterministic given the book.
- * Above the band with no depth to walk it returns null: the caller decides
- * (an order rejects, match end keeps the touch).
+ * Above the band with no depth to walk it returns null: the caller decides.
+ * An order that opens or adds rejects; one that only shrinks the position, and
+ * match end, fill at the touch.
  */
 import Decimal from "decimal.js";
 import { D, ZERO, BPS_DIVISOR } from "../utils/decimal";

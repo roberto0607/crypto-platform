@@ -231,6 +231,67 @@ describe("stale book (ticker reference, no depth)", () => {
     });
 });
 
+describe("stale book: anything that only shrinks a position still fills", () => {
+    /** A $1M 10x long, then the book goes stale. */
+    async function longThenStale(): Promise<string> {
+        enableLeverage();
+        const u = await trader("2000000.00000000");
+        await market(u, "BUY", "10.00000000", { leverage: 10 });
+        clearReferenceBooks();
+        await seedTicker("BTC/USD", "99990", "100000", "100000");
+        return u;
+    }
+
+    it("a CLOSE (reduce-only) fills at the touch, position flat", async () => {
+        const u = await longThenStale();
+        const r = await market(u, "SELL", "10.00000000", { reduceOnly: true });
+        expect(r.fills[0].price).toBe("99990.00000000");
+        expect(D((await position(u)).base_qty).toNumber()).toBe(0);
+    });
+
+    it("a plain opposite-side order that only reduces fills at the touch", async () => {
+        const u = await longThenStale();
+        const r = await market(u, "SELL", "6.00000000");
+        expect(r.fills[0].price).toBe("99990.00000000");
+        expect(D((await position(u)).base_qty).toNumber()).toBe(4);
+    });
+
+    it("exactly closing without the flag fills too", async () => {
+        const u = await longThenStale();
+        await market(u, "SELL", "10.00000000");
+        expect(D((await position(u)).base_qty).toNumber()).toBe(0);
+    });
+
+    it("a flip opens something, so it rejects", async () => {
+        const u = await longThenStale();
+        await expect(market(u, "SELL", "11.00000000")).rejects.toThrow("book_stale_for_size");
+        expect(D((await position(u)).base_qty).toNumber()).toBe(10);
+    });
+
+    it("adding to the position rejects", async () => {
+        const u = await longThenStale();
+        await expect(market(u, "BUY", "1.00000000")).rejects.toThrow("book_stale_for_size");
+    });
+
+    it("SPOT: selling a holding fills at the touch; a short past it rejects", async () => {
+        const u = await trader("2000000.00000000");
+        await market(u, "BUY", "10.00000000");
+        clearReferenceBooks();
+        await seedTicker("BTC/USD", "99990", "100000", "100000");
+        await expect(market(u, "SELL", "11.00000000")).rejects.toThrow("book_stale_for_size");
+        const r = await market(u, "SELL", "10.00000000");
+        expect(r.fills[0].price).toBe("99990.00000000");
+    });
+
+    it("the quote agrees when asked about a reducing order", async () => {
+        const u = await longThenStale();
+        expect(await quoteMarketOrder({ userId: u, pairId, side: "SELL", qty: "10.00000000", reduces: true }))
+            .toMatchObject({ executable: true, estimatedPrice: "99990.00000000" });
+        expect(await quoteMarketOrder({ userId: u, pairId, side: "SELL", qty: "10.00000000" }))
+            .toMatchObject({ executable: false, reason: "book_stale_for_size" });
+    });
+});
+
 describe("quote (the order panel's preview)", () => {
     const quote = (uid: string, q: Omit<Parameters<typeof quoteMarketOrder>[0], "userId" | "pairId">) =>
         quoteMarketOrder({ userId: uid, pairId, ...q });

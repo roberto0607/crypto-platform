@@ -1143,11 +1143,14 @@ own consumed depth over a few seconds.
 
 ---
 
-## 🔵 LOW — Match end on a stale book closes a large position at the touch
+## 🔵 LOW — On a stale book, closes above the touch band pay no slippage
 
 **Discovered:** 2026-11-03, PR 2a.
 
-Match end can't be refused, so with no depth to walk (`ClosePrices`, ticker or
-older fallback) a position above the touch band closes at the touch, without
-exit slippage. It needs a book outage at the moment the match ends, which a
-player can't choose. Same-size closes on a live book walk normally.
+With no depth to walk (ticker reference, or an older fallback at match end),
+anything that only shrinks a position fills at the touch whatever its size: a
+CLOSE, a TP/SL/trailing fire, a plain reduce, a match-end close. That is
+deliberate: exits must never be refused or wait for the feed. Only orders that
+open or add reject (`book_stale_for_size`). The cost is that a large exit
+during a book outage skips its slippage. A player can't cause the outage, and
+closes on a live book walk normally.

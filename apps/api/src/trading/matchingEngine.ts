@@ -461,16 +461,25 @@ async function placeOrderInternal(
         // the touch band at the touch, the rest walks the Kraken book (one
         // system trade at the average). A replay session's price is final.
         // Above the band with no depth (ticker reference) there's nothing to
-        // price it from: reject rather than guess. A liquidation can't land
-        // here, its reference is always the book.
+        // walk. An order that only shrinks the position fills at the touch:
+        // a CLOSE or a stop never waits for the feed. One that opens or adds
+        // anything rejects rather than guess. A liquidation can't land here,
+        // its reference is always the book.
         const touch = systemFillPrice(reference!, side);
-        const priced = reference!.source === "replay"
-            ? { price: touch, slippageBps: ZERO, beyondBookQty: ZERO }
+        const atTouch = { price: touch, slippageBps: ZERO, beyondBookQty: ZERO };
+        let priced = reference!.source === "replay"
+            ? atTouch
             : priceMarketFill({
                 levels: side === "BUY" ? reference!.levels?.asks : reference!.levels?.bids,
                 touch, side, qty: remaining, model: fillModel,
             });
-        if (!priced) throw new Error("book_stale_for_size");
+        if (!priced) {
+            const row = await readPosition(client, userId, pairId, posScope, false);
+            const signed = row ? D(row.base_qty) : ZERO;
+            const reducible = side === "SELL" ? Decimal.max(signed, ZERO) : Decimal.max(signed.neg(), ZERO);
+            if (D(qty).gt(reducible)) throw new Error("book_stale_for_size");
+            priced = atTouch;
+        }
         systemFillSlippageBps = priced.slippageBps;
         const sysPrice = D(toFixed8(priced.price));
         const sysQuoteStr = toFixed8(remaining.mul(sysPrice));

@@ -128,6 +128,8 @@ export async function quoteMarketOrder(input: {
     qty?: string;
     budget?: string;
     leverage?: number;
+    /** The order only shrinks the position: with no depth it fills at the touch, like the engine. */
+    reduces?: boolean;
 }): Promise<MarketQuote> {
     const { userId, pairId, side } = input;
     const pair = await findPairById(pairId);
@@ -163,7 +165,8 @@ export async function quoteMarketOrder(input: {
             const price = replayPrice(qty);
             return { price, slippageBps: ZERO, beyondBookQty: ZERO };
         }
-        return priceMarketFill({ levels: levelsFor(ref, side), touch, side, qty, model });
+        return priceMarketFill({ levels: levelsFor(ref, side), touch, side, qty, model })
+            ?? (input.reduces ? { price: touch, slippageBps: ZERO, beyondBookQty: ZERO } : null);
     };
 
     const qty = input.budget !== undefined

@@ -8,7 +8,7 @@ import { buildApp } from "../../../app";
 import { pool } from "../../../db/pool";
 import { resetTestData, ensureMigrations } from "../../../testing/resetDb";
 import { createTestUser, createTestAssetAndPair, createTestWallets } from "../../../testing/fixtures";
-import { seedDepthBook, clearReferenceBooks } from "../../../testing/referenceBook";
+import { seedDepthBook, clearReferenceBooks, seedTicker } from "../../../testing/referenceBook";
 
 describe("GET /v1/sim/quote", () => {
     let app: FastifyInstance;
@@ -59,6 +59,13 @@ describe("GET /v1/sim/quote", () => {
         expect(res.statusCode).toBe(200);
         expect(Number(res.json().qty)).toBeGreaterThan(0.49);
         expect(Number(res.json().qty)).toBeLessThan(0.5);
+    });
+
+    it("takes reduces as a real boolean", async () => {
+        clearReferenceBooks();
+        await seedTicker("BTC/USD", "99990", "100000", "100000");
+        expect((await get("qty=10&reduces=true")).json()).toMatchObject({ executable: true });
+        expect((await get("qty=10&reduces=false")).json()).toMatchObject({ executable: false, reason: "book_stale_for_size" });
     });
 
     it("wants exactly one of qty and budget", async () => {

@@ -32,6 +32,7 @@ const quoteQuery = z.object({
     qty: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
     budget: z.string().regex(/^\d+(\.\d{1,8})?$/).optional(),
     leverage: z.coerce.number().min(1).max(LEVERAGE_CEILING).optional(),
+    reduces: z.boolean().optional(),
 }).refine((q) => (q.qty === undefined) !== (q.budget === undefined), { message: "Give exactly one of qty or budget" });
 
 const v1Sim: FastifyPluginAsync = async (app) => {
@@ -131,6 +132,7 @@ const v1Sim: FastifyPluginAsync = async (app) => {
                     qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
                     budget: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
                     leverage: { type: "number" },
+                    reduces: { type: "boolean", description: "The order only shrinks the position" },
                 },
             },
             response: {
