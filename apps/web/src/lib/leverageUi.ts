@@ -7,7 +7,7 @@
  * Design: docs/designs/2026-10-13-leverage-design.md §3, §4.
  */
 import Decimal from "decimal.js-light";
-import { liquidationPrice, marginHealth, sizeForMargin, type MarginSide } from "@/lib/margin";
+import { liquidationPrice, marginHealth, shownLiqPrice, sizeForMargin, type MarginSide } from "@/lib/margin";
 
 const ZERO = new Decimal(0);
 const BPS = 10000;
@@ -118,7 +118,7 @@ export function isolatedPositionView(p: {
     unrealizedPnl: capped.toNumber(),
     roePct: margin.gt(0) ? capped.div(margin).mul(100).toNumber() : 0,
     health,
-    liqPrice: p.liqPrice === null ? null : Number(p.liqPrice),
+    liqPrice: shownLiqPrice(side, Number(p.leverage), p.liqPrice === null ? null : Number(p.liqPrice)),
   };
 }
 
@@ -202,9 +202,9 @@ export function positionMark(
  * open ISOLATED position with a liq price (a 1x long has none). SPOT
  * positions (leverage off) never get one.
  */
-export function chartLiqPrice(position: { base_qty: string; margin_mode?: string; liq_price?: string | null } | null): number | null {
+export function chartLiqPrice(position: { base_qty: string; margin_mode?: string; leverage?: string; liq_price?: string | null } | null): number | null {
   if (!position || position.margin_mode !== "ISOLATED" || !position.liq_price) return null;
-  if (Number(position.base_qty) === 0) return null;
-  const liq = Number(position.liq_price);
-  return liq > 0 ? liq : null;
+  const qty = Number(position.base_qty);
+  if (qty === 0) return null;
+  return shownLiqPrice(qty > 0 ? "LONG" : "SHORT", Number(position.leverage), Number(position.liq_price));
 }

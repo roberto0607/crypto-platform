@@ -19,6 +19,7 @@ import { notifyChallengeReceived } from "../../notifications/notificationService
 import { getMatchReplay, ReplayError } from "../../competitions/replay/replayService.js";
 import { getMatchBreakdown, BreakdownError } from "../../competitions/breakdown/breakdownService.js";
 import { getSpectatorCount } from "../../competitions/matchSpectatorStore.js";
+import { withLivePnl } from "../../competitions/matchPnlEngine.js";
 import { joinMatchSpectatorRoom, leaveMatchSpectatorRoom } from "../../competitions/matchSpectatorSession.js";
 import { getStreamHandler, setStreamSpectatingMatch, getStreamSpectatingMatch } from "./v1Events.js";
 import { pool } from "../../db/pool.js";
@@ -115,7 +116,7 @@ const v1Matches: FastifyPluginAsync = async (app) => {
         try {
             const userId = req.user!.id;
             const match = await getActiveMatchForUser(userId);
-            return reply.send({ ok: true, match });
+            return reply.send({ ok: true, match: match ? await withLivePnl(match) : null });
         } catch (err) {
             return v1HandleError(reply, err);
         }

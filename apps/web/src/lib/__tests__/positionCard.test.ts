@@ -116,6 +116,13 @@ describe("addPreview: the position's liq price after an add (engine math)", () =
     )!;
     expect(r.liqPrice).toBeNull();
   });
+  it("a 1x long whose margin rounded down stays unliquidatable: null, not dust", () => {
+    const r = addPreview(
+      { baseQty: "0.01234567", entry: "64321.12345678", margin: "794.08736422", leverage: "1", mmrBps: 50 },
+      "0.00765433", 64000.12345678,
+    )!;
+    expect(r.liqPrice).toBeNull();
+  });
   it("nothing to add: null", () => {
     expect(addPreview({ baseQty: "0.01", entry: "83000", margin: "830", leverage: "1", mmrBps: 50 }, "", 80000)).toBeNull();
   });

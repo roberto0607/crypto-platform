@@ -41,6 +41,7 @@ vi.mock("@/api/endpoints/triggers", () => ({
 }));
 
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
+import { chartLiqPrice } from "@/lib/leverageUi";
 import ToastProvider from "@/components/ToastProvider";
 import { placeOrder } from "@/api/endpoints/trading";
 import { createTrigger, updateTrigger, cancelTrigger, listTriggers } from "@/api/endpoints/triggers";
@@ -140,6 +141,19 @@ describe("the card", () => {
   it("a 1x long: liq none, no distance", async () => {
     await mount({ ...ISO_LONG, leverage: "1.00", isolated_margin: "499.99947000", liq_price: null });
     expect(screen.getByTestId("pos-liq").textContent).toBe("None");
+  });
+
+  it("a 1x long with dust in liq_price reads None, with no distance and no chart line", async () => {
+    const pos = { ...ISO_LONG, leverage: "1.00", isolated_margin: "499.99947000", liq_price: "0.00000054" };
+    await mount(pos);
+    expect(screen.getByTestId("pos-liq").textContent).toBe("None");
+    expect(chartLiqPrice(pos)).toBeNull();
+  });
+
+  it("a tiny loss never reads -0.00%", async () => {
+    // 0.0060241 × (80,000 − 80,000.5) on $500 margin: -0.0006% return on margin
+    await mount({ ...ISO_LONG, base_qty: "0.00602410", avg_entry_price: "80000.50", isolated_margin: "482.00000000", leverage: "1.00" });
+    expect(screen.getByTestId("pos-pnl-pct").textContent).not.toContain("-0.00%");
   });
 
   it("SIZE, MARGIN, BREAK-EVEN ($81,018.94 at the pair's 5 bps) and FEES PAID", async () => {

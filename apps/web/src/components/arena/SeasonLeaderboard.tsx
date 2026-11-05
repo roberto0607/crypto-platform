@@ -6,6 +6,7 @@ import {
     type LeaderboardEntry,
 } from "@/api/endpoints/competitions";
 import { LeaderboardRow } from "./LeaderboardRow";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
    SEASON LEADERBOARD CSS
@@ -446,7 +447,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                 <div className="slb-stat-card">
                     <div className="slb-stat-lbl">YOUR P&L</div>
                     <div className={`slb-stat-val${myPnl > 0 ? " green" : myPnl < 0 ? " red" : ""}`}>
-                        {myEntry ? `${myPnl >= 0 ? "+" : ""}${myPnl.toFixed(2)}%` : "--"}
+                        {myEntry ? formatPnlPct(myPnl) : "--"}
                     </div>
                 </div>
                 <div className="slb-stat-card">

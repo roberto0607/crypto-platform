@@ -3,7 +3,7 @@
  * (display only; the server books every number for real).
  */
 import Decimal from "decimal.js-light";
-import { increasePosition, type MarginSide } from "@/lib/margin";
+import { increasePosition, shownLiqPrice, type MarginSide } from "@/lib/margin";
 
 const BPS = 10000;
 
@@ -95,7 +95,11 @@ export function addPreview(
     new Decimal(price),
     new Decimal(pos.leverage),
   );
-  return { qty: r.qty.toNumber(), entry: r.entry.toNumber(), liqPrice: r.liqPrice.gt(0) ? r.liqPrice : null };
+  return {
+    qty: r.qty.toNumber(),
+    entry: r.entry.toNumber(),
+    liqPrice: shownLiqPrice(signed.gt(0) ? "LONG" : "SHORT", new Decimal(pos.leverage), r.liqPrice),
+  };
 }
 
 /**

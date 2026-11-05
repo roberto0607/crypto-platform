@@ -46,6 +46,8 @@ export function placeOrder(
 export function listOrders(params?: {
   pairId?: UUID;
   status?: string;
+  /** "free" or a match id; omit for every order. See lib/orderScope. */
+  scope?: string;
   cursor?: string;
   limit?: number;
 }) {

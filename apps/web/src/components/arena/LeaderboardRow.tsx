@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
    LEADERBOARD ROW — Single row component
@@ -76,7 +77,7 @@ export function LeaderboardRow({ entry, isCurrentUser, rank }: LeaderboardRowPro
     // P&L
     const pnl = parseFloat(entry.return_pct ?? "0");
     const pnlColor = pnl > 0 ? "#4ade80" : pnl < 0 ? "#f87171" : "#FF6B00";
-    const pnlStr = (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%";
+    const pnlStr = formatPnlPct(pnl);
 
     // Win rate
     const wr = entry.win_rate != null ? parseFloat(String(entry.win_rate)) : null;

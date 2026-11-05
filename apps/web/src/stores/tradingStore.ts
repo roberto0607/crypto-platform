@@ -27,6 +27,8 @@ import { useAppStore } from "./appStore";
 import { setActiveCompetitionId } from "@/api/client";
 import { rememberPairSymbol } from "@/lib/pairs";
 import { coalesceByKey } from "@/lib/coalesce";
+import { orderScope } from "@/lib/orderScope";
+import { useActiveMatchStore } from "@/stores/activeMatchStore";
 
 // The order book arrives over SSE (book.snapshot, ≤2/s per pair — see
 // useSSE.onBookSnapshot). It used to be refetched on every price tick, ~125
@@ -37,8 +39,11 @@ import { coalesceByKey } from "@/lib/coalesce";
 export const BOOK_EVENT_STALE_MS = 5_000;
 
 // selectPair and UnifiedOrderPanel both load the pair's triggers on mount;
-// share one request per pair.
-const fetchActiveTriggers = coalesceByKey((pairId: string) => listTriggers({ pairId, status: "ACTIVE" }));
+// share one request per pair and scope.
+const fetchActiveTriggers = coalesceByKey((key: string) => {
+  const [pairId, scope] = key.split("|") as [string, string];
+  return listTriggers({ pairId, status: "ACTIVE", scope });
+});
 
 export interface RecentTrade {
   tradeId: UUID;
@@ -319,9 +324,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   refreshOpenOrders: async () => {
     const pairId = get().selectedPairId;
     if (!pairId) return;
+    const scope = orderScope();
     try {
-      const res = await listOrders({ pairId, status: "OPEN", limit: 50 });
-      if (get().selectedPairId === pairId) {
+      const res = await listOrders({ pairId, status: "OPEN", limit: 50, scope });
+      if (get().selectedPairId === pairId && orderScope() === scope) {
         set({ openOrders: res.data.orders, lastError: null });
       }
     } catch (err) {
@@ -337,9 +343,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   refreshTriggers: async () => {
     const pairId = get().selectedPairId;
     if (!pairId) return;
+    const scope = orderScope();
     try {
-      const res = await fetchActiveTriggers(pairId);
-      if (get().selectedPairId === pairId) set({ activeTriggers: res.data.data ?? [] });
+      const res = await fetchActiveTriggers(`${pairId}|${scope}`);
+      if (get().selectedPairId === pairId && orderScope() === scope) set({ activeTriggers: res.data.data ?? [] });
     } catch (err) {
       console.error("[tradingStore] refreshTriggers failed:", err);
     }
@@ -454,3 +461,17 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
 }));
 
+// A match starting or ending changes which orders and triggers are on screen:
+// drop the old scope's rows at once, then load the new scope's.
+let shownScope = orderScope();
+useActiveMatchStore.subscribe(() => {
+  const scope = orderScope();
+  if (scope === shownScope) return;
+  shownScope = scope;
+  useTradingStore.setState({ openOrders: [], activeTriggers: [] });
+  const { selectedPairId, refreshOpenOrders, refreshTriggers } = useTradingStore.getState();
+  if (selectedPairId) {
+    void refreshOpenOrders();
+    void refreshTriggers();
+  }
+});

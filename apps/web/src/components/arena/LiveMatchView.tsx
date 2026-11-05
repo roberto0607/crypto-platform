@@ -59,13 +59,22 @@ const LMV_CSS = `
     align-items: center;
     gap: 12px;
     flex: 1;
+    min-width: 0;
   }
+  .lmv-h-left > *, .lmv-h-right > * { flex-shrink: 0; }
   .lmv-h-right { justify-content: flex-end; }
   .lmv-h-center {
     display: flex;
     align-items: center;
     gap: 12px;
     flex-shrink: 0;
+  }
+  .lmv-h-left > .lmv-h-name, .lmv-h-right > .lmv-h-name {
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .lmv-h-name {
     font-family: var(--ar-mono);
@@ -78,6 +87,7 @@ const LMV_CSS = `
     font-size: 22px;
     letter-spacing: 2px;
     padding: 2px 10px;
+    white-space: nowrap;
   }
   .lmv-h-vs {
     font-family: var(--ar-bebas);

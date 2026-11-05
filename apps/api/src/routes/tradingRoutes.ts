@@ -9,6 +9,7 @@ import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { findPairById, listActivePairsForDisplay } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
+import { parseMatchScope } from "../http/matchScopeQuery";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
@@ -279,6 +280,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
         properties: {
           pairId: { type: "string", format: "uuid", description: "Filter by trading pair" },
           status: { type: "string", description: "Filter by order status (e.g. OPEN, FILLED, CANCELLED)" },
+          scope: { type: "string", description: "'free' or a match id. Omit for every order." },
         },
       },
       response: {
@@ -289,14 +291,22 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
             orders: { type: "array", items: { type: "object", additionalProperties: true } },
           },
         },
+        400: {
+          type: "object",
+          properties: { ok: { type: "boolean", const: false }, error: { type: "string" } },
+        },
       },
     },
     preHandler: requireUser,
   }, async (req, reply) => {
     const actor = req.user!;
+    const scope = parseMatchScope((req.query as { scope?: unknown }).scope);
+    if (scope === "invalid") {
+      return reply.code(400).send({ ok: false, error: "invalid_input" });
+    }
     const queryParsed = listOrdersQuery.safeParse(req.query);
     const filters = queryParsed.success ? queryParsed.data : {};
-    const orders = await listOrdersByUserId(actor.id, filters);
+    const orders = await listOrdersByUserId(actor.id, { ...filters, scope });
     return reply.send({ ok: true, orders });
   });
 

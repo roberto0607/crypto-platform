@@ -4,6 +4,7 @@ import { useCompetitionStore } from "@/stores/competitionStore";
 import { getMatchHistory, type Match } from "@/api/endpoints/matches";
 import { getTierForElo, TIER_COLORS } from "@/lib/tiers";
 import { CopyInviteLink } from "@/components/arena/CopyInviteLink";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 const PROFILE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
@@ -236,7 +237,7 @@ export default function ProfilePage() {
                                                     : <span style={{ color: "var(--pf-gold)", fontSize: 9, letterSpacing: 2 }}>DRAW</span>}
                                         </td>
                                         <td style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--pf-g)" : "var(--pf-red)" }}>
-                                            {yourPnl ? (parseFloat(yourPnl) >= 0 ? "+" : "") + parseFloat(yourPnl).toFixed(2) + "%" : "--"}
+                                            {yourPnl ? formatPnlPct(yourPnl) : "--"}
                                         </td>
                                         <td style={{ color: won ? "var(--pf-g)" : lost ? "var(--pf-red)" : "var(--pf-muted)" }}>
                                             {eloDisplay}

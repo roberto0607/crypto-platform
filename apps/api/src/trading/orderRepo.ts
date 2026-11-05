@@ -1,6 +1,7 @@
 import { pool } from "../db/pool";
 import type { Pool, PoolClient } from "pg";
 import { timedQuery } from "../observability/dbTiming";
+import { matchScopeSql, type MatchScope } from "../http/matchScopeQuery";
 
 export type OrderRow = {
     id: string;
@@ -109,7 +110,7 @@ export async function findOrderByIdForUpdate(client: PoolClient, id: string): Pr
 
 export async function listOrdersByUserId(
     userId: string,
-    filters?: { pairId?: string; status?: string }
+    filters?: { pairId?: string; status?: string; scope?: MatchScope }
 ): Promise<OrderRow[]> {
     let query = `SELECT ${ORDER_COLUMNS} FROM orders WHERE user_id = $1`;
     const params: any[] = [userId];
@@ -123,6 +124,8 @@ export async function listOrdersByUserId(
         params.push(filters.status);
         query += ` AND status = $${params.length}`;
     }
+
+    query += matchScopeSql(filters?.scope, params);
 
     query += ` ORDER BY created_at DESC`;
 
@@ -309,7 +312,7 @@ export async function fetchRestingOrdersBatch(
  */
 export async function listOrdersByUserIdPaginated(
     userId: string,
-    filters: { pairId?: string; status?: string },
+    filters: { pairId?: string; status?: string; scope?: MatchScope },
     limit: number,
     cursor: { ca: string; id: string } | null,
 ): Promise<OrderRow[]> {
@@ -325,6 +328,8 @@ export async function listOrdersByUserIdPaginated(
         params.push(filters.status);
         query += ` AND status = $${params.length}`;
     }
+
+    query += matchScopeSql(filters.scope, params);
 
     if (cursor) {
         params.push(cursor.ca);

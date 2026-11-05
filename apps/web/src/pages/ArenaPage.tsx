@@ -17,6 +17,7 @@ import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 import { ChallengeBox } from "@/components/arena/ChallengeBox";
 import { PendingChallengeCard } from "@/components/arena/PendingChallengeCard";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
    ARENA PAGE CSS — Trade Wars
@@ -171,12 +172,6 @@ function formatTimeRemaining(endsAt: string): string {
     if (days > 0) return `${days}D ${hours}H`;
     if (hours > 0) return `${hours}H ${mins}M`;
     return `${mins}M`;
-}
-
-function formatPnl(pct: string | null): string {
-    if (!pct) return "0.00%";
-    const n = parseFloat(pct);
-    return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 }
 
 export default function ArenaPage() {
@@ -391,7 +386,7 @@ export default function ArenaPage() {
                             <div className="ar-sc-val" style={{ color: "var(--ar-g)" }}>
                                 {(() => {
                                     const entry = leaderboard.find((e) => e.user_id === userId);
-                                    return entry ? formatPnl(entry.return_pct) : "--";
+                                    return entry ? formatPnlPct(entry.return_pct) : "--";
                                 })()}
                             </div>
                             <div className="ar-sc-lbl">RETURN</div>
@@ -448,7 +443,7 @@ export default function ArenaPage() {
                                                 {activeMatch.challenger_id === userId ? "YOU" : (activeMatch.challenger_name ?? "CHALLENGER")}
                                             </div>
                                             <div className="ar-mc-pnl" style={{ color: parseFloat(activeMatch.challenger_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                {formatPnl(activeMatch.challenger_pnl_pct)}
+                                                {formatPnlPct(activeMatch.challenger_pnl_pct)}
                                             </div>
                                         </div>
                                         <div className="ar-mc-divider" />
@@ -457,7 +452,7 @@ export default function ArenaPage() {
                                                 {activeMatch.opponent_id === userId ? "YOU" : (activeMatch.opponent_name ?? "OPPONENT")}
                                             </div>
                                             <div className="ar-mc-pnl" style={{ color: parseFloat(activeMatch.opponent_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                {formatPnl(activeMatch.opponent_pnl_pct)}
+                                                {formatPnlPct(activeMatch.opponent_pnl_pct)}
                                             </div>
                                         </div>
                                     </div>
@@ -527,9 +522,9 @@ export default function ArenaPage() {
                                                                     : <span className="ar-draw">DRAW</span>}
                                                     </td>
                                                     <td style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                        {formatPnl(yourPnl)}
+                                                        {formatPnlPct(yourPnl)}
                                                     </td>
-                                                    <td style={{ color: "rgba(255,255,255,0.4)" }}>{formatPnl(theirPnl)}</td>
+                                                    <td style={{ color: "rgba(255,255,255,0.4)" }}>{formatPnlPct(theirPnl)}</td>
                                                     <td style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}>
                                                         {eloDisplay}
                                                     </td>
@@ -587,14 +582,14 @@ export default function ArenaPage() {
                                     <div>
                                         <div className="ar-mc-player">{m.challenger_name ?? "CHALLENGER"} ({m.challenger_elo})</div>
                                         <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.challenger_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                            {formatPnl(m.challenger_pnl_pct)}
+                                            {formatPnlPct(m.challenger_pnl_pct)}
                                         </div>
                                     </div>
                                     <div className="ar-mc-divider" />
                                     <div>
                                         <div className="ar-mc-player">{m.opponent_name ?? "OPPONENT"} ({m.opponent_elo})</div>
                                         <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.opponent_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                            {formatPnl(m.opponent_pnl_pct)}
+                                            {formatPnlPct(m.opponent_pnl_pct)}
                                         </div>
                                     </div>
                                 </div>

@@ -2,15 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Match } from "@/api/endpoints/matches";
 import client from "@/api/client";
-
-function formatPnl(pct: string | null): string {
-    if (!pct) return "0.00%";
-    const n = parseFloat(pct);
-    // Clamp anything that rounds to zero to a clean "0.00%" — a forfeit-win has
-    // ~zero P&L, and "-0.00%" on a YOU WON screen reads as broken.
-    if (Math.abs(n) < 0.005) return "0.00%";
-    return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-}
+import { formatPnlPct } from "@/lib/matchPnl";
 
 interface EloResult {
     winner_id: string;
@@ -144,7 +136,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                             className="lmv-end-val"
                             style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnl(yourPnl)}
+                            {formatPnlPct(yourPnl)}
                         </div>
                     </div>
                     <div>
@@ -153,7 +145,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                             className="lmv-end-val"
                             style={{ color: parseFloat(oppPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnl(oppPnl)}
+                            {formatPnlPct(oppPnl)}
                         </div>
                     </div>
                 </div>

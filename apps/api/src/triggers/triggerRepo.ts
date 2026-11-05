@@ -1,5 +1,6 @@
 import { pool } from "../db/pool";
 import type { PoolClient } from "pg";
+import { matchScopeSql, type MatchScope } from "../http/matchScopeQuery";
 import type { TriggerKind, TriggerOrderRow, TriggerStatus } from "./triggerTypes";
 
 const TRIGGER_COLUMNS = `id, user_id, pair_id, kind, side, trigger_price, limit_price, qty, status, oco_group_id, derived_order_id, fail_reason, trailing_offset, trailing_high_water_mark, trade_proposal_id, match_id, created_at, updated_at`;
@@ -80,7 +81,7 @@ export async function updateTrailingHwm(
 
 export async function listTriggersByUser(
     userId: string,
-    filters: { pairId?: string; status?: string },
+    filters: { pairId?: string; status?: string; scope?: MatchScope },
     limit: number,
     cursor: { ca: string; id: string } | null
 ): Promise<TriggerOrderRow[]> {
@@ -96,6 +97,8 @@ export async function listTriggersByUser(
         params.push(filters.status);
         query += ` AND status = $${params.length}`;
     }
+
+    query += matchScopeSql(filters.scope, params);
 
     if (cursor) {
         params.push(cursor.ca);
