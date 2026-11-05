@@ -21,7 +21,7 @@ import type { PnlFlash } from "@/hooks/usePnlFlash";
 import { healthTone } from "@/lib/leverageUi";
 import { breakEvenPrice, equityAtLiq, isAtRisk, liqDistancePct, openDuration } from "@/lib/positionCard";
 import { PRICE_HELP } from "@/lib/priceHelp";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatPnlPct, formatPnlUsd } from "@/lib/matchPnl";
 
 const GREEN = "#00ff41";
 const RED = "#ff3b3b";
@@ -31,7 +31,7 @@ const HEALTH_COLORS = { ok: GREEN, warn: AMBER, danger: RED } as const;
 export function fmtUsd(n: number): string {
   return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-export const fmtSigned = (n: number) => (n >= 0 ? "+" : "-") + fmtUsd(Math.abs(n));
+export const fmtSigned = formatPnlUsd;
 const fmtWholeUsd = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 export const fmtQty = (q: number) => q.toFixed(q >= 1 ? 4 : 5);
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatPnlPct, formatMatchPnl } from "@/lib/matchPnl";
+import { formatPnlPct, formatMatchPnl, formatPnlUsd } from "@/lib/matchPnl";
 
 describe("formatPnlPct", () => {
   it.each([
@@ -52,5 +52,33 @@ describe("formatMatchPnl", () => {
   it("no capital: the percent alone", () => {
     expect(formatMatchPnl("1.5", null)).toBe("+1.50%");
     expect(formatMatchPnl("1.5", "0")).toBe("+1.50%");
+  });
+});
+
+describe("formatPnlUsd", () => {
+  it.each([
+    [1234.5, "+$1,234.50"],
+    [-67.82, "-$67.82"],
+    [1, "+$1.00"],
+    [0.42, "+$0.42"],
+    [-0.01, "-$0.01"],
+    [0.0006, "+$0.0006"],
+    [-0.0006, "-$0.0006"],
+    [0.0049, "+$0.0049"],
+    [0.00004, "+<$0.0001"],
+    [-0.00004, "-<$0.0001"],
+    [0, "$0.00"],
+    [-0, "$0.00"],
+    [1e-12, "$0.00"],
+  ])("%s -> %s", (input, out) => {
+    expect(formatPnlUsd(input)).toBe(out);
+  });
+
+  it("never reads as a frozen zero while the position is off zero", () => {
+    for (let i = 1; i <= 2_000; i++) {
+      for (const n of [i / 1_000_000, -i / 1_000_000]) {
+        expect(formatPnlUsd(n)).not.toMatch(/^[+-]\$0\.00$/);
+      }
+    }
   });
 });
