@@ -99,11 +99,16 @@ async function scenario(): Promise<Record<string, Row[]>> {
     // ── Dump, normalized ──
     const assetSym = new Map([[btcAsset.id, "BTC"], [usdAsset.id, "USD"]]);
     const walletRows = (await pool.query(
-        `SELECT id, user_id, asset_id, competition_id, match_id, balance::text, reserved::text, closed_at
-         FROM wallets ORDER BY created_at, ctid`)).rows;
+        `SELECT id, user_id, asset_id, competition_id, match_id, balance::text, reserved::text, closed_at,
+                created_at::text AS created
+         FROM wallets ORDER BY created_at`)).rows;
     for (const w of walletRows) {
         labels.set(w.id, `w:${labels.get(w.user_id)}:${assetSym.get(w.asset_id)}:${w.match_id ? "match" : w.competition_id ? "comp" : "free"}`);
     }
+    // Wallets funded together share created_at, and ctid is no tiebreak: every
+    // UPDATE moves a row, so physical order differs between runs.
+    walletRows.sort((a, b) => a.created.localeCompare(b.created)
+        || String(labels.get(a.id)).localeCompare(String(labels.get(b.id))));
     const orders = (await pool.query(
         `SELECT id, user_id, pair_id, side, type, limit_price::text, qty::text, qty_filled::text, status,
                 reserved_wallet_id, reserved_amount::text, reserved_consumed::text, competition_id, match_id,
