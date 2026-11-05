@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
+import { useActiveMatchStore } from "@/stores/activeMatchStore";
 import {
     acceptMatch,
     forfeitMatch,
@@ -85,23 +86,6 @@ const ARENA_CSS = `
   .ar-mc-pnl { font-family:var(--ar-bebas);font-size:36px;letter-spacing:2px; }
   .ar-mc-divider { width:1px;height:50px;background:var(--ar-borderW); }
 
-  /* Buttons */
-  .ar-btn {
-    padding:10px 24px;font-family:var(--ar-mono);font-size:11px;font-weight:700;
-    letter-spacing:3px;text-transform:uppercase;cursor:pointer;border:none;
-    transition:all 0.2s;clip-path:polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
-  }
-  .ar-btn-orange { background:var(--ar-orange);color:#000; }
-  .ar-btn-orange:hover { background:#ff8533;box-shadow:0 0 20px rgba(255,107,0,0.3); }
-  .ar-btn-outline {
-    background:transparent;color:var(--ar-orange);border:1px solid var(--ar-orange);
-    clip-path:none;
-  }
-  .ar-btn-outline:hover { background:rgba(255,107,0,0.08); }
-  .ar-btn-red { background:var(--ar-red);color:#fff; }
-  .ar-btn-red:hover { background:#ff5555; }
-  .ar-btn:disabled { opacity:0.4;cursor:not-allowed; }
-
   /* Empty state */
   .ar-empty {
     text-align:center;padding:40px;color:var(--ar-muted);font-size:11px;letter-spacing:2px;
@@ -179,6 +163,7 @@ export default function ArenaPage() {
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
     const { addToast } = useToast();
+    const endedMatch = useActiveMatchStore((s) => s.endedMatch);
 
     const prefill = useSearchParams()[0].get("challenge");
 
@@ -314,11 +299,13 @@ export default function ArenaPage() {
 
     const daysLeft = seasonInfo ? formatTimeRemaining(seasonInfo.end_at) : "--";
 
-    // ── LIVE MATCH VIEW — replaces lobby when match is active ──
-    if (activeMatch && activeMatch.status === "ACTIVE") {
+    // ── LIVE MATCH VIEW — replaces lobby while a match is on, and until its
+    // result is dismissed (a reload here finds no active match by then) ──
+    const shownMatch = activeMatch?.status === "ACTIVE" ? activeMatch : endedMatch;
+    if (shownMatch) {
         return (
             <LiveMatchView
-                match={activeMatch}
+                match={shownMatch}
                 onMatchEnd={() => {
                     setActiveMatch(null);
                     loadMatchHistory();

@@ -1,3 +1,4 @@
+import "@/styles/match.css";
 import { useState, useEffect, useRef } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";

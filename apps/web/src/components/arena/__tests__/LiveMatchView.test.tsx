@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -10,7 +10,11 @@ import userEvent from "@testing-library/user-event";
 // bookkeeping, so the stub just surfaces the props it was called with.
 vi.mock("@/components/trading/CandlestickChart", () => ({ CandlestickChart: () => null }));
 vi.mock("@/components/trading/UnifiedOrderPanel", () => ({ UnifiedOrderPanel: () => null }));
-vi.mock("../MatchEndOverlay", () => ({ MatchEndOverlay: () => null }));
+vi.mock("../MatchEndOverlay", () => ({
+    MatchEndOverlay: (props: { match: { status: string; id: string }; onBackToArena: () => void }) => (
+        <button data-testid="end-overlay" data-status={props.match.status} onClick={props.onBackToArena}>end</button>
+    ),
+}));
 vi.mock("../MatchChatPanel", () => ({
     MatchChatPanel: (props: { matchId: string; opponentName: string; isOpen: boolean; onClose: () => void }) => (
         <div
@@ -39,6 +43,7 @@ vi.mock("@/api/endpoints/matches", () => ({
 import { useAppStore } from "@/stores/appStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useActiveMatchStore, acquireActiveMatchPolling, releaseActiveMatchPolling } from "@/stores/activeMatchStore";
 import ToastProvider from "@/components/ToastProvider";
 import { LiveMatchView } from "@/components/arena/LiveMatchView";
 import type { Match } from "@/api/endpoints/matches";
@@ -108,10 +113,11 @@ function dispatchMatchMessage(overrides: Partial<MessageReceivedEvent> = {}) {
     });
 }
 
-function renderView(match: Match) {
+function renderView(match: Match, onMatchEnd = vi.fn()) {
+    useActiveMatchStore.getState().setActiveMatch(match);
     return render(
         <ToastProvider>
-            <LiveMatchView match={match} onMatchEnd={vi.fn()} />
+            <LiveMatchView match={match} onMatchEnd={onMatchEnd} />
         </ToastProvider>,
     );
 }
@@ -124,6 +130,13 @@ beforeEach(() => {
     useAuthStore.setState({ user: { id: "me", email: "me@test.com", role: "USER" } as any });
     useAppStore.setState({ pairs: [pair], wallets: [] });
     useTradingStore.setState({ selectedPairId: "pair-1" } as any);
+    useActiveMatchStore.getState().setActiveMatch(null);
+    acquireActiveMatchPolling();
+});
+
+afterEach(() => {
+    releaseActiveMatchPolling();
+    useActiveMatchStore.getState().setActiveMatch(null);
 });
 
 describe("LiveMatchView — Match Chat unread tracking", () => {
@@ -174,14 +187,8 @@ describe("LiveMatchView — Match Chat unread tracking", () => {
         expect(screen.getByText("1")).toBeInTheDocument();
     });
 
-    // match.id can only change internally (setMatch from syncMatchState/SSE),
-    // never via a prop swap — LiveMatchView's `match` is local state seeded
-    // ONCE from the initialMatch prop (React ignores a changed useState
-    // initial value on re-render), so a bare rerender with a different
-    // `match` prop would not exercise the reset effect at all. Drive it
-    // through the real mechanism instead: the "sse:reconnected" handler
-    // calls syncMatchState(), which calls setMatch(data.match) with
-    // whatever getActiveMatch() resolves to.
+    // The match on screen follows activeMatchStore, so drive the change the
+    // real way: a reconnect refetches, and the old match turns out to be over.
     it("resets chat open/unread/everOpened state when the mounted match's id changes", async () => {
         renderView(makeMatch({ id: "match-1" }));
         await userEvent.click(screen.getByRole("button", { name: /CHAT/ })); // open -> chatEverOpened=true
@@ -192,9 +199,10 @@ describe("LiveMatchView — Match Chat unread tracking", () => {
         getActiveMatchApi.mockResolvedValueOnce({
             data: { match: makeMatch({ id: "match-2", opponent_name: "NewOpp" }) },
         });
+        getMatchApi.mockResolvedValueOnce({ data: { match: makeMatch({ status: "CANCELLED" }) } });
         await act(async () => {
             window.dispatchEvent(new CustomEvent("sse:reconnected"));
-            await Promise.resolve();
+            await new Promise((r) => setTimeout(r, 0));
         });
 
         // New match: panel un-mounts (chatEverOpened reset) and badge is gone.
@@ -204,5 +212,51 @@ describe("LiveMatchView — Match Chat unread tracking", () => {
         // A push against the new match starts a fresh unread count from 0 -> 1, not 1 -> 2.
         dispatchMatchMessage();
         expect(screen.getByText("1")).toBeInTheDocument();
+    });
+});
+
+describe("LiveMatchView — match end, from activeMatchStore", () => {
+    const ended = {
+        matchId: "match-1", reason: "timeout", winnerUserId: "me", forfeitUserId: null,
+        challengerPnlPct: "3", opponentPnlPct: "-1", eloDeltas: { winner: 10 },
+    };
+    const fire = (type: string, detail?: unknown) =>
+        act(() => { window.dispatchEvent(new CustomEvent(type, { detail })); });
+
+    it("shows the header P&L from the store's live push", () => {
+        renderView(makeMatch());
+        fire("sse:match.pnl.update", { matchId: "match-1", challengerPnlPct: "2", opponentPnlPct: "-1" });
+        expect(screen.getByText("+$1,000.00 (+2.00%)")).toBeInTheDocument();
+    });
+
+    it("shows the result on match.ended", () => {
+        renderView(makeMatch());
+        expect(screen.queryByTestId("end-overlay")).not.toBeInTheDocument();
+        fire("sse:match.ended", ended);
+        expect(screen.getByTestId("end-overlay")).toHaveAttribute("data-status", "COMPLETED");
+    });
+
+    it("past ends_at: settling, not a result it doesn't have", () => {
+        renderView(makeMatch({ ends_at: new Date(Date.now() - 1_000).toISOString() }));
+        expect(screen.getByText(/SETTLING/)).toBeInTheDocument();
+        expect(screen.queryByTestId("end-overlay")).not.toBeInTheDocument();
+    });
+
+    it("leaving the result clears it and hands back to the arena", async () => {
+        const onMatchEnd = vi.fn();
+        renderView(makeMatch(), onMatchEnd);
+        fire("sse:match.ended", ended);
+        await userEvent.click(screen.getByTestId("end-overlay"));
+        expect(onMatchEnd).toHaveBeenCalled();
+        expect(useActiveMatchStore.getState().endedMatch).toBeNull();
+    });
+
+    it("a refused forfeit is a toast, and the match goes on", async () => {
+        forfeitMatchApi.mockRejectedValue({ response: { data: { message: "Too late" } } });
+        renderView(makeMatch());
+        await userEvent.click(screen.getByRole("button", { name: "FORFEIT" }));
+        await userEvent.click(screen.getByRole("button", { name: "CONFIRM FORFEIT" }));
+        expect(await screen.findByText("Too late")).toBeInTheDocument();
+        expect(screen.queryByTestId("end-overlay")).not.toBeInTheDocument();
     });
 });

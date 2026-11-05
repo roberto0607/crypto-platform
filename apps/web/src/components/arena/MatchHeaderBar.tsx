@@ -26,6 +26,8 @@ interface MatchHeaderBarProps {
     chatOpen: boolean;
     chatUnread: number;
     onToggleChat: () => void;
+    /** ends_at has passed and the result isn't in yet. */
+    settling?: boolean;
 }
 
 export function MatchHeaderBar({
@@ -38,6 +40,7 @@ export function MatchHeaderBar({
     chatOpen,
     chatUnread,
     onToggleChat,
+    settling = false,
 }: MatchHeaderBarProps) {
     const [timeLeft, setTimeLeft] = useState(match.ends_at ? formatCountdown(match.ends_at) : "--");
     const [showForfeitConfirm, setShowForfeitConfirm] = useState(false);
@@ -87,8 +90,8 @@ export function MatchHeaderBar({
                 <div className="lmv-h-center">
                     <span className="lmv-h-vs">VS</span>
                     <span className="lmv-h-badge">1V1 LIVE</span>
-                    <span className={`lmv-h-timer${isUrgent ? " urgent" : ""}`}>
-                        TIME LEFT: {timeLeft}
+                    <span className={`lmv-h-timer${isUrgent && !settling ? " urgent" : ""}`}>
+                        {settling ? "SETTLING…" : `TIME LEFT: ${timeLeft}`}
                     </span>
                 </div>
 
