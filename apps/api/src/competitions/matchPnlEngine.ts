@@ -11,15 +11,13 @@ const logger = rootLogger.child({ module: "matchPnlEngine" });
 let handler: EventHandler | null = null;
 
 // ── Publish gate ──
-// Two gates, both reused from existing codebase conventions rather than
-// invented fresh: 0.01 percentage points is the exact minDelta
-// usePnlFlash.ts already uses client-side to decide "is this PnL change
-// worth flashing" (kept in sync so the server's publish gate and the
-// client's flash-worthiness threshold agree). 1000ms mirrors
+// 0.001 percentage points is $1 on $100k: the header shows dollars and cents,
+// so a coarser gate leaves them visibly frozen. (usePnlFlash's 0.01 is a
+// separate question, how big a move is worth flashing.) 1000ms mirrors
 // LIVE_INDICATOR_THROTTLE_MS, the established "recompute on tick, throttle
 // to ~1/sec" convention CandlestickChart.tsx already uses for RSI/MACD/ATR
-// live-update.
-const MIN_PNL_DELTA_PCT = 0.01;
+// live-update, and bounds the push rate whatever the delta.
+const MIN_PNL_DELTA_PCT = 0.001;
 const MIN_PUBLISH_INTERVAL_MS = 1000;
 
 interface LastPublished {
@@ -79,12 +77,11 @@ function toLiveRow(row: PositionRow): LivePositionRow {
 }
 
 /**
- * Recompute and (if the publish gate passes) push live PnL for one match.
- * Pulls every position row the two participants hold in this match (not
- * just the pair that ticked) since a player's total match PnL sums across
- * every pair they've traded in the match.
+ * Both players' live PnL %. Pulls every position row they hold in this match
+ * (not just the pair that ticked) since a player's total match PnL sums
+ * across every pair they've traded in the match.
  */
-async function recomputeAndPublish(match: ActiveMatchRef): Promise<void> {
+async function computeMatchPnl(match: ActiveMatchRef): Promise<{ challengerPnlPct: number; opponentPnlPct: number }> {
     const startingCapital = parseFloat(match.starting_capital);
 
     const { rows: positions } = await pool.query<PositionRow>(
@@ -127,8 +124,33 @@ async function recomputeAndPublish(match: ActiveMatchRef): Promise<void> {
     const challengerRows = positions.filter((p) => p.user_id === match.challenger_id).map(toLiveRow);
     const opponentRows = positions.filter((p) => p.user_id === match.opponent_id).map(toLiveRow);
 
-    const challengerPnlPct = computeLiveMatchPnl(challengerRows, priceByPair, startingCapital);
-    const opponentPnlPct = computeLiveMatchPnl(opponentRows, priceByPair, startingCapital);
+    return {
+        challengerPnlPct: computeLiveMatchPnl(challengerRows, priceByPair, startingCapital),
+        opponentPnlPct: computeLiveMatchPnl(opponentRows, priceByPair, startingCapital),
+    };
+}
+
+/**
+ * An ACTIVE match with its *_pnl_pct set to the live numbers, for reads:
+ * the row stays at its opening value until the match ends, and a page that
+ * just loaded gets no push until P&L next clears the gate. Any other status
+ * comes back as is, and so does a match whose P&L can't be read.
+ */
+export async function withLivePnl<T extends ActiveMatchRef & { status: string }>(match: T): Promise<T> {
+    if (match.status !== "ACTIVE") return match;
+    try {
+        const { challengerPnlPct, opponentPnlPct } = await computeMatchPnl(match);
+        return { ...match, challenger_pnl_pct: challengerPnlPct.toFixed(8), opponent_pnl_pct: opponentPnlPct.toFixed(8) };
+    } catch (err) {
+        // The match itself must still load: the next push corrects the P&L.
+        logger.error({ matchId: match.id, err }, "match_pnl_read_error");
+        return match;
+    }
+}
+
+/** Recompute and (if the publish gate passes) push live PnL for one match. */
+async function recomputeAndPublish(match: ActiveMatchRef): Promise<void> {
+    const { challengerPnlPct, opponentPnlPct } = await computeMatchPnl(match);
 
     if (!shouldPublish(match.id, challengerPnlPct, opponentPnlPct)) return;
     recordPublished(match.id, challengerPnlPct, opponentPnlPct);
