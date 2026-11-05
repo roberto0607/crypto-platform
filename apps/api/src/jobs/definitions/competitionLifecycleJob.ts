@@ -5,6 +5,7 @@ import {
     updateCompetitionStatus,
 } from "../../competitions/competitionRepo";
 import { finalizeCompetition } from "../../competitions/competitionService";
+import { finalizeSeason } from "../../competitions/seasonService";
 import { listActiveParticipants } from "../../competitions/participantRepo";
 import { pool } from "../../db/pool";
 import { publish } from "../../events/eventBus";
@@ -49,6 +50,14 @@ export const competitionLifecycleJob: JobDefinition = {
         const toEnd = await listActiveToEnd();
         for (const comp of toEnd) {
             try {
+                if (comp.competition_type === "SEASON") {
+                    if (await finalizeSeason(comp.id)) {
+                        ctx.logger.info({ competitionId: comp.id, name: comp.name }, "competition_ended");
+                        publish(createEvent("competition.ended", { competitionId: comp.id, name: comp.name }));
+                    }
+                    continue;
+                }
+
                 await finalizeCompetition(comp.id);
                 ctx.logger.info({ competitionId: comp.id, name: comp.name }, "competition_ended");
 

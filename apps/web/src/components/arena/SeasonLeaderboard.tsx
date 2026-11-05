@@ -306,7 +306,7 @@ function SkeletonRows() {
    MAIN COMPONENT
 ───────────────────────────────────────── */
 interface SeasonLeaderboardProps {
-    seasonInfo: { id: string; name: string; end_at: string; season_number?: number } | null;
+    seasonInfo: { id: string; name: string; end_at: string; season_number?: number; status?: string } | null;
     seasonLoading: boolean;
     seasonError: boolean;
 }
@@ -400,7 +400,8 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
     }
 
     // ── Derived data ──
-    const phase = derivePhase(seasonInfo as unknown as Competition);
+    const ended = seasonInfo.status === "ENDED";
+    const phase = ended ? "OFF_SEASON" : derivePhase(seasonInfo as unknown as Competition);
     const phaseLabel = PHASE_LABELS[phase] ?? PHASE_LABELS.WEEK_1;
     const timeMs = new Date(seasonInfo.end_at).getTime() - Date.now();
     const isUrgent = timeMs > 0 && timeMs < 3_600_000; // < 1 hour
@@ -449,17 +450,19 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                     </div>
                 </div>
                 <div className="slb-stat-card">
-                    <div className="slb-stat-lbl">SEASON ENDS</div>
-                    <div className={`slb-stat-val white`}>{timeLeft}</div>
+                    <div className="slb-stat-lbl">{ended ? "SEASON ENDED" : "SEASON ENDS"}</div>
+                    <div className={`slb-stat-val white`}>{ended ? new Date(seasonInfo.end_at).toLocaleDateString() : timeLeft}</div>
                 </div>
             </div>
 
             {/* ── PHASE BANNER ── */}
             <div className="slb-phase">
                 <span className="slb-phase-title">{phaseLabel}</span>
-                <span className={`slb-phase-countdown${isUrgent ? " urgent" : ""}`}>
-                    Rankings lock in {timeLeft}
-                </span>
+                {!ended && (
+                    <span className={`slb-phase-countdown${isUrgent ? " urgent" : ""}`}>
+                        Rankings lock in {timeLeft}
+                    </span>
+                )}
             </div>
 
             {/* ── YOUR POSITION BANNER ── */}
@@ -480,14 +483,19 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                             </div>
                         )}
                     </div>
-                    <div className="slb-your-time">{timeLeft}</div>
+                    {!ended && <div className="slb-your-time">{timeLeft}</div>}
                 </div>
             )}
 
             {/* ── TITLE ROW ── */}
             <div className="slb-title-row">
-                <span className="slb-live-dot" />
-                <span className="slb-title">SEASON {seasonInfo.season_number ?? "?"} LEADERBOARD ({totalParticipants})</span>
+                {!ended && <span className="slb-live-dot" />}
+                <span className="slb-title">
+                    SEASON {seasonInfo.season_number ?? "?"} {ended ? "FINAL STANDINGS" : "LEADERBOARD"} ({totalParticipants})
+                </span>
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: 1, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
+                SCORE = ELO GAINED · FIRST 3 MATCHES VS EACH OPPONENT COUNT · 3+ MATCHES FOR A BADGE
             </div>
 
             {/* ── LOADING STATE ── */}
@@ -509,7 +517,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
             {/* ── EMPTY STATE ── */}
             {!loading && !error && displayData.length === 0 && (
                 <div className="slb-empty">
-                    No traders have joined Season {seasonInfo.season_number ?? "?"} yet.
+                    No matches played in Season {seasonInfo.season_number ?? "?"} yet.
                 </div>
             )}
 
@@ -523,7 +531,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                             <th>SCORE</th>
                             <th>P&L %</th>
                             <th>WIN RATE</th>
-                            <th>TRADES</th>
+                            <th>MATCHES</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -553,7 +561,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
                         <tfoot>
                             <tr>
                                 <td colSpan={6} className="slb-table-footer">
-                                    RANKS 11\u2013{totalParticipants} ANONYMOUS \u00B7 TOP 10 REVEALED AT SEASON END
+                                    RANKS 11–{totalParticipants} STAY ANONYMOUS
                                 </td>
                             </tr>
                         </tfoot>

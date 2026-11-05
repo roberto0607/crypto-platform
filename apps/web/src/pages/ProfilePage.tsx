@@ -188,7 +188,7 @@ export default function ProfilePage() {
                     <div className="pf-badges">
                         {userBadges.map((b) => (
                             <div key={b.id} className="pf-badge-item">
-                                <div className="pf-badge-icon">{b.badge_type === "WEEKLY_CHAMPION" ? "\u2655" : "\u2606"}</div>
+                                <div className="pf-badge-icon">{b.badge_type.endsWith("_CHAMPION") ? "\u2655" : "\u2606"}</div>
                                 <div className="pf-badge-name">{b.badge_type.replace(/_/g, " ")}</div>
                                 <div className="pf-badge-meta">{b.tier} {"\u00B7"} {b.week_id}</div>
                             </div>

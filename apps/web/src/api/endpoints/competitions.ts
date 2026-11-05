@@ -84,6 +84,20 @@ export function getLeaderboard(id: string, params?: { limit?: number; offset?: n
     );
 }
 
+export interface CurrentSeason {
+    id: string;
+    name: string;
+    season_number: number;
+    status: "ACTIVE" | "ENDED";
+    start_at: string;
+    end_at: string;
+}
+
+/** The active season, else the last one during its off-season, else null. */
+export function getCurrentSeason() {
+    return client.get<{ ok: true; season: CurrentSeason | null }>("/v1/seasons/current");
+}
+
 export function joinCompetition(id: string) {
     return client.post<{ ok: true }>(`/v1/competitions/${id}/join`);
 }

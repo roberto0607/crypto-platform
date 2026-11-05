@@ -29,7 +29,8 @@ export async function joinCompetition(
         // 1. Lock competition row
         const comp = await lockCompetitionForUpdate(client, competitionId);
         if (!comp) throw new AppError("competition_not_found");
-        if (comp.status !== "UPCOMING" && comp.status !== "ACTIVE") {
+        // A season has no wallets to join: playing a match is what enters you.
+        if ((comp.status !== "UPCOMING" && comp.status !== "ACTIVE") || comp.competition_type === "SEASON") {
             throw new AppError("competition_not_joinable", { status: comp.status });
         }
 

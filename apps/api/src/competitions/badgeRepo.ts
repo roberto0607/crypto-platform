@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { pool } from "../db/pool.js";
 import type { BadgeRow } from "./competitionTypes.js";
 
@@ -11,8 +12,8 @@ export async function awardBadge(params: {
     weekId: string;
     competitionId: string;
     metadata?: Record<string, unknown>;
-}): Promise<BadgeRow | null> {
-    const { rows } = await pool.query<BadgeRow>(
+}, db: PoolClient | typeof pool = pool): Promise<BadgeRow | null> {
+    const { rows } = await db.query<BadgeRow>(
         `INSERT INTO user_badges (user_id, badge_type, tier, week_id, competition_id, metadata)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb)
          ON CONFLICT (user_id, badge_type, week_id, tier) DO NOTHING

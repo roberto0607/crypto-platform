@@ -11,7 +11,7 @@ import {
     type Match,
     type ActiveMatchListEntry,
 } from "@/api/endpoints/matches";
-import { listCompetitions, getLeaderboard, type LeaderboardEntry } from "@/api/endpoints/competitions";
+import { getCurrentSeason, getLeaderboard, type CurrentSeason, type LeaderboardEntry } from "@/api/endpoints/competitions";
 import { LiveMatchView } from "@/components/arena/LiveMatchView";
 import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
@@ -195,7 +195,7 @@ export default function ArenaPage() {
     const [liveLoading, setLiveLoading] = useState(true);
     const [liveError, setLiveError] = useState(false);
     const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-    const [seasonInfo, setSeasonInfo] = useState<{ id: string; name: string; end_at: string; season_number?: number } | null>(null);
+    const [seasonInfo, setSeasonInfo] = useState<CurrentSeason | null>(null);
 
     const [seasonLoading, setSeasonLoading] = useState(true);
     const [seasonError, setSeasonError] = useState(false);
@@ -231,12 +231,10 @@ export default function ArenaPage() {
         setSeasonLoading(true);
         setSeasonError(false);
         try {
-            const { data } = await listCompetitions({ competition_type: "SEASON", status: "ACTIVE", limit: 1 });
-            const comps = data.competitions ?? (data as any).data ?? [];
-            if (comps.length > 0) {
-                const s = comps[0]!;
-                setSeasonInfo({ id: s.id, name: s.name, end_at: s.end_at, season_number: (s as any).season_number });
-                const lb = await getLeaderboard(s.id, { limit: 50 });
+            const { data } = await getCurrentSeason();
+            setSeasonInfo(data.season);
+            if (data.season) {
+                const lb = await getLeaderboard(data.season.id, { limit: 50 });
                 setLeaderboard(lb.data.leaderboard ?? (lb.data as any).data ?? []);
             }
         } catch {
