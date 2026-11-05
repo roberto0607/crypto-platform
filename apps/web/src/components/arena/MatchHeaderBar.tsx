@@ -2,12 +2,7 @@ import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 import type { Match } from "@/api/endpoints/matches";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
-
-function formatPnl(pct: string | null): string {
-    if (!pct) return "0.00%";
-    const n = parseFloat(pct);
-    return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-}
+import { formatMatchPnl } from "@/lib/matchPnl";
 
 function formatCountdown(endsAt: string): string {
     const diff = new Date(endsAt).getTime() - Date.now();
@@ -84,7 +79,7 @@ export function MatchHeaderBar({
                             "--pnl-flash-tint": flashTint(yourFlash.dir),
                         } as CSSProperties}
                     >
-                        {formatPnl(yourPnl)}
+                        {formatMatchPnl(yourPnl, match.starting_capital)}
                     </span>
                 </div>
 
@@ -109,7 +104,7 @@ export function MatchHeaderBar({
                             "--pnl-flash-tint": flashTint(oppFlash.dir),
                         } as CSSProperties}
                     >
-                        {formatPnl(opponentPnl)}
+                        {formatMatchPnl(opponentPnl, match.starting_capital)}
                     </span>
                     <button
                         type="button"

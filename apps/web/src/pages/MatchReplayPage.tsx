@@ -14,6 +14,7 @@ import {
     type SeriesMarker,
 } from "lightweight-charts";
 import { getMatchReplay, type MatchReplay } from "@/api/endpoints/matchReplay";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 const CHAL = "#FF6B00"; // challenger (war-theme orange)
 const OPP = "#22D3EE"; // opponent (cyan)
@@ -242,7 +243,7 @@ export default function MatchReplayPage() {
                 ? uid === match.challenger.id
                 : uid === match.opponent.id);
     const fmt = (v: number | null | undefined) =>
-        v == null ? "--" : `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+        v == null ? "--" : formatPnlPct(v);
     const pairs = Object.keys(data.candles);
 
     return (

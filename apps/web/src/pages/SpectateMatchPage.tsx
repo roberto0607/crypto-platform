@@ -14,6 +14,7 @@ import { waitForStreamId } from "@/api/sse";
 import { createDatafeedAdapter } from "@/lib/datafeedAdapter";
 import { applyTick, planClosedCandle, reconcileForming, type Bar } from "@/lib/formingCandle";
 import { useAppStore } from "@/stores/appStore";
+import { formatPnlPct } from "@/lib/matchPnl";
 import type {
     MatchPnlUpdateEvent,
     MatchEndedEvent,
@@ -79,12 +80,6 @@ const PAGE_CSS = `
   .sm-chat-meta { font-size:9px;color:rgba(255,255,255,0.3);letter-spacing:1px;margin-top:2px; }
   .sm-note { font-size:9px;color:rgba(255,255,255,0.25);letter-spacing:1px;margin-top:4px;text-align:center; }
 `;
-
-function formatPnl(pct: string | null): string {
-    if (!pct) return "0.00%";
-    const n = parseFloat(pct);
-    return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
-}
 
 function formatTimeRemaining(endsAt: string): string {
     const diff = new Date(endsAt).getTime() - Date.now();
@@ -428,14 +423,14 @@ export default function SpectateMatchPage() {
                         <div>
                             <div className="sm-player">{match.challenger_name ?? "CHALLENGER"} ({match.challenger_elo})</div>
                             <div className="sm-pnl" style={{ color: parseFloat(challengerPnl ?? "0") >= 0 ? "#00ff41" : "#ff3b3b" }}>
-                                {formatPnl(challengerPnl)}
+                                {formatPnlPct(challengerPnl)}
                             </div>
                         </div>
                         <div className="sm-divider" />
                         <div>
                             <div className="sm-player">{match.opponent_name ?? "OPPONENT"} ({match.opponent_elo})</div>
                             <div className="sm-pnl" style={{ color: parseFloat(opponentPnl ?? "0") >= 0 ? "#00ff41" : "#ff3b3b" }}>
-                                {formatPnl(opponentPnl)}
+                                {formatPnlPct(opponentPnl)}
                             </div>
                         </div>
                     </div>

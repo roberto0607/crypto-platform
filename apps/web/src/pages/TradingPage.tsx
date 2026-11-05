@@ -20,6 +20,7 @@ import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
 import { chartLiqPrice } from "@/lib/leverageUi";
+import { formatPnlPct } from "@/lib/matchPnl";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 
 /* ─────────────────────────────────────────
@@ -1397,8 +1398,8 @@ export default function TradingPage() {
             background: "rgba(255,107,0,0.06)", borderTop: "1px solid rgba(255,107,0,0.25)",
           }}>
             <span style={{ color: "#FF6B00", fontWeight: 700 }}>⚔ 1V1</span>
-            <span>YOU: <span style={{ color: yPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{yPnl >= 0 ? "+" : ""}{yPnl.toFixed(2)}%</span></span>
-            <span>{oppName.toUpperCase()}: <span style={{ color: oPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{oPnl >= 0 ? "+" : ""}{oPnl.toFixed(2)}%</span></span>
+            <span>YOU: <span style={{ color: yPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(yPnl)}</span></span>
+            <span>{oppName.toUpperCase()}: <span style={{ color: oPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(oPnl)}</span></span>
             <span style={{ marginLeft: "auto", color: "rgba(255,107,0,0.6)" }}>TIME: {timeStr}</span>
           </div>
         );

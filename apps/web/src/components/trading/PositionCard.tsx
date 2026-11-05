@@ -21,6 +21,7 @@ import type { PnlFlash } from "@/hooks/usePnlFlash";
 import { healthTone } from "@/lib/leverageUi";
 import { breakEvenPrice, equityAtLiq, isAtRisk, liqDistancePct, openDuration } from "@/lib/positionCard";
 import { PRICE_HELP } from "@/lib/priceHelp";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 const GREEN = "#00ff41";
 const RED = "#ff3b3b";
@@ -31,7 +32,6 @@ export function fmtUsd(n: number): string {
   return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 export const fmtSigned = (n: number) => (n >= 0 ? "+" : "-") + fmtUsd(Math.abs(n));
-const fmtPct = (n: number, dp = 2) => `${n >= 0 ? "+" : ""}${n.toFixed(dp)}%`;
 const fmtWholeUsd = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 export const fmtQty = (q: number) => q.toFixed(q >= 1 ? 4 : 5);
 
@@ -251,7 +251,7 @@ export function PositionCard(props: PositionCardProps) {
               title={isoView ? "Return on margin: unrealized P&L / margin" : "Unrealized P&L / cost"}
               style={{ color: pnlColor, fontWeight: 700, fontSize: 12 }}
             >
-              {fmtPct(pnlPct)}{isoView && <span style={{ ...smallLabel, marginLeft: 4 }}>ROE</span>}
+              {formatPnlPct(pnlPct)}{isoView && <span style={{ ...smallLabel, marginLeft: 4 }}>ROE</span>}
             </span>
           </div>
         </div>

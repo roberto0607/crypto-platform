@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
+import { formatPnlPct } from "@/lib/matchPnl";
 import type { MatchPnlUpdateEvent } from "@/types/api";
 
 /**
@@ -67,8 +68,8 @@ export function CompetitionBottomBar() {
             }}
         >
             <span style={{ color: "#FF6B00", fontWeight: 700 }}>⚔ 1V1</span>
-            <span>YOU: <span style={{ color: yPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{yPnl >= 0 ? "+" : ""}{yPnl.toFixed(2)}%</span></span>
-            <span>{oppName.toUpperCase()}: <span style={{ color: oPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{oPnl >= 0 ? "+" : ""}{oPnl.toFixed(2)}%</span></span>
+            <span>YOU: <span style={{ color: yPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(yPnl)}</span></span>
+            <span>{oppName.toUpperCase()}: <span style={{ color: oPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(oPnl)}</span></span>
             <span style={{ marginLeft: "auto", color: "rgba(255,107,0,0.6)" }}>TIME: {timeStr}</span>
         </button>
     );
