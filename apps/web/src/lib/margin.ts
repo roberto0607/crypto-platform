@@ -80,6 +80,16 @@ export function liquidationPrice(pos: MarginPosition): Decimal {
   return cost.plus(pos.margin).div(pos.qty.mul(ONE.plus(mmr)));
 }
 
+/**
+ * A position's liq price to show, null when it has none. A long at 1x can't
+ * be liquidated, whatever is stored: margin rounds down to 8 dp, so its
+ * liq_price is usually dust (cost − margin > 0), not 0.
+ */
+export function shownLiqPrice<T extends number | Decimal>(side: MarginSide, leverage: number | Decimal, liq: T | null): T | null {
+  if (liq === null || !(Number(liq) > 0)) return null;
+  return side === "LONG" && Number(leverage) <= 1 ? null : liq;
+}
+
 /** The mark at which equity reaches 0 (long floored at 0). */
 export function bankruptcyPrice(pos: Pick<MarginPosition, "side" | "qty" | "entry" | "margin">): Decimal {
   const perUnit = pos.margin.div(pos.qty);

@@ -12,6 +12,7 @@ import {
   isolatedPositionView,
   scopeEquity,
   healthTone,
+  chartLiqPrice,
 } from "@/lib/leverageUi";
 
 describe("leverageOptions", () => {
@@ -128,5 +129,36 @@ describe("healthTone", () => {
     expect(healthTone(0.3)).toBe("warn");
     expect(healthTone(0.24)).toBe("danger");
     expect(healthTone(0)).toBe("danger");
+  });
+});
+
+// A 1x long can't be liquidated, but margin rounds down to 8 dp, so the engine
+// stores dust (cost − margin > 0) as liq_price rather than 0.
+describe("a 1x long has no liquidation price", () => {
+  const dust = { baseQty: "0.01234567", entry: "64321.12345678", margin: "794.08736422", leverage: "1.00", liqPrice: "0.00000054", mmrBps: 50, mark: 64000 };
+
+  it("isolatedPositionView: dust reads as none", () => {
+    expect(isolatedPositionView(dust).liqPrice).toBeNull();
+  });
+
+  it("isolatedPositionView: a stored 0 reads as none", () => {
+    expect(isolatedPositionView({ ...dust, liqPrice: "0.00000000" }).liqPrice).toBeNull();
+  });
+
+  it("a 1x short keeps its liquidation price", () => {
+    expect(isolatedPositionView({ ...dust, baseQty: "-0.01234567", liqPrice: "127992.28" }).liqPrice).toBe(127992.28);
+  });
+
+  it("a 2x long keeps its liquidation price", () => {
+    expect(isolatedPositionView({ ...dust, leverage: "2.00", liqPrice: "32321.67" }).liqPrice).toBe(32321.67);
+  });
+
+  it("chartLiqPrice: no line for a 1x long", () => {
+    expect(chartLiqPrice({ base_qty: "0.01234567", margin_mode: "ISOLATED", leverage: "1.00", liq_price: "0.00000054" })).toBeNull();
+  });
+
+  it("chartLiqPrice: keeps a 1x short and a 2x long", () => {
+    expect(chartLiqPrice({ base_qty: "-0.5", margin_mode: "ISOLATED", leverage: "1.00", liq_price: "127992.28" })).toBe(127992.28);
+    expect(chartLiqPrice({ base_qty: "0.5", margin_mode: "ISOLATED", leverage: "2.00", liq_price: "32321.67" })).toBe(32321.67);
   });
 });
