@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { decodeCursor, parseLimit, slicePage } from "../../http/pagination";
+import { parseMatchScope } from "../../http/matchScopeQuery";
 import {
     createTriggerOrder,
     listTriggersByUser,
@@ -178,6 +179,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 properties: {
                     pairId: { type: "string", format: "uuid" },
                     status: { type: "string", description: "Filter by trigger status (ACTIVE, FIRED, CANCELLED)" },
+                    scope: { type: "string", description: "'free' or a match id. Omit for every trigger." },
                     limit: { type: "string" },
                     cursor: { type: "string" },
                 },
@@ -196,6 +198,8 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
     }, async (req, reply) => {
         try {
             const actor = req.user!;
+            const scope = parseMatchScope((req.query as { scope?: unknown }).scope);
+            if (scope === "invalid") throw new AppError("invalid_input");
             const queryParsed = listTriggersQuery.safeParse(req.query);
             const q = queryParsed.success ? queryParsed.data : {};
 
@@ -204,7 +208,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
 
             const rows = await listTriggersByUser(
                 actor.id,
-                { pairId: q.pairId, status: q.status },
+                { pairId: q.pairId, status: q.status, scope },
                 limit,
                 cursor,
             );

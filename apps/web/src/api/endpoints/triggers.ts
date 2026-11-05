@@ -22,6 +22,8 @@ export function createTrigger(params: {
 export function listTriggers(params?: {
   pairId?: UUID;
   status?: string;
+  /** "free" or a match id; omit for every trigger. See lib/orderScope. */
+  scope?: string;
   cursor?: string;
   limit?: number;
 }) {

@@ -5,6 +5,8 @@ import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { decodeCursor, parseLimit, slicePage } from "../../http/pagination";
 import { listOrdersByUserIdPaginated } from "../../trading/orderRepo";
+import { parseMatchScope } from "../../http/matchScopeQuery";
+import { AppError } from "../../errors/AppError";
 
 const listOrdersQuery = z.object({
     pairId: z.string().uuid().optional(),
@@ -25,6 +27,7 @@ const v1Orders: FastifyPluginAsync = async (app) => {
                 properties: {
                     pairId: { type: "string", format: "uuid", description: "Filter by trading pair" },
                     status: { type: "string", description: "Filter by order status" },
+                    scope: { type: "string", description: "'free' or a match id. Omit for every order." },
                     limit: { type: "string", description: "Page size (default 50, max 100)" },
                     cursor: { type: "string", description: "Cursor from previous page's nextCursor" },
                 },
@@ -43,6 +46,8 @@ const v1Orders: FastifyPluginAsync = async (app) => {
     }, async (req, reply) => {
         try {
             const actor = req.user!;
+            const scope = parseMatchScope((req.query as { scope?: unknown }).scope);
+            if (scope === "invalid") throw new AppError("invalid_input");
             const queryParsed = listOrdersQuery.safeParse(req.query);
             const q = queryParsed.success ? queryParsed.data : {};
 
@@ -51,7 +56,7 @@ const v1Orders: FastifyPluginAsync = async (app) => {
 
             const rows = await listOrdersByUserIdPaginated(
                 actor.id,
-                { pairId: q.pairId, status: q.status },
+                { pairId: q.pairId, status: q.status, scope },
                 limit,
                 cursor,
             );
