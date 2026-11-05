@@ -3,6 +3,7 @@ const TWO_DP_FROM = 0.01;
 const TINY = 0.00005;
 /** The server sends 8 decimals, so anything smaller is zero. */
 const ZERO = 0.00000001;
+const TINY_USD = 0.00005;
 
 const toNumber = (v: string | number | null | undefined): number => {
   const n = typeof v === "number" ? v : parseFloat(v ?? "0");
@@ -37,4 +38,17 @@ export function formatMatchPnl(pct: string | number | null | undefined, starting
   if (abs < 0.005) return "$0.00 (0.00%)";
   const amount = abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${usd < 0 ? "-" : "+"}$${amount} (${formatPnlPct(n)})`;
+}
+
+/**
+ * A signed dollar P&L that never sits at a frozen "+$0.00": cents from a cent
+ * up, four decimals below that, `<$0.0001` under those. Only a true zero has
+ * no sign.
+ */
+export function formatPnlUsd(usd: number): string {
+  const abs = Math.abs(usd);
+  if (abs < ZERO) return "$0.00";
+  const sign = usd < 0 ? "-" : "+";
+  if (abs >= 0.01) return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return abs < TINY_USD ? `${sign}<$0.0001` : `${sign}$${abs.toFixed(4)}`;
 }

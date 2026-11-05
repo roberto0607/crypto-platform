@@ -5,14 +5,22 @@ import type { Match } from "@/api/endpoints/matches";
 
 const MATCH = { id: "m1", starting_capital: "100000.00000000", ends_at: null } as unknown as Match;
 
-function renderBar(yourPnl: string | null, opponentPnl: string | null) {
+function renderBar(yourPnl: string | null, opponentPnl: string | null, settling = false) {
   render(
     <MatchHeaderBar
-      match={MATCH} yourPnl={yourPnl} opponentPnl={opponentPnl} yourName="alice" opponentName="bob"
+      settling={settling} match={MATCH} yourPnl={yourPnl} opponentPnl={opponentPnl} yourName="alice" opponentName="bob"
       onForfeit={() => {}} chatOpen={false} chatUnread={0} onToggleChat={() => {}}
     />,
   );
 }
+
+describe("MatchHeaderBar timer", () => {
+  it("settling replaces the countdown", () => {
+    renderBar("0", "0", true);
+    expect(screen.getByText("SETTLING…")).toBeTruthy();
+    expect(screen.queryByText(/TIME LEFT/)).toBeNull();
+  });
+});
 
 describe("MatchHeaderBar P&L", () => {
   it("shows dollars and percent for both players", () => {

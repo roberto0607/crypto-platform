@@ -270,11 +270,13 @@ describe("TP limit vs liquidation (10x long past its liq price)", () => {
         const release = await holdPairLock();
         const fire = fireTrigger(tp, { last: "74000" });
         await waitBlocked(1);
-        const liq = liquidate(u, 1, SIZE);
+        // Expect the rejection now, not after `await fire`: it can land first,
+        // and an unobserved rejection leaks as an unhandled error (as on PR #225).
+        const liqRejected = expect(liquidate(u, 1, SIZE)).rejects.toMatchObject({ reason: "flat" });
         await waitBlocked(2);
         await release();
         await fire;
-        await expect(liq).rejects.toMatchObject({ reason: "flat" });
+        await liqRejected;
         expect((await position(u)).base_qty).toBe("0.00000000");
         const { rows } = await pool.query(`SELECT 1 FROM liquidations WHERE mode = 'EXECUTED'`);
         expect(rows).toEqual([]);

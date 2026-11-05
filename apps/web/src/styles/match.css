@@ -1,0 +1,414 @@
+/*
+ * The match UI that has to work on any page: header, forfeit confirm, chat,
+ * result overlay, and .ar-btn. Imported by AppLayout, so none of it depends
+ * on ArenaPage or LiveMatchView being mounted.
+ *
+ * --ar-* are set on these elements, not on :root: UnifiedOrderPanel reads
+ * var(--ar-orange, var(--g)), so a global value would turn the trade page's
+ * green accents orange.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+.lmv-header, .lmv-modal-backdrop, .lmv-end-backdrop, .lmv-chat-panel, .ar-btn {
+  --ar-g: #00ff41; --ar-red: #ff3b3b; --ar-orange: #FF6B00;
+  --ar-gold: #FFD700; --ar-bg: #040404; --ar-bg2: #080808;
+  --ar-border: rgba(255,107,0,0.16); --ar-borderW: rgba(255,255,255,0.06);
+  --ar-muted: rgba(255,255,255,0.3); --ar-faint: rgba(255,255,255,0.05);
+  --ar-bebas: 'Bebas Neue', sans-serif; --ar-mono: 'Space Mono', monospace;
+}
+.lmv-header, .lmv-modal-backdrop, .lmv-end-backdrop, .lmv-chat-panel {
+  font-family: var(--ar-mono);
+  color: rgba(255,255,255,0.88);
+}
+.lmv-header *, .lmv-modal-backdrop *, .lmv-end-backdrop *, .lmv-chat-panel * {
+  box-sizing: border-box;
+}
+
+/* Buttons */
+.ar-btn {
+  padding:10px 24px;font-family:var(--ar-mono);font-size:11px;font-weight:700;
+  letter-spacing:3px;text-transform:uppercase;cursor:pointer;border:none;
+  transition:all 0.2s;clip-path:polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
+}
+.ar-btn-orange { background:var(--ar-orange);color:#000; }
+.ar-btn-orange:hover { background:#ff8533;box-shadow:0 0 20px rgba(255,107,0,0.3); }
+.ar-btn-outline {
+  background:transparent;color:var(--ar-orange);border:1px solid var(--ar-orange);
+  clip-path:none;
+}
+.ar-btn-outline:hover { background:rgba(255,107,0,0.08); }
+.ar-btn-red { background:var(--ar-red);color:#fff; }
+.ar-btn-red:hover { background:#ff5555; }
+.ar-btn:disabled { opacity:0.4;cursor:not-allowed; }
+
+/* ── HEADER BAR ── */
+.lmv-header {
+  height: 56px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--ar-bg2);
+  border-bottom: 1px solid var(--ar-orange);
+  gap: 16px;
+}
+.lmv-h-left, .lmv-h-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+.lmv-h-left > *, .lmv-h-right > * { flex-shrink: 0; }
+.lmv-h-right { justify-content: flex-end; }
+.lmv-h-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.lmv-h-left > .lmv-h-name, .lmv-h-right > .lmv-h-name {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lmv-h-name {
+  font-family: var(--ar-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+.lmv-h-pnl {
+  font-family: var(--ar-bebas);
+  font-size: 22px;
+  letter-spacing: 2px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+.lmv-h-vs {
+  font-family: var(--ar-bebas);
+  font-size: 20px;
+  color: var(--ar-orange);
+  opacity: 0.6;
+  letter-spacing: 3px;
+}
+.lmv-h-badge {
+  font-family: var(--ar-mono);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ar-orange);
+  border: 1px solid var(--ar-orange);
+  padding: 3px 8px;
+  animation: lmv-pulse 2s ease-in-out infinite;
+}
+@keyframes lmv-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.lmv-h-timer {
+  font-family: var(--ar-mono);
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: rgba(255,255,255,0.6);
+}
+.lmv-h-timer.urgent {
+  color: var(--ar-red);
+  animation: lmv-pulse 1s ease-in-out infinite;
+}
+.lmv-forfeit-btn {
+  font-family: var(--ar-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--ar-red);
+  border: 1px solid var(--ar-red);
+  background: transparent;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lmv-forfeit-btn:hover {
+  background: rgba(255,59,59,0.1);
+}
+.lmv-chat-toggle {
+  position: relative;
+  font-family: var(--ar-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: rgba(255,255,255,0.6);
+  border: 1px solid var(--ar-borderW);
+  background: transparent;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lmv-chat-toggle:hover {
+  border-color: var(--ar-orange);
+  color: var(--ar-orange);
+}
+.lmv-chat-toggle.active {
+  border-color: var(--ar-orange);
+  color: var(--ar-orange);
+  background: rgba(255,107,0,0.06);
+}
+.lmv-chat-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--ar-red);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 50%;
+  min-width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+/* ── MODAL ── */
+.lmv-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.lmv-modal {
+  background: #0c0c0c;
+  border: 1px solid var(--ar-orange);
+  padding: 32px;
+  max-width: 420px;
+  width: 90%;
+}
+.lmv-modal-title {
+  font-family: var(--ar-bebas);
+  font-size: 28px;
+  letter-spacing: 4px;
+  color: var(--ar-red);
+  margin-bottom: 12px;
+}
+.lmv-modal-text {
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.6);
+  margin-bottom: 24px;
+}
+.lmv-modal-actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* ── MATCH END OVERLAY ── */
+.lmv-end-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.lmv-end-card {
+  text-align: center;
+  padding: 48px 64px;
+  border: 1px solid var(--ar-orange);
+  background: #0a0a0a;
+  min-width: 340px;
+}
+.lmv-end-result {
+  font-family: var(--ar-bebas);
+  font-size: 48px;
+  letter-spacing: 6px;
+  margin-bottom: 24px;
+}
+.lmv-end-pnl-row {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  margin-bottom: 24px;
+}
+.lmv-end-label {
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--ar-muted);
+  margin-bottom: 4px;
+}
+.lmv-end-val {
+  font-family: var(--ar-bebas);
+  font-size: 28px;
+  letter-spacing: 2px;
+}
+.lmv-end-elo-section {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  margin-bottom: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ar-borderW);
+}
+.lmv-end-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ── MATCH CHAT PANEL ── */
+/* Floating over .lmv-wrap (position:relative), kept mounted after
+   first open so the log survives toggling closed/open — only visibility
+   animates, not mount state. */
+.lmv-chat-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 300px;
+  height: 380px;
+  max-height: calc(100% - 32px);
+  background: var(--ar-bg2);
+  border: 1px solid var(--ar-orange);
+  display: flex;
+  flex-direction: column;
+  z-index: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(12px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  pointer-events: none;
+}
+.lmv-chat-panel.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.lmv-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ar-borderW);
+  flex-shrink: 0;
+}
+.lmv-chat-title {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--ar-orange);
+}
+.lmv-chat-close {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.lmv-chat-close:hover { color: #fff; }
+.lmv-chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
+  padding: 10px 12px;
+}
+.lmv-chat-empty {
+  margin: auto;
+  font-size: 10px;
+  color: rgba(255,255,255,0.2);
+  text-align: center;
+}
+.lmv-chat-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+.lmv-chat-msg.mine { align-self: flex-end; align-items: flex-end; }
+.lmv-chat-msg:not(.mine) { align-self: flex-start; align-items: flex-start; }
+.lmv-chat-bubble {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.85);
+  word-break: break-word;
+}
+.lmv-chat-msg.mine .lmv-chat-bubble {
+  background: rgba(255,107,0,0.12);
+  color: #fff;
+}
+.lmv-chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.lmv-chat-ts {
+  font-size: 8px;
+  color: var(--ar-muted);
+}
+.lmv-chat-report {
+  font-family: var(--ar-mono);
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--ar-muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.lmv-chat-report:hover {
+  color: var(--ar-red);
+  text-decoration: underline;
+}
+.lmv-chat-reported {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: rgba(255,255,255,0.15);
+}
+.lmv-chat-error {
+  font-size: 9px;
+  color: var(--ar-red);
+  padding: 0 12px 4px;
+}
+.lmv-chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ar-borderW);
+  flex-shrink: 0;
+}
+.lmv-chat-input {
+  flex: 1;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--ar-borderW);
+  color: #fff;
+  font-family: var(--ar-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  outline: none;
+  min-width: 0;
+}
+.lmv-chat-input:focus { border-color: var(--ar-orange); }
+.lmv-chat-send {
+  font-family: var(--ar-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--ar-orange);
+  border: 1px solid var(--ar-orange);
+  background: transparent;
+  padding: 0 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lmv-chat-send:hover:not(:disabled) { background: rgba(255,107,0,0.1); }
+.lmv-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }

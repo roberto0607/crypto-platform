@@ -2,8 +2,9 @@ import type { JobDefinition } from "../jobTypes";
 import { completeMatch, mutualForfeitMatch } from "../../competitions/matchService.js";
 
 /**
- * Match cleanup — runs every 5 minutes. Resolves matches stuck in
- * non-terminal states past their deadline:
+ * Match cleanup — runs every 15 seconds, because this is how a timed-out
+ * match ends: both players wait on SETTLING until it runs, and orders are
+ * accepted until then. Resolves matches past their deadline:
  *
  *   - PENDING > 2 hours old → CANCELLED (opponent never accepted; no
  *     stakes, no ELO).
@@ -19,7 +20,7 @@ import { completeMatch, mutualForfeitMatch } from "../../competitions/matchServi
  */
 export const matchCleanupJob: JobDefinition = {
     name: "match-cleanup",
-    intervalSeconds: 300,
+    intervalSeconds: 15,
     timeoutMs: 30_000,
     async run(ctx) {
         // 1. Stale PENDING matches (> 2 hours old) → CANCELLED.
@@ -40,7 +41,7 @@ export const matchCleanupJob: JobDefinition = {
             `SELECT id FROM matches
              WHERE status = 'ACTIVE'
                AND ends_at IS NOT NULL
-               AND ends_at < now() - interval '5 minutes'
+               AND ends_at <= now()
              LIMIT 50`,
         );
 

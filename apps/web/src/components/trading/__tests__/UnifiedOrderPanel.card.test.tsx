@@ -150,6 +150,12 @@ describe("the card", () => {
     expect(chartLiqPrice(pos)).toBeNull();
   });
 
+  it("a P&L under a cent shows its digits, not a frozen +$0.00", async () => {
+    // 0.1 × (80,000 − 79,999.994) = +$0.0006
+    await mount({ ...ISO_LONG, base_qty: "0.10000000", avg_entry_price: "79999.994", isolated_margin: "7999.99940000", leverage: "1.00" });
+    expect(screen.getByTestId("pos-pnl").textContent).toBe("+$0.0006");
+  });
+
   it("a tiny loss never reads -0.00%", async () => {
     // 0.0060241 × (80,000 − 80,000.5) on $500 margin: -0.0006% return on margin
     await mount({ ...ISO_LONG, base_qty: "0.00602410", avg_entry_price: "80000.50", isolated_margin: "482.00000000", leverage: "1.00" });

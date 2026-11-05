@@ -6,13 +6,14 @@ import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { chartLiqPrice } from "@/lib/leverageUi";
 import type { Timeframe } from "@/api/endpoints/candles";
 import { getPositions } from "@/api/endpoints/analytics";
-import { forfeitMatch, getActiveMatch, getMatch, type Match } from "@/api/endpoints/matches";
+import type { Match } from "@/api/endpoints/matches";
+import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
 import { MatchHeaderBar } from "./MatchHeaderBar";
 import { MatchEndOverlay } from "./MatchEndOverlay";
 import { MatchChatPanel } from "./MatchChatPanel";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import { useToast } from "@/components/ToastProvider";
-import type { Position, MatchEndedEvent, MatchPnlUpdateEvent, MessageReceivedEvent } from "@/types/api";
+import type { Position, MessageReceivedEvent } from "@/types/api";
 import Spinner from "@/components/Spinner";
 import { pickInitialPairId } from "@/lib/pairs";
 
@@ -40,170 +41,6 @@ const LMV_CSS = `
     min-height: 0;
     overflow: hidden;
     position: relative;
-  }
-
-  /* ── HEADER BAR ── */
-  .lmv-header {
-    height: 56px;
-    min-height: 56px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 20px;
-    background: var(--ar-bg2);
-    border-bottom: 1px solid var(--ar-orange);
-    gap: 16px;
-  }
-  .lmv-h-left, .lmv-h-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
-    min-width: 0;
-  }
-  .lmv-h-left > *, .lmv-h-right > * { flex-shrink: 0; }
-  .lmv-h-right { justify-content: flex-end; }
-  .lmv-h-center {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-  }
-  .lmv-h-left > .lmv-h-name, .lmv-h-right > .lmv-h-name {
-    flex-shrink: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .lmv-h-name {
-    font-family: var(--ar-mono);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 2px;
-  }
-  .lmv-h-pnl {
-    font-family: var(--ar-bebas);
-    font-size: 22px;
-    letter-spacing: 2px;
-    padding: 2px 10px;
-    white-space: nowrap;
-  }
-  .lmv-h-vs {
-    font-family: var(--ar-bebas);
-    font-size: 20px;
-    color: var(--ar-orange);
-    opacity: 0.6;
-    letter-spacing: 3px;
-  }
-  .lmv-h-badge {
-    font-family: var(--ar-mono);
-    font-size: 9px;
-    letter-spacing: 3px;
-    color: var(--ar-orange);
-    border: 1px solid var(--ar-orange);
-    padding: 3px 8px;
-    animation: lmv-pulse 2s ease-in-out infinite;
-  }
-  @keyframes lmv-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-  }
-  .lmv-h-timer {
-    font-family: var(--ar-mono);
-    font-size: 13px;
-    letter-spacing: 2px;
-    color: rgba(255,255,255,0.6);
-  }
-  .lmv-h-timer.urgent {
-    color: var(--ar-red);
-    animation: lmv-pulse 1s ease-in-out infinite;
-  }
-  .lmv-forfeit-btn {
-    font-family: var(--ar-mono);
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: var(--ar-red);
-    border: 1px solid var(--ar-red);
-    background: transparent;
-    padding: 4px 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .lmv-forfeit-btn:hover {
-    background: rgba(255,59,59,0.1);
-  }
-  .lmv-chat-toggle {
-    position: relative;
-    font-family: var(--ar-mono);
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: rgba(255,255,255,0.6);
-    border: 1px solid var(--ar-borderW);
-    background: transparent;
-    padding: 4px 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .lmv-chat-toggle:hover {
-    border-color: var(--ar-orange);
-    color: var(--ar-orange);
-  }
-  .lmv-chat-toggle.active {
-    border-color: var(--ar-orange);
-    color: var(--ar-orange);
-    background: rgba(255,107,0,0.06);
-  }
-  .lmv-chat-badge {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    background: var(--ar-red);
-    color: #fff;
-    font-size: 9px;
-    font-weight: 700;
-    border-radius: 50%;
-    min-width: 16px;
-    height: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 3px;
-  }
-
-  /* ── MODAL ── */
-  .lmv-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-  .lmv-modal {
-    background: #0c0c0c;
-    border: 1px solid var(--ar-orange);
-    padding: 32px;
-    max-width: 420px;
-    width: 90%;
-  }
-  .lmv-modal-title {
-    font-family: var(--ar-bebas);
-    font-size: 28px;
-    letter-spacing: 4px;
-    color: var(--ar-red);
-    margin-bottom: 12px;
-  }
-  .lmv-modal-text {
-    font-size: 11px;
-    line-height: 1.6;
-    color: rgba(255,255,255,0.6);
-    margin-bottom: 24px;
-  }
-  .lmv-modal-actions {
-    display: flex;
-    gap: 12px;
   }
 
   /* ── SPLIT AREA ── */
@@ -554,213 +391,6 @@ const LMV_CSS = `
   .lmv-feed-ts { color: var(--ar-muted); font-size: 9px; flex-shrink: 0; }
   .lmv-feed-action { color: rgba(255,255,255,0.6); }
 
-  /* ── MATCH END OVERLAY ── */
-  .lmv-end-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.85);
-    backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-  }
-  .lmv-end-card {
-    text-align: center;
-    padding: 48px 64px;
-    border: 1px solid var(--ar-orange);
-    background: #0a0a0a;
-    min-width: 340px;
-  }
-  .lmv-end-result {
-    font-family: var(--ar-bebas);
-    font-size: 48px;
-    letter-spacing: 6px;
-    margin-bottom: 24px;
-  }
-  .lmv-end-pnl-row {
-    display: flex;
-    justify-content: center;
-    gap: 40px;
-    margin-bottom: 24px;
-  }
-  .lmv-end-label {
-    font-size: 8px;
-    letter-spacing: 3px;
-    color: var(--ar-muted);
-    margin-bottom: 4px;
-  }
-  .lmv-end-val {
-    font-family: var(--ar-bebas);
-    font-size: 28px;
-    letter-spacing: 2px;
-  }
-  .lmv-end-elo-section {
-    display: flex;
-    justify-content: center;
-    gap: 40px;
-    margin-bottom: 32px;
-    padding-top: 16px;
-    border-top: 1px solid var(--ar-borderW);
-  }
-  .lmv-end-actions {
-    display: flex;
-    justify-content: center;
-    gap: 12px;
-  }
-
-  /* ── MATCH CHAT PANEL ── */
-  /* Floating over .lmv-wrap (position:relative below), kept mounted after
-     first open so the log survives toggling closed/open — only visibility
-     animates, not mount state. */
-  .lmv-chat-panel {
-    position: absolute;
-    right: 16px;
-    bottom: 16px;
-    width: 300px;
-    height: 380px;
-    max-height: calc(100% - 32px);
-    background: var(--ar-bg2);
-    border: 1px solid var(--ar-orange);
-    display: flex;
-    flex-direction: column;
-    z-index: 500;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(12px);
-    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
-    pointer-events: none;
-  }
-  .lmv-chat-panel.open {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-    pointer-events: auto;
-  }
-  .lmv-chat-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--ar-borderW);
-    flex-shrink: 0;
-  }
-  .lmv-chat-title {
-    font-size: 9px;
-    letter-spacing: 2px;
-    color: var(--ar-orange);
-  }
-  .lmv-chat-close {
-    background: transparent;
-    border: none;
-    color: rgba(255,255,255,0.5);
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 0 4px;
-  }
-  .lmv-chat-close:hover { color: #fff; }
-  .lmv-chat-log {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 6px;
-    padding: 10px 12px;
-  }
-  .lmv-chat-empty {
-    margin: auto;
-    font-size: 10px;
-    color: rgba(255,255,255,0.2);
-    text-align: center;
-  }
-  .lmv-chat-msg {
-    display: flex;
-    flex-direction: column;
-    max-width: 85%;
-  }
-  .lmv-chat-msg.mine { align-self: flex-end; align-items: flex-end; }
-  .lmv-chat-msg:not(.mine) { align-self: flex-start; align-items: flex-start; }
-  .lmv-chat-bubble {
-    font-size: 11px;
-    line-height: 1.4;
-    padding: 6px 10px;
-    background: rgba(255,255,255,0.05);
-    color: rgba(255,255,255,0.85);
-    word-break: break-word;
-  }
-  .lmv-chat-msg.mine .lmv-chat-bubble {
-    background: rgba(255,107,0,0.12);
-    color: #fff;
-  }
-  .lmv-chat-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 2px;
-  }
-  .lmv-chat-ts {
-    font-size: 8px;
-    color: var(--ar-muted);
-  }
-  .lmv-chat-report {
-    font-family: var(--ar-mono);
-    font-size: 8px;
-    letter-spacing: 1px;
-    color: var(--ar-muted);
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-  }
-  .lmv-chat-report:hover {
-    color: var(--ar-red);
-    text-decoration: underline;
-  }
-  .lmv-chat-reported {
-    font-size: 8px;
-    letter-spacing: 1px;
-    color: rgba(255,255,255,0.15);
-  }
-  .lmv-chat-error {
-    font-size: 9px;
-    color: var(--ar-red);
-    padding: 0 12px 4px;
-  }
-  .lmv-chat-input-row {
-    display: flex;
-    gap: 6px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--ar-borderW);
-    flex-shrink: 0;
-  }
-  .lmv-chat-input {
-    flex: 1;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid var(--ar-borderW);
-    color: #fff;
-    font-family: var(--ar-mono);
-    font-size: 11px;
-    padding: 6px 8px;
-    outline: none;
-    min-width: 0;
-  }
-  .lmv-chat-input:focus { border-color: var(--ar-orange); }
-  .lmv-chat-send {
-    font-family: var(--ar-mono);
-    font-size: 9px;
-    letter-spacing: 1px;
-    color: var(--ar-orange);
-    border: 1px solid var(--ar-orange);
-    background: transparent;
-    padding: 0 10px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .lmv-chat-send:hover:not(:disabled) { background: rgba(255,107,0,0.1); }
-  .lmv-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
 `;
 
 /* ── MatchOrderPanel removed — see UnifiedOrderPanel.tsx ── */
@@ -781,9 +411,17 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const selectPair = useTradingStore((s) => s.selectPair);
     const { addToast } = useToast();
 
-    const [match, setMatch] = useState(initialMatch);
+    // The session lives in activeMatchStore. The prop only covers the moment
+    // before the store has loaded the match ArenaPage already has.
+    const storeMatch = useActiveMatchStore((s) => s.activeMatch);
+    const endedMatch = useActiveMatchStore((s) => s.endedMatch);
+    const settling = useActiveMatchStore((s) => s.settling);
+    const forfeit = useActiveMatchStore((s) => s.forfeit);
+    const dismissEndedMatch = useActiveMatchStore((s) => s.dismissEndedMatch);
+    const match = endedMatch?.id === initialMatch.id
+        ? endedMatch
+        : storeMatch?.status === "ACTIVE" ? storeMatch : initialMatch;
     const [positions, setPositions] = useState<Position[]>([]);
-    const [showEndOverlay, setShowEndOverlay] = useState(false);
 
     // Match Chat — ephemeral, component-local (no store). The panel itself
     // owns the message log; this view only tracks open/closed + the unread
@@ -804,9 +442,8 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         });
     }, []);
     // LiveMatchView isn't remounted between matches (ArenaPage renders it
-    // keyless), so a new match.id must explicitly reset chat state — same
-    // reason livePnl resets on match.id below. Without this, a leftover
-    // chatEverOpened would mount a fresh match's panel straight onto whatever
+    // keyless), so a new match.id must explicitly reset chat state. Without
+    // this, a leftover chatEverOpened would mount a fresh match's panel straight onto whatever
     // open/unread state the previous match's chat left behind.
     useEffect(() => {
         setChatOpen(false);
@@ -820,14 +457,10 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const timeframe: Timeframe = "1h";
     const vpvrMode = "visible" as const;
 
-    // Tracks whether the component is still mounted, so async SSE handlers
-    // and polls don't setState on an unmounted component. Must set true on
-    // mount, not just false in cleanup -- React StrictMode's dev-only
-    // mount/unmount/remount double-invoke runs this effect's cleanup once
-    // before the "real" mount, which without the explicit reset left
-    // isMounted.current permanently false for the rest of the session
-    // (silently no-oping every isMounted-gated handler below, including
-    // match.ended's fast path). Dev-only; production doesn't double-invoke.
+    // Tracks whether the component is still mounted, so async handlers don't
+    // setState on an unmounted component. Must set true on mount, not just
+    // false in cleanup: React StrictMode's dev-only double-invoke runs the
+    // cleanup once before the "real" mount.
     const isMounted = useRef(true);
     useEffect(() => {
         isMounted.current = true;
@@ -840,20 +473,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const yourName = isChallenger ? (match.challenger_name ?? "YOU") : (match.opponent_name ?? "YOU");
     const opponentName = isChallenger ? (match.opponent_name ?? "OPPONENT") : (match.challenger_name ?? "OPPONENT");
 
-    // Live in-match PnL — kept as separate state from `match`, NOT patched
-    // into it, because syncMatchState's 30s safety-net poll (and the
-    // reconnect refetch) call setMatch(data.match) wholesale from the
-    // stale DB row snapshot every cycle; patching pnl fields directly into
-    // `match` would get clobbered back to 0.00% on the very next poll.
-    // Falls back to the row snapshot until the first qualifying push
-    // arrives; reset on match change so a stale number can't leak.
-    const [livePnl, setLivePnl] = useState<{ challengerPnlPct: string; opponentPnlPct: string } | null>(null);
-    useEffect(() => {
-        setLivePnl(null);
-    }, [match.id]);
-
-    const challengerPnlPct = livePnl?.challengerPnlPct ?? match.challenger_pnl_pct;
-    const opponentPnlPct = livePnl?.opponentPnlPct ?? match.opponent_pnl_pct;
+    const { challengerPnlPct, opponentPnlPct } = useMatchPnl(match);
     const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
     const opponentPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
 
@@ -877,74 +497,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         }
     }, []);
 
-    // Re-fetch authoritative match state from the server. Shared by the slow
-    // poll safety net and the reconnect refetch. The `match.ended` SSE push is
-    // the fast path (sub-second); this only catches a push that never arrived.
-    const syncMatchState = useCallback(async () => {
-        try {
-            const { data } = await getActiveMatch();
-            if (!isMounted.current) return;
-            if (data.match) {
-                setMatch(data.match);
-                if (data.match.status === "COMPLETED" || data.match.status === "FORFEITED") {
-                    setLivePnl(null);
-                    setShowEndOverlay(true);
-                }
-            } else {
-                // No active match — fetch final state by ID for accurate result display
-                try {
-                    const { data: full } = await getMatch(match.id);
-                    if (isMounted.current) setMatch(full.match);
-                } catch { /* ignore — overlay will use existing match state */ }
-                if (isMounted.current) {
-                    setLivePnl(null);
-                    setShowEndOverlay(true);
-                }
-            }
-        } catch { /* ignore */ }
-    }, [match.id]);
-
-    // Fast path: the opponent's verdict arrives via the `match.ended` SSE push.
-    // Patch the terminal fields from the payload and flip the overlay — no
-    // re-fetch needed for the verdict (the overlay's own GET /result call
-    // enriches the ELO count-up afterward). This is what makes the WON/LOST
-    // screen appear instantly instead of on the next poll tick.
-    useEffect(() => {
-        const handler = (e: Event) => {
-            const d = (e as CustomEvent<MatchEndedEvent>).detail;
-            if (!d || d.matchId !== match.id || !isMounted.current) return;
-            setMatch((prev) => ({
-                ...prev,
-                status: d.reason === "timeout" ? "COMPLETED" : "FORFEITED",
-                winner_id: d.winnerUserId,
-                forfeit_user_id: d.forfeitUserId,
-                challenger_pnl_pct: d.challengerPnlPct,
-                opponent_pnl_pct: d.opponentPnlPct,
-                elo_delta: d.eloDeltas?.winner ?? prev.elo_delta,
-            }));
-            // Clear the live push so these authoritative terminal values (not
-            // a slightly-earlier live number) win via the livePnl ?? match.*
-            // fallback above.
-            setLivePnl(null);
-            setShowEndOverlay(true);
-        };
-        window.addEventListener("sse:match.ended", handler);
-        return () => window.removeEventListener("sse:match.ended", handler);
-    }, [match.id]);
-
-    // Live in-match PnL — patches the separate livePnl state (see above)
-    // from the match.pnl.update SSE push instead of the frozen row
-    // snapshot, so yourPnl/opponentPnl track price in real time.
-    useEffect(() => {
-        const handler = (e: Event) => {
-            const d = (e as CustomEvent<MatchPnlUpdateEvent>).detail;
-            if (!d || d.matchId !== match.id || !isMounted.current) return;
-            setLivePnl({ challengerPnlPct: d.challengerPnlPct, opponentPnlPct: d.opponentPnlPct });
-        };
-        window.addEventListener("sse:match.pnl.update", handler);
-        return () => window.removeEventListener("sse:match.pnl.update", handler);
-    }, [match.id]);
-
     // Match Chat unread badge — MessageReceivedEvent never carries matchId,
     // so (per the approved Gate 0 constraint) a "match" conversationType push
     // arriving while this view is mounted is attributed to the current match
@@ -959,34 +511,6 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
         window.addEventListener("sse:message.received", handler);
         return () => window.removeEventListener("sse:message.received", handler);
     }, [chatOpen]);
-
-    // Safety net: poll every 30s in case a push was missed (slowed from 15s now
-    // that the SSE push is the primary signal).
-    useEffect(() => {
-        const id = setInterval(syncMatchState, 30_000);
-        return () => clearInterval(id);
-    }, [syncMatchState]);
-
-    // The eventBus has no replay buffer: a tab disconnected at the instant
-    // `match.ended` fires misses it permanently. On SSE reconnect, re-sync so
-    // the verdict resolves immediately rather than waiting up to 30s.
-    useEffect(() => {
-        const handler = () => { void syncMatchState(); };
-        window.addEventListener("sse:reconnected", handler);
-        return () => window.removeEventListener("sse:reconnected", handler);
-    }, [syncMatchState]);
-
-    // Check for match end by timer
-    useEffect(() => {
-        if (!match.ends_at) return;
-        const check = () => {
-            if (new Date(match.ends_at!).getTime() <= Date.now()) {
-                setShowEndOverlay(true);
-            }
-        };
-        const id = setInterval(check, 1000);
-        return () => clearInterval(id);
-    }, [match.ends_at]);
 
     // Fetch positions
     const refreshPositions = useCallback(() => {
@@ -1016,11 +540,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     // Handle forfeit
     const handleForfeit = async () => {
         try {
-            await forfeitMatch(match.id);
-            // Fetch full match with JOINed player data (elo, names)
-            const { data: full } = await getMatch(match.id);
-            setMatch(full.match);
-            setShowEndOverlay(true);
+            await forfeit(match.id);
         } catch (err: any) {
             const msg = err?.response?.data?.message;
             addToast("error", msg ?? "Couldn't forfeit the match. Try again.");
@@ -1057,6 +577,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
                 chatOpen={chatOpen}
                 chatUnread={chatUnread}
                 onToggleChat={handleToggleChat}
+                settling={settling && match.id === storeMatch?.id}
             />
 
             {/* FULL WIDTH TRADING VIEW */}
@@ -1092,12 +613,12 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
             )}
 
             {/* MATCH END OVERLAY */}
-            {showEndOverlay && (
+            {endedMatch?.id === match.id && (
                 <MatchEndOverlay
-                    match={match}
+                    match={endedMatch}
                     userId={userId}
                     onBackToArena={() => {
-                        setShowEndOverlay(false);
+                        dismissEndedMatch();
                         onMatchEnd();
                     }}
                 />

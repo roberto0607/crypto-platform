@@ -151,8 +151,7 @@ export function openButtonLabel(args: {
 
 /** The CLOSE & REVERSE confirm text, with the position's P&L now. */
 export function reverseMessage(positionSide: "LONG" | "SHORT", openSide: "LONG" | "SHORT", pnl: number): string {
-    const pnlTxt = `${pnl >= 0 ? "+" : "-"}${fmtUsd(Math.abs(pnl))}`;
-    return `This closes your ${positionSide} (${pnlTxt}) and opens a ${openSide}. Confirm?`;
+    return `This closes your ${positionSide} (${fmtSigned(pnl)}) and opens a ${openSide}. Confirm?`;
 }
 
 interface UnifiedOrderPanelProps {
