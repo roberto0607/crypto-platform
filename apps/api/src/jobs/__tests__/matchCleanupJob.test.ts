@@ -11,7 +11,7 @@
  * fixture pattern of matchScopedPositions.test.ts (direct pool.query setup).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { pool } from "../../db/pool";
 import { logger } from "../../observability/logContext";
 import { applyFillToPositionTx } from "../../analytics/positionRepo";
@@ -416,5 +416,54 @@ describe("matchCleanupJob — match resolution on timer expiry", () => {
                 expect(userRows[0]!.loss_count).toBe(1);
             }
         });
+    });
+});
+
+describe("matchCleanupJob — a timed-out match completes promptly", () => {
+    let ctx: Ctx;
+    const status = async () => (await pool.query<{ status: string }>(
+        `SELECT status FROM matches WHERE id = $1`, [ctx.matchId],
+    )).rows[0]!.status;
+    const endIn = (seconds: number) => pool.query(
+        `UPDATE matches SET ends_at = now() + make_interval(secs => $2) WHERE id = $1`, [ctx.matchId, seconds],
+    );
+
+    beforeEach(async () => {
+        ctx = await setupCtx("52000.00000000");
+        await openChallengerPosition(ctx);
+        await insertFilledOrder(ctx);
+    });
+    afterEach(async () => {
+        await teardownCtx(ctx).catch(() => {});
+    });
+
+    it("runs often enough to complete a match within 30 s of ends_at", () => {
+        // Worst case: ends just after a run, waits one interval, plus the runner's 1 s tick.
+        expect(matchCleanupJob.intervalSeconds + 1).toBeLessThan(30);
+    });
+
+    it("the first run after ends_at completes it: no grace period", async () => {
+        await endIn(-1);
+        await runCleanupJob();
+        expect(await status()).toBe("COMPLETED");
+    });
+
+    it("leaves a match that hasn't reached ends_at", async () => {
+        await endIn(60);
+        await runCleanupJob();
+        expect(await status()).toBe("ACTIVE");
+    });
+
+    it("overlapping runs resolve it once", async () => {
+        await endIn(-1);
+        await Promise.all([runCleanupJob(), runCleanupJob()]);
+        expect(await status()).toBe("COMPLETED");
+        for (const userId of [ctx.challengerId, ctx.opponentId]) {
+            const { rows } = await pool.query<{ count: string }>(
+                `SELECT count(*) FROM elo_history WHERE match_id = $1 AND user_id = $2`,
+                [ctx.matchId, userId],
+            );
+            expect(parseInt(rows[0]!.count, 10)).toBe(1);
+        }
     });
 });
