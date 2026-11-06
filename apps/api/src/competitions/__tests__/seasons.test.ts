@@ -43,16 +43,16 @@ async function insertSeason(over: {
 async function played(
     winner: { id: string },
     loser: { id: string },
-    over: { at?: Date; delta?: number; status?: string; winnerPnl?: string; loserPnl?: string; draw?: boolean } = {},
+    over: { at?: Date; startedAt?: Date; hours?: number; delta?: number; status?: string; winnerPnl?: string; loserPnl?: string; draw?: boolean } = {},
 ): Promise<void> {
     const delta = over.delta ?? 10;
     const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO matches (challenger_id, opponent_id, duration_hours, starting_capital, status,
-                              winner_id, completed_at, challenger_pnl_pct, opponent_pnl_pct)
-         VALUES ($1, $2, 24, 100000, $3, $4, $5, $6, $7) RETURNING id`,
+                              winner_id, completed_at, challenger_pnl_pct, opponent_pnl_pct, started_at)
+         VALUES ($1, $2, $8, 100000, $3, $4, $5, $6, $7, $9) RETURNING id`,
         [
             winner.id, loser.id, over.status ?? "COMPLETED", over.draw ? null : winner.id,
-            over.at ?? ago(1), over.winnerPnl ?? "2", over.loserPnl ?? "-2",
+            over.at ?? ago(1), over.winnerPnl ?? "2", over.loserPnl ?? "-2", over.hours ?? 24, over.startedAt ?? null,
         ],
     );
     if (over.draw) return;
@@ -106,6 +106,29 @@ describe("schema", () => {
         await insertSeason({ status: "ENDED", end: ago(1) });
         seasonNumber = 0;
         await expect(insertSeason({ status: "ACTIVE" })).rejects.toMatchObject({ code: "23505" });
+    });
+});
+
+describe("which matches count", () => {
+    it("a 15-minute match scores like a 24-hour one", async () => {
+        const [a, b, c, d] = [await player("len_a"), await player("len_b"), await player("len_c"), await player("len_d")];
+        const season = await insertSeason();
+        await played(a, b, { delta: 15, hours: 0.25 });
+        await played(c, d, { delta: 15, hours: 24 });
+        await refreshSeasonLeaderboard(season.id);
+        const rows = await board(season.id);
+        const score = (u: { id: string }) => rows.find((r) => r.user_id === u.id)!.nuanced_score;
+        expect(score(a)).toBe(score(c));
+        expect(score(b)).toBe(score(d));
+    });
+
+    it("a match that started before the season and finished in it counts", async () => {
+        const [a, b] = [await player("span_a"), await player("span_b")];
+        const season = await insertSeason();
+        const { rows: [s] } = await pool.query<{ start_at: Date }>(`SELECT start_at FROM competitions WHERE id = $1`, [season.id]);
+        await played(a, b, { startedAt: new Date(s!.start_at.getTime() - 3_600_000), at: new Date(s!.start_at.getTime() + 60_000) });
+        await refreshSeasonLeaderboard(season.id);
+        expect((await board(season.id)).map((r) => r.user_id).sort()).toEqual([a.id, b.id].sort());
     });
 });
 

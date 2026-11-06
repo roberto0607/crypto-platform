@@ -30,8 +30,8 @@ const challengeBody = z.object({
     // guid, not uuid: uuid() refuses the bots' fixed ids before the route can
     // say they aren't challengeable.
     opponentId: z.guid(),
-    durationHours: z.number().int().refine((v) => [24, 168, 336, 504, 672].includes(v), {
-        message: "Duration must be 24, 168, 336, 504, or 672 hours",
+    durationHours: z.number().refine((v) => [0.25, 1, 4, 24, 168, 336, 504, 672].includes(v), {
+        message: "Duration must be 0.25, 1, 4, 24, 168, 336, 504, or 672 hours",
     }),
     allowedPairIds: z.array(z.string().uuid()).min(1).max(10),
 });
