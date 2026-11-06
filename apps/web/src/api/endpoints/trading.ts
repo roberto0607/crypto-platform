@@ -26,6 +26,8 @@ export function searchPairs(query: string) {
 
 export function placeOrder(
   params: {
+    /** "free" or a match id. Required: see lib/orderScope. */
+    scope: string;
     pairId: UUID;
     side: OrderSide;
     type: OrderType;

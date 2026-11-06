@@ -8,6 +8,8 @@ import type {
 } from "@/types/api";
 
 export function createTrigger(params: {
+  /** "free" or a match id. Required: see lib/orderScope. */
+  scope: string;
   pairId: UUID;
   kind: TriggerKind;
   side: OrderSide;
@@ -46,6 +48,8 @@ export function updateTrigger(
 }
 
 export function createOco(params: {
+  /** "free" or a match id. Required: see lib/orderScope. */
+  scope: string;
   pairId: UUID;
   legA: {
     kind: TriggerKind;

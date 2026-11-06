@@ -1,7 +1,7 @@
 import client from "../client";
 import type { Position, PnlSummary, UUID } from "@/types/api";
 
-export function getPositions(params?: { pairId?: UUID }) {
+export function getPositions(params?: { pairId?: UUID; /** "free" (default) or a match id. See lib/orderScope. */ scope?: string }) {
   return client.get<{ ok: true; positions: Position[] }>("/positions", { params });
 }
 

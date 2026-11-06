@@ -179,7 +179,7 @@ describe("the order: input = margin", () => {
     await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
     expect(placeOrder).toHaveBeenCalledTimes(1);
     const body = vi.mocked(placeOrder).mock.calls[0]![0];
-    expect(body).toEqual({ pairId: "p1", side: "BUY", type: "MARKET", qty: "0.00602409", leverage: 10 });
+    expect(body).toEqual({ scope: "free", pairId: "p1", side: "BUY", type: "MARKET", qty: "0.00602409", leverage: 10 });
   });
 
   it("a short at 10x: liq $90,845.77 (+9.5%)", async () => {
@@ -274,6 +274,7 @@ describe("CLOSE POSITION", () => {
     await mount(ISO_LONG);
     await userEvent.setup().click(screen.getByRole("button", { name: /CLOSE POSITION/ }));
     expect(vi.mocked(placeOrder).mock.calls[0]![0]).toEqual({
+      scope: "free",
       pairId: "p1", side: "SELL", type: "MARKET", qty: "0.00602409", reduceOnly: true,
     });
   });

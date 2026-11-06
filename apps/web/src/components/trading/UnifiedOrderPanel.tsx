@@ -39,6 +39,7 @@ import { formatDecimal } from "@/lib/decimal";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
 import { useBuyingPower, useOrderWallets } from "@/hooks/useBuyingPower";
+import { useOrderScope } from "@/lib/orderScope";
 import { useLeverageInfo } from "@/hooks/useLeverageInfo";
 import { useLiquidationMark } from "@/hooks/useLiquidationMark";
 import { useMarketQuotes } from "@/hooks/useMarketQuotes";
@@ -53,7 +54,7 @@ import {
     scopeEquity,
 } from "@/lib/leverageUi";
 import { addPreview, reverseSummary } from "@/lib/positionCard";
-import { orderErrorText, quoteReasonText, fmtCompactUsd, type OrderErrorContext } from "@/lib/orderErrors";
+import { CLIENT_OUTDATED, orderErrorText, quoteReasonText, fmtCompactUsd, type OrderErrorContext } from "@/lib/orderErrors";
 import { PRICE_HELP } from "@/lib/priceHelp";
 import { PositionCard, fmtQty, fmtSigned } from "@/components/trading/PositionCard";
 import { ConfirmBox } from "@/components/trading/ConfirmBox";
@@ -154,6 +155,21 @@ export function reverseMessage(positionSide: "LONG" | "SHORT", openSide: "LONG" 
     return `This closes your ${positionSide} (${fmtSigned(pnl)}) and opens a ${openSide}. Confirm?`;
 }
 
+function RefreshButton() {
+    return (
+        <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{
+                display: "block", marginTop: 6, padding: "4px 10px", fontSize: 10, letterSpacing: 2, fontFamily: "inherit",
+                color: "#fff", background: "transparent", border: "1px solid rgba(255,255,255,0.35)", cursor: "pointer",
+            }}
+        >
+            REFRESH
+        </button>
+    );
+}
+
 interface UnifiedOrderPanelProps {
     pair: TradingPair;
     position: Position | null;
@@ -184,6 +200,8 @@ export function UnifiedOrderPanel({
     const submitOrder = useTradingStore((s) => s.submitOrder);
     const snapshot = useTradingStore((s) => s.snapshot);
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
+    // The book on screen. Every write below names it (see lib/orderScope).
+    const scope = useOrderScope();
     const pairPrice = usePairPricesStore((s) => s.prices[pair.id]);
     // AVAILABLE = buying power (2× rule, lib/buyingPower.ts): cash minus what
     // open shorts hold, live with wallet.updated and prices. Null = a shorted
@@ -252,7 +270,7 @@ export function UnifiedOrderPanel({
         return () => { for (const e of events) window.removeEventListener(e, refetch); };
     }, [fetchTriggers]);
 
-    // Reset on pair change
+    // Reset on pair or scope change: nothing typed for one book carries to another.
     useEffect(() => {
         setBtnState("idle");
         setOrderError(null);
@@ -265,7 +283,7 @@ export function UnifiedOrderPanel({
         setTpSlMsg("");
         setConfirmReverse(false);
         setConfirmCardReverse(false);
-    }, [selectedPairId]);
+    }, [selectedPairId, scope]);
 
     // The CONFIRM that sent a rejected order is pinned; the error may be off-screen.
     useEffect(() => {
@@ -567,6 +585,8 @@ export function UnifiedOrderPanel({
         setOrderError(null);
         setTpSlMsg("");
         setBtnState("idle");
+        // An order's TP/SL go with it, even if the switch moves while it's in flight.
+        const orderScope = scope;
         try {
             // A preset, solved again now: the book may have moved since its
             // click, past what the solve's drift buffer covers.
@@ -583,11 +603,12 @@ export function UnifiedOrderPanel({
             // `reduceOnly` only for a MARKET reduce or close (the API refuses
             // it on a LIMIT): otherwise the body is the pre-leverage one.
             const opts = {
+                scope: orderScope,
                 ...(leveraged ? { leverage } : {}),
                 ...(solvedQty ? { qty: solvedQty } : {}),
                 ...(reduces && orderType === "MARKET" ? { reduceOnly: true } : {}),
             };
-            const result = await submitOrder(Object.keys(opts).length ? opts : undefined);
+            const result = await submitOrder(opts);
             const fills = result?.fills ?? [];
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
 
@@ -598,6 +619,7 @@ export function UnifiedOrderPanel({
                 try {
                     if (tpNum && slNum && tpValid && slValid) {
                         await createOco({
+                            scope: orderScope,
                             pairId: selectedPairId,
                             legA: { kind: "STOP_MARKET", side: closeSide, triggerPrice: slPrice, qty: qtyStr },
                             legB: { kind: "TAKE_PROFIT_MARKET", side: closeSide, triggerPrice: tpPrice, qty: qtyStr },
@@ -605,6 +627,7 @@ export function UnifiedOrderPanel({
                         setTpSlMsg("ORDER + TP/SL SET");
                     } else if (tpNum && tpValid) {
                         await createTrigger({
+                            scope: orderScope,
                             pairId: selectedPairId,
                             kind: "TAKE_PROFIT_MARKET",
                             side: closeSide,
@@ -614,6 +637,7 @@ export function UnifiedOrderPanel({
                         setTpSlMsg("ORDER + TP SET");
                     } else if (slNum && slValid) {
                         await createTrigger({
+                            scope: orderScope,
                             pairId: selectedPairId,
                             kind: "STOP_MARKET",
                             side: closeSide,
@@ -629,6 +653,7 @@ export function UnifiedOrderPanel({
                             ? (currentPrice - tslNum).toFixed(8)
                             : (currentPrice + tslNum).toFixed(8);
                         await createTrigger({
+                            scope: orderScope,
                             pairId: selectedPairId,
                             kind: "TRAILING_STOP_MARKET",
                             side: closeSide,
@@ -676,7 +701,7 @@ export function UnifiedOrderPanel({
             // stop fired, the match ended) or smaller, the server trims or
             // rejects it — a CLOSE can never open a new position.
             await placeOrder(
-                { pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8), reduceOnly: true },
+                { scope, pairId: selectedPairId, side: closeSide, type: "MARKET", qty: posAbsQty.toFixed(8), reduceOnly: true },
                 crypto.randomUUID(),
             );
             onOrderFilled();
@@ -719,7 +744,7 @@ export function UnifiedOrderPanel({
         if (!hasPosition || !selectedPairId) return "No open position";
         try {
             await createTrigger({
-                pairId: selectedPairId, kind, side: posQty > 0 ? "SELL" : "BUY",
+                scope, pairId: selectedPairId, kind, side: posQty > 0 ? "SELL" : "BUY",
                 triggerPrice: price, qty: posAbsQty.toFixed(8),
             });
             await fetchTriggers();
@@ -750,7 +775,7 @@ export function UnifiedOrderPanel({
         try {
             await placeOrder(
                 {
-                    pairId: selectedPairId, side: posQty > 0 ? "SELL" : "BUY", type: "MARKET",
+                    scope, pairId: selectedPairId, side: posQty > 0 ? "SELL" : "BUY", type: "MARKET",
                     qty: (posAbsQty * 2).toFixed(8),
                     ...(leveraged && isoView ? { leverage: isoView.leverage } : {}),
                 },
@@ -1168,6 +1193,7 @@ export function UnifiedOrderPanel({
                 <div ref={orderErrorRef} role="alert" data-testid="order-error"
                     style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginTop: 6, scrollMarginBottom: 120 }}>
                     {orderError}
+                    {orderError === CLIENT_OUTDATED && <RefreshButton />}
                 </div>
             ) : (quoteHint || balanceWarning) && (
                 <div data-testid={quoteHint ? "quote-hint" : "balance-warning"} style={{ fontSize: 10, lineHeight: 1.4, color: "#f59e0b", marginTop: 6 }}>
@@ -1198,7 +1224,12 @@ export function UnifiedOrderPanel({
                             onCancel={() => setConfirmCardReverse(false)}
                         />
                     )}
-                    {positionError && <div role="alert" style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginBottom: 6 }}>{positionError}</div>}
+                    {positionError && (
+                        <div role="alert" style={{ fontSize: 10, lineHeight: 1.4, color: "#ff3b3b", marginBottom: 6 }}>
+                            {positionError}
+                            {positionError === CLIENT_OUTDATED && <RefreshButton />}
+                        </div>
+                    )}
                     <button
                         type="button"
                         disabled={closing}

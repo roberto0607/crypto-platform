@@ -155,7 +155,15 @@ function mount(position: Position | null) {
   );
 }
 
-const lastOrderBody = () => http.posts.filter((p) => p.url === "/orders").at(-1)?.body;
+// Every order names its scope, checked here rather than in the golden, so the
+// golden still pins the rest of the body byte for byte.
+const lastOrderBody = () => {
+  const body = http.posts.filter((p) => p.url === "/orders").at(-1)?.body as { scope?: string } | undefined;
+  if (!body) return body;
+  const { scope, ...rest } = body;
+  expect(scope).toBe("free");
+  return rest;
+};
 
 async function scenarioA() {
   setup();

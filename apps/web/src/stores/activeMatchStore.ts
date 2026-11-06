@@ -10,9 +10,14 @@ export interface LivePnl {
     opponentPnlPct: string;
 }
 
+export type TradeMode = "MATCH" | "PRACTICE";
+
 interface ActiveMatchState {
     activeMatch: Match | null;
     isInCompetition: boolean;
+    /** During a live match: trade it, or practice on free-play (lib/orderScope). */
+    tradeMode: TradeMode;
+    setTradeMode: (mode: TradeMode) => void;
     /** The latest match.pnl.update for activeMatch. Read through useMatchPnl. */
     livePnl: LivePnl | null;
     /** ends_at has passed and the server hasn't given the result yet. */
@@ -85,6 +90,8 @@ function applyMatch(match: Match | null): void {
         isInCompetition: match?.status === "ACTIVE",
         // A stale number from a prior match can't leak.
         livePnl: s.livePnl?.matchId === match?.id ? s.livePnl : null,
+        // Every match starts on the match, whatever the last one was left on.
+        tradeMode: s.activeMatch?.id === match?.id ? s.tradeMode : "MATCH",
     }));
     watchEnd();
 }
@@ -98,6 +105,8 @@ function finishMatch(match: Match): void {
 export const useActiveMatchStore = create<ActiveMatchState>((set, get) => ({
     activeMatch: null,
     isInCompetition: false,
+    tradeMode: "MATCH",
+    setTradeMode: (tradeMode) => set({ tradeMode }),
     livePnl: null,
     settling: false,
     endedMatch: null,

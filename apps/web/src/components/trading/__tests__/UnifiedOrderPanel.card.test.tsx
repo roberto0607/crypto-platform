@@ -190,6 +190,7 @@ describe("TP / SL on the position", () => {
     await user.type(screen.getByLabelText("TAKE PROFIT price"), "78000");
     await user.click(screen.getByRole("button", { name: "SET" }));
     expect(createTrigger).toHaveBeenCalledWith({
+      scope: "free",
       pairId: "p1", kind: "TAKE_PROFIT_MARKET", side: "BUY", triggerPrice: "78000", qty: "0.06165230",
     });
   });
@@ -245,6 +246,7 @@ describe("reverse from the card", () => {
       "This closes your SHORT (+$67.82) and opens a LONG of 0.06165 BTC. Confirm?");
     await user.click(screen.getByRole("button", { name: "REVERSE TO LONG" }));
     expect(vi.mocked(placeOrder).mock.calls[0]![0]).toEqual({
+      scope: "free",
       pairId: "p1", side: "BUY", type: "MARKET", qty: "0.12330460", leverage: 10,
     });
   });
@@ -323,7 +325,7 @@ describe("CLOSE & REVERSE: never one click", () => {
     await user.click(screen.getByRole("button", { name: "CONFIRM" }));
     await settle();
     // $8,000 at 80,000: exactly what the button sent before the confirm step.
-    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toEqual({ pairId: "p1", side: "BUY", type: "MARKET", qty: "0.10000000" });
+    expect(vi.mocked(placeOrder).mock.calls[0]![0]).toEqual({ scope: "free", pairId: "p1", side: "BUY", type: "MARKET", qty: "0.10000000" });
   });
 });
 
