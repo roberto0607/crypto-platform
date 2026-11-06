@@ -109,32 +109,32 @@ export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: Match
     }
 
     return (
-        <div className={`lmv-chat-panel${isOpen ? " open" : ""}`} aria-hidden={!isOpen}>
-            <div className="lmv-chat-header">
-                <span className="lmv-chat-title">CHAT — {opponentName}</span>
-                <button type="button" className="lmv-chat-close" onClick={onClose} aria-label="Close chat">
+        <div className={`mt-chat-panel${isOpen ? " open" : ""}`} aria-hidden={!isOpen}>
+            <div className="mt-chat-header">
+                <span className="mt-chat-title">CHAT — {opponentName}</span>
+                <button type="button" className="mt-chat-close" onClick={onClose} aria-label="Close chat">
                     ×
                 </button>
             </div>
 
-            <div className="lmv-chat-log">
+            <div className="mt-chat-log">
                 {messages.length === 0 ? (
-                    <div className="lmv-chat-empty">No messages yet. Say hi.</div>
+                    <div className="mt-chat-empty">No messages yet. Say hi.</div>
                 ) : (
                     messages.map((m) => {
                         const mine = m.sender_id === myId;
                         return (
-                            <div key={m.id} className={`lmv-chat-msg${mine ? " mine" : ""}`}>
-                                <div className="lmv-chat-bubble">{m.body}</div>
-                                <div className="lmv-chat-meta">
-                                    <span className="lmv-chat-ts">{formatTime(m.created_at)}</span>
+                            <div key={m.id} className={`mt-chat-msg${mine ? " mine" : ""}`}>
+                                <div className="mt-chat-bubble">{m.body}</div>
+                                <div className="mt-chat-meta">
+                                    <span className="mt-chat-ts">{formatTime(m.created_at)}</span>
                                     {!mine && (
                                         reportedIds.has(m.id) ? (
-                                            <span className="lmv-chat-reported">Reported</span>
+                                            <span className="mt-chat-reported">Reported</span>
                                         ) : (
                                             <button
                                                 type="button"
-                                                className="lmv-chat-report"
+                                                className="mt-chat-report"
                                                 onClick={() => handleReport(m.id)}
                                             >
                                                 Report
@@ -148,9 +148,9 @@ export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: Match
                 )}
             </div>
 
-            {error && <div className="lmv-chat-error">{error}</div>}
+            {error && <div className="mt-chat-error">{error}</div>}
 
-            <div className="lmv-chat-input-row">
+            <div className="mt-chat-input-row">
                 <input
                     type="text"
                     value={draft}
@@ -164,11 +164,11 @@ export function MatchChatPanel({ matchId, opponentName, isOpen, onClose }: Match
                     placeholder="Message..."
                     maxLength={2000}
                     disabled={sending}
-                    className="lmv-chat-input"
+                    className="mt-chat-input"
                 />
                 <button
                     type="button"
-                    className="lmv-chat-send"
+                    className="mt-chat-send"
                     onClick={() => void handleSend()}
                     disabled={sending || !draft.trim()}
                 >

@@ -1,5 +1,5 @@
 /**
- * The open-position card (UnifiedOrderPanel, trade page and arena).
+ * The open-position card (UnifiedOrderPanel).
  * Top to bottom:
  *   header   SIDE + COIN, leverage badge, how long it's been open
  *   hero     unrealized P&L ($ and %: return on margin for ISOLATED)
@@ -56,7 +56,6 @@ const priceInput: React.CSSProperties = {
 };
 
 export interface PositionCardProps {
-  classPrefix: string;
   pair: TradingPair;
   baseSymbol: string;
   position: Position;
@@ -91,7 +90,7 @@ type TriggerKind = "TAKE_PROFIT_MARKET" | "STOP_MARKET";
 
 export function PositionCard(props: PositionCardProps) {
   const {
-    classPrefix: p, pair, baseSymbol, position, direction, qty, entry, mark, markStale, isoView,
+    pair, baseSymbol, position, direction, qty, entry, mark, markStale, isoView,
     health, mmrBps, pnl, pnlPct, pnlFlash, entering, tpTrigger, slTrigger, tslTrigger,
   } = props;
   const now = useNow();
@@ -197,7 +196,7 @@ export function PositionCard(props: PositionCardProps) {
   const reverseTo = isLong ? "SHORT" : "LONG";
 
   return (
-    <div className={`${p}-position-card-sticky`}>
+    <div className={`tr-position-card-sticky`}>
       <div
         className={entering ? "position-card-enter" : undefined}
         data-testid="position-card"
@@ -367,9 +366,9 @@ export function PositionCard(props: PositionCardProps) {
           {triggerErr && <div role="alert" style={{ fontSize: 9, color: RED }}>{triggerErr}</div>}
         </div>
 
-        {/* ${p}-pos-foot: at phone width the page's CSS stacks this row
+        {/* tr-pos-foot: at phone width the page's CSS stacks this row
             left-aligned, clear of the fixed Agent Activity button (bottom-right). */}
-        <div className={`${p}-pos-foot`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, fontSize: 9, letterSpacing: 1 }}>
+        <div className={`tr-pos-foot`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 4, fontSize: 9, letterSpacing: 1 }}>
           <span style={{ color: "rgba(255,255,255,0.4)" }} data-testid="pos-equity"
             title={isoView ? "Margin + unrealized P&L (a loss counts at most the margin)" : "Cost + unrealized P&L"}>
             equity {fmtUsd(equity)}

@@ -143,11 +143,11 @@ describe("MatchChatPanel", () => {
         const { container } = renderPanel();
         await waitFor(() => expect(screen.getByText("mine")).toBeInTheDocument());
 
-        const mineBubble = screen.getByText("mine").closest(".lmv-chat-msg");
-        const theirsBubble = screen.getByText("theirs").closest(".lmv-chat-msg");
+        const mineBubble = screen.getByText("mine").closest(".mt-chat-msg");
+        const theirsBubble = screen.getByText("theirs").closest(".mt-chat-msg");
         expect(mineBubble).toHaveClass("mine");
         expect(theirsBubble).not.toHaveClass("mine");
-        expect(container.querySelectorAll(".lmv-chat-msg")).toHaveLength(2);
+        expect(container.querySelectorAll(".mt-chat-msg")).toHaveLength(2);
     });
 
     it("re-fetches a fresh (empty) history when matchId changes", async () => {
@@ -172,14 +172,14 @@ describe("MatchChatPanel", () => {
     it("applies the open class only when isOpen is true (stays mounted when closed)", async () => {
         const { container, rerender } = renderPanel({ isOpen: false });
         await waitFor(() => expect(listMatchChatMessagesApi).toHaveBeenCalled());
-        expect(container.querySelector(".lmv-chat-panel")).not.toHaveClass("open");
+        expect(container.querySelector(".mt-chat-panel")).not.toHaveClass("open");
 
         rerender(
             <ToastProvider>
                 <MatchChatPanel matchId="match-1" opponentName="Opponent" isOpen={true} onClose={vi.fn()} />
             </ToastProvider>,
         );
-        expect(container.querySelector(".lmv-chat-panel")).toHaveClass("open");
+        expect(container.querySelector(".mt-chat-panel")).toHaveClass("open");
     });
 
     it("calls onClose when the close button is clicked", async () => {

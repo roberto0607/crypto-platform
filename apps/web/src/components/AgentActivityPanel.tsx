@@ -62,7 +62,7 @@ function AgentActivityEntryRow({ entry }: { entry: AgentActivityEntry }) {
 
 // Self-contained, no props -- mirrors NotificationBell.tsx's architecture
 // (reads panelOpen/togglePanel/closePanel straight from the store, mounts
-// unconditionally). Visually modeled on LiveMatchView's MatchChatPanel
+// unconditionally). Visually modeled on MatchChatPanel
 // (floating overlay, opacity/visibility-toggled, kept mounted) but as
 // Tailwind utilities rather than an embedded <style> block, since this
 // component has no parent to lean on for shared CSS the way MatchChatPanel

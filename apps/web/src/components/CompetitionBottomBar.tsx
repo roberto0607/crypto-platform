@@ -5,9 +5,9 @@ import { formatPnlPct } from "@/lib/matchPnl";
 import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
 
 /**
- * Persistent reminder strip shown on every route (except /trade and /arena,
- * where the match is already visible via TradingPage's own bar / MatchHeaderBar)
- * while the user has an ACTIVE 1v1 running. Read-only, click-through to /arena.
+ * Persistent reminder strip shown on every route (except /trade, which has
+ * the match header, and /arena, which has the MATCH LIVE card) while the user
+ * has an ACTIVE 1v1 running. Read-only, click-through to the match on /trade.
  */
 export function CompetitionBottomBar() {
     const navigate = useNavigate();
@@ -36,7 +36,7 @@ export function CompetitionBottomBar() {
     return (
         <button
             type="button"
-            onClick={() => navigate("/arena")}
+            onClick={() => navigate("/trade")}
             aria-label={`Active 1v1 match vs ${oppName} — click to return`}
             style={{
                 position: "fixed", bottom: 36, left: 0, right: 0, zIndex: 99,

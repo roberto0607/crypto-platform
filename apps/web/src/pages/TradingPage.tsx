@@ -10,8 +10,10 @@ import { getCandles } from "@/api/endpoints/candles";
 import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
 import { useScopedPositions } from "@/hooks/useScopedPositions";
-import { MatchScopeSwitch } from "@/components/trading/MatchScopeSwitch";
-import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
+import { useMatchChat } from "@/hooks/useMatchChat";
+import { PracticeBanner } from "@/components/trading/MatchScopeSwitch";
+import { MatchHeaderBar } from "@/components/arena/MatchHeaderBar";
+import { MatchChatPanel } from "@/components/arena/MatchChatPanel";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
@@ -22,7 +24,6 @@ import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
 import { chartLiqPrice } from "@/lib/leverageUi";
-import { formatPnlPct } from "@/lib/matchPnl";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 
 /* ─────────────────────────────────────────
@@ -161,6 +162,7 @@ const TRADE_CSS = `
   /* ── CHART AREA ── */
   .tr-chart-area {
     grid-area:chart;
+    position:relative; /* docks the match chat */
     display:flex;flex-direction:column;
     overflow:hidden;
     height:100%;
@@ -388,8 +390,7 @@ const TRADE_CSS = `
     padding-top:0;
   }
 
-  /* shared UnifiedOrderPanel root (classPrefix "tr") — padding matches the
-     arena's .lmv-order-section so both consumers of the component align */
+  /* UnifiedOrderPanel root */
   .tr-order-section {
     padding:10px 16px;
   }
@@ -439,14 +440,13 @@ const TRADE_CSS = `
      children → 2-col grid; MARKET → only AMOUNT → no rule → full-width as before.
      min-width:0 lets the grid items/inputs shrink into 160px columns (otherwise
      input intrinsic min-width blows the grid out and clips the right column +
-     the USD unit). Scoped to tr-; the arena's lmv-pa-row has no rule so its
-     fields stack vertically exactly as today — shared component, layout-safe.
+     the USD unit).
 
      tr-ts-row reuses the IDENTICAL rule for TAKE PROFIT|STOP LOSS (PR #50): pairing
      those two stacked fields into one 2-col row reclaims a field's worth of height so
      TRAILING STOP clears the pinned footer in the worst-case filled state. align-items:
      start keeps both inputs top-aligned when only one column's Est. profit/loss helper
-     shows. Arena has no lmv-ts-row rule, so lmv keeps its vertical stack. */
+     shows. */
   .tr-pa-row:has(> .tr-field + .tr-field),
   .tr-ts-row:has(> .tr-field + .tr-field) {
     display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start;
@@ -465,9 +465,7 @@ const TRADE_CSS = `
      inherited 16px/0.88 from the panel root, making them the LOUDEST text on
      the panel — the "flat wall". Style them here as the small, quiet,
      wide-tracked uppercase terminal labels the dead rule always intended, so
-     the eye is led to the input VALUES (0.9) instead. tr-scoped descendant
-     selector: hits only the trade panel's .tr-field labels; the arena's
-     .lmv-field labels are a separate prefix and stay untouched. AMOUNT's
+     the eye is led to the input VALUES (0.9) instead. AMOUNT's
      quick-amount buttons (25/50/75/MAX) live in the same <label> but carry
      their own inline styles, which override this rule → they keep their look.
      Opacity-only on the unit (0.35) and summary label (0.40) below. */
@@ -508,9 +506,7 @@ const TRADE_CSS = `
   /* Summary is glance-only reference — lay the 4 rows as a 2×2 grid (two
      values per row) so it occupies HALF the vertical height. This is the main
      lever that keeps the four risk fields + helpers + OPEN unoccluded by the
-     pinned footer in the worst-case filled state (PR #49). Scoped to tr-: the
-     arena's .lmv-summary is a separate rule, untouched → arena stays 4-row.
-     font-size 10 (from 11) buys the horizontal room two values/row needs so
+     pinned footer in the worst-case filled state (PR #49). font-size 10 (from 11) buys the horizontal room two values/row needs so
      6-figure position sizes don't collide with their label. */
   .tr-summary {
     margin-top:4px;border-top:1px solid var(--borderW);padding-top:4px;
@@ -527,7 +523,7 @@ const TRADE_CSS = `
   .tr-sum-val { color:rgba(255,255,255,0.9);white-space:nowrap; }
   /* Empty POSITION SIZE / FEE ("--" before an amount is entered) dims to match the
      position card's already-muted TP/SL dashes (0.2) so it reads as intentionally
-     empty, not missing data. Same value used for .lmv-sum-empty in the arena. */
+     empty, not missing data. */
   .tr-sum-empty { color:rgba(255,255,255,0.2); }
 
   /* place order button */
@@ -1175,11 +1171,11 @@ export default function TradingPage() {
     saveOrderPanelWidth(w);
   }, []);
 
-  const userId = useAuthStore((s) => s.user?.id);
   const { isInCompetition, activeMatch } = useCompetitionMode();
 
-  const matchPnlNow = useMatchPnl(activeMatch);
-  const settling = useActiveMatchStore((st) => st.settling);
+  const userId = useAuthStore((s) => s.user?.id);
+  const liveMatch = isInCompetition ? activeMatch : null;
+  const chat = useMatchChat(liveMatch?.id ?? null);
 
   // Default on mount: the user's last pick if it's still offered, else
   // BTC/USD (pickInitialPairId in lib/pairs).
@@ -1280,6 +1276,11 @@ export default function TradingPage() {
     <div className="tr-wrap">
       {/* background overlays removed — too distracting */}
 
+      {liveMatch && (
+        <MatchHeaderBar match={liveMatch} chatOpen={chat.open} chatUnread={chat.unread} onToggleChat={chat.toggle} />
+      )}
+      <PracticeBanner />
+
       {/* UNIFIED TOP TOOLBAR — profile, symbol search, timeframes, indicators, alerts */}
       <TradeToolbar
         timeframe={timeframe}
@@ -1287,8 +1288,6 @@ export default function TradingPage() {
         vpvrMode={vpvrMode}
         onVpvrModeChange={setVpvrMode}
       />
-
-      <MatchScopeSwitch />
 
       {/* BODY */}
       <div
@@ -1303,6 +1302,14 @@ export default function TradingPage() {
             fundingRateHourly={fundingRateHourly}
             liquidationPrice={chartLiqPrice(currentPosition)}
           />
+          {liveMatch && chat.everOpened && (
+            <MatchChatPanel
+              matchId={liveMatch.id}
+              opponentName={(liveMatch.challenger_id === userId ? liveMatch.opponent_name : liveMatch.challenger_name) ?? "OPPONENT"}
+              isOpen={chat.open}
+              onClose={chat.close}
+            />
+          )}
         </div>
 
         {/* Order panel resize handle (Gate 1) */}
@@ -1320,7 +1327,6 @@ export default function TradingPage() {
               position={currentPosition}
               positions={positions}
               onOrderFilled={refreshPositions}
-              classPrefix="tr"
             />
           </div>
 
@@ -1335,37 +1341,6 @@ export default function TradingPage() {
 
       {/* OPEN-ORDERS DOCK — full width, between the chart row and AppLayout's ticker */}
       <OrderDock />
-
-      {/* ── Competition bottom bar ── */}
-      {isInCompetition && activeMatch && (() => {
-        const isChallenger = activeMatch.challenger_id === userId;
-        const { challengerPnlPct, opponentPnlPct } = matchPnlNow;
-        const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
-        const oppPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
-        const oppName = isChallenger ? (activeMatch.opponent_name ?? "OPPONENT") : (activeMatch.challenger_name ?? "OPPONENT");
-        const endsAt = activeMatch.ends_at ? new Date(activeMatch.ends_at) : null;
-        const now = new Date();
-        const msLeft = endsAt ? Math.max(0, endsAt.getTime() - now.getTime()) : 0;
-        const hrsLeft = Math.floor(msLeft / 3_600_000);
-        const minsLeft = Math.floor((msLeft % 3_600_000) / 60_000);
-        const timeStr = hrsLeft >= 24 ? `${Math.floor(hrsLeft / 24)}D ${hrsLeft % 24}H` : `${hrsLeft}H ${minsLeft}M`;
-        const yPnl = parseFloat(yourPnl ?? "0");
-        const oPnl = parseFloat(oppPnl ?? "0");
-        return (
-          <div style={{
-            position: "absolute", bottom: 36, left: 0, right: 0, zIndex: 90,
-            height: 32, display: "flex", alignItems: "center", gap: 24,
-            padding: "0 16px", fontFamily: "'Space Mono', monospace",
-            fontSize: 10, letterSpacing: 2, color: "#FF6B00",
-            background: "rgba(255,107,0,0.06)", borderTop: "1px solid rgba(255,107,0,0.25)",
-          }}>
-            <span style={{ color: "#FF6B00", fontWeight: 700 }}>⚔ 1V1</span>
-            <span>YOU: <span style={{ color: yPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(yPnl)}</span></span>
-            <span>{oppName.toUpperCase()}: <span style={{ color: oPnl >= 0 ? "#00ff41" : "#ff3b3b" }}>{formatPnlPct(oPnl)}</span></span>
-            <span style={{ marginLeft: "auto", color: "rgba(255,107,0,0.6)" }}>{settling ? "SETTLING…" : `TIME: ${timeStr}`}</span>
-          </div>
-        );
-      })()}
 
       {/* Ticker is provided by AppLayout's <TickerBar /> */}
     </div>

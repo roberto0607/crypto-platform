@@ -1,4 +1,5 @@
 import "@/styles/match.css";
+import { MatchEndGate } from "@/components/arena/MatchEndGate";
 import { useState, useEffect, useRef } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
@@ -147,6 +148,7 @@ export default function AppLayout() {
       <div className="fixed inset-0 pointer-events-none z-[1]" style={{ background: "radial-gradient(ellipse 100% 100% at 50% 50%, transparent 40%, rgba(0,0,0,0.7) 100%)" }} />
       <div className="fixed inset-0 pointer-events-none z-[2] scanlines-bg" />
 
+      <MatchEndGate />
       <SystemBanner />
       <UsernamePromptBanner />
 

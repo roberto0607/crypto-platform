@@ -123,26 +123,26 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
     }
 
     return (
-        <div className="lmv-end-backdrop">
-            <div className="lmv-end-card">
-                <div className="lmv-end-result" style={{ color: resultColor }}>
+        <div className="mt-end-backdrop">
+            <div className="mt-end-card">
+                <div className="mt-end-result" style={{ color: resultColor }}>
                     {resultText}
                 </div>
 
-                <div className="lmv-end-pnl-row">
+                <div className="mt-end-pnl-row">
                     <div>
-                        <div className="lmv-end-label">YOUR P&L</div>
+                        <div className="mt-end-label">YOUR P&L</div>
                         <div
-                            className="lmv-end-val"
+                            className="mt-end-val"
                             style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
                             {formatPnlPct(yourPnl)}
                         </div>
                     </div>
                     <div>
-                        <div className="lmv-end-label">OPPONENT</div>
+                        <div className="mt-end-label">OPPONENT</div>
                         <div
-                            className="lmv-end-val"
+                            className="mt-end-val"
                             style={{ color: parseFloat(oppPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
                             {formatPnlPct(oppPnl)}
@@ -150,11 +150,11 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                     </div>
                 </div>
 
-                <div className="lmv-end-elo-section">
+                <div className="mt-end-elo-section">
                     <div>
-                        <div className="lmv-end-label">ELO CHANGE</div>
+                        <div className="mt-end-label">ELO CHANGE</div>
                         <div
-                            className="lmv-end-val"
+                            className="mt-end-val"
                             style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}
                         >
                             {won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
@@ -166,10 +166,10 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                         </div>
                     </div>
                     <div>
-                        <div className="lmv-end-label">NEW ELO</div>
+                        <div className="mt-end-label">NEW ELO</div>
                         <div
                             key={settleTick}
-                            className={`lmv-end-val${settleTick > 0 && !reducedMotion ? " elo-settle-pulse" : ""}`}
+                            className={`mt-end-val${settleTick > 0 && !reducedMotion ? " elo-settle-pulse" : ""}`}
                             style={{ color: "#fff", display: "inline-block" }}
                         >
                             {displayElo}
@@ -233,7 +233,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                     </div>
                 )}
 
-                <div className="lmv-end-actions">
+                <div className="mt-end-actions">
                     <button className="ar-btn ar-btn-outline" onClick={() => navigate(`/matches/${match.id}/breakdown`)}>
                         VIEW TRADE BREAKDOWN
                     </button>
