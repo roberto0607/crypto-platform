@@ -5,7 +5,7 @@ import { requireUser } from "../auth/requireUser";
 import { getPositions, getPnlSummary, getEquitySeries } from "../analytics/pnlService";
 import type { PositionRow } from "../analytics/positionRepo";
 import type { PositionWithPnl } from "../analytics/pnlService";
-import { getActiveMatchIdForUser } from "../competitions/matchService";
+import { parseMatchScope } from "../http/matchScopeQuery";
 import { getSnapshotForUser } from "../replay/replayEngine";
 import { pool } from "../db/pool";
 import { D, toFixed8 } from "../utils/decimal";
@@ -52,18 +52,21 @@ const analyticsRoutes: FastifyPluginAsync = async (app) => {
     // aggregate-scope reads, and widening its signature would force scope
     // decisions on those callers. The trade-off is ~20 lines of duplicated
     // unrealized-PnL attach logic, which is acceptable for route isolation.
-    app.get("/positions", { schema: { tags: ["Portfolio"], summary: "List positions", description: "Returns user's open positions with unrealized PnL.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, positions: { type: "array", items: { type: "object", additionalProperties: true } } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.get("/positions", { schema: { tags: ["Portfolio"], summary: "List positions", description: "Returns user's open positions with unrealized PnL.", security: [{ bearerAuth: [] }], querystring: { type: "object", properties: { pairId: { type: "string", format: "uuid" }, scope: { type: "string", description: "'free' (default) or a match id" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, positions: { type: "array", items: { type: "object", additionalProperties: true } } } }, 400: { type: "object", properties: { ok: { type: "boolean", const: false }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
         const actor = req.user!;
         const queryParsed = positionsQuery.safeParse(req.query);
         const pairId = queryParsed.success ? queryParsed.data.pairId : undefined;
 
-        const activeMatchId = await getActiveMatchIdForUser(actor.id);
+        // The scope the request names; none is free-play, never inferred.
+        const scope = parseMatchScope((req.query as { scope?: unknown }).scope);
+        if (scope === "invalid") return reply.code(400).send({ ok: false, error: "invalid_input" });
+        const activeMatchId = scope ?? null;
 
         const conditions: string[] = [`p.user_id = $1`, `p.base_qty <> 0`];
         const params: (string | null)[] = [actor.id];
 
         if (activeMatchId) {
-            // In-match — show only the current match's rows.
+            // The named match's rows.
             params.push(activeMatchId);
             conditions.push(`p.match_id = $${params.length}`);
         } else {

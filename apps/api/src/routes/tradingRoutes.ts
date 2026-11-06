@@ -9,11 +9,11 @@ import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { findPairById, listActivePairsForDisplay } from "../trading/pairRepo";
 import { findOrderById, listOrdersByUserId } from "../trading/orderRepo";
-import { parseMatchScope } from "../http/matchScopeQuery";
+import { parseMatchScope, SCOPE_REQUIRED_MESSAGE } from "../http/matchScopeQuery";
 import { listTradesByOrderId } from "../trading/tradeRepo";
 import { cancelOrderWithOutbox } from "../trading/phase6OrderService";
 import { enqueueOrder } from "../queue/queueManager";
-import { getActiveMatchIdForUser } from "../competitions/matchService";
+import { resolveTradeScope } from "../competitions/tradeScope";
 import { assertTradablePairId } from "../market/marketSymbols";
 import { clientIp } from "../http/clientIp";
 
@@ -30,6 +30,9 @@ const placeOrderBody = z.object({
   leverage: z.number().min(1).max(100).multipleOf(0.01).optional(),
   // Only shrink the position (the CLOSE button). MARKET only.
   reduceOnly: z.boolean().optional(),
+  // Which book the order trades: "free" or a match id. Required (the route
+  // says scope_required when it's missing); never inferred.
+  scope: z.union([z.literal("free"), z.string().uuid()]).optional(),
 }).refine(
   (data) => {
     if (data.type === "LIMIT" && !data.limitPrice) return false;
@@ -130,6 +133,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Order quantity (decimal string, up to 8 decimals)" },
           limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for LIMIT orders, forbidden for MARKET orders" },
           leverage: { type: "number", minimum: 1, maximum: 100, description: "Leverage (default 1x). Above 1 needs leverage enabled; capped per mode (free-play / match / competition)." },
+          scope: { type: "string", description: "Required. 'free', or the id of the user's ACTIVE match. An order is never rerouted: an ended match is match_ended." },
           reduceOnly: { type: "boolean", description: "MARKET only. Only shrinks the position: trimmed to it, rejected with reduce_only_no_position when there's nothing to reduce. Never opens or flips." },
         },
       },
@@ -171,7 +175,8 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable", "invalid_leverage", "leverage_exceeds_cap", "leverage_mismatch", "spot_orders_open", "isolated_orders_open", "reduce_only_no_position", "reduce_only_market_only"] },
+            message: { type: "string" },
+            error: { type: "string", enum: ["scope_required", "invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable", "invalid_leverage", "leverage_exceeds_cap", "leverage_mismatch", "spot_orders_open", "isolated_orders_open", "reduce_only_no_position", "reduce_only_market_only"] },
             details: { type: "object", additionalProperties: true },
           },
         },
@@ -179,7 +184,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["idempotency_conflict"] },
+            error: { type: "string", enum: ["idempotency_conflict", "match_ended"] },
           },
         },
         503: {
@@ -201,19 +206,18 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
 
     const actor = req.user!;
 
+    if (parsed.data.scope === undefined) {
+        return reply.code(400).send({ ok: false, error: "scope_required", message: SCOPE_REQUIRED_MESSAGE });
+    }
+
         try {
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
         const competitionId = req.headers["x-competition-id"] as string | undefined;
 
-        // Resolve the user's active match HERE, at the HTTP edge, so a concrete
-        // string-or-null crosses the queue boundary. Passing undefined and
-        // relying on phase6OrderService's getActiveMatchIdForUser fallback works
-        // in-process but is lost across the Redis queue: undefined was
-        // serialized to "" and read back as null (free-play), stamping
-        // match_id = NULL on every in-match order/position. Resolving here makes
-        // both queue backends behave identically. No client header needed — the
-        // server knows the user's match state.
-        const matchId = await getActiveMatchIdForUser(actor.id);
+        // Resolved HERE, at the HTTP edge, so a concrete string-or-null crosses
+        // the queue boundary (undefined was lost across Redis once: every
+        // in-match order was stamped match_id = NULL).
+        const matchId = await resolveTradeScope(actor.id, parsed.data.scope);
 
         // Only MARKET_SYMBOLS pairs are tradable — reject before enqueueing.
         await assertTradablePairId(parsed.data.pairId);

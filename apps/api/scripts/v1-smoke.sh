@@ -96,7 +96,7 @@ for i in 1 2 3; do
   curl -sf -X POST "$BASE/orders" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":\"0.1\",\"limitPrice\":\"$PRICE\"}" > /dev/null
+    -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":\"0.1\",\"limitPrice\":\"$PRICE\"}" > /dev/null
 done
 echo " OK"
 

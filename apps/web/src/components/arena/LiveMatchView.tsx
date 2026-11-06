@@ -418,6 +418,7 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
     const settling = useActiveMatchStore((s) => s.settling);
     const forfeit = useActiveMatchStore((s) => s.forfeit);
     const dismissEndedMatch = useActiveMatchStore((s) => s.dismissEndedMatch);
+    const setTradeMode = useActiveMatchStore((s) => s.setTradeMode);
     const match = endedMatch?.id === initialMatch.id
         ? endedMatch
         : storeMatch?.status === "ACTIVE" ? storeMatch : initialMatch;
@@ -514,12 +515,17 @@ export function LiveMatchView({ match: initialMatch, onMatchEnd }: LiveMatchView
 
     // Fetch positions
     const refreshPositions = useCallback(() => {
-        getPositions()
+        getPositions({ scope: match.id })
             .then((res) => {
                 if (isMounted.current) setPositions(res.data.positions);
             })
             .catch(() => {});
-    }, []);
+    }, [match.id]);
+
+    // This view is always the match. PRACTICE lives on /trade.
+    useEffect(() => {
+        setTradeMode("MATCH");
+    }, [setTradeMode]);
 
     useEffect(() => {
         refreshPositions();

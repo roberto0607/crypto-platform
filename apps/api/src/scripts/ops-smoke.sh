@@ -150,7 +150,7 @@ curl -sf -X POST "$BASE/admin/wallets/$TRADER_ID/$USD_ID/credit" \
 ORDER_RESP=$(curl -sf -X POST "$BASE/trading/orders" \
   -H "Authorization: Bearer $TRADER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}" 2>/dev/null || echo "FAIL")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}" 2>/dev/null || echo "FAIL")
 
 if echo "$ORDER_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('ok') or d.get('order')" 2>/dev/null; then
   pass "Order placed successfully"

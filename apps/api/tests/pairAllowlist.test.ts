@@ -141,7 +141,7 @@ describe("placement is rejected with pair_not_tradable", () => {
             method: "POST",
             url: "/orders",
             headers: { authorization: `Bearer ${traderToken}` },
-            payload: { pairId: blockedPairId, side: "BUY", type: "MARKET", qty: "0.01" },
+            payload: { scope: "free", pairId: blockedPairId, side: "BUY", type: "MARKET", qty: "0.01" },
         });
         expect(res.statusCode).toBe(400);
         expect(res.json().error).toBe("pair_not_tradable");
@@ -157,7 +157,7 @@ describe("placement is rejected with pair_not_tradable", () => {
             method: "POST",
             url: "/v1/triggers",
             headers: { authorization: `Bearer ${traderToken}` },
-            payload: { pairId: blockedPairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "90", qty: "1" },
+            payload: { scope: "free", pairId: blockedPairId, kind: "STOP_MARKET", side: "SELL", triggerPrice: "90", qty: "1" },
         });
         expect(res.statusCode).toBe(400);
         expect(res.json().code).toBe("pair_not_tradable");
@@ -168,7 +168,7 @@ describe("placement is rejected with pair_not_tradable", () => {
             method: "POST",
             url: "/v1/oco",
             headers: { authorization: `Bearer ${traderToken}` },
-            payload: {
+            payload: { scope: "free",
                 pairId: blockedPairId,
                 legA: { kind: "STOP_MARKET", side: "SELL", triggerPrice: "90", qty: "1" },
                 legB: { kind: "TAKE_PROFIT_MARKET", side: "SELL", triggerPrice: "110", qty: "1" },

@@ -144,7 +144,7 @@ describe("LIMIT order — reserve on creation, release on cancel", () => {
       method: "POST",
       url: "/orders",
       headers: { authorization: `Bearer ${traderToken}` },
-      payload: { pairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "45000" },
+      payload: { scope: "free", pairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "45000" },
     });
 
     expect(orderRes.statusCode).toBe(201);
@@ -179,7 +179,7 @@ describe("LIMIT order — reserve on creation, release on cancel", () => {
       method: "POST",
       url: "/orders",
       headers: { authorization: `Bearer ${traderToken}` },
-      payload: { pairId, side: "SELL", type: "LIMIT", qty: "2", limitPrice: "55000" },
+      payload: { scope: "free", pairId, side: "SELL", type: "LIMIT", qty: "2", limitPrice: "55000" },
     });
 
     expect(orderRes.statusCode).toBe(201);
@@ -213,7 +213,7 @@ describe("MARKET order — does NOT reserve", () => {
       method: "POST",
       url: "/orders",
       headers: { authorization: `Bearer ${traderToken}` },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
 
     expect(orderRes.statusCode).toBe(201);
@@ -315,7 +315,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderA = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${sellerToken}` },
-      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+      payload: { scope: "free", pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
     });
     expect(orderA.statusCode).toBe(201);
     const orderAId = orderA.json().order.id;
@@ -323,7 +323,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderB = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${sellerToken}` },
-      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "47000" },
+      payload: { scope: "free", pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "47000" },
     });
     expect(orderB.statusCode).toBe(201);
     const orderBId = orderB.json().order.id;
@@ -331,7 +331,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderC = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${sellerToken}` },
-      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+      payload: { scope: "free", pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
     });
     expect(orderC.statusCode).toBe(201);
     const orderCId = orderC.json().order.id;
@@ -341,7 +341,7 @@ describe("Price-time priority — deterministic matching", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${buyerToken}` },
-      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "2.5", limitPrice: "48000" },
+      payload: { scope: "free", pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "2.5", limitPrice: "48000" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order: buyOrder, fills } = buyRes.json();
@@ -398,7 +398,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderD = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${buyerToken}` },
-      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
+      payload: { scope: "free", pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
     });
     expect(orderD.statusCode).toBe(201);
     const orderDId = orderD.json().order.id;
@@ -406,7 +406,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderE = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${buyerToken}` },
-      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46500" },
+      payload: { scope: "free", pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46500" },
     });
     expect(orderE.statusCode).toBe(201);
     const orderEId = orderE.json().order.id;
@@ -414,7 +414,7 @@ describe("Price-time priority — deterministic matching", () => {
     const orderF = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${buyerToken}` },
-      payload: { pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
+      payload: { scope: "free", pairId: ptPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "46000" },
     });
     expect(orderF.statusCode).toBe(201);
     const orderFId = orderF.json().order.id;
@@ -424,7 +424,7 @@ describe("Price-time priority — deterministic matching", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${sellerToken}` },
-      payload: { pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "2.5", limitPrice: "46000" },
+      payload: { scope: "free", pairId: ptPairId, side: "SELL", type: "LIMIT", qty: "2.5", limitPrice: "46000" },
     });
     expect(sellRes.statusCode).toBe(201);
     const { order: sellOrder, fills } = sellRes.json();
@@ -515,7 +515,7 @@ describe("Self-trade prevention", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${stpToken}` },
-      payload: { pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "49000" },
+      payload: { scope: "free", pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "49000" },
     });
     expect(sellRes.statusCode).toBe(201);
     const sellOrder = sellRes.json().order;
@@ -525,7 +525,7 @@ describe("Self-trade prevention", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${stpToken}` },
-      payload: { pairId: stpPairId, side: "BUY", type: "MARKET", qty: "1" },
+      payload: { scope: "free", pairId: stpPairId, side: "BUY", type: "MARKET", qty: "1" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order: buyOrder, fills } = buyRes.json();
@@ -551,7 +551,7 @@ describe("Self-trade prevention", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${stpToken}` },
-      payload: { pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
+      payload: { scope: "free", pairId: stpPairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "48000" },
     });
     expect(sellRes.statusCode).toBe(201);
     const sellOrder = sellRes.json().order;
@@ -560,7 +560,7 @@ describe("Self-trade prevention", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${stpToken}` },
-      payload: { pairId: stpPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "48000" },
+      payload: { scope: "free", pairId: stpPairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "48000" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order: buyOrder, fills } = buyRes.json();
@@ -663,7 +663,7 @@ describe("Financial integrity — precision & invariants", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${makerToken}` },
-      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
+      payload: { scope: "free", pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
     });
     expect(sellRes.statusCode).toBe(201);
 
@@ -671,7 +671,7 @@ describe("Financial integrity — precision & invariants", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${takerToken}` },
-      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
+      payload: { scope: "free", pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.00000001", limitPrice: "99999.99999999" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order, fills } = buyRes.json();
@@ -702,7 +702,7 @@ describe("Financial integrity — precision & invariants", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${makerToken}` },
-      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "10", limitPrice: "50000" },
+      payload: { scope: "free", pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "10", limitPrice: "50000" },
     });
     expect(sellRes.statusCode).toBe(201);
 
@@ -710,7 +710,7 @@ describe("Financial integrity — precision & invariants", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${takerToken}` },
-      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "10", limitPrice: "50000" },
+      payload: { scope: "free", pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "10", limitPrice: "50000" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order, fills } = buyRes.json();
@@ -760,7 +760,7 @@ describe("Financial integrity — precision & invariants", () => {
     const sellRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${makerToken}` },
-      payload: { pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.12345678", limitPrice: "67890.12345678" },
+      payload: { scope: "free", pairId: fiPairId, side: "SELL", type: "LIMIT", qty: "0.12345678", limitPrice: "67890.12345678" },
     });
     expect(sellRes.statusCode).toBe(201);
     const sellOrderId = sellRes.json().order.id;
@@ -769,7 +769,7 @@ describe("Financial integrity — precision & invariants", () => {
     const buyRes = await app.inject({
       method: "POST", url: "/orders",
       headers: { authorization: `Bearer ${takerToken}` },
-      payload: { pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.05000000", limitPrice: "67890.12345678" },
+      payload: { scope: "free", pairId: fiPairId, side: "BUY", type: "LIMIT", qty: "0.05000000", limitPrice: "67890.12345678" },
     });
     expect(buyRes.statusCode).toBe(201);
     const { order: buyOrder, fills } = buyRes.json();

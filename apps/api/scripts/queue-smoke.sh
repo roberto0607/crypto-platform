@@ -60,7 +60,7 @@ for i in $(seq 1 50); do
     -H "Authorization: Bearer $USER_TOKEN" \
     -H "Content-Type: application/json" \
     -H "Idempotency-Key: smoke-queue-$i-$$" \
-    -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}" \
+    -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}" \
     > "$TMPDIR_SMOKE/status_$i.txt" 2>/dev/null &
   PIDS+=($!)
 done

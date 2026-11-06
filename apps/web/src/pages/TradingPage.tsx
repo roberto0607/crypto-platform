@@ -6,17 +6,18 @@ import { useChartLayoutStore } from "@/stores/chartLayoutStore";
 import { useDailyOpenStore } from "@/stores/dailyOpenStore";
 import { CandlestickChart } from "@/components/trading/CandlestickChart";
 import { TradeToolbar } from "@/components/trading/TradeToolbar";
-import { getPositions } from "@/api/endpoints/analytics";
 import { getCandles } from "@/api/endpoints/candles";
 import { getMsUntilNextUTCMidnight } from "@/lib/priceChange";
 import { useCompetitionMode } from "@/hooks/useCompetitionMode";
+import { useScopedPositions } from "@/hooks/useScopedPositions";
+import { MatchScopeSwitch } from "@/components/trading/MatchScopeSwitch";
 import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
 import client from "@/api/client";
 import { UnifiedOrderPanel } from "@/components/trading/UnifiedOrderPanel";
 import OrderDock from "@/components/trading/OrderDock";
 import { PRICE_HELP } from "@/lib/priceHelp";
 import { HorizontalDragHandle, loadOrderPanelWidth, saveOrderPanelWidth } from "@/components/trading/HorizontalDragHandle";
-import type { Position, OrderBook as OrderBookType, TradingPair } from "@/types/api";
+import type { OrderBook as OrderBookType, TradingPair } from "@/types/api";
 import Spinner from "@/components/Spinner";
 import { setVisibleInterval } from "@/lib/visibleInterval";
 import { pickInitialPairId } from "@/lib/pairs";
@@ -1145,7 +1146,7 @@ export default function TradingPage() {
   const selectedPairId = useTradingStore((s) => s.selectedPairId);
   const selectPair = useTradingStore((s) => s.selectPair);
   const liveOrderBook = useTradingStore((s) => s.orderBook);
-  const [positions, setPositions] = useState<Position[]>([]);
+  const { positions, refreshPositions } = useScopedPositions();
   // Deribit's hourly-applied funding rate (current_funding). null = not yet
   // fetched (renders em-dash). A fetched value of 0 is a genuine, meaningful
   // funding rate and renders as "0.0000%".
@@ -1198,30 +1199,6 @@ export default function TradingPage() {
       s.textContent = TRADE_CSS;
       document.head.appendChild(s);
     }
-  }, []);
-
-  // Fetch positions
-  const refreshPositions = () => {
-    getPositions()
-      .then((res) => setPositions(res.data.positions))
-      .catch(() => {});
-  };
-
-  // Positions aren't pair-scoped, so load once on mount (refetching per pair
-  // change fetched twice on every load: once for null, once for the pair).
-  useEffect(() => {
-    refreshPositions();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Refresh positions on SSE trade events and liquidations
-  useEffect(() => {
-    const handler = () => refreshPositions();
-    window.addEventListener("sse:trade.created", handler);
-    window.addEventListener("sse:position.liquidated", handler);
-    return () => {
-      window.removeEventListener("sse:trade.created", handler);
-      window.removeEventListener("sse:position.liquidated", handler);
-    };
   }, []);
 
   // Fetch funding rate from basis endpoint. We display fundingRateHourly
@@ -1310,6 +1287,8 @@ export default function TradingPage() {
         vpvrMode={vpvrMode}
         onVpvrModeChange={setVpvrMode}
       />
+
+      <MatchScopeSwitch />
 
       {/* BODY */}
       <div

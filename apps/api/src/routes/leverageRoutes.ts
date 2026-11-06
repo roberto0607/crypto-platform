@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { requireUser } from "../auth/requireUser";
 import { handleError } from "../http/handleError";
-import { getActiveMatchIdForUser } from "../competitions/matchService";
+import { resolveTradeScope } from "../competitions/tradeScope";
 import { assertTradablePairId } from "../market/marketSymbols";
 import { getLeverageInfo } from "../trading/leverageInfo";
 
@@ -25,7 +25,10 @@ const leverageRoutes: FastifyPluginAsync = async (app) => {
             querystring: {
                 type: "object",
                 required: ["pairId"],
-                properties: { pairId: { type: "string", format: "uuid" } },
+                properties: {
+                    pairId: { type: "string", format: "uuid" },
+                    scope: { type: "string", description: "'free' (default) or a match id: the scope the next order would name" },
+                },
             },
             response: {
                 200: {
@@ -68,7 +71,9 @@ const leverageRoutes: FastifyPluginAsync = async (app) => {
             const { pairId } = parsed.data;
             await assertTradablePairId(pairId);
             const userId = req.user!.id;
-            const matchId = await getActiveMatchIdForUser(userId);
+            // The scope the next order would name; none is free-play.
+            const raw = (req.query as { scope?: unknown }).scope;
+            const matchId = raw === undefined ? null : await resolveTradeScope(userId, raw);
             const competitionId = matchId ? null : ((req.headers["x-competition-id"] as string | undefined) ?? null);
             const scope = { competitionId, matchId };
             const info = await getLeverageInfo(userId, pairId, scope);

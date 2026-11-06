@@ -173,14 +173,14 @@ describe("Concurrency — 10 concurrent LIMIT orders", () => {
         app.inject({
           method: "POST", url: "/orders",
           headers: { authorization: `Bearer ${s.token}` },
-          payload: { pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
+          payload: { scope: "free", pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
         }),
       ),
       ...buyers.map((b) =>
         app.inject({
           method: "POST", url: "/orders",
           headers: { authorization: `Bearer ${b.token}` },
-          payload: { pairId: pair.pairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "50000" },
+          payload: { scope: "free", pairId: pair.pairId, side: "BUY", type: "LIMIT", qty: "1", limitPrice: "50000" },
         }),
       ),
     ]);
@@ -226,7 +226,7 @@ describe("Concurrency — 10 concurrent MARKET orders", () => {
       const res = await app.inject({
         method: "POST", url: "/orders",
         headers: { authorization: `Bearer ${maker.token}` },
-        payload: { pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
+        payload: { scope: "free", pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
       });
       expect(res.statusCode).toBe(201);
     }
@@ -241,7 +241,7 @@ describe("Concurrency — 10 concurrent MARKET orders", () => {
         app.inject({
           method: "POST", url: "/orders",
           headers: { authorization: `Bearer ${t.token}` },
-          payload: { pairId: pair.pairId, side: "BUY", type: "MARKET", qty: "1" },
+          payload: { scope: "free", pairId: pair.pairId, side: "BUY", type: "MARKET", qty: "1" },
         }),
       ),
     );
@@ -307,7 +307,7 @@ describe("Concurrency — cancel while matching", () => {
       const res = await app.inject({
         method: "POST", url: "/orders",
         headers: { authorization: `Bearer ${seller.token}` },
-        payload: { pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
+        payload: { scope: "free", pairId: pair.pairId, side: "SELL", type: "LIMIT", qty: "1", limitPrice: "50000" },
       });
       expect(res.statusCode).toBe(201);
       sellOrderIds.push(res.json().order.id);
@@ -318,7 +318,7 @@ describe("Concurrency — cancel while matching", () => {
       app.inject({
         method: "POST", url: "/orders",
         headers: { authorization: `Bearer ${buyer.token}` },
-        payload: { pairId: pair.pairId, side: "BUY", type: "LIMIT", qty: "3", limitPrice: "50000" },
+        payload: { scope: "free", pairId: pair.pairId, side: "BUY", type: "LIMIT", qty: "3", limitPrice: "50000" },
       }),
       ...sellOrderIds.map((id) =>
         app.inject({

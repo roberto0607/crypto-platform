@@ -104,7 +104,7 @@ check("Has BTC_USDT pair", any(p["symbol"] == f"BTC_USDT_{TS}" for p in pairs["p
 
 # ── Test 2: MARKET BUY system fill (no book) ──
 print("\n--- Test 2: MARKET BUY system fill ---")
-order1 = api("POST", "/orders", tokenA, {"pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "1"})
+order1 = api("POST", "/orders", tokenA, {"scope": "free", "pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "1"})
 check("201 order", order1.get("ok"), json.dumps(order1))
 check("Status FILLED", order1["order"]["status"] == "FILLED")
 check("1 fill", len(order1["fills"]) == 1)
@@ -119,7 +119,7 @@ check("A.BTC = 1", float(aBtc["balance"]) == 1.0, f"balance={aBtc['balance']}")
 
 # ── Test 3: LIMIT SELL rests on book ──
 print("\n--- Test 3: LIMIT SELL rests on book ---")
-order2 = api("POST", "/orders", tokenB, {"pairId": pairId, "side": "SELL", "type": "LIMIT", "qty": "2", "limitPrice": "51000"})
+order2 = api("POST", "/orders", tokenB, {"scope": "free", "pairId": pairId, "side": "SELL", "type": "LIMIT", "qty": "2", "limitPrice": "51000"})
 check("201 order", order2.get("ok"), json.dumps(order2))
 check("Status OPEN", order2["order"]["status"] == "OPEN")
 check("0 fills", len(order2["fills"]) == 0)
@@ -132,7 +132,7 @@ check("Asks has 51000", len(book["book"]["asks"]) >= 1 and book["book"]["asks"][
 
 # ── Test 4: MARKET BUY matches resting LIMIT SELL ──
 print("\n--- Test 4: MARKET BUY matches LIMIT SELL ---")
-order3 = api("POST", "/orders", tokenA, {"pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "1"})
+order3 = api("POST", "/orders", tokenA, {"scope": "free", "pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "1"})
 check("201 order", order3.get("ok"), json.dumps(order3))
 check("Status FILLED", order3["order"]["status"] == "FILLED")
 check("1 fill", len(order3["fills"]) == 1)
@@ -153,7 +153,7 @@ check("Released 1 BTC", cancel["releasedAmount"] == "1.00000000", f"released={ca
 
 # ── Test 6: Insufficient balance ──
 print("\n--- Test 6: Insufficient balance ---")
-order4 = api("POST", "/orders", tokenB, {"pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "9999"})
+order4 = api("POST", "/orders", tokenB, {"scope": "free", "pairId": pairId, "side": "BUY", "type": "MARKET", "qty": "9999"})
 check("400 insufficient", order4.get("error") == "insufficient_balance", json.dumps(order4))
 
 # ── Test 7: Cancel filled order ──
@@ -170,12 +170,12 @@ check("403 forbidden", otherOrder.get("error") == "forbidden", json.dumps(otherO
 # ── Test 9: LIMIT crossing (immediate match) ──
 print("\n--- Test 9: LIMIT crossing ---")
 # A places LIMIT BUY at 55000
-order5 = api("POST", "/orders", tokenA, {"pairId": pairId, "side": "BUY", "type": "LIMIT", "qty": "1", "limitPrice": "55000"})
+order5 = api("POST", "/orders", tokenA, {"scope": "free", "pairId": pairId, "side": "BUY", "type": "LIMIT", "qty": "1", "limitPrice": "55000"})
 check("A LIMIT BUY OPEN", order5.get("ok") and order5["order"]["status"] == "OPEN", json.dumps(order5))
 aBuyOrderId = order5["order"]["id"]
 
 # B places LIMIT SELL at 54000 → should cross A's resting BUY at 55000
-order6 = api("POST", "/orders", tokenB, {"pairId": pairId, "side": "SELL", "type": "LIMIT", "qty": "1", "limitPrice": "54000"})
+order6 = api("POST", "/orders", tokenB, {"scope": "free", "pairId": pairId, "side": "SELL", "type": "LIMIT", "qty": "1", "limitPrice": "54000"})
 check("B LIMIT SELL FILLED", order6.get("ok") and order6["order"]["status"] == "FILLED", json.dumps(order6))
 check("1 fill at 55000", len(order6["fills"]) == 1 and order6["fills"][0]["price"] == "55000.00000000",
       f"fills={json.dumps(order6.get('fills'))}")

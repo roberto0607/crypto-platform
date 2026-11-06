@@ -78,6 +78,7 @@ const ERROR_STATUS: Record<string, number> = {
   email_taken: 409,
   username_taken: 409,
   match_ended: 409,
+  scope_required: 400,
   match_wallets_missing: 409,
   wallet_already_exists: 409,
   asset_already_exists: 409,

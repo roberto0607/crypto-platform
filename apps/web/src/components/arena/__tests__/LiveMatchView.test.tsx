@@ -26,6 +26,17 @@ vi.mock("../MatchChatPanel", () => ({
     ),
 }));
 
+// A match change reloads open orders and triggers: keep those off the network,
+// or their failure logs can land after the test environment has closed.
+vi.mock("@/api/endpoints/trading", async (orig) => ({
+    ...(await orig<typeof import("@/api/endpoints/trading")>()),
+    listOrders: async () => ({ data: { ok: true, orders: [], nextCursor: null } }),
+}));
+vi.mock("@/api/endpoints/triggers", async (orig) => ({
+    ...(await orig<typeof import("@/api/endpoints/triggers")>()),
+    listTriggers: async () => ({ data: { data: [], nextCursor: null } }),
+}));
+
 const getPositionsApi = vi.fn();
 vi.mock("@/api/endpoints/analytics", () => ({
     getPositions: (params?: unknown) => getPositionsApi(params),

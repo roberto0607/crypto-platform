@@ -303,7 +303,7 @@ describe("POST /orders reduceOnly", () => {
     let app: FastifyInstance;
     const auth = (sub: string) => ({ authorization: `Bearer ${app.jwt.sign({ sub, role: "USER" }, { expiresIn: 3600 })}` });
     const post = (uid: string, body: Record<string, unknown>) =>
-        app.inject({ method: "POST", url: "/orders", headers: auth(uid), payload: { pairId, ...body } });
+        app.inject({ method: "POST", url: "/orders", headers: auth(uid), payload: { pairId, scope: "free", ...body } });
 
     beforeAll(async () => {
         app = await buildApp({

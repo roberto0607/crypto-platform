@@ -131,7 +131,7 @@ echo "=== 7. Place order within daily limit (notional=50) ==="
 BUY1=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
 BUY1_STATUS=$(echo "$BUY1" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['status'])")
 check "Order within limit accepted" "$([[ "$BUY1_STATUS" == "FILLED" ]] && echo true || echo false)" "status=$BUY1_STATUS"
 
@@ -139,7 +139,7 @@ echo "=== 8. Place order exceeding daily notional (projected ~250 > 200) ==="
 OVER_HTTP=$(curl -s -o /tmp/gov-over-resp.json -w "%{http_code}" -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.004\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.004\"}")
 OVER_CODE=$(python3 -c "import sys,json; d=json.load(open('/tmp/gov-over-resp.json')); print(d.get('details',{}).get('code', d.get('code','')))" 2>/dev/null || echo "")
 check "Notional over-limit rejected 403" "$([[ "$OVER_HTTP" == "403" ]] && echo true || echo false)" "http=$OVER_HTTP"
 check "Error code is DAILY_NOTIONAL_LIMIT_EXCEEDED" "$([[ "$OVER_CODE" == "DAILY_NOTIONAL_LIMIT_EXCEEDED" ]] && echo true || echo false)" "code=$OVER_CODE"
@@ -156,7 +156,7 @@ echo "=== 10. Suspended account order blocked ==="
 SUSP_HTTP=$(curl -s -o /tmp/gov-susp-resp.json -w "%{http_code}" -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.0001\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.0001\"}")
 SUSP_CODE=$(python3 -c "import sys,json; d=json.load(open('/tmp/gov-susp-resp.json')); print(d.get('details',{}).get('code', d.get('code','')))" 2>/dev/null || echo "")
 check "Suspended account rejected 403" "$([[ "$SUSP_HTTP" == "403" ]] && echo true || echo false)" "http=$SUSP_HTTP"
 check "Error code is ACCOUNT_SUSPENDED" "$([[ "$SUSP_CODE" == "ACCOUNT_SUSPENDED" ]] && echo true || echo false)" "code=$SUSP_CODE"
@@ -173,7 +173,7 @@ echo "=== 12. Re-activated account can trade (small order within remaining limit
 BUY3=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
 BUY3_STATUS=$(echo "$BUY3" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['status'])")
 check "Re-activated order accepted" "$([[ "$BUY3_STATUS" == "FILLED" ]] && echo true || echo false)" "status=$BUY3_STATUS"
 

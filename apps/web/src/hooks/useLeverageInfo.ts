@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getLeverageInfo } from "@/api/endpoints/leverage";
-import { useActiveMatchStore } from "@/stores/activeMatchStore";
+import { useOrderScope } from "@/lib/orderScope";
 import { useTradingStore } from "@/stores/tradingStore";
 import type { LeverageInfo } from "@/types/api";
 
@@ -10,7 +10,7 @@ const REFETCH_ON = ["sse:trade.created", "sse:position.liquidated", "sse:reconne
 /**
  * GET /leverage for the pair: the margin model and cap the server will give
  * the user's next order there (the web never decides a cap). Refetched on
- * pair, match or competition change and after fills / liquidations (an open
+ * pair, scope or competition change and after fills / liquidations (an open
  * position locks the leverage; closing it frees it).
  *
  * null while loading or if the request fails: the panel then behaves as it
@@ -18,9 +18,7 @@ const REFETCH_ON = ["sse:trade.created", "sse:position.liquidated", "sse:reconne
  */
 export function useLeverageInfo(pairId: string | null): LeverageInfo | null {
   const [info, setInfo] = useState<LeverageInfo | null>(null);
-  const matchId = useActiveMatchStore((s) =>
-    s.isInCompetition && s.activeMatch?.status === "ACTIVE" ? s.activeMatch.id : null,
-  );
+  const scope = useOrderScope();
   const competitionId = useTradingStore((s) => s.activeCompetitionId);
   const [nonce, setNonce] = useState(0);
 
@@ -36,11 +34,11 @@ export function useLeverageInfo(pairId: string | null): LeverageInfo | null {
       return;
     }
     let live = true;
-    getLeverageInfo(pairId)
+    getLeverageInfo(pairId, scope)
       .then((res) => { if (live) setInfo(res.data.pairId === pairId ? res.data : null); })
       .catch(() => { if (live) setInfo(null); });
     return () => { live = false; };
-  }, [pairId, matchId, competitionId, nonce]);
+  }, [pairId, scope, competitionId, nonce]);
 
   // A response for another pair never applies.
   return info && info.pairId === pairId ? info : null;

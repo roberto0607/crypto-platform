@@ -104,7 +104,7 @@ echo "=== 7. Place LIMIT BUY order ==="
 ORDER_RESP=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":\"0.01\",\"limitPrice\":\"49000\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"LIMIT\",\"qty\":\"0.01\",\"limitPrice\":\"49000\"}")
 echo "$ORDER_RESP" | python3 -m json.tool
 echo " OK"
 

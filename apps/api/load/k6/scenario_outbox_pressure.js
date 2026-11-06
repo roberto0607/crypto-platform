@@ -43,6 +43,7 @@ export function placeOrders(data) {
   const pairId = data.pairId;
 
   const res = authedPost(token, '/orders', {
+    scope: 'free',
     pairId,
     side: 'BUY',
     type: 'MARKET',

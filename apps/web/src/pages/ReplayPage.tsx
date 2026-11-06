@@ -806,6 +806,7 @@ export default function ReplayPage() {
     const flashSetter = side === "BUY" ? setBuyFlash : setSellFlash;
     try {
       await placeOrder({
+        scope: "free",
         pairId: session.pair_id,
         side,
         type: "MARKET",

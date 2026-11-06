@@ -136,7 +136,7 @@ async function closePosition(token: string, pairId: string, qty: string): Promis
     for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
         let r: ApiResult;
         try {
-            r = await api("POST", "/orders", { token, body: { pairId, side: "SELL", type: "MARKET", qty } });
+            r = await api("POST", "/orders", { token, body: { scope: "free", pairId, side: "SELL", type: "MARKET", qty } });
         } catch (err) {
             r = { status: 0, body: { error: err instanceof Error ? err.message : "network_error" } };
         }
@@ -190,7 +190,7 @@ async function main(): Promise<number> {
     console.log(`Kraken best ask:   ${fmt(bestAsk)}  (at order time)`);
 
     const qty = qtyForNotional(NOTIONAL_USD, bestAsk);
-    const buy = await api("POST", "/orders", { token, body: { pairId: pair.id, side: "BUY", type: "MARKET", qty } });
+    const buy = await api("POST", "/orders", { token, body: { scope: "free", pairId: pair.id, side: "BUY", type: "MARKET", qty } });
 
     if (buy.status !== 201) {
         const code = errCode(buy);

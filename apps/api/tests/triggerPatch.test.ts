@@ -101,8 +101,8 @@ describe("trigger scope (match_id) over HTTP", () => {
         app.inject({ method: "POST", url, headers: { authorization: `Bearer ${token}` }, payload: body });
     const leg = (kind: string, triggerPrice: string) => ({ kind, side: "SELL", triggerPrice, qty: "1" });
 
-    it("is fixed at creation: free-play → null, in a match → that match (single and both OCO legs)", async () => {
-        const free = await post("/v1/triggers", { pairId, ...leg("STOP_MARKET", "90") });
+    it("is fixed at creation: free → null, a match → that match (single and both OCO legs)", async () => {
+        const free = await post("/v1/triggers", { scope: "free", pairId, ...leg("STOP_MARKET", "90") });
         expect(free.statusCode).toBe(201);
         expect(free.json().match_id).toBeNull();
 
@@ -113,10 +113,10 @@ describe("trigger scope (match_id) over HTTP", () => {
         );
         matchIds.push(m!.id);
 
-        const single = await post("/v1/triggers", { pairId, ...leg("STOP_MARKET", "90") });
+        const single = await post("/v1/triggers", { scope: m!.id, pairId, ...leg("STOP_MARKET", "90") });
         expect(single.json().match_id).toBe(m!.id);
 
-        const oco = await post("/v1/oco", { pairId, legA: leg("STOP_MARKET", "90"), legB: leg("TAKE_PROFIT_MARKET", "110") });
+        const oco = await post("/v1/oco", { scope: m!.id, pairId, legA: leg("STOP_MARKET", "90"), legB: leg("TAKE_PROFIT_MARKET", "110") });
         expect(oco.statusCode).toBe(201);
         expect(oco.json().legA.match_id).toBe(m!.id);
         expect(oco.json().legB.match_id).toBe(m!.id);
@@ -145,11 +145,11 @@ describe("trailing-stop offset validation (pair at 100)", () => {
 
     it("POST /v1/triggers: 400 for an offset of 0 or >= price, 201 inside it", async () => {
         for (const offset of ["0", "100", "150"]) {
-            const res = await post("/v1/triggers", { pairId, ...trailing(offset) });
+            const res = await post("/v1/triggers", { scope: "free", pairId, ...trailing(offset) });
             expect(res.statusCode, `offset ${offset}`).toBe(400);
             expect(res.json().code).toBe("invalid_input");
         }
-        expect((await post("/v1/triggers", { pairId, ...trailing("5") })).statusCode).toBe(201);
+        expect((await post("/v1/triggers", { scope: "free", pairId, ...trailing("5") })).statusCode).toBe(201);
     });
 
     it("POST /v1/oco: a trailing leg with an offset >= price is rejected, and neither leg is created", async () => {
@@ -183,7 +183,7 @@ describe("trailing-stop offset validation (pair at 100)", () => {
     it("503 stale_price_source with no live price", async () => {
         clearReferenceBooks();
         try {
-            const res = await post("/v1/triggers", { pairId, ...trailing("5") });
+            const res = await post("/v1/triggers", { scope: "free", pairId, ...trailing("5") });
             expect(res.statusCode).toBe(503);
         } finally {
             seedReferenceBook(pairId, "100", "100");

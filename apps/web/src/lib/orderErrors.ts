@@ -27,7 +27,11 @@ export function fmtCompactUsd(n: number): string {
   return `$${Math.round(n)}`;
 }
 
+/** An out-of-date tab: the server now needs what this build doesn't send. */
+export const CLIENT_OUTDATED = "TRADR was updated — refresh to continue";
+
 const TEXT: Record<string, string> = {
+  scope_required: CLIENT_OUTDATED,
   book_stale_for_size: "Price feed stale — try a smaller order or retry",
   stale_price_source: "Price feed delayed — retry",
   reduce_only_no_position: "No position to reduce — it's already closed",

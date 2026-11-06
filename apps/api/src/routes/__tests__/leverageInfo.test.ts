@@ -121,7 +121,8 @@ describe("GET /leverage", () => {
         const m = await createMatch(a, b, 24, [pairId]);
         await acceptMatch(m.id, b); // stamped 5x
         flagOn({ maxMatch: 2 });
-        expect((await info(a)).json()).toMatchObject({ marginMode: "ISOLATED", cap: 5, scope: { matchId: m.id } });
+        const res = await app.inject({ method: "GET", url: `/leverage?pairId=${pairId}&scope=${m.id}`, headers: auth(a) });
+        expect(res.json()).toMatchObject({ marginMode: "ISOLATED", cap: 5, scope: { matchId: m.id } });
     });
 
     it("a competition: 1x", async () => {

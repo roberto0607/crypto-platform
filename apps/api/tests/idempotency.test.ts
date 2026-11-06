@@ -118,7 +118,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key,
       },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res1.statusCode).toBe(201);
     const body1 = res1.json();
@@ -133,7 +133,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key,
       },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res2.statusCode).toBe(201);
     const body2 = res2.json();
@@ -159,7 +159,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key,
       },
-      payload: { pairId, side: "SELL", type: "LIMIT", qty: "0.01", limitPrice: "99999" },
+      payload: { scope: "free", pairId, side: "SELL", type: "LIMIT", qty: "0.01", limitPrice: "99999" },
     });
     expect(res1.statusCode).toBe(201);
     const body1 = res1.json();
@@ -174,7 +174,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key,
       },
-      payload: { pairId, side: "SELL", type: "LIMIT", qty: "0.01", limitPrice: "99999" },
+      payload: { scope: "free", pairId, side: "SELL", type: "LIMIT", qty: "0.01", limitPrice: "99999" },
     });
     expect(res2.statusCode).toBe(201);
     const body2 = res2.json();
@@ -202,7 +202,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key1,
       },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res1.statusCode).toBe(201);
 
@@ -213,7 +213,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key2,
       },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res2.statusCode).toBe(201);
 
@@ -233,7 +233,7 @@ describe("Idempotency — snapshot persistence", () => {
         authorization: `Bearer ${traderToken}`,
         "idempotency-key": key,
       },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res.statusCode).toBe(201);
 
@@ -260,7 +260,7 @@ describe("Idempotency — snapshot persistence", () => {
       method: "POST",
       url: "/orders",
       headers: { authorization: `Bearer ${traderToken}` },
-      payload: { pairId, side: "BUY", type: "MARKET", qty: "0.01" },
+      payload: { scope: "free", pairId, side: "BUY", type: "MARKET", qty: "0.01" },
     });
     expect(res.statusCode).toBe(201);
     const orderId = res.json().order.id;

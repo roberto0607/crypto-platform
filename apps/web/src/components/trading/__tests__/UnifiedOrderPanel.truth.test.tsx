@@ -189,7 +189,7 @@ describe("preview", () => {
     expect(row("EST. FILL").textContent).toBe("$100,500.00");
     await user.click(screen.getByRole("button", { name: /OPEN LONG/ }));
     await settle();
-    expect(http.orders[0]).toEqual({ pairId: "p1", side: "BUY", type: "MARKET", qty: "0.01000000" });
+    expect(http.orders[0]).toEqual({ scope: "free", pairId: "p1", side: "BUY", type: "MARKET", qty: "0.01000000" });
   });
 });
 

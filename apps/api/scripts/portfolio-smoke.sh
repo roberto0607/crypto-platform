@@ -94,7 +94,7 @@ echo "=== 6. Place BUY (MARKET, system fill) ==="
 BUY=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.5\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.5\"}")
 BUY_FILLS=$(echo "$BUY" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['fills']))")
 if [ "$BUY_FILLS" -lt 1 ]; then
   echo "FAIL: BUY order did not fill"; exit 1
@@ -140,7 +140,7 @@ echo "=== 9. Place SELL (MARKET, system fill) ==="
 SELL=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"SELL\",\"type\":\"MARKET\",\"qty\":\"0.25\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"SELL\",\"type\":\"MARKET\",\"qty\":\"0.25\"}")
 SELL_FILLS=$(echo "$SELL" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['fills']))")
 if [ "$SELL_FILLS" -lt 1 ]; then
   echo "FAIL: SELL order did not fill"; exit 1
