@@ -9,7 +9,6 @@ const nodeFs = (): Promise<any> => import(/* @vite-ignore */ ["node", "fs"].join
 let css = "";
 let appLayout = "";
 let arenaPage = "";
-let liveMatchView = "";
 
 beforeAll(async () => {
   const fs = await nodeFs();
@@ -17,7 +16,6 @@ beforeAll(async () => {
   css = read("styles/match.css");
   appLayout = read("layouts/AppLayout.tsx");
   arenaPage = read("pages/ArenaPage.tsx");
-  liveMatchView = read("components/arena/LiveMatchView.tsx");
 });
 
 describe("the match UI's CSS loads on any page", () => {
@@ -25,7 +23,7 @@ describe("the match UI's CSS loads on any page", () => {
     expect(appLayout).toContain('import "@/styles/match.css"');
   });
 
-  it.each([".ar-btn-orange", ".ar-btn-outline", ".ar-btn-red", ".lmv-header", ".lmv-modal-backdrop", ".lmv-end-card", ".lmv-chat-panel"])(
+  it.each([".ar-btn-orange", ".ar-btn-outline", ".ar-btn-red", ".mt-header", ".mt-modal-backdrop", ".mt-end-card", ".mt-chat-panel"])(
     "has %s", (selector) => {
       expect(css).toContain(selector);
     },
@@ -39,7 +37,15 @@ describe("the match UI's CSS loads on any page", () => {
 
   it("is defined once, not also inline in the pages", () => {
     expect(arenaPage).not.toMatch(/\.ar-btn-red\s*\{/);
-    expect(liveMatchView).not.toMatch(/\.lmv-end-card\s*\{/);
-    expect(liveMatchView).not.toMatch(/\.lmv-chat-panel\s*\{/);
+  });
+
+  it("the chat docks in the chart area: nothing lets it reach the order form", () => {
+    expect(css).toMatch(/\.mt-chat-panel \{[^}]*position: absolute[^}]*left: 16px/);
+    expect(css).toMatch(/\.mt-chat-panel \{[^}]*max-width: calc\(100% - 32px\)/);
+  });
+
+  it("the header can't clip: columns that shrink, around ones that don't", () => {
+    expect(css).toMatch(/\.mt-header \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\) auto/);
+    expect(css).toMatch(/\.mt-h-name \{[^}]*text-overflow: ellipsis/);
   });
 });

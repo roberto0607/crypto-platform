@@ -1,5 +1,5 @@
 /**
- * UnifiedOrderPanel — shared order form used by both TradingPage and LiveMatchView.
+ * UnifiedOrderPanel — the order form on /trade, free-play and match alike.
  *
  * Features:
  *   - LONG / SHORT direction toggle
@@ -176,7 +176,6 @@ interface UnifiedOrderPanelProps {
     /** Every open position of the account this panel trades (for EQUITY). Defaults to `position`. */
     positions?: Position[];
     onOrderFilled: () => void;
-    classPrefix?: string;
 }
 
 export function UnifiedOrderPanel({
@@ -184,7 +183,6 @@ export function UnifiedOrderPanel({
     position,
     positions,
     onOrderFilled,
-    classPrefix = "tr",
 }: UnifiedOrderPanelProps) {
     const orderType = useTradingStore((s) => s.orderType);
     const limitPrice = useTradingStore((s) => s.limitPrice);
@@ -569,7 +567,7 @@ export function UnifiedOrderPanel({
         });
     })();
     // The enriched OPEN label (with notional + qty) is the only long one — let it
-    // wrap/shrink so it never clips at the narrower arena width.
+    // wrap/shrink so it never clips at a narrow panel width.
     const btnLabelEnriched =
         !orderSubmitting && btnState === "idle" && !hasPosition && baseQty > 0;
 
@@ -853,21 +851,18 @@ export function UnifiedOrderPanel({
         group?.querySelector<HTMLButtonElement>(`[data-lv="${next}"]`)?.focus();
     };
 
-    const p = classPrefix;
-
     const btnClass = (() => {
-        if (btnState === "success") return `${p}-place-btn success`;
-        return `${p}-place-btn ${isLong ? "buy" : "sell"}`;
+        if (btnState === "success") return `tr-place-btn success`;
+        return `tr-place-btn ${isLong ? "buy" : "sell"}`;
     })();
 
     return (
-        <div className={`${p}-order-section`}>
+        <div className={`tr-order-section`}>
             {/* ── OPEN POSITION CARD — first in the panel, above LONG/SHORT, so
                 it's visible without scrolling; the form follows in normal flow. ── */}
             {hasPosition && (
                 <PositionCard
                     key={`${pair.id}:${cardKey}`}
-                    classPrefix={p}
                     pair={pair}
                     baseSymbol={baseSymbol}
                     position={position!}
@@ -895,15 +890,15 @@ export function UnifiedOrderPanel({
             )}
 
             {/* ── DIRECTION ── */}
-            <div className={`${p}-dir-toggle`}>
+            <div className={`tr-dir-toggle`}>
                 <div
-                    className={`${p}-dir-btn ${p === "lmv" ? "long" : `${p}-dir-long`}${activeMode === "LONG" ? " active" : ""}`}
+                    className={`tr-dir-btn tr-dir-long${activeMode === "LONG" ? " active" : ""}`}
                     onClick={() => handleModeChange("LONG")}
                 >
                     LONG
                 </div>
                 <div
-                    className={`${p}-dir-btn ${p === "lmv" ? "short" : `${p}-dir-short`}${activeMode === "SHORT" ? " active" : ""}`}
+                    className={`tr-dir-btn tr-dir-short${activeMode === "SHORT" ? " active" : ""}`}
                     onClick={() => handleModeChange("SHORT")}
                 >
                     SHORT
@@ -911,11 +906,11 @@ export function UnifiedOrderPanel({
             </div>
 
             {/* ── ORDER TYPE ── */}
-            <div className={`${p}-type-toggle`}>
+            <div className={`tr-type-toggle`}>
                 {(["MARKET", "LIMIT"] as const).map((t) => (
                     <div
                         key={t}
-                        className={`${p}-tt${orderType === t ? " active" : ""}`}
+                        className={`tr-tt${orderType === t ? " active" : ""}`}
                         onClick={() => {
                             onResize();
                             setOrderType(t);
@@ -982,28 +977,26 @@ export function UnifiedOrderPanel({
 
             {/* LIMIT PRICE + AMOUNT share one row. In LIMIT mode the tr-pa-row CSS
                 lays them out as two columns so the limit-price field adds no vertical
-                height; in MARKET mode only AMOUNT is present and it stays full-width.
-                Arena (lmv-pa-row) has no rule for this wrapper, so the fields stack
-                exactly as before there. */}
-            <div className={`${p}-pa-row`}>
+                height; in MARKET mode only AMOUNT is present and it stays full-width. */}
+            <div className={`tr-pa-row`}>
             {/* ── LIMIT PRICE ── */}
             {orderType === "LIMIT" && (
-                <div className={`${p}-field`}>
+                <div className={`tr-field`}>
                     <label>LIMIT PRICE</label>
-                    <div className={`${p}-field-wrap`}>
+                    <div className={`tr-field-wrap`}>
                         <input type="number" placeholder={currentPrice ? currentPrice.toFixed(2) : "0.00"} value={limitPrice} onChange={(e) => { onEdit(); setLimitPrice(e.target.value); }} />
-                        <span className={`${p}-field-unit`}>USD</span>
+                        <span className={`tr-field-unit`}>USD</span>
                     </div>
                     {limitWarn && <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 4, letterSpacing: 1 }}>{limitWarn}</div>}
                 </div>
             )}
 
             {/* ── AMOUNT (USD) ── */}
-            <div className={`${p}-field`}>
+            <div className={`tr-field`}>
                 <label>{leveraged ? "MARGIN" : "AMOUNT"}</label>
-                <div className={`${p}-field-wrap`}>
+                <div className={`tr-field-wrap`}>
                     <input type="number" placeholder="0.00" value={usdAmount} onChange={(e) => { onResize(); setUsdAmount(e.target.value); setLastOrderUsd(null); setLastOrderFee(null); }} />
-                    <span className={`${p}-field-unit`}>USD</span>
+                    <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {baseQty > 0 && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", marginTop: 3, letterSpacing: 1 }}>
                     ≈ {baseQty.toFixed(4)} {baseSymbol}{leveraged && ` · ${fmtUsd(effectiveUsd)} at ${leverage}x`}
@@ -1045,26 +1038,25 @@ export function UnifiedOrderPanel({
                 TRAILING STOP needs to stay above the pinned footer in the worst-case
                 filled state (PR #50). Each column is self-contained (label + input +
                 its OWN helper), and the grid's align-items:start keeps both inputs
-                top-aligned even when only one column shows a helper. Arena (lmv-ts-row)
-                has no rule, so the two fields stack vertically there exactly as before. */}
-            <div className={`${p}-ts-row`}>
+                top-aligned even when only one column shows a helper. */}
+            <div className={`tr-ts-row`}>
             {/* ── TAKE PROFIT ── */}
-            <div className={`${p}-field`}>
+            <div className={`tr-field`}>
                 <label>TAKE PROFIT</label>
-                <div className={`${p}-field-wrap`}>
+                <div className={`tr-field-wrap`}>
                     <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => { onEdit(); setTpPrice(e.target.value); }} />
-                    <span className={`${p}-field-unit`}>USD</span>
+                    <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {tpError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tpError}</div>}
                 {!tpError && tpNum > 0 && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
             </div>
 
             {/* ── STOP LOSS ── */}
-            <div className={`${p}-field`}>
+            <div className={`tr-field`}>
                 <label>STOP LOSS</label>
-                <div className={`${p}-field-wrap`}>
+                <div className={`tr-field-wrap`}>
                     <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => { onEdit(); setSlPrice(e.target.value); }} />
-                    <span className={`${p}-field-unit`}>USD</span>
+                    <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
                 {!slError && slNum > 0 && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
@@ -1072,11 +1064,11 @@ export function UnifiedOrderPanel({
             </div>{/* /tr-ts-row */}
 
             {/* ── TRAILING STOP ── */}
-            <div className={`${p}-field`}>
+            <div className={`tr-field`}>
                 <label>TRAILING STOP</label>
-                <div className={`${p}-field-wrap`}>
+                <div className={`tr-field-wrap`}>
                     <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => { onEdit(); setTslOffset(e.target.value); }} />
-                    <span className={`${p}-field-unit`}>USD</span>
+                    <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {tslError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tslError}</div>}
                 {!tslError && tslNum > 0 && currentPrice > 0 && (
@@ -1087,24 +1079,23 @@ export function UnifiedOrderPanel({
             </div>
 
             {/* Footer. No open position (trade page): pinned, so the cost summary +
-                submit button stay visible while TP/SL/TSL scroll above (display:contents
-                in the arena). With a position open: in normal flow (-with-position) and
+                submit button stay visible while TP/SL/TSL scroll above. With a position open: in normal flow (-with-position) and
                 the card sits at the top of the panel instead. Pinned with the card, the
                 group covered the form above it (MARKET/LIMIT clipped). */}
-            <div className={`${p}-order-footer${hasPosition ? ` ${p}-order-footer-with-position` : ` ${p}-order-footer-pinned`}`}>
+            <div className={`tr-order-footer${hasPosition ? ` tr-order-footer-with-position` : ` tr-order-footer-pinned`}`}>
             {/* ── SUMMARY ── */}
-            <div className={`${p}-summary`}>
-                <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`} title={PRICE_HELP.estFill}>EST. FILL</span>
-                    <span className={`${p}-sum-val`} style={{ ...dim, ...(previewStale ? { color: "#f59e0b" } : undefined) }}>
-                        {quoteDash ? "—" : quoting || (orderType === "LIMIT" && limitPrice) ? fmtUsd(estFill ?? 0) : <span className={`${p}-sum-empty`}>--</span>}
+            <div className={`tr-summary`}>
+                <div className={`tr-sum-row`}>
+                    <span className={`tr-sum-lbl`} title={PRICE_HELP.estFill}>EST. FILL</span>
+                    <span className={`tr-sum-val`} style={{ ...dim, ...(previewStale ? { color: "#f59e0b" } : undefined) }}>
+                        {quoteDash ? "—" : quoting || (orderType === "LIMIT" && limitPrice) ? fmtUsd(estFill ?? 0) : <span className={`tr-sum-empty`}>--</span>}
                     </span>
                 </div>
                 {/* Its own row: a chip beside the price overflows the cell at panel width. */}
                 {previewStale && (
-                    <div className={`${p}-sum-row`}>
-                        <span className={`${p}-sum-lbl`}>PRICE FEED</span>
-                        <span className={`${p}-sum-val`}>
+                    <div className={`tr-sum-row`}>
+                        <span className={`tr-sum-lbl`}>PRICE FEED</span>
+                        <span className={`tr-sum-val`}>
                             <span
                                 title="Price feed stale: liquidations are paused on this pair. Previewing at the last trade."
                                 style={{ padding: "0 3px", fontSize: 8, letterSpacing: 1, color: "#f59e0b", border: "1px solid rgba(245,158,11,0.5)" }}
@@ -1114,27 +1105,27 @@ export function UnifiedOrderPanel({
                         </span>
                     </div>
                 )}
-                <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
-                    <span className={`${p}-sum-val`} style={dim}>{quoteDash ? "—" : shownNotional > 0 ? fmtUsd(shownNotional) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`${p}-sum-empty`}>--</span>}</span>
+                <div className={`tr-sum-row`}>
+                    <span className={`tr-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
+                    <span className={`tr-sum-val`} style={dim}>{quoteDash ? "—" : shownNotional > 0 ? fmtUsd(shownNotional) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`tr-sum-empty`}>--</span>}</span>
                 </div>
                 {orderType === "MARKET" && (
-                    <div className={`${p}-sum-row ${p}-sum-wide`}>
-                        <span className={`${p}-sum-lbl`} title="Est. fill vs the best bid / ask, for this size">SLIPPAGE</span>
-                        <span className={`${p}-sum-val`} style={dim}>
-                            {quoteDash ? "—" : slipPct !== null ? `${fmtSlippagePct(slipPct)} · ${slipUsd < 0 ? "-" : ""}${fmtUsd(Math.abs(slipUsd))}` : <span className={`${p}-sum-empty`}>--</span>}
+                    <div className={`tr-sum-row tr-sum-wide`}>
+                        <span className={`tr-sum-lbl`} title="Est. fill vs the best bid / ask, for this size">SLIPPAGE</span>
+                        <span className={`tr-sum-val`} style={dim}>
+                            {quoteDash ? "—" : slipPct !== null ? `${fmtSlippagePct(slipPct)} · ${slipUsd < 0 ? "-" : ""}${fmtUsd(Math.abs(slipUsd))}` : <span className={`tr-sum-empty`}>--</span>}
                         </span>
                     </div>
                 )}
-                <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`}>{feeLabel}</span>
-                    <span className={`${p}-sum-val`} style={dim}>{quoteDash ? "—" : shownFee > 0 ? fmtFee(shownFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`${p}-sum-empty`}>--</span>}</span>
+                <div className={`tr-sum-row`}>
+                    <span className={`tr-sum-lbl`}>{feeLabel}</span>
+                    <span className={`tr-sum-val`} style={dim}>{quoteDash ? "—" : shownFee > 0 ? fmtFee(shownFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`tr-sum-empty`}>--</span>}</span>
                 </div>
                 {leveraged && (
-                    <div className={`${p}-sum-row`}>
-                        <span className={`${p}-sum-lbl`}>EST. LIQ PRICE</span>
+                    <div className={`tr-sum-row`}>
+                        <span className={`tr-sum-lbl`}>EST. LIQ PRICE</span>
                         <span
-                            className={`${p}-sum-val`}
+                            className={`tr-sum-val`}
                             data-testid="est-liq"
                             style={{ ...dim, color: estLiq?.price ? "#f59e0b" : undefined }}
                             title={!estLiq
@@ -1146,14 +1137,14 @@ export function UnifiedOrderPanel({
                             {quoteDash && reverse?.kind !== "reduce" ? "—"
                                 : estLiq?.price ? fmtUsd(estLiq.price)
                                 : estLiq && reverse?.kind === "close" ? "—"
-                                : usdNum > 0 ? "None" : <span className={`${p}-sum-empty`}>--</span>}
+                                : usdNum > 0 ? "None" : <span className={`tr-sum-empty`}>--</span>}
                         </span>
                     </div>
                 )}
-                <div className={`${p}-sum-row`}>
-                    <span className={`${p}-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
+                <div className={`tr-sum-row`}>
+                    <span className={`tr-sum-lbl`} style={{ color: "rgba(255,255,255,0.35)" }}>AVAILABLE</span>
                     <span
-                        className={`${p}-sum-val`}
+                        className={`tr-sum-val`}
                         style={{ color: available !== null && available < 0 ? "#ff3b3b" : "#fff" }}
                         title={leveraged ? "Free USD: your balance minus what open orders hold. Open positions' margin is already out of it." : "Cash minus what open shorts hold (2× their value)"}
                     >
@@ -1161,9 +1152,9 @@ export function UnifiedOrderPanel({
                     </span>
                 </div>
                 {leveraged && (
-                    <div className={`${p}-sum-row`}>
-                        <span className={`${p}-sum-lbl`}>EQUITY</span>
-                        <span className={`${p}-sum-val`} title="USD plus each open position's margin and P&L (a loss counts at most its margin)">
+                    <div className={`tr-sum-row`}>
+                        <span className={`tr-sum-lbl`}>EQUITY</span>
+                        <span className={`tr-sum-val`} title="USD plus each open position's margin and P&L (a loss counts at most its margin)">
                             {equity === null ? "—" : `$${formatDecimal(equity.toString(), 2)} USD`}
                         </span>
                     </div>
@@ -1205,7 +1196,7 @@ export function UnifiedOrderPanel({
 
             {/* ── Pinned actions ── (see .tr-pos-actions) */}
             {hasPosition && (
-                <div className={`${p}-pos-actions`} data-testid="position-actions">
+                <div className={`tr-pos-actions`} data-testid="position-actions">
                     {confirmingFlip && (
                         <ConfirmBox
                             message={reverseMessage(posDirection!, activeMode, pnlValue)}

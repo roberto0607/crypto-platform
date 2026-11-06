@@ -48,15 +48,15 @@ beforeEach(() => {
   useTradingStore.setState({ selectedPairId: "p1", orderType: "MARKET", activeTriggers: [], snapshot: { bid: "83000", ask: "83000", last: "83000", ts: "0", source: "live" } });
 });
 
-async function mount(prefix: "tr" | "lmv", position: Position | null) {
-  const r = render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={position} onOrderFilled={() => {}} classPrefix={prefix} /></ToastProvider>);
+async function mount(position: Position | null) {
+  const r = render(<ToastProvider><UnifiedOrderPanel pair={PAIR} position={position} onOrderFilled={() => {}} /></ToastProvider>);
   await act(async () => { await new Promise((res) => setTimeout(res, 0)); });
   return r.container;
 }
 
-describe.each(["tr", "lmv"] as const)("%s: the card, the form and summary + OPEN don't overlap", (p) => {
+describe.each(["tr"] as const)("%s: the card, the form and summary + OPEN don't overlap", (p) => {
   it("with a position open, the card is first in the panel (above LONG/SHORT); summary + OPEN close it, in flow", async () => {
-    const c = await mount(p, POS);
+    const c = await mount(POS);
     const section = c.querySelector(`.${p}-order-section`)!;
     const kids = [...section.children].map((el) => el.className);
     expect(kids[0]).toBe(`${p}-position-card-sticky`);
@@ -73,7 +73,7 @@ describe.each(["tr", "lmv"] as const)("%s: the card, the form and summary + OPEN
   });
 
   it("without a position: unchanged (no card, no with-position class)", async () => {
-    const c = await mount(p, null);
+    const c = await mount(null);
     const footer = c.querySelector(`.${p}-order-footer`)!;
     expect(footer.classList.contains(`${p}-order-footer-with-position`)).toBe(false);
     expect(c.querySelector(`.${p}-position-card-sticky`)).toBeNull();

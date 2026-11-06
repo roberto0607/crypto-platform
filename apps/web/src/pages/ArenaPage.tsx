@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
-import { useActiveMatchStore } from "@/stores/activeMatchStore";
+import { useMatchPnl } from "@/stores/activeMatchStore";
 import {
     acceptMatch,
-    forfeitMatch,
     getActiveMatch,
     getMatchHistory,
     getActiveMatches,
@@ -13,12 +12,11 @@ import {
     type ActiveMatchListEntry,
 } from "@/api/endpoints/matches";
 import { getCurrentSeason, getLeaderboard, type CurrentSeason, type LeaderboardEntry } from "@/api/endpoints/competitions";
-import { LiveMatchView } from "@/components/arena/LiveMatchView";
 import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 import { ChallengeBox } from "@/components/arena/ChallengeBox";
 import { PendingChallengeCard } from "@/components/arena/PendingChallengeCard";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatMatchPnl, formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
    ARENA PAGE CSS — Trade Wars
@@ -83,7 +81,7 @@ const ARENA_CSS = `
     display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;text-align:center;
   }
   .ar-mc-player { font-size:10px;color:var(--ar-muted);letter-spacing:2px;margin-bottom:4px; }
-  .ar-mc-pnl { font-family:var(--ar-bebas);font-size:36px;letter-spacing:2px; }
+  .ar-mc-pnl { font-family:var(--ar-bebas);font-size:28px;letter-spacing:1px; }
   .ar-mc-divider { width:1px;height:50px;background:var(--ar-borderW); }
 
   /* Empty state */
@@ -158,12 +156,43 @@ function formatTimeRemaining(endsAt: string): string {
     return `${mins}M`;
 }
 
+function MatchLiveCard({ match, userId, onEnter }: { match: Match; userId: string; onEnter: () => void }) {
+    const { challengerPnlPct, opponentPnlPct } = useMatchPnl(match);
+    const players = [
+        { id: match.challenger_id, name: match.challenger_name ?? "CHALLENGER", pnl: challengerPnlPct },
+        { id: match.opponent_id, name: match.opponent_name ?? "OPPONENT", pnl: opponentPnlPct },
+    ];
+    return (
+        <div className="ar-match-card">
+            <div className="ar-mc-header">
+                <div className="ar-mc-vs">MATCH LIVE</div>
+                {match.ends_at && <div className="ar-mc-timer">{formatTimeRemaining(match.ends_at)}</div>}
+            </div>
+            <div className="ar-mc-scores">
+                {players.map((p, i) => (
+                    <Fragment key={p.id}>
+                        {i === 1 && <div className="ar-mc-divider" />}
+                        <div>
+                            <div className="ar-mc-player">{p.id === userId ? "YOU" : p.name}</div>
+                            <div className="ar-mc-pnl" style={{ color: parseFloat(p.pnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
+                                {formatMatchPnl(p.pnl, match.starting_capital)}
+                            </div>
+                        </div>
+                    </Fragment>
+                ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+                <button className="ar-btn ar-btn-orange" onClick={onEnter}>ENTER MATCH</button>
+            </div>
+        </div>
+    );
+}
+
 export default function ArenaPage() {
     const navigate = useNavigate();
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
     const { addToast } = useToast();
-    const endedMatch = useActiveMatchStore((s) => s.endedMatch);
 
     const prefill = useSearchParams()[0].get("challenge");
 
@@ -241,12 +270,13 @@ export default function ArenaPage() {
         return () => clearInterval(interval);
     }, [tab, loadLiveMatches]);
 
-    // Auto-transition to LiveMatchView when a match is accepted (SSE push)
+    // A match starting here goes straight to the match screen. Arriving with
+    // one already on doesn't: that's what the MATCH LIVE card is for.
     useEffect(() => {
-        const handler = () => { loadActiveMatch(); };
+        const handler = () => { navigate("/trade"); };
         window.addEventListener("sse:match.started", handler);
         return () => { window.removeEventListener("sse:match.started", handler); };
-    }, [loadActiveMatch]);
+    }, [navigate]);
 
     // Show incoming challenge when opponent sends one (SSE push)
     useEffect(() => {
@@ -278,41 +308,14 @@ export default function ArenaPage() {
         if (!activeMatch) return;
         try {
             await acceptMatch(activeMatch.id);
-            await loadActiveMatch();
+            navigate("/trade");
         } catch (err: any) {
             const msg = err?.response?.data?.message;
             addToast("error", msg ?? "Couldn't accept the match. Try again.");
         }
     }
 
-    async function handleForfeit() {
-        if (!activeMatch) return;
-        try {
-            await forfeitMatch(activeMatch.id);
-            await loadActiveMatch();
-            await loadMatchHistory();
-        } catch (err: any) {
-            const msg = err?.response?.data?.message;
-            addToast("error", msg ?? "Couldn't forfeit the match. Try again.");
-        }
-    }
-
     const daysLeft = seasonInfo ? formatTimeRemaining(seasonInfo.end_at) : "--";
-
-    // ── LIVE MATCH VIEW — replaces lobby while a match is on, and until its
-    // result is dismissed (a reload here finds no active match by then) ──
-    const shownMatch = activeMatch?.status === "ACTIVE" ? activeMatch : endedMatch;
-    if (shownMatch) {
-        return (
-            <LiveMatchView
-                match={shownMatch}
-                onMatchEnd={() => {
-                    setActiveMatch(null);
-                    loadMatchHistory();
-                }}
-            />
-        );
-    }
 
     return (
         <>
@@ -411,46 +414,8 @@ export default function ArenaPage() {
                             />
                         )}
 
-                        {/* Active Match */}
-                        {activeMatch?.status === "ACTIVE" && (
-                            <div className="ar-match-card">
-                                <div className="ar-mc-header">
-                                    <div className="ar-mc-vs">MATCH LIVE</div>
-                                    {activeMatch.ends_at && (
-                                        <div className="ar-mc-timer">
-                                            {formatTimeRemaining(activeMatch.ends_at)}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {activeMatch.status === "ACTIVE" && (
-                                    <div className="ar-mc-scores">
-                                        <div>
-                                            <div className="ar-mc-player">
-                                                {activeMatch.challenger_id === userId ? "YOU" : (activeMatch.challenger_name ?? "CHALLENGER")}
-                                            </div>
-                                            <div className="ar-mc-pnl" style={{ color: parseFloat(activeMatch.challenger_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                {formatPnlPct(activeMatch.challenger_pnl_pct)}
-                                            </div>
-                                        </div>
-                                        <div className="ar-mc-divider" />
-                                        <div>
-                                            <div className="ar-mc-player">
-                                                {activeMatch.opponent_id === userId ? "YOU" : (activeMatch.opponent_name ?? "OPPONENT")}
-                                            </div>
-                                            <div className="ar-mc-pnl" style={{ color: parseFloat(activeMatch.opponent_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                {formatPnlPct(activeMatch.opponent_pnl_pct)}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-                                    {activeMatch.status === "ACTIVE" && (
-                                        <button className="ar-btn ar-btn-red" onClick={handleForfeit}>FORFEIT</button>
-                                    )}
-                                </div>
-                            </div>
+                        {activeMatch?.status === "ACTIVE" && userId && (
+                            <MatchLiveCard match={activeMatch} userId={userId} onEnter={() => navigate("/trade")} />
                         )}
 
                         {!activeMatch && (

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MatchScopeSwitch } from "@/components/trading/MatchScopeSwitch";
+import { MatchScopeSwitch, PracticeBanner } from "@/components/trading/MatchScopeSwitch";
 import { useActiveMatchStore } from "@/stores/activeMatchStore";
 import { useAuthStore } from "@/stores/authStore";
 import { orderScope } from "@/lib/orderScope";
@@ -17,14 +17,14 @@ beforeEach(() => {
 
 describe("MATCH | PRACTICE", () => {
   it("not in a match: nothing to switch", () => {
-    const { container } = render(<MatchScopeSwitch />);
+    const { container } = render(<><MatchScopeSwitch /><PracticeBanner /></>);
     expect(container.textContent).toBe("");
     expect(orderScope()).toBe("free");
   });
 
   it("a live match defaults to MATCH", () => {
     store().setActiveMatch(MATCH);
-    render(<MatchScopeSwitch />);
+    render(<><MatchScopeSwitch /><PracticeBanner /></>);
     expect(screen.getByRole("radio", { name: "MATCH" })).toBeChecked();
     expect(orderScope()).toBe("m1");
     expect(screen.queryByText(/switch back/i)).toBeNull();
@@ -32,7 +32,7 @@ describe("MATCH | PRACTICE", () => {
 
   it("PRACTICE: free-play scope, and a banner back to the match", async () => {
     store().setActiveMatch(MATCH);
-    render(<MatchScopeSwitch />);
+    render(<><MatchScopeSwitch /><PracticeBanner /></>);
     await userEvent.click(screen.getByRole("radio", { name: "PRACTICE" }));
     expect(orderScope()).toBe("free");
     expect(screen.getByRole("status").textContent).toContain("Live match vs bob");
@@ -45,15 +45,15 @@ describe("MATCH | PRACTICE", () => {
     useAuthStore.setState({ user: { id: "opp" } as never });
     store().setActiveMatch(MATCH);
     store().setTradeMode("PRACTICE");
-    render(<MatchScopeSwitch />);
+    render(<><MatchScopeSwitch /><PracticeBanner /></>);
     expect(screen.getByRole("status").textContent).toContain("Live match vs me_t");
   });
 
   it("the match ending takes the switch away", () => {
     store().setActiveMatch(MATCH);
-    const { container, rerender } = render(<MatchScopeSwitch />);
+    const { container, rerender } = render(<><MatchScopeSwitch /><PracticeBanner /></>);
     store().setActiveMatch(null);
-    rerender(<MatchScopeSwitch />);
+    rerender(<><MatchScopeSwitch /><PracticeBanner /></>);
     expect(container.textContent).toBe("");
   });
 });

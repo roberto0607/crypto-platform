@@ -1,8 +1,12 @@
 import { useState, useEffect } from "react";
 import type { CSSProperties } from "react";
 import type { Match } from "@/api/endpoints/matches";
+import { MatchScopeSwitch } from "@/components/trading/MatchScopeSwitch";
+import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
 import { formatMatchPnl } from "@/lib/matchPnl";
+import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
+import { useAuthStore } from "@/stores/authStore";
 
 function formatCountdown(endsAt: string): string {
     const diff = new Date(endsAt).getTime() - Date.now();
@@ -16,36 +20,63 @@ function formatCountdown(endsAt: string): string {
     return `${mins}m ${secs}s`;
 }
 
+const URGENT_MS = 30 * 60_000;
+
+/** The last 30 minutes, or the last 10% of a match too short for that to mean anything. */
+function isUrgent(match: Match): boolean {
+    if (!match.ends_at) return false;
+    const left = new Date(match.ends_at).getTime() - Date.now();
+    return left > 0 && left < Math.min(URGENT_MS, match.duration_hours * 360_000);
+}
+
+const flashTint = (dir: string): string => (dir === "up" ? "rgba(0,255,65,0.45)" : "rgba(255,59,59,0.45)");
+
+function PlayerScore({ name, pnl, capital, matchId, side, leading }: {
+    name: string;
+    pnl: string | null;
+    capital: string;
+    matchId: string;
+    side: "you" | "opponent";
+    leading: boolean;
+}) {
+    const n = parseFloat(pnl ?? "0");
+    const flash = usePnlFlash(n, matchId, 0.01);
+    return (
+        <div className={`mt-h-player ${side}`}>
+            <span className="mt-h-name" title={name}>{name}</span>
+            <span
+                key={flash.key}
+                className={`mt-h-pnl${flash.dir ? " pnl-flash" : ""}`}
+                style={{
+                    color: n >= 0 ? "var(--ar-g)" : "var(--ar-red)",
+                    background: leading ? "rgba(0,255,65,0.06)" : "rgba(204,0,0,0.06)",
+                    "--pnl-flash-tint": flashTint(flash.dir),
+                } as CSSProperties}
+            >
+                {formatMatchPnl(pnl, capital)}
+            </span>
+        </div>
+    );
+}
+
 interface MatchHeaderBarProps {
     match: Match;
-    yourPnl: string | null;
-    opponentPnl: string | null;
-    yourName: string;
-    opponentName: string;
-    onForfeit: () => void;
     chatOpen: boolean;
     chatUnread: number;
     onToggleChat: () => void;
-    /** ends_at has passed and the result isn't in yet. */
-    settling?: boolean;
 }
 
-export function MatchHeaderBar({
-    match,
-    yourPnl,
-    opponentPnl,
-    yourName,
-    opponentName,
-    onForfeit,
-    chatOpen,
-    chatUnread,
-    onToggleChat,
-    settling = false,
-}: MatchHeaderBarProps) {
+/** The live match, on top of /trade: both players, the clock, MATCH | PRACTICE, CHAT, FORFEIT. */
+export function MatchHeaderBar({ match, chatOpen, chatUnread, onToggleChat }: MatchHeaderBarProps) {
+    const userId = useAuthStore((s) => s.user?.id);
+    const settling = useActiveMatchStore((s) => s.settling);
+    const forfeit = useActiveMatchStore((s) => s.forfeit);
+    const { challengerPnlPct, opponentPnlPct } = useMatchPnl(match);
+    const { addToast } = useToast();
+
     const [timeLeft, setTimeLeft] = useState(match.ends_at ? formatCountdown(match.ends_at) : "--");
     const [showForfeitConfirm, setShowForfeitConfirm] = useState(false);
 
-    // Countdown timer — tick every second
     useEffect(() => {
         if (!match.ends_at) return;
         const tick = () => setTimeLeft(formatCountdown(match.ends_at!));
@@ -54,97 +85,61 @@ export function MatchHeaderBar({
         return () => clearInterval(id);
     }, [match.ends_at]);
 
-    const yourPnlNum = parseFloat(yourPnl ?? "0");
-    const oppPnlNum = parseFloat(opponentPnl ?? "0");
-    const youWinning = yourPnlNum >= oppPnlNum;
+    const isChallenger = match.challenger_id === userId;
+    const yourName = (isChallenger ? match.challenger_name : match.opponent_name) ?? "YOU";
+    const opponentName = (isChallenger ? match.opponent_name : match.challenger_name) ?? "OPPONENT";
+    const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
+    const opponentPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
+    const youLead = parseFloat(yourPnl ?? "0") >= parseFloat(opponentPnl ?? "0");
 
-    // Flash each P&L figure green/red when it moves (throttled, re-baselined per match).
-    const yourFlash = usePnlFlash(yourPnlNum, match.id, 0.01);
-    const oppFlash = usePnlFlash(oppPnlNum, match.id, 0.01);
-    const flashTint = (dir: string): string =>
-        dir === "up" ? "rgba(0,255,65,0.45)" : "rgba(255,59,59,0.45)";
-
-    const timeMs = match.ends_at ? new Date(match.ends_at).getTime() - Date.now() : Infinity;
-    const isUrgent = timeMs < 30 * 60 * 1000 && timeMs > 0;
+    const confirmForfeit = async () => {
+        setShowForfeitConfirm(false);
+        try {
+            await forfeit(match.id);
+        } catch (err: any) {
+            addToast("error", err?.response?.data?.message ?? "Couldn't forfeit the match. Try again.");
+        }
+    };
 
     return (
         <>
-            <div className="lmv-header">
-                {/* Left — your score */}
-                <div className="lmv-h-left">
-                    <span className="lmv-h-name" style={{ color: "var(--ar-orange)" }}>{yourName}</span>
-                    <span
-                        key={yourFlash.key}
-                        className={`lmv-h-pnl${yourFlash.dir ? " pnl-flash" : ""}`}
-                        style={{
-                            color: yourPnlNum >= 0 ? "var(--ar-g)" : "var(--ar-red)",
-                            background: youWinning ? "rgba(0,255,65,0.06)" : "rgba(204,0,0,0.06)",
-                            "--pnl-flash-tint": flashTint(yourFlash.dir),
-                        } as CSSProperties}
-                    >
-                        {formatMatchPnl(yourPnl, match.starting_capital)}
-                    </span>
-                </div>
+            <div className="mt-header">
+                <PlayerScore name={yourName} pnl={yourPnl} capital={match.starting_capital} matchId={match.id} side="you" leading={youLead} />
 
-                {/* Center — VS + badge + timer */}
-                <div className="lmv-h-center">
-                    <span className="lmv-h-vs">VS</span>
-                    <span className="lmv-h-badge">1V1 LIVE</span>
-                    <span className={`lmv-h-timer${isUrgent && !settling ? " urgent" : ""}`}>
+                <div className="mt-h-center">
+                    <span className="mt-h-badge">1V1 LIVE</span>
+                    <span className={`mt-h-timer${!settling && isUrgent(match) ? " urgent" : ""}`}>
                         {settling ? "SETTLING…" : `TIME LEFT: ${timeLeft}`}
                     </span>
+                    <MatchScopeSwitch />
                 </div>
 
-                {/* Right — opponent score + forfeit */}
-                <div className="lmv-h-right">
-                    <span className="lmv-h-name" style={{ color: "rgba(255,255,255,0.6)" }}>{opponentName}</span>
-                    <span
-                        key={oppFlash.key}
-                        className={`lmv-h-pnl${oppFlash.dir ? " pnl-flash" : ""}`}
-                        style={{
-                            color: oppPnlNum >= 0 ? "var(--ar-g)" : "var(--ar-red)",
-                            background: !youWinning ? "rgba(0,255,65,0.06)" : "rgba(204,0,0,0.06)",
-                            "--pnl-flash-tint": flashTint(oppFlash.dir),
-                        } as CSSProperties}
-                    >
-                        {formatMatchPnl(opponentPnl, match.starting_capital)}
-                    </span>
-                    <button
-                        type="button"
-                        className={`lmv-chat-toggle${chatOpen ? " active" : ""}`}
-                        onClick={onToggleChat}
-                    >
+                <PlayerScore name={opponentName} pnl={opponentPnl} capital={match.starting_capital} matchId={match.id} side="opponent" leading={!youLead} />
+
+                <div className="mt-h-actions">
+                    <button type="button" className={`mt-chat-toggle${chatOpen ? " active" : ""}`} onClick={onToggleChat}>
                         CHAT
-                        {chatUnread > 0 && (
-                            <span className="lmv-chat-badge">{chatUnread > 9 ? "9+" : chatUnread}</span>
-                        )}
+                        {chatUnread > 0 && <span className="mt-chat-badge">{chatUnread > 9 ? "9+" : chatUnread}</span>}
                     </button>
-                    <button className="lmv-forfeit-btn" onClick={() => setShowForfeitConfirm(true)}>
+                    <button type="button" className="mt-forfeit-btn" onClick={() => setShowForfeitConfirm(true)}>
                         FORFEIT
                     </button>
                 </div>
             </div>
 
-            {/* Forfeit confirmation modal */}
             {showForfeitConfirm && (
-                <div className="lmv-modal-backdrop" onClick={() => setShowForfeitConfirm(false)}>
-                    <div className="lmv-modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="lmv-modal-title">FORFEIT MATCH?</div>
-                        <p className="lmv-modal-text">
+                <div className="mt-modal-backdrop" onClick={() => setShowForfeitConfirm(false)}>
+                    <div className="mt-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="mt-modal-title">FORFEIT MATCH?</div>
+                        <p className="mt-modal-text">
                             Are you sure you want to forfeit this match?
                             You will lose ELO and the match will be recorded as a loss.
                         </p>
-                        <div className="lmv-modal-actions">
+                        <div className="mt-modal-actions">
                             <button className="ar-btn ar-btn-outline" onClick={() => setShowForfeitConfirm(false)}>
                                 CANCEL
                             </button>
-                            <button
-                                className="ar-btn ar-btn-red"
-                                onClick={() => {
-                                    setShowForfeitConfirm(false);
-                                    onForfeit();
-                                }}
-                            >
+                            <button className="ar-btn ar-btn-red" onClick={() => { void confirmForfeit(); }}>
                                 CONFIRM FORFEIT
                             </button>
                         </div>

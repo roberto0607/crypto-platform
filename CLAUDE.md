@@ -104,6 +104,13 @@ All new indicators follow this pattern:
 - **Never reintroduce `SameSite=None`.** It existed only because web and API were separate `*.up.railway.app` hosts. `up.railway.app` is on the Public Suffix List, so those hosts were different sites; Safari treated the refresh cookie as third-party and dropped it, logging users out on every reload.
 - Any web origin that isn't same-site with the API can't refresh a session. Keep such hosts redirected to `playtradr.com` (`apps/web/nginx.conf`).
 
+### Match screen and trade scope
+- **`/trade` is the match screen.** There's no separate match view (LiveMatchView was removed). In a live match `TradingPage` adds `MatchHeaderBar` on top (names, $ + %, timer, MATCH | PRACTICE, CHAT, FORFEIT) and docks `MatchChatPanel` in `.tr-chart-area`, so it can't reach the order form. Arena shows a MATCH LIVE card with ENTER MATCH; there's no forced redirect. A match starting while on `/arena` goes to `/trade`.
+- **`activeMatchStore` owns the session**: live P&L, `settling` (past `ends_at`, no result yet), `endedMatch`, `tradeMode`. `MatchEndGate` in `AppLayout` shows the result on any page. Match UI styles are in `styles/match.css` (`mt-*`, `.ar-btn`), imported by `AppLayout`. `--ar-*` stay off `:root`: `UnifiedOrderPanel` reads `var(--ar-orange, var(--g))`, so a global value would recolor `/trade`.
+- **Scope is explicit, never inferred from "the user is in a match".** During a live match a player can trade it or practice on free-play. `POST /orders`, `/v1/triggers` and `/v1/oco` require `scope` (`free` or a match id; missing is 400 `scope_required`). `resolveTradeScope` refuses, and never reroutes, a match that isn't ACTIVE (`match_ended`) or isn't the user's (`forbidden`). `GET /positions`, `/leverage`, `/orders`, `/v1/triggers` take `scope` too; no scope on `/positions` and `/leverage` is free-play, and on the order and trigger lists it's every row (Journal, replay). `/v1/sim/quote` reads no wallet or position, so it has none.
+- **Web**: `lib/orderScope` is the only place the scope comes from; every request names it. Don't add a read or write on the trade page without it.
+- **Timed-out matches**: `matchCleanupJob` completes them, every 15 s with no grace period. Orders are accepted until it runs.
+
 ### Error Handling
 - Never use `process.exit()` silently — always log before exiting
 - Migration guard throws errors (not `process.exit`) so they propagate to the top-level catch

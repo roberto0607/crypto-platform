@@ -634,12 +634,11 @@ describe("F-04: the actions live outside the scrolled card", () => {
     expect(screen.queryByTestId("confirm-box")).toBeNull();
   });
 
-  it("both pages pin that bar in their CSS", async () => {
+  it("the trade page pins that bar in its CSS", async () => {
     const proc = (globalThis as { process?: { cwd(): string } }).process!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fs: any = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
     const read = (f: string): string => fs.readFileSync(`${proc.cwd()}/src/${f}`, "utf8");
     expect(read("pages/TradingPage.tsx")).toMatch(/\.tr-pos-actions \{\s*position:sticky;bottom:0/);
-    expect(read("components/arena/LiveMatchView.tsx")).toMatch(/\.lmv-pos-actions \{\s*position: sticky;\s*bottom: 0/);
   });
 });

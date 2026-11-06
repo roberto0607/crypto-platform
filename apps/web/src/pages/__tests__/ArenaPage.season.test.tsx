@@ -10,7 +10,6 @@ vi.mock("@/api/endpoints/matches", () => ({
   getActiveMatches: vi.fn(() => Promise.resolve({ data: { matches: [] } })),
 }));
 vi.mock("@/components/arena/ChallengeBox", () => ({ ChallengeBox: () => null }));
-vi.mock("@/components/arena/LiveMatchView", () => ({ LiveMatchView: () => null }));
 vi.mock("@/components/ToastProvider", () => ({ useToast: () => ({ addToast: vi.fn() }) }));
 
 import ArenaPage from "@/pages/ArenaPage";

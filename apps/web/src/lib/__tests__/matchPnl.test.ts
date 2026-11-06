@@ -44,7 +44,9 @@ describe("formatMatchPnl", () => {
     ["-0.0005", "100000", "-$0.50 (-0.0005%)"],
     ["-0.00002", "100000", "-$0.02 (-<0.0001%)"],
     ["0", "100000", "$0.00 (0.00%)"],
-    ["-0.000001", "100000", "$0.00 (0.00%)"],
+    ["-0.000001", "100000", "-$0.0010 (-<0.0001%)"],
+    ["0.0000002", "100000", "+$0.0002 (+<0.0001%)"],
+    ["0.00000000", "100000", "$0.00 (0.00%)"],
   ])("%s of %s -> %s", (pct, capital, out) => {
     expect(formatMatchPnl(pct, capital)).toBe(out);
   });
@@ -78,6 +80,16 @@ describe("formatPnlUsd", () => {
     for (let i = 1; i <= 2_000; i++) {
       for (const n of [i / 1_000_000, -i / 1_000_000]) {
         expect(formatPnlUsd(n)).not.toMatch(/^[+-]\$0\.00$/);
+      }
+    }
+  });
+});
+
+describe("formatMatchPnl: never a frozen $0.00", () => {
+  it("any move off zero shows, at the card's precision", () => {
+    for (let i = 1; i <= 500; i++) {
+      for (const pct of [i / 10_000_000, -i / 10_000_000]) {
+        expect(formatMatchPnl(pct, "100000")).not.toMatch(/^[+-]?\$0\.00 /);
       }
     }
   });
