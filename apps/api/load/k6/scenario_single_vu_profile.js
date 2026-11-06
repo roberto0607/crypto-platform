@@ -36,6 +36,7 @@ export default function (data) {
   // 1. MARKET BUY — matches resting asks first, falls through to a system
   //    fill against pair.last_price for any unfilled remainder.
   const marketRes = authedPost(token, '/orders', {
+    scope: 'free',
     pairId,
     side: 'BUY',
     type: 'MARKET',
@@ -63,6 +64,7 @@ export default function (data) {
 
   // 2. LIMIT BUY far below market — rests on book without filling.
   const limitRes = authedPost(token, '/orders', {
+    scope: 'free',
     pairId,
     side: 'BUY',
     type: 'LIMIT',

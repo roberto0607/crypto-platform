@@ -11,6 +11,9 @@ import { z } from "zod";
  */
 export type MatchScope = string | null | undefined;
 
+/** The words an out-of-date tab shows: it reads `message` for a code it doesn't know. */
+export const SCOPE_REQUIRED_MESSAGE = "TRADR was updated — refresh to continue";
+
 const scopeParam = z.union([z.literal("free"), z.string().uuid()]);
 
 /** The repo filter for a raw `scope` value; "invalid" for anything else. */

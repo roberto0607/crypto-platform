@@ -59,7 +59,7 @@ describe("with the engine", () => {
 
     const auth = (sub: string) => ({ authorization: `Bearer ${app.jwt.sign({ sub, role: "USER" }, { expiresIn: 3600 })}` });
     const post = (body: Record<string, unknown>) =>
-        app.inject({ method: "POST", url: "/orders", headers: auth(userId), payload: { pairId, ...body } });
+        app.inject({ method: "POST", url: "/orders", headers: auth(userId), payload: { pairId, scope: "free", ...body } });
 
     beforeAll(async () => {
         await ensureMigrations();

@@ -29,6 +29,7 @@ export default function (data) {
 
   // 1. MARKET BUY — executes immediately or fills from resting asks
   const marketRes = authedPost(token, '/orders', {
+    scope: 'free',
     pairId,
     side: 'BUY',
     type: 'MARKET',
@@ -42,6 +43,7 @@ export default function (data) {
 
   // 2. LIMIT BUY far below market — will rest on book without filling
   const limitRes = authedPost(token, '/orders', {
+    scope: 'free',
     pairId,
     side: 'BUY',
     type: 'LIMIT',

@@ -107,7 +107,7 @@ echo "=== 5. Place order to create a position ==="
 ORDER=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.5\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.5\"}")
 ORDER_STATUS=$(echo "$ORDER" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['status'])")
 check "Order filled" "$([[ "$ORDER_STATUS" == "FILLED" ]] && echo true || echo false)" "status=$ORDER_STATUS"
 

@@ -103,7 +103,7 @@ echo "=== 6. POST /v1/triggers — create single STOP_MARKET ==="
 TRG1=$(curl -sf -X POST "$BASE/v1/triggers" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_MARKET\",\"side\":\"SELL\",\"triggerPrice\":\"49000\",\"qty\":\"0.5\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_MARKET\",\"side\":\"SELL\",\"triggerPrice\":\"49000\",\"qty\":\"0.5\"}")
 TRG1_ID=$(echo "$TRG1" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 TRG1_STATUS=$(echo "$TRG1" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
 
@@ -118,7 +118,7 @@ OCO=$(curl -sf -X POST "$BASE/v1/oco" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
-    \"pairId\":\"$PAIR_ID\",
+    \"scope\":\"free\",\"pairId\":\"$PAIR_ID\",
     \"legA\":{\"kind\":\"STOP_MARKET\",\"side\":\"SELL\",\"triggerPrice\":\"48000\",\"qty\":\"0.1\"},
     \"legB\":{\"kind\":\"TAKE_PROFIT_MARKET\",\"side\":\"SELL\",\"triggerPrice\":\"52000\",\"qty\":\"0.1\"}
   }")
@@ -193,7 +193,7 @@ echo "=== 13. Validation: STOP_LIMIT without limitPrice ==="
 BAD=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/v1/triggers" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_LIMIT\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"qty\":\"0.1\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_LIMIT\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"qty\":\"0.1\"}")
 
 if [ "$BAD" = "400" ]; then
   pass "STOP_LIMIT without limitPrice returns 400"
@@ -205,7 +205,7 @@ echo "=== 14. Validation: STOP_MARKET with limitPrice ==="
 BAD2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/v1/triggers" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_MARKET\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"limitPrice\":\"51500\",\"qty\":\"0.1\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_MARKET\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"limitPrice\":\"51500\",\"qty\":\"0.1\"}")
 
 if [ "$BAD2" = "400" ]; then
   pass "STOP_MARKET with limitPrice returns 400"
@@ -217,7 +217,7 @@ echo "=== 15. STOP_LIMIT with limitPrice succeeds ==="
 TRG_LIMIT=$(curl -sf -X POST "$BASE/v1/triggers" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_LIMIT\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"limitPrice\":\"51500\",\"qty\":\"0.1\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"kind\":\"STOP_LIMIT\",\"side\":\"BUY\",\"triggerPrice\":\"51000\",\"limitPrice\":\"51500\",\"qty\":\"0.1\"}")
 TRG_LIMIT_STATUS=$(echo "$TRG_LIMIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
 TRG_LIMIT_LP=$(echo "$TRG_LIMIT" | python3 -c "import sys,json; print(json.load(sys.stdin)['limit_price'])")
 

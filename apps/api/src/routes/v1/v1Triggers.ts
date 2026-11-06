@@ -15,7 +15,7 @@ import {
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
 import { assertTradablePairId } from "../../market/marketSymbols";
-import { getActiveMatchIdForUser } from "../../competitions/matchService";
+import { resolveTradeScope } from "../../competitions/tradeScope";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
 import { assertTrailingOffset } from "../../triggers/trailingOffset";
 
@@ -118,7 +118,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             security: [{ bearerAuth: [] }],
             body: {
                 type: "object",
-                required: ["pairId", "kind", "side", "triggerPrice", "qty"],
+                required: ["pairId", "kind", "side", "triggerPrice", "qty"], // scope too: resolveTradeScope says scope_required
                 properties: {
                     pairId: { type: "string", format: "uuid" },
                     kind: { type: "string", enum: ["STOP_MARKET", "STOP_LIMIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT", "TRAILING_STOP_MARKET"] },
@@ -146,7 +146,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             await assertTradablePairId(b.pairId);
             if (b.kind === "TRAILING_STOP_MARKET") await assertTrailingOffset(b.pairId, b.trailingOffset!);
             // Scope fixed at creation: the account this trigger acts on.
-            const matchId = await getActiveMatchIdForUser(actor.id);
+            const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
 
             const trigger = await createTriggerOrder({
                 userId: actor.id,
@@ -356,7 +356,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
 
             const ocoGroupId = crypto.randomUUID();
             // Both legs share one scope, resolved once at creation.
-            const matchId = await getActiveMatchIdForUser(actor.id);
+            const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
 
             const legA = await createTriggerOrder({
                 userId: actor.id,

@@ -151,7 +151,7 @@ curl -sf -X POST "$BASE/replay/start" \
 ORDER_HTTP=$(curl -s -o /tmp/recon-order-resp.json -w "%{http_code}" -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
 ORDER_CODE=$(python3 -c "import sys,json; d=json.load(open('/tmp/recon-order-resp.json')); print(d.get('details',{}).get('code', d.get('code','')))" 2>/dev/null || echo "")
 check "Quarantined order rejected 403" "$([[ "$ORDER_HTTP" == "403" ]] && echo true || echo false)" "http=$ORDER_HTTP"
 check "Error code is ACCOUNT_QUARANTINED" "$([[ "$ORDER_CODE" == "ACCOUNT_QUARANTINED" ]] && echo true || echo false)" "code=$ORDER_CODE"
@@ -166,7 +166,7 @@ echo "=== 11. Unquarantined user can trade again ==="
 ORDER2=$(curl -sf -X POST "$BASE/orders" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
+  -d "{\"scope\":\"free\",\"pairId\":\"$PAIR_ID\",\"side\":\"BUY\",\"type\":\"MARKET\",\"qty\":\"0.001\"}")
 ORDER2_STATUS=$(echo "$ORDER2" | python3 -c "import sys,json; print(json.load(sys.stdin)['order']['status'])")
 check "Unquarantined order accepted" "$([[ "$ORDER2_STATUS" == "FILLED" ]] && echo true || echo false)" "status=$ORDER2_STATUS"
 

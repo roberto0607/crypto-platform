@@ -49,6 +49,7 @@ export default function (data) {
   } else {
     // 30% writes — MARKET BUY small qty
     const res = authedPost(token, '/orders', {
+      scope: 'free',
       pairId,
       side: 'BUY',
       type: 'MARKET',
