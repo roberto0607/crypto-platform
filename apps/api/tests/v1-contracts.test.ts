@@ -116,7 +116,7 @@ beforeAll(async () => {
             method: "POST",
             url: "/orders",
             headers: { authorization: `Bearer ${traderToken}` },
-            payload: {
+            payload: { scope: "free",
                 pairId,
                 side: "BUY",
                 type: "LIMIT",
