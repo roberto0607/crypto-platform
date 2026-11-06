@@ -61,14 +61,14 @@
       "closed": false
     },
     {
-      "id": "w:bob:USD:match",
-      "balance": "12456.92990000",
+      "id": "w:bob:BTC:match",
+      "balance": "-0.03000000",
       "reserved": "0.00000000",
       "closed": false
     },
     {
-      "id": "w:bob:BTC:match",
-      "balance": "-0.03000000",
+      "id": "w:bob:USD:match",
+      "balance": "12456.92990000",
       "reserved": "0.00000000",
       "closed": false
     }
