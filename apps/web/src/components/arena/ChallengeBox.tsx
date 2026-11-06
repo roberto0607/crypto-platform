@@ -8,6 +8,9 @@ import { CopyInviteLink } from "./CopyInviteLink";
 import { PlayerSearch } from "./PlayerSearch";
 
 const DURATION_OPTIONS = [
+    { value: 0.25, label: "15M" },
+    { value: 1, label: "1H" },
+    { value: 4, label: "4H" },
     { value: 24, label: "24H" },
     { value: 168, label: "1 WEEK" },
     { value: 336, label: "2 WEEKS" },
@@ -133,7 +136,7 @@ export function ChallengeBox({ onChanged }: ChallengeBoxProps) {
                     className="ar-select"
                     aria-label="Match length"
                     value={duration}
-                    onChange={(e) => setDuration(parseInt(e.target.value, 10))}
+                    onChange={(e) => setDuration(Number(e.target.value))}
                 >
                     {DURATION_OPTIONS.map((d) => (
                         <option key={d.value} value={d.value}>{d.label}</option>

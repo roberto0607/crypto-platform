@@ -103,4 +103,17 @@ describe("ChallengeBox", () => {
     fireEvent.click(challengeButton());
     expect(await screen.findByRole("button", { name: /cancel stuck match/i })).toBeInTheDocument();
   });
+
+  it("offers the short durations, and sends 15M as a quarter of an hour", async () => {
+    api.challengeUser.mockResolvedValue({ data: { match: {} } });
+    renderBox("/arena?challenge=bob");
+    await screen.findByTestId("player-chip");
+    const select = screen.getByRole("combobox");
+    expect([...select.querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+      ["15M", "1H", "4H", "24H", "1 WEEK", "2 WEEKS", "3 WEEKS", "4 WEEKS"],
+    );
+    fireEvent.change(select, { target: { value: "0.25" } });
+    fireEvent.click(challengeButton());
+    await waitFor(() => expect(api.challengeUser).toHaveBeenCalledWith(expect.objectContaining({ durationHours: 0.25 })));
+  });
 });
