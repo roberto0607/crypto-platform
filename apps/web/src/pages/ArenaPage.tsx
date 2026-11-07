@@ -49,6 +49,7 @@ const ARENA_CSS = `
   .ar-sc-val.orange { color:var(--ar-orange); }
   .ar-sc-val.gold { color:var(--ar-gold); }
   .ar-sc-val.green { color:var(--ar-g); }
+  .ar-sc-val.red { color:var(--ar-red); }
   .ar-sc-lbl { font-size:8px;color:var(--ar-muted);letter-spacing:3px;margin-top:2px; }
 
   /* Tabs */
@@ -154,6 +155,11 @@ function formatTimeRemaining(endsAt: string): string {
     if (days > 0) return `${days}D ${hours}H`;
     if (hours > 0) return `${hours}H ${mins}M`;
     return `${mins}M`;
+}
+
+/** A banner number: green above zero, red below, plain at zero. */
+function scoreValClass(value: number): string {
+    return `ar-sc-val${value > 0 ? " green" : value < 0 ? " red" : ""}`;
 }
 
 function MatchLiveCard({ match, userId, onEnter }: { match: Match; userId: string; onEnter: () => void }) {
@@ -316,6 +322,9 @@ export default function ArenaPage() {
     }
 
     const daysLeft = seasonInfo ? formatTimeRemaining(seasonInfo.end_at) : "--";
+    const myEntry = leaderboard.find((e) => e.user_id === userId);
+    const myScore = myEntry ? parseFloat((myEntry as any).nuanced_score ?? myEntry.return_pct ?? "0") : 0;
+    const myReturn = myEntry ? parseFloat(myEntry.return_pct ?? "0") : 0;
 
     return (
         <>
@@ -357,27 +366,21 @@ export default function ArenaPage() {
                         </div>
                         <div className="ar-sc-item">
                             <div className="ar-sc-val">{daysLeft}</div>
-                            <div className="ar-sc-lbl">REMAINING</div>
+                            <div className="ar-sc-lbl">{seasonInfo.status === "ENDED" ? "SEASON" : "REMAINING"}</div>
                         </div>
                         <div className="ar-sc-item">
                             <div className="ar-sc-val gold">#{leaderboard.findIndex((e) => e.user_id === userId) + 1 || "--"}</div>
                             <div className="ar-sc-lbl">YOUR RANK</div>
                         </div>
                         <div className="ar-sc-item">
-                            <div className="ar-sc-val green">
-                                {(() => {
-                                    const entry = leaderboard.find((e) => e.user_id === userId);
-                                    return entry ? parseFloat((entry as any).nuanced_score ?? entry.return_pct ?? "0").toFixed(0) : "--";
-                                })()}
+                            <div className={scoreValClass(myScore)}>
+                                {myEntry ? myScore.toFixed(0) : "--"}
                             </div>
                             <div className="ar-sc-lbl">SCORE</div>
                         </div>
                         <div className="ar-sc-item">
-                            <div className="ar-sc-val" style={{ color: "var(--ar-g)" }}>
-                                {(() => {
-                                    const entry = leaderboard.find((e) => e.user_id === userId);
-                                    return entry ? formatPnlPct(entry.return_pct) : "--";
-                                })()}
+                            <div className={scoreValClass(myReturn)}>
+                                {myEntry ? formatPnlPct(myEntry.return_pct) : "--"}
                             </div>
                             <div className="ar-sc-lbl">RETURN</div>
                         </div>
@@ -399,6 +402,7 @@ export default function ArenaPage() {
                         seasonInfo={seasonInfo}
                         seasonLoading={seasonLoading}
                         seasonError={seasonError}
+                        onBoard={setLeaderboard}
                     />
                 )}
 

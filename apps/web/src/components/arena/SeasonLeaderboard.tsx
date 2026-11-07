@@ -6,7 +6,6 @@ import {
     type LeaderboardEntry,
 } from "@/api/endpoints/competitions";
 import { LeaderboardRow } from "./LeaderboardRow";
-import { formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
    SEASON LEADERBOARD CSS
@@ -17,36 +16,6 @@ const SLB_CSS = `
     --slb-mono: 'Space Mono', monospace;
     font-family: var(--slb-mono);
   }
-
-  /* ── STAT CARDS ── */
-  .slb-stat-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-  .slb-stat-card {
-    background: #261200;
-    border: 1px solid rgba(255,107,0,0.2);
-    border-radius: 6px;
-    padding: 10px 12px;
-    text-align: center;
-  }
-  .slb-stat-lbl {
-    font-size: 8px;
-    letter-spacing: 3px;
-    color: rgba(255,107,0,0.5);
-    margin-bottom: 4px;
-  }
-  .slb-stat-val {
-    font-family: var(--slb-bebas);
-    font-size: 22px;
-    letter-spacing: 2px;
-    color: #FF6B00;
-  }
-  .slb-stat-val.green { color: #4ade80; }
-  .slb-stat-val.red { color: #f87171; }
-  .slb-stat-val.white { color: #fff; }
 
   /* ── PHASE BANNER ── */
   .slb-phase {
@@ -310,9 +279,11 @@ interface SeasonLeaderboardProps {
     seasonInfo: { id: string; name: string; end_at: string; season_number?: number; status?: string } | null;
     seasonLoading: boolean;
     seasonError: boolean;
+    /** Each load of the board, so the Arena banner shows the same numbers. */
+    onBoard?: (entries: LeaderboardEntry[]) => void;
 }
 
-export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: SeasonLeaderboardProps) {
+export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError, onBoard }: SeasonLeaderboardProps) {
     const userId = useAuthStore((s) => s.user?.id);
 
     const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -331,6 +302,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
             const lb = data.leaderboard ?? (data as any).data ?? [];
             setEntries(lb);
             lastGoodData.current = lb;
+            onBoard?.(lb);
             if (!isRefresh) setLoading(false);
         } catch {
             if (!isRefresh) {
@@ -339,7 +311,7 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
             }
             // On refresh failure, keep showing last good data
         }
-    }, [seasonInfo]);
+    }, [seasonInfo, onBoard]);
 
     // Initial fetch
     useEffect(() => {
@@ -412,7 +384,6 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
     const myEntry = displayData.find((e) => e.user_id === userId);
     const myRank = myEntry?.rank ?? displayData.length + 1;
     const myScore = myEntry ? parseFloat((myEntry as any).nuanced_score ?? myEntry.return_pct ?? "0") : 0;
-    const myPnl = myEntry ? parseFloat(myEntry.return_pct ?? "0") : 0;
 
     // Progress toward next rank: score of user one rank above you
     const nextRankEntry = displayData.find((e) => e.rank === myRank - 1);
@@ -430,32 +401,6 @@ export function SeasonLeaderboard({ seasonInfo, seasonLoading, seasonError }: Se
 
     return (
         <div className="slb-wrap">
-            {/* ── STAT CARDS ── */}
-            <div className="slb-stat-grid">
-                <div className="slb-stat-card">
-                    <div className="slb-stat-lbl">YOUR RANK</div>
-                    <div className="slb-stat-val">
-                        {myEntry ? `#${myRank}` : "--"}
-                    </div>
-                </div>
-                <div className="slb-stat-card">
-                    <div className="slb-stat-lbl">YOUR SCORE</div>
-                    <div className="slb-stat-val">
-                        {myEntry ? myScore.toFixed(0) : "--"}
-                    </div>
-                </div>
-                <div className="slb-stat-card">
-                    <div className="slb-stat-lbl">YOUR P&L</div>
-                    <div className={`slb-stat-val${myPnl > 0 ? " green" : myPnl < 0 ? " red" : ""}`}>
-                        {myEntry ? formatPnlPct(myPnl) : "--"}
-                    </div>
-                </div>
-                <div className="slb-stat-card">
-                    <div className="slb-stat-lbl">{ended ? "SEASON ENDED" : "SEASON ENDS"}</div>
-                    <div className={`slb-stat-val white`}>{ended ? new Date(seasonInfo.end_at).toLocaleDateString() : timeLeft}</div>
-                </div>
-            </div>
-
             {/* ── PHASE BANNER ── */}
             <div className="slb-phase">
                 <span className="slb-phase-title">{phaseLabel}</span>
