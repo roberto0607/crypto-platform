@@ -19,6 +19,7 @@ import { logger as rootLogger } from "../observability/logContext.js";
 import { publish } from "../events/eventBus.js";
 import { createEvent } from "../events/eventTypes.js";
 import { publishMatchEvent } from "../events/matchEvents.js";
+import { computeFee } from "../trading/feeCalc.js";
 import { createTrade } from "../trading/tradeRepo.js";
 import { D, toFixed8 } from "../utils/decimal.js";
 import { createMatchConversationTx } from "../chat/conversationRepo.js";
@@ -30,6 +31,7 @@ import {
     lockMatchWalletsTx,
     lockMatchPairsTx,
     settleMatchWalletsTx,
+    type SettlementFees,
 } from "./matchWallets.js";
 import type { AppEvent } from "../events/eventTypes.js";
 import { deleteMatchConversation } from "../chat/chatService.js";
@@ -1021,9 +1023,10 @@ export function calculateNuancedScore(
  *      takes them in (pair → wallets → positions), so an in-flight match fill
  *      waits and then hits closed wallets (match_ended) instead of deadlocking
  *   3. force-close positions (score) and settle the wallets to USD at the
- *      same fair price (closing a long at the bid, a short at the ask). An
- *      ISOLATED position settles its margin + P&L (loss-capped) into USD in
- *      the force-close; it has no base wallet balance to settle
+ *      same fair price (closing a long at the bid, a short at the ask), less
+ *      the taker fee of a manual close. An ISOLATED position settles its
+ *      margin + P&L (loss-capped) into USD in the force-close; it has no base
+ *      wallet balance to settle
  *   4. close the wallets — final balances kept, nothing moves to free-play
  * Returns the events to publish after COMMIT.
  */
@@ -1032,8 +1035,8 @@ async function settleMatchAccountsTx(matchId: string, client: PoolClient): Promi
     const events = await cancelMatchOrdersTx(client, matchId);
     await lockMatchWalletsTx(client, matchId);
     const prices = new ClosePrices();
-    await closeMatchScopedPositions(matchId, client, prices);
-    await settleMatchWalletsTx(client, matchId, prices);
+    const { closeFees } = await closeMatchScopedPositions(matchId, client, prices);
+    await settleMatchWalletsTx(client, matchId, prices, closeFees);
     // wallet.updated for every wallet's final state (released holds included).
     const closed = await closeMatchWalletsTx(client, matchId);
     return [...events, ...closed];
@@ -1061,12 +1064,14 @@ function publishAll(events: AppEvent[]): void {
  * thence into match.challenger_pnl_pct / opponent_pnl_pct. This is the
  * anti-gameability guarantee — a user can't forfeit a losing open position
  * to escape the loss, because the close books the loss into the match score.
+ * It's a real close, so it pays the taker fee: holding to match end must not
+ * be cheaper than closing by hand.
  */
 async function closeMatchScopedPositions(
     matchId: string,
     client: PoolClient,
     prices: ClosePrices,
-): Promise<{ closedCount: number; totalPnlRealized: string }> {
+): Promise<{ closedCount: number; totalPnlRealized: string; closeFees: SettlementFees }> {
     // Lock match-scoped, non-flat position rows for the duration of the txn.
     const { rows: openPositions } = await client.query<{
         user_id: string;
@@ -1086,16 +1091,19 @@ async function closeMatchScopedPositions(
 
     let closedCount = 0;
     let totalPnl = D("0");
+    const closeFees: SettlementFees = new Map();
     for (const pos of openPositions) {
         // Close price (matchWallets.ClosePrices): closing a long sells from
         // the bid, a short buys from the ask, size priced like any market
         // close — the same price the wallet settlement uses, so the score and
         // the match wallets agree.
-        const { rows: pairRows } = await client.query<{ quote_asset_id: string }>(
-            `SELECT quote_asset_id FROM trading_pairs WHERE id = $1`,
+        const { rows: pairRows } = await client.query<{ quote_asset_id: string; maker_fee_bps: number; taker_fee_bps: number }>(
+            `SELECT quote_asset_id, maker_fee_bps, taker_fee_bps FROM trading_pairs WHERE id = $1`,
             [pos.pair_id],
         );
-        const quoteAssetId = pairRows[0]?.quote_asset_id ?? null;
+        const pairRow = pairRows[0];
+        if (!pairRow) throw new Error("pair_not_found");
+        const quoteAssetId = pairRow.quote_asset_id;
         const close = await prices.get(client, {
             userId: pos.user_id,
             pairId: pos.pair_id,
@@ -1119,22 +1127,26 @@ async function closeMatchScopedPositions(
         const exitD = close.price;
         const isolated = pos.margin_mode === "ISOLATED";
         let pnl = D(computeUnrealizedRowPnl(pos.base_qty, pos.avg_entry_price, exitD.toString()));
+        const fee = computeFee(toFixed8(baseQty.abs().mul(exitD)), "TAKER", pairRow, pos.user_id).feeAmount;
 
-        // SPOT: book the P&L on the row here; settleMatchWalletsTx then sells
-        // the base wallet at the same price. ISOLATED holds no base: the
-        // close is settled below like any other close of the position.
+        // SPOT: book the P&L and fee on the row here; settleMatchWalletsTx
+        // then sells the base wallet at the same price and takes the fee from
+        // the proceeds. ISOLATED holds no base: the close is settled below
+        // like any other close of the position.
         if (!isolated) {
             await client.query(
                 `UPDATE positions
                  SET realized_pnl_quote = realized_pnl_quote + $3,
+                     fees_paid_quote = fees_paid_quote + $5,
                      base_qty = 0,
                      avg_entry_price = 0,
                      updated_at = now()
                  WHERE user_id = $1
                    AND pair_id = $2
                    AND match_id = $4`,
-                [pos.user_id, pos.pair_id, toFixed8(pnl), matchId],
+                [pos.user_id, pos.pair_id, toFixed8(pnl), matchId, fee],
             );
+            closeFees.set(`${pos.user_id}:${pos.pair_id}`, fee);
         }
 
         // Synthetic audit trade. The orders CHECK constraint requires at
@@ -1169,7 +1181,7 @@ async function closeMatchScopedPositions(
             price: toFixed8(exitD),
             qty: toFixed8(absQty),
             quoteAmount: toFixed8(quoteAmt),
-            feeAmount: "0.00000000",
+            feeAmount: fee,
             feeAssetId: quoteAssetId,
             isSystemFill: true,
         });
@@ -1177,8 +1189,8 @@ async function closeMatchScopedPositions(
         // ISOLATED: the same settlement as a close through the engine —
         // margin released, P&L booked with the loss cap (a gap past
         // bankruptcy loses the margin, never more; the excess is recorded as
-        // LIQUIDATION_SHORTFALL), position flat. Fee-free, like the SPOT
-        // force-close. The match USD wallet is already locked.
+        // LIQUIDATION_SHORTFALL), position flat. The match USD wallet is
+        // already locked.
         let shortfall: Decimal | null = null;
         if (isolated) {
             const { rows: usdRows } = await client.query<{ id: string }>(
@@ -1195,7 +1207,7 @@ async function closeMatchScopedPositions(
                 side: closingSide,
                 qty: toFixed8(absQty),
                 price: toFixed8(exitD),
-                fee: "0.00000000",
+                fee,
                 feeRole: "TAKER",
                 leverage: D(pos.leverage),
                 mmrBps,
@@ -1230,6 +1242,7 @@ async function closeMatchScopedPositions(
     return {
         closedCount,
         totalPnlRealized: toFixed8(totalPnl),
+        closeFees,
     };
 }
 
