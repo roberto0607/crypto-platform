@@ -19,6 +19,11 @@ export function MatchEndGate() {
         dismiss();
         navigate("/arena");
       }}
+      // The gate lives in AppLayout, so a route change alone leaves this on top.
+      onViewBreakdown={() => {
+        dismiss();
+        navigate(`/matches/${endedMatch.id}/breakdown`);
+      }}
     />
   );
 }

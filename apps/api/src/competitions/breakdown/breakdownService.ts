@@ -13,8 +13,13 @@
  * Grouped at order level (not raw fills) with a qty-weighted avg fill price,
  * since "a trade I made" reads naturally as one order, not its individual
  * partial-fill line items.
+ *
+ * P&L and fees are per player, from the match-scoped positions rows the stored
+ * headline is computed from (calculatePlayerStats), so they can't disagree with
+ * it. Not per order: trades.fee_amount only holds the taker's fee.
  */
 import { pool } from "../../db/pool.js";
+import { D, toFixed8 } from "../../utils/decimal.js";
 import { getMatchById } from "../matchService.js";
 
 export class BreakdownError extends Error {
@@ -38,6 +43,14 @@ export interface BreakdownOrder {
     lastFillAt: string | null;
 }
 
+export interface BreakdownSummary {
+    /** The stored headline; null if the player has none. */
+    pnlPct: string | null;
+    realizedPnlQuote: string;
+    feesQuote: string;
+    netPnlQuote: string;
+}
+
 export interface MatchBreakdown {
     match: {
         id: string;
@@ -48,6 +61,8 @@ export interface MatchBreakdown {
     };
     challengerOrders: BreakdownOrder[];
     opponentOrders: BreakdownOrder[];
+    challengerSummary: BreakdownSummary;
+    opponentSummary: BreakdownSummary;
 }
 
 interface RawOrderRow {
@@ -91,6 +106,25 @@ export async function getMatchBreakdown(matchId: string): Promise<MatchBreakdown
         [matchId],
     );
 
+    const { rows: totals } = await pool.query<{ user_id: string; realized: string; fees: string }>(
+        `SELECT user_id, sum(realized_pnl_quote)::text AS realized, sum(fees_paid_quote)::text AS fees
+         FROM positions WHERE match_id = $1
+         GROUP BY user_id`,
+        [matchId],
+    );
+
+    const summaryOf = (userId: string, pnlPct: string | null): BreakdownSummary => {
+        const row = totals.find((t) => t.user_id === userId);
+        const realized = D(row?.realized ?? "0");
+        const fees = D(row?.fees ?? "0");
+        return {
+            pnlPct,
+            realizedPnlQuote: toFixed8(realized),
+            feesQuote: toFixed8(fees),
+            netPnlQuote: toFixed8(realized.minus(fees)),
+        };
+    };
+
     const toBreakdownOrder = (r: RawOrderRow): BreakdownOrder => ({
         orderId: r.order_id,
         pairSymbol: r.pair_symbol,
@@ -114,5 +148,7 @@ export async function getMatchBreakdown(matchId: string): Promise<MatchBreakdown
         },
         challengerOrders: rows.filter((r) => r.user_id === match.challenger_id).map(toBreakdownOrder),
         opponentOrders: rows.filter((r) => r.user_id === match.opponent_id).map(toBreakdownOrder),
+        challengerSummary: summaryOf(match.challenger_id, match.challenger_pnl_pct),
+        opponentSummary: summaryOf(match.opponent_id, match.opponent_pnl_pct),
     };
 }

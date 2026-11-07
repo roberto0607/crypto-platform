@@ -370,10 +370,9 @@ const TRADE_CSS = `
     height:100%;max-height:100%;overflow:hidden;
   }
   .tr-order-panel-top {
-    flex:1 1 0;overflow-y:auto;min-height:0;
+    flex:1 1 0;min-height:0;overflow:hidden;
+    display:flex;flex-direction:column;
   }
-  .tr-order-panel-top::-webkit-scrollbar { width:2px; }
-  .tr-order-panel-top::-webkit-scrollbar-thumb { background:var(--border); }
   .tr-order-panel-activity {
     flex-shrink:0;max-height:200px;overflow:hidden;
     display:flex;flex-direction:column;
@@ -392,8 +391,16 @@ const TRADE_CSS = `
 
   /* UnifiedOrderPanel root */
   .tr-order-section {
+    flex:1 1 0;min-height:0;
+    display:flex;flex-direction:column;
+  }
+  /* The scroller, so the action bar below it is never over a field. */
+  .tr-order-form {
+    flex:1 1 0;min-height:0;overflow-y:auto;
     padding:10px 16px;
   }
+  .tr-order-form::-webkit-scrollbar { width:4px; }
+  .tr-order-form::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.25); }
 
   .tr-op-section {
     padding:8px 14px;border-bottom:1px solid var(--borderW);
@@ -556,7 +563,7 @@ const TRADE_CSS = `
   /* Order-form sticky submit footer. Base is layout-transparent (display:contents)
      so the has-position case is unchanged; when there is NO open position the
      -pinned variant pins the cost summary + submit to the bottom of the scrollable
-     .tr-order-panel-top, so OPEN LONG/SHORT is always reachable regardless of scroll
+     .tr-order-form, so OPEN LONG/SHORT is always reachable regardless of scroll
      or how tall the OrderDock is. Edge-to-edge + opaque (mirrors the position card),
      z-index below the card (1 < 2) so the card wins when both could be present. */
   .tr-order-footer { display:contents; }
@@ -711,19 +718,18 @@ const TRADE_CSS = `
     margin:0 -16px;padding:8px 16px 0;
     background:#050505;border-top:1px solid var(--borderW);
   }
-  /* Always reachable (F-04): pinned to the bottom of the scrolling order panel,
-     so CLOSE and any confirm stay on screen however tall the card or the dock
-     (and above the book, which sits outside the scroller). Last in the
-     section, so the form scrolls clear of it. */
+  /* Always reachable (F-04): under the form's scroller, not over it, so CLOSE
+     and any confirm stay on screen however tall the card or the dock, and take
+     their height from the scroller instead of covering what's in it. */
   .tr-pos-actions {
-    position:sticky;bottom:0;z-index:3;
-    margin:8px -16px -10px;padding:8px 16px 10px;
+    flex:none;
+    padding:8px 16px 10px;
     background:#050505;border-top:1px solid var(--borderW);
   }
   /* The card at the top of the panel (above LONG/SHORT): in flow, edge to
      edge, separated from the form below. Not sticky: at ~400px it would
      cover the form while scrolling. */
-  .tr-order-section > .tr-position-card-sticky {
+  .tr-order-form > .tr-position-card-sticky {
     position:static;margin:-10px -16px 10px;padding:12px 16px;
     border-top:none;border-bottom:1px solid var(--borderW);
   }
@@ -732,7 +738,8 @@ const TRADE_CSS = `
      height, then the order panel and book; the toolbar wraps onto more
      rows (it has dropdowns, so it can't be an overflow scroller). */
   @media (max-width: 768px) {
-    .tr-wrap { overflow-x:hidden;overflow-y:auto;max-height:100%; }
+    /* The page scrolls here. Focusing a field stops clear of the CLOSE bar. */
+    .tr-wrap { overflow-x:hidden;overflow-y:auto;max-height:100%;scroll-padding-bottom:80px; }
     .tr-body {
       display:flex;flex-direction:column;
       flex:0 0 auto;overflow:visible;
@@ -743,7 +750,10 @@ const TRADE_CSS = `
       height:auto;max-height:none;overflow:visible;
       border-left:none;border-top:1px solid var(--border);
     }
-    .tr-order-panel-top { flex:0 0 auto;overflow:visible; }
+    .tr-order-panel-top { flex:0 0 auto;overflow:visible;display:block; }
+    .tr-order-section { display:block; }
+    .tr-order-form { overflow:visible; }
+    .tr-pos-actions { position:sticky;bottom:0;z-index:3; }
     .tr-order-panel-book { flex:0 0 auto;height:260px; }
     .tr-order-dock { flex-shrink:0; }
     /* The position card's equity / "reverse to …" row: stacked and

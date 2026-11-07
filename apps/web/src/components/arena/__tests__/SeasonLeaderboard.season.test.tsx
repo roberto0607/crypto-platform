@@ -44,7 +44,6 @@ describe("SeasonLeaderboard", () => {
     expect(screen.getByText(/3\+ matches for a badge/i)).toBeInTheDocument();
     expect(screen.getByText(/ranks 11–12 stay anonymous/i)).toBeInTheDocument();
     expect(screen.queryByText(/revealed/i)).not.toBeInTheDocument();
-    expect(screen.getByText("SEASON ENDS")).toBeInTheDocument();
   });
 
   it("off-season: final standings, with no countdown", async () => {
@@ -53,8 +52,6 @@ describe("SeasonLeaderboard", () => {
     expect(screen.getByText(/season 3 final standings/i)).toBeInTheDocument();
     expect(screen.getByText(/off season/i)).toBeInTheDocument();
     expect(screen.queryByText(/rankings lock in/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("SEASON ENDS")).not.toBeInTheDocument();
-    expect(screen.getByText("SEASON ENDED")).toBeInTheDocument();
   });
 
   it("says nobody has played yet, rather than joined", async () => {

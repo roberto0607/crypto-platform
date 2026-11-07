@@ -11,13 +11,14 @@ import {
     listTriggersByUser,
     cancelTriggerByUser,
     updateTriggerByUser,
-    findTriggerPairIdForUser,
+    findTriggerForUser,
 } from "../../triggers/triggerRepo";
 import { AppError } from "../../errors/AppError";
 import { assertTradablePairId } from "../../market/marketSymbols";
 import { resolveTradeScope } from "../../competitions/tradeScope";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
 import { assertTrailingOffset } from "../../triggers/trailingOffset";
+import { assertTriggerPlacement, assertTriggerPrice } from "../../triggers/triggerPlacement";
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
 
@@ -147,6 +148,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             if (b.kind === "TRAILING_STOP_MARKET") await assertTrailingOffset(b.pairId, b.trailingOffset!);
             // Scope fixed at creation: the account this trigger acts on.
             const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
+            await assertTriggerPlacement(actor.id, b.pairId, matchId, [b]);
 
             const trigger = await createTriggerOrder({
                 userId: actor.id,
@@ -299,10 +301,15 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 if (!parsed.success) {
                     throw new AppError("invalid_input", parsed.error.flatten());
                 }
-                if (parsed.data.trailingOffset !== undefined) {
-                    // Unknown / not-owned ids fall through to updateTriggerByUser's 404.
-                    const pairIdOfTrigger = await findTriggerPairIdForUser(actor.id, id);
-                    if (pairIdOfTrigger) await assertTrailingOffset(pairIdOfTrigger, parsed.data.trailingOffset);
+                // Unknown, not-owned or finished triggers fall through to
+                // updateTriggerByUser's 404 / trigger_not_editable.
+                const existing = await findTriggerForUser(actor.id, id);
+                if (existing?.status === "ACTIVE") {
+                    const { trailingOffset, triggerPrice } = parsed.data;
+                    if (trailingOffset !== undefined) await assertTrailingOffset(existing.pair_id, trailingOffset);
+                    if (triggerPrice !== undefined) {
+                        await assertTriggerPrice(existing.pair_id, { kind: existing.kind, side: existing.side, triggerPrice });
+                    }
                 }
                 const trigger = await updateTriggerByUser(actor.id, id, parsed.data);
                 return reply.send(trigger);
@@ -357,6 +364,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             const ocoGroupId = crypto.randomUUID();
             // Both legs share one scope, resolved once at creation.
             const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
+            await assertTriggerPlacement(actor.id, b.pairId, matchId, [b.legA, b.legB]);
 
             const legA = await createTriggerOrder({
                 userId: actor.id,

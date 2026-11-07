@@ -22,7 +22,7 @@ const MATCH = {
 function renderOverlay(userId: string, onBackToArena = vi.fn(), match = MATCH) {
   render(
     <MemoryRouter>
-      <MatchEndOverlay match={match} userId={userId} onBackToArena={onBackToArena} />
+      <MatchEndOverlay match={match} userId={userId} onBackToArena={onBackToArena} onViewBreakdown={() => {}} />
       <Where />
     </MemoryRouter>,
   );

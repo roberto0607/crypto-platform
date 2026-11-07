@@ -26,9 +26,10 @@ interface MatchEndOverlayProps {
     match: Match;
     userId: string;
     onBackToArena: () => void;
+    onViewBreakdown: () => void;
 }
 
-export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverlayProps) {
+export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown }: MatchEndOverlayProps) {
     const navigate = useNavigate();
     const [eloResult, setEloResult] = useState<EloResult | null>(null);
 
@@ -234,7 +235,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena }: MatchEndOverla
                 )}
 
                 <div className="mt-end-actions">
-                    <button className="ar-btn ar-btn-outline" onClick={() => navigate(`/matches/${match.id}/breakdown`)}>
+                    <button className="ar-btn ar-btn-outline" onClick={onViewBreakdown}>
                         VIEW TRADE BREAKDOWN
                     </button>
                     {opponentName && (

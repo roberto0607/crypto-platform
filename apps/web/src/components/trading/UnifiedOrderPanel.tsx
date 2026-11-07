@@ -408,15 +408,34 @@ export function UnifiedOrderPanel({
         seenPos.current = posIdentity;
     }, [posIdentity]);
 
-    // Derive TP/SL/TSL from active triggers
-    const tpTrigger = activeTriggers.find((t) => t.kind === "TAKE_PROFIT_MARKET");
-    const slTrigger = activeTriggers.find((t) => t.kind === "STOP_MARKET");
-    const tslTrigger = activeTriggers.find((t) => t.kind === "TRAILING_STOP_MARKET");
+    // TP/SL/TSL of the open position: only triggers on the side that closes it.
+    const positionTrigger = (kind: TriggerOrder["kind"]) =>
+        activeTriggers.find((t) => t.kind === kind && t.side === (posQty > 0 ? "SELL" : "BUY"));
+    const tpTrigger = positionTrigger("TAKE_PROFIT_MARKET");
+    const slTrigger = positionTrigger("STOP_MARKET");
+    const tslTrigger = positionTrigger("TRAILING_STOP_MARKET");
+
+    // EST. LIQ PRICE with a position open is the POSITION's after this
+    // order, not the order alone: an add books into one position (engine
+    // math, lib/positionCard addPreview); a reduce leaves its liq price where
+    // it is; a full close leaves none; a flip opens the rest on its own (the
+    // order-alone preview). No position: the order alone, as before.
+    const reverse = hasPosition && posDirection !== activeMode && baseQty > 0
+        ? reverseSummary({ positionSide: posDirection!, positionQty: posAbsQty, orderQty: baseQty })
+        : null;
+
+    const reduces = reverse?.kind === "reduce" || reverse?.kind === "close";
+    // A TP/SL protects a position this order would open or grow; a reduce or
+    // close opens nothing (the server refuses it too: trigger_not_reducing).
+    // Hidden, not erased: typing a flip's size passes through reduce sizes.
+    const tpShown = reduces ? "" : tpPrice;
+    const slShown = reduces ? "" : slPrice;
+    const tslShown = reduces ? "" : tslOffset;
 
     // TP/SL estimates
-    const tpNum = tpPrice ? parseFloat(tpPrice) : 0;
-    const slNum = slPrice ? parseFloat(slPrice) : 0;
-    const tslNum = tslOffset ? parseFloat(tslOffset) : 0;
+    const tpNum = tpShown ? parseFloat(tpShown) : 0;
+    const slNum = slShown ? parseFloat(slShown) : 0;
+    const tslNum = tslShown ? parseFloat(tslShown) : 0;
     const tpEstProfit = tpNum > 0 && baseQty > 0
         ? (activeMode === "LONG" ? (tpNum - effectivePrice) : (effectivePrice - tpNum)) * baseQty
         : 0;
@@ -437,7 +456,7 @@ export function UnifiedOrderPanel({
     const slError = slNum > 0 && !slValid
         ? (activeMode === "LONG" ? "Stop loss must be below entry for a long position" : "Stop loss must be above entry for a short position")
         : null;
-    const tslError = trailingOffsetError(tslOffset, currentPrice, slDistance);
+    const tslError = trailingOffsetError(tslShown, currentPrice, slDistance);
     const hasValidationError = !!(tpError || slError || tslError);
 
     const limitWarn = orderType === "LIMIT" && limitPrice
@@ -448,20 +467,10 @@ export function UnifiedOrderPanel({
                 : null)
         : null;
 
-    // EST. LIQ PRICE with a position open is the POSITION's after this
-    // order, not the order alone: an add books into one position (engine
-    // math, lib/positionCard addPreview); a reduce leaves its liq price where
-    // it is; a full close leaves none; a flip opens the rest on its own (the
-    // order-alone preview). No position: the order alone, as before.
-    const reverse = hasPosition && posDirection !== activeMode && baseQty > 0
-        ? reverseSummary({ positionSide: posDirection!, positionQty: posAbsQty, orderQty: baseQty })
-        : null;
-
     // ── MARKET preview: the quote. Until the first answer, the local estimate
     // (dimmed); on failure "—", never the last number. ──
     const sideParam = activeMode === "LONG" ? "BUY" : "SELL";
     const quoting = orderType === "MARKET" && usdNum > 0;
-    const reduces = reverse?.kind === "reduce" || reverse?.kind === "close";
     const confirmingFlip = confirmReverse && reverse?.kind === "flip";
     const qtyRef = useRef(baseQtyStr);
     qtyRef.current = baseQtyStr;
@@ -611,7 +620,7 @@ export function UnifiedOrderPanel({
             const filledQty = fills.reduce((sum: number, f: { qty: string }) => sum + parseFloat(f.qty), 0);
 
             // Create TP/SL triggers if specified and order filled
-            if (filledQty > 0 && selectedPairId) {
+            if (filledQty > 0 && selectedPairId && !reduces) {
                 const closeSide = (isLong ? "SELL" : "BUY") as "BUY" | "SELL";
                 const qtyStr = filledQty.toFixed(8);
                 try {
@@ -858,6 +867,8 @@ export function UnifiedOrderPanel({
 
     return (
         <div className={`tr-order-section`}>
+            {/* The form scrolls on its own, above the action bar. */}
+            <div className={`tr-order-form`}>
             {/* ── OPEN POSITION CARD — first in the panel, above LONG/SHORT, so
                 it's visible without scrolling; the form follows in normal flow. ── */}
             {hasPosition && (
@@ -1044,7 +1055,7 @@ export function UnifiedOrderPanel({
             <div className={`tr-field`}>
                 <label>TAKE PROFIT</label>
                 <div className={`tr-field-wrap`}>
-                    <input type="number" placeholder={isLong ? "above entry" : "below entry"} value={tpPrice} onChange={(e) => { onEdit(); setTpPrice(e.target.value); }} />
+                    <input type="number" disabled={reduces} placeholder={isLong ? "above entry" : "below entry"} value={tpShown} onChange={(e) => { onEdit(); setTpPrice(e.target.value); }} />
                     <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {tpError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tpError}</div>}
@@ -1055,7 +1066,7 @@ export function UnifiedOrderPanel({
             <div className={`tr-field`}>
                 <label>STOP LOSS</label>
                 <div className={`tr-field-wrap`}>
-                    <input type="number" placeholder={isLong ? "below entry" : "above entry"} value={slPrice} onChange={(e) => { onEdit(); setSlPrice(e.target.value); }} />
+                    <input type="number" disabled={reduces} placeholder={isLong ? "below entry" : "above entry"} value={slShown} onChange={(e) => { onEdit(); setSlPrice(e.target.value); }} />
                     <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
@@ -1067,7 +1078,7 @@ export function UnifiedOrderPanel({
             <div className={`tr-field`}>
                 <label>TRAILING STOP</label>
                 <div className={`tr-field-wrap`}>
-                    <input type="number" placeholder="offset in USD" value={tslOffset} onChange={(e) => { onEdit(); setTslOffset(e.target.value); }} />
+                    <input type="number" disabled={reduces} placeholder="offset in USD" value={tslShown} onChange={(e) => { onEdit(); setTslOffset(e.target.value); }} />
                     <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {tslError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tslError}</div>}
@@ -1077,6 +1088,12 @@ export function UnifiedOrderPanel({
                     </div>
                 )}
             </div>
+
+            {reduces && (
+                <div data-testid="tpsl-reduce-hint" style={{ fontSize: 9, lineHeight: 1.4, color: "rgba(255,255,255,0.45)", marginBottom: 8, letterSpacing: 1 }}>
+                    This order only reduces your {posDirection}, so it can't carry a TP or SL. Set them on the position card.
+                </div>
+            )}
 
             {/* Footer. No open position (trade page): pinned, so the cost summary +
                 submit button stay visible while TP/SL/TSL scroll above. With a position open: in normal flow (-with-position) and
@@ -1193,6 +1210,7 @@ export function UnifiedOrderPanel({
             )}
 
             </div>{/* /order-footer */}
+            </div>{/* /tr-order-form */}
 
             {/* ── Pinned actions ── (see .tr-pos-actions) */}
             {hasPosition && (

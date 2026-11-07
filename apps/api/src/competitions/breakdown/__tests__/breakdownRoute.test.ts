@@ -181,4 +181,34 @@ describe("GET /v1/matches/:id/breakdown", () => {
         expect(res.statusCode).toBe(404);
         expect(res.json().error).toBe("match_not_found");
     });
+
+    it("gives each player's P&L and fees, and they add up to the stored headline", async () => {
+        const matchId = await seedMatch("COMPLETED");
+        await pool.query(`UPDATE matches SET challenger_pnl_pct = '0.19', opponent_pnl_pct = '-0.01' WHERE id = $1`, [matchId]);
+        const position = (userId: string, realized: string, fees: string) => pool.query(
+            `INSERT INTO positions (user_id, pair_id, match_id, base_qty, avg_entry_price, realized_pnl_quote, fees_paid_quote)
+             VALUES ($1, $2, $3, 0, 0, $4, $5)`,
+            [userId, pairId, matchId, realized, fees],
+        );
+        await position(challengerId, "100.00000000", "5.00000000");
+        await position(opponentId, "0.00000000", "5.00000000");
+
+        const res = await app.inject({ method: "GET", url: `/v1/matches/${matchId}/breakdown`, headers: auth(app, challengerId) });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().challengerSummary).toEqual({
+            pnlPct: "0.19", realizedPnlQuote: "100.00000000", feesQuote: "5.00000000", netPnlQuote: "95.00000000",
+        });
+        expect(res.json().opponentSummary).toEqual({
+            pnlPct: "-0.01", realizedPnlQuote: "0.00000000", feesQuote: "5.00000000", netPnlQuote: "-5.00000000",
+        });
+    });
+
+    it("a player who never traded: zero P&L and fees", async () => {
+        const matchId = await seedMatch("COMPLETED");
+        const res = await app.inject({ method: "GET", url: `/v1/matches/${matchId}/breakdown`, headers: auth(app, challengerId) });
+        expect(res.json().opponentSummary).toEqual({
+            pnlPct: null, realizedPnlQuote: "0.00000000", feesQuote: "0.00000000", netPnlQuote: "0.00000000",
+        });
+    });
 });
