@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getMatchBreakdown, type MatchBreakdown, type BreakdownOrder } from "@/api/endpoints/matchBreakdown";
+import { getMatchBreakdown, type MatchBreakdown, type BreakdownOrder, type BreakdownSummary } from "@/api/endpoints/matchBreakdown";
+import { formatPnlPct } from "@/lib/matchPnl";
 
 const CHAL = "#FF6B00"; // challenger (war-theme orange)
 const OPP = "#22D3EE"; // opponent (cyan)
@@ -34,6 +35,39 @@ function formatPrice(p: string | null): string {
 function formatTime(t: string | null): string {
     if (!t) return "--";
     return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function usd(value: string): string {
+    return `$${Math.abs(parseFloat(value)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+}
+
+function signedUsd(value: string): string {
+    const n = parseFloat(value);
+    return `${n > 0 ? "+" : n < 0 ? "-" : ""}${usd(value)}`;
+}
+
+const signColor = (value: string | null) => {
+    const n = parseFloat(value ?? "0");
+    return n > 0 ? "#16a34a" : n < 0 ? "#dc2626" : undefined;
+};
+
+function Summary({ summary, testId }: { summary: BreakdownSummary; testId: string }) {
+    const items: [string, string, string | undefined][] = [
+        ["P&L", formatPnlPct(summary.pnlPct), signColor(summary.pnlPct)],
+        ["REALIZED", signedUsd(summary.realizedPnlQuote), signColor(summary.realizedPnlQuote)],
+        ["FEES", usd(summary.feesQuote), undefined],
+        ["NET", signedUsd(summary.netPnlQuote), signColor(summary.netPnlQuote)],
+    ];
+    return (
+        <div className="mb-summary" data-testid={testId}>
+            {items.map(([label, value, color]) => (
+                <div key={label}>
+                    <div className="mb-sum-lbl">{label}</div>
+                    <div className="mb-sum-val" style={{ color }}>{value}</div>
+                </div>
+            ))}
+        </div>
+    );
 }
 
 function OrdersTable({ orders, color }: { orders: BreakdownOrder[]; color: string }) {
@@ -130,6 +164,7 @@ export default function MatchBreakdownPage() {
                         <span className="mb-dot" style={{ background: CHAL }} />
                         {match.challenger.name}
                     </div>
+                    <Summary summary={data.challengerSummary} testId="breakdown-summary-challenger" />
                     <OrdersTable orders={data.challengerOrders} color={CHAL} />
                 </div>
                 <div className="mb-col">
@@ -137,6 +172,7 @@ export default function MatchBreakdownPage() {
                         <span className="mb-dot" style={{ background: OPP }} />
                         {match.opponent.name}
                     </div>
+                    <Summary summary={data.opponentSummary} testId="breakdown-summary-opponent" />
                     <OrdersTable orders={data.opponentOrders} color={OPP} />
                 </div>
             </div>
@@ -156,6 +192,9 @@ function BreakdownStyles() {
       .mb-col { flex:1; min-width:0; border:1px solid rgba(255,255,255,0.06); background:rgba(255,255,255,0.02); padding:12px; }
       .mb-col-header { display:flex; align-items:center; gap:8px; font-family:'Bebas Neue',sans-serif; font-size:18px; letter-spacing:2px; margin-bottom:10px; }
       .mb-dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+      .mb-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+      .mb-sum-lbl { font-size:8px; letter-spacing:2px; color:rgba(255,255,255,0.35); margin-bottom:2px; }
+      .mb-sum-val { font-size:12px; font-weight:700; }
       .mb-table { width:100%; border-collapse:collapse; font-size:10px; }
       .mb-table th { text-align:left; padding:6px 8px; color:rgba(255,255,255,0.35); letter-spacing:1px; font-weight:400; border-bottom:1px solid rgba(255,255,255,0.08); }
       .mb-table td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.04); white-space:nowrap; }

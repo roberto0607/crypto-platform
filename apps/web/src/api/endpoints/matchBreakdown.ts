@@ -23,6 +23,13 @@ export interface BreakdownPlayer {
     name: string;
 }
 
+export interface BreakdownSummary {
+    pnlPct: string | null;
+    realizedPnlQuote: string;
+    feesQuote: string;
+    netPnlQuote: string;
+}
+
 export interface MatchBreakdown {
     ok: true;
     match: {
@@ -34,6 +41,8 @@ export interface MatchBreakdown {
     };
     challengerOrders: BreakdownOrder[];
     opponentOrders: BreakdownOrder[];
+    challengerSummary: BreakdownSummary;
+    opponentSummary: BreakdownSummary;
 }
 
 export function getMatchBreakdown(matchId: string) {

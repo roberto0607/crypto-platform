@@ -46,6 +46,15 @@ describe("MatchEndGate: the result appears wherever the player is", () => {
     expect(useActiveMatchStore.getState().endedMatch).toBeNull();
   });
 
+  it("VIEW TRADE BREAKDOWN clears it and opens the breakdown", async () => {
+    useActiveMatchStore.setState({ endedMatch: ENDED });
+    mount("/trade");
+    await userEvent.click(screen.getByText("VIEW TRADE BREAKDOWN"));
+    expect(where()).toBe("/matches/m1/breakdown");
+    expect(useActiveMatchStore.getState().endedMatch).toBeNull();
+    expect(screen.queryByText("VIEW TRADE BREAKDOWN")).toBeNull();
+  });
+
   it("REMATCH lands on the challenge box, pre-filled", async () => {
     useActiveMatchStore.setState({ endedMatch: ENDED });
     mount("/trade");
