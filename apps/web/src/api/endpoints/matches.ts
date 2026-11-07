@@ -30,6 +30,8 @@ export interface Match {
     opponent_elo: number;
     winner_elo_delta: number | null;
     loser_elo_delta: number | null;
+    /** Set when the winner got no ELO (anti-farming rules). */
+    winner_unrated_reason?: string | null;
 }
 
 export function challengeUser(body: {

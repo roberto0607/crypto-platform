@@ -8,6 +8,7 @@
  * lifecycle job calls finalizeSeason.
  */
 import type { PoolClient } from "pg";
+import { config } from "../config.js";
 import { pool } from "../db/pool.js";
 import { notifyCompetitionEnded } from "../notifications/notificationService.js";
 import { logger } from "../observability/logContext.js";
@@ -58,6 +59,10 @@ export async function getDisplaySeason(): Promise<DisplaySeason | null> {
  */
 async function rebuildBoard(client: PoolClient, season: CompetitionRow): Promise<void> {
     await client.query(`DELETE FROM competition_leaderboard WHERE competition_id = $1`, [season.id]);
+    if (config.eloIntegrityEnabled) {
+        await rebuildBoardFromRatings(client, season);
+        return;
+    }
     await client.query(
         `WITH played AS (
              SELECT m.id AS match_id, m.completed_at, m.winner_id, side.user_id, side.rival_id, side.pnl_pct
@@ -99,6 +104,38 @@ async function rebuildBoard(client: PoolClient, season: CompetitionRow): Promise
                 0, avg_pnl, matches, win_rate, score
            FROM standings`,
         [season.id, season.start_at, season.end_at, SCORED_MATCHES_PER_OPPONENT],
+    );
+}
+
+/**
+ * ELO_INTEGRITY_ENABLED: the board is the season points stored per player per
+ * match when it was resolved (eloIntegrity.ts), so nothing is recomputed. A
+ * player's unrated wins don't count as matches; matches resolved without the
+ * flag have no stored points and don't count at all.
+ */
+async function rebuildBoardFromRatings(client: PoolClient, season: CompetitionRow): Promise<void> {
+    await client.query(
+        `WITH standings AS (
+             SELECT r.user_id,
+                    count(*) AS matches,
+                    100.0 * count(*) FILTER (WHERE r.result = 'WIN') / count(*) AS win_rate,
+                    avg(COALESCE(CASE WHEN r.user_id = m.challenger_id THEN m.challenger_pnl_pct
+                                      ELSE m.opponent_pnl_pct END, 0)) AS avg_pnl,
+                    sum(r.season_points) AS score,
+                    COALESCE(max(r.completed_at) FILTER (WHERE r.season_points <> 0), min(r.completed_at)) AS reached_score_at
+               FROM match_ratings r
+               JOIN matches m ON m.id = r.match_id
+              WHERE r.season_id = $1 AND r.rated
+                AND r.completed_at >= $2 AND r.completed_at < $3
+              GROUP BY r.user_id
+         )
+         INSERT INTO competition_leaderboard
+             (competition_id, user_id, rank, equity, return_pct, trades_count, win_rate, nuanced_score)
+         SELECT $1, user_id,
+                row_number() OVER (ORDER BY score DESC, win_rate DESC, reached_score_at, user_id),
+                0, avg_pnl, matches, win_rate, score
+           FROM standings`,
+        [season.id, season.start_at, season.end_at],
     );
 }
 

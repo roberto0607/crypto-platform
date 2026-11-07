@@ -221,7 +221,9 @@ export default function ProfilePage() {
                                 const lost = m.winner_id && m.winner_id !== user?.id;
                                 // Mirror Arena: show this user's real per-match ELO change —
                                 // winner_elo_delta on a win, loser_elo_delta (already negative) on a loss.
-                                const eloDisplay = won
+                                const eloDisplay = won && m.winner_unrated_reason
+                                    ? "UNRATED"
+                                    : won
                                     ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
                                     : lost
                                         ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`

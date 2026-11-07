@@ -14,6 +14,7 @@ import {
     type TWTier,
 } from "./eloService.js";
 import type { MatchEloResult } from "./eloService.js";
+import { matchActivityTx, writeMatchRatingsTx } from "./eloIntegrity.js";
 import { getUserTier } from "./tierRepo.js";
 import { logger as rootLogger } from "../observability/logContext.js";
 import { publish } from "../events/eventBus.js";
@@ -77,6 +78,7 @@ export interface MatchWithPlayers extends MatchRow {
     opponent_elo: number;
     winner_elo_delta: number | null;
     loser_elo_delta: number | null;
+    winner_unrated_reason: string | null;
 }
 
 /** Starting capital per tier */
@@ -319,6 +321,10 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
             ? match.opponent_id
             : match.challenger_id;
 
+        // ELO integrity counts each player's own fills, so read them before
+        // the match-end force-closes below add orders of their own.
+        const activity = config.eloIntegrityEnabled ? await matchActivityTx(client, matchId) : undefined;
+
         // Anti-gameability: force-close match-scoped positions and book the
         // realized PnL into the match stats. Without this the forfeiter
         // could escape a losing open position by forfeiting — now the loss
@@ -360,7 +366,7 @@ export async function forfeitMatch(matchId: string, forfeitUserId: string): Prom
         }
 
         // Apply full ELO resolution (streaks, tiers, badges) — idempotent
-        const eloResult = await resolveMatchElo(matchId, client);
+        const eloResult = await resolveMatchElo(matchId, client, { activity });
         if (eloResult) {
             logger.info({ matchId, ...eloResult }, "forfeit_elo_resolved");
         }
@@ -399,6 +405,9 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         if (match.status !== "ACTIVE") throw new Error("match_not_active");
 
         const capital = parseFloat(match.starting_capital);
+
+        // Own fills for ELO integrity, before the force-closes below.
+        const activity = config.eloIntegrityEnabled ? await matchActivityTx(client, matchId) : undefined;
 
         // Force-close any open match-scoped positions at current market price.
         // Books realized PnL into positions.realized_pnl_quote so the next
@@ -450,7 +459,7 @@ export async function completeMatch(matchId: string): Promise<MatchRow> {
         }
 
         // Apply full ELO resolution (streaks, tiers, badges) — idempotent
-        const eloResult = await resolveMatchElo(matchId, client);
+        const eloResult = await resolveMatchElo(matchId, client, { activity });
         if (eloResult) {
             logger.info({ matchId, ...eloResult }, "match_elo_resolved");
         }
@@ -535,6 +544,7 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
         // loss_count + 1, loss_streak + 1, win_streak reset, elo_history row,
         // demotion check. No streak multiplier, no badges, no promotion.
         const playerIds = [match.challenger_id, match.opponent_id];
+        const ratings: Parameters<typeof writeMatchRatingsTx>[3] = [];
         const { rows: players } = await client.query<{
             id: string;
             elo_rating: number;
@@ -580,6 +590,15 @@ export async function mutualForfeitMatch(matchId: string): Promise<MatchRow> {
                 { matchId, userId: playerId, tier, delta, oldElo: player.elo_rating, newElo },
                 "mutual_forfeit_elo_applied",
             );
+            ratings.push({
+                userId: playerId,
+                opponentId: playerId === match.challenger_id ? match.opponent_id : match.challenger_id,
+                result: "LOSS" as const, reason: null, pairScale: 1, eloDelta: delta, seasonDelta: () => delta,
+            });
+        }
+        // Both no-shows lose as before; the season board counts it.
+        if (config.eloIntegrityEnabled) {
+            await writeMatchRatingsTx(client, matchId, new Date(updated[0].completed_at ?? Date.now()), ratings);
         }
 
         const accountEvents = await settleMatchAccountsTx(matchId, client);
@@ -772,7 +791,8 @@ export async function getMatchHistory(
                 o.display_name AS opponent_name,
                 o.elo_rating AS opponent_elo,
                 mer.winner_delta AS winner_elo_delta,
-                mer.loser_delta AS loser_elo_delta
+                mer.loser_delta AS loser_elo_delta,
+                mer.winner_unrated_reason
          FROM matches m
          JOIN users c ON c.id = m.challenger_id
          JOIN users o ON o.id = m.opponent_id

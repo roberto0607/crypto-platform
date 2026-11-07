@@ -20,6 +20,8 @@ interface EloResult {
     winner_win_streak: number;
     streak_multiplier: string;
     badges_earned: string[];
+    /** Set when the winner got no ELO (anti-farming rules). */
+    winner_unrated_reason?: string | null;
 }
 
 interface MatchEndOverlayProps {
@@ -72,6 +74,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
     const winStreak = eloResult && isWinner ? eloResult.winner_win_streak : 0;
     const streakMultiplier = eloResult ? parseFloat(eloResult.streak_multiplier) : 1;
     const badges = eloResult?.badges_earned ?? [];
+    const unrated = won && isWinner && !!eloResult?.winner_unrated_reason;
 
     // ── ELO count-up animation ──
     // Counts the NEW ELO from old → new and the delta from 0 → final over 800ms
@@ -158,7 +161,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}
                         >
-                            {won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
+                            {unrated ? "UNRATED" : won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
                             {streakMultiplier > 1 && won && (
                                 <span style={{ fontSize: "0.7em", marginLeft: 6, color: "var(--ar-gold)" }}>
                                     {streakMultiplier}x STREAK
