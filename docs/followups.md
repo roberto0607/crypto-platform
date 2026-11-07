@@ -1202,3 +1202,50 @@ placed on competition wallets after a `CUSTOM` or `WEEKLY` competition ends.
 Final ranks are already written, so results don't change, but the wallets keep
 moving. No page exposes this today (`CompetitionSelector` isn't mounted). Seasons
 aren't affected: they have no wallets.
+
+---
+
+## 🟡 MEDIUM — Nothing in the database stops two TP/SL on one position
+
+**Discovered:** 2026-11-07, position-level TP/SL PR.
+
+A position has at most one TP, one SL and one trailing stop per scope
+(`triggers/triggerPlacement.ts`). The route enforces this under a lock on the
+position row; the table doesn't. Prod still has duplicates from before the
+change, so a unique index would fail to build today. Once they're canceled, add
+a partial unique index on `trigger_orders` (user, pair, scope, kind slot)
+`WHERE status = 'ACTIVE'`. Until then, a duplicate is harmless: firing closes the
+whole position and the close cancels the rest.
+
+---
+
+## 🟡 MEDIUM — A win streak from before the season boosts the season score
+
+**Discovered:** 2026-11-07, season score review (PR #237).
+
+The season score sums ELO changes, and the ELO win-streak multiplier (×1.2 at 3
+straight wins, ×1.5 at 5, ×2 at 10) reads `users.win_streak`, which never resets
+at season start. A player's first season win can count ×1.2 thanks to wins from
+the season before. Handle it in the ELO anti-farming PR.
+
+---
+
+## 🔵 LOW — No partial or laddered take-profits
+
+**Discovered:** 2026-11-07, position-level TP/SL PR.
+
+Every TP/SL now covers the whole position, and setting another replaces it, so a
+TP that closes part of a position (or several TPs at different prices) is no
+longer possible. Before, it only happened by accident: an add with TP/SL sized
+its triggers to the add. A possible future feature, designed on purpose.
+
+---
+
+## 🔵 LOW — `scripts/triggers-smoke.sh` is broken on main
+
+**Discovered:** 2026-11-07, match bug-fix PR (#237).
+
+It trades a throwaway pair that the `MARKET_SYMBOLS` allowlist rejects
+(`pair_not_tradable`), and it isn't in CI, so nothing notices. It also predates
+the trigger rules: triggers need an open position and a live mark. Fix it or
+delete it.
