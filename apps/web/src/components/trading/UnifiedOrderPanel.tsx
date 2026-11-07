@@ -622,14 +622,13 @@ export function UnifiedOrderPanel({
             // Create TP/SL triggers if specified and order filled
             if (filledQty > 0 && selectedPairId && !reduces) {
                 const closeSide = (isLong ? "SELL" : "BUY") as "BUY" | "SELL";
-                const qtyStr = filledQty.toFixed(8);
                 try {
                     if (tpNum && slNum && tpValid && slValid) {
                         await createOco({
                             scope: orderScope,
                             pairId: selectedPairId,
-                            legA: { kind: "STOP_MARKET", side: closeSide, triggerPrice: slPrice, qty: qtyStr },
-                            legB: { kind: "TAKE_PROFIT_MARKET", side: closeSide, triggerPrice: tpPrice, qty: qtyStr },
+                            legA: { kind: "STOP_MARKET", side: closeSide, triggerPrice: slPrice },
+                            legB: { kind: "TAKE_PROFIT_MARKET", side: closeSide, triggerPrice: tpPrice },
                         });
                         setTpSlMsg("ORDER + TP/SL SET");
                     } else if (tpNum && tpValid) {
@@ -639,7 +638,6 @@ export function UnifiedOrderPanel({
                             kind: "TAKE_PROFIT_MARKET",
                             side: closeSide,
                             triggerPrice: tpPrice,
-                            qty: qtyStr,
                         });
                         setTpSlMsg("ORDER + TP SET");
                     } else if (slNum && slValid) {
@@ -649,7 +647,6 @@ export function UnifiedOrderPanel({
                             kind: "STOP_MARKET",
                             side: closeSide,
                             triggerPrice: slPrice,
-                            qty: qtyStr,
                         });
                         setTpSlMsg("ORDER + SL SET");
                     }
@@ -665,7 +662,6 @@ export function UnifiedOrderPanel({
                             kind: "TRAILING_STOP_MARKET",
                             side: closeSide,
                             triggerPrice: initialStop,
-                            qty: qtyStr,
                             trailingOffset: tslNum.toFixed(8),
                         });
                         setTpSlMsg((prev) => prev ? prev + " + TSL" : "ORDER + TSL SET");
@@ -752,7 +748,7 @@ export function UnifiedOrderPanel({
         try {
             await createTrigger({
                 scope, pairId: selectedPairId, kind, side: posQty > 0 ? "SELL" : "BUY",
-                triggerPrice: price, qty: posAbsQty.toFixed(8),
+                triggerPrice: price,
             });
             await fetchTriggers();
             return null;

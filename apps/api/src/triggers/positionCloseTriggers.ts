@@ -29,6 +29,8 @@ import type { TriggerOrderRow } from "./triggerTypes";
 
 export const POSITION_CLOSED_REASON = "position_closed";
 export const MATCH_ENDED_REASON = "match_ended";
+/** A new TP/SL took this one's slot on the position (triggerPlacement.ts). */
+export const REPLACED_REASON = "replaced";
 
 /**
  * Which trigger side protected a position that this fill just closed, or null

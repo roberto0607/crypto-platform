@@ -1,7 +1,6 @@
 import { pool } from "../db/pool";
 import { listActiveTriggersForPair, markTriggeredTx, cancelOcoSiblingTx, setStatusTx, updateTrailingHwm, reducibleQty } from "./triggerRepo";
 import { triggerCanceledEvent, MATCH_ENDED_REASON } from "./positionCloseTriggers";
-import Decimal from "decimal.js";
 import { D, toFixed8 } from "../utils/decimal";
 import type { TriggerOrderRow } from "./triggerTypes";
 import { placeOrderWithSnapshot } from "../trading/phase6OrderService";
@@ -157,16 +156,17 @@ export async function fireTrigger(
         return;
     }
 
-    // Reduce-only: a TP/SL/trailing trigger only ever closes the position it
-    // protects. Clamp its qty to what's left of that position in the scope the
-    // derived order lands in; if nothing is left (closed manually, by the
-    // other OCO leg, or partially closed down to zero) cancel instead of
-    // placing an order that would open — or flip into — a new position.
-    const reducible = D(await reducibleQty(trigger.user_id, trigger.pair_id, trigger.side, {
+    // Reduce-only and position-level: a TP/SL/trailing trigger closes the
+    // position it protects, all of what's left in the scope the derived order
+    // lands in, whatever trigger.qty says. (Fills keep that in step; a trigger
+    // from before TP/SL were position-level may hold less.) If nothing is left
+    // (closed manually, by the other OCO leg, or partially closed down to zero)
+    // cancel instead of placing an order that would open — or flip into — a
+    // new position.
+    const orderQty = D(await reducibleQty(trigger.user_id, trigger.pair_id, trigger.side, {
         competitionId: null,             // derived orders are free-play or match scoped, never competition
         matchId: triggerMatchId,
     }));
-    const orderQty = Decimal.min(D(trigger.qty), reducible);
     if (orderQty.lte(0)) {
         await cancelUnfired(trigger, canceledSibling, NO_POSITION_REASON);
         return; // not fired: no order, no trigger.fired event, no notification

@@ -183,7 +183,7 @@ describe("the card", () => {
 });
 
 describe("TP / SL on the position", () => {
-  it("+ SET TAKE PROFIT: a reduce trigger for the whole position, closing side", async () => {
+  it("+ SET TAKE PROFIT: the closing side, sized by the server", async () => {
     await mount(ISO_SHORT);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "+ SET TAKE PROFIT" }));
@@ -191,7 +191,7 @@ describe("TP / SL on the position", () => {
     await user.click(screen.getByRole("button", { name: "SET" }));
     expect(createTrigger).toHaveBeenCalledWith({
       scope: "free",
-      pairId: "p1", kind: "TAKE_PROFIT_MARKET", side: "BUY", triggerPrice: "78000", qty: "0.06165230",
+      pairId: "p1", kind: "TAKE_PROFIT_MARKET", side: "BUY", triggerPrice: "78000",
     });
   });
 

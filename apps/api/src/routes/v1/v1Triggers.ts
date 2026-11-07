@@ -7,7 +7,6 @@ import { v1HandleError } from "../../http/v1Error";
 import { decodeCursor, parseLimit, slicePage } from "../../http/pagination";
 import { parseMatchScope } from "../../http/matchScopeQuery";
 import {
-    createTriggerOrder,
     listTriggersByUser,
     cancelTriggerByUser,
     updateTriggerByUser,
@@ -18,7 +17,7 @@ import { assertTradablePairId } from "../../market/marketSymbols";
 import { resolveTradeScope } from "../../competitions/tradeScope";
 import type { TriggerOrderRow } from "../../triggers/triggerTypes";
 import { assertTrailingOffset } from "../../triggers/trailingOffset";
-import { assertTriggerPlacement, assertTriggerPrice } from "../../triggers/triggerPlacement";
+import { assertTriggerPrice, placePositionTriggers } from "../../triggers/triggerPlacement";
 
 const decimalStr = z.string().regex(/^\d+(\.\d{1,8})?$/);
 
@@ -35,7 +34,7 @@ const createTriggerBody = z
         side: z.enum(["BUY", "SELL"]),
         triggerPrice: decimalStr,
         limitPrice: decimalStr.optional(),
-        qty: decimalStr,
+        qty: decimalStr.optional(), // ignored: see triggerPlacement.ts
         trailingOffset: decimalStr.optional(),
     })
     .refine(
@@ -85,7 +84,7 @@ const triggerLeg = z
         side: z.enum(["BUY", "SELL"]),
         triggerPrice: decimalStr,
         limitPrice: decimalStr.optional(),
-        qty: decimalStr,
+        qty: decimalStr.optional(), // ignored: see triggerPlacement.ts
         trailingOffset: decimalStr.optional(),
     })
     .refine(
@@ -119,14 +118,14 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             security: [{ bearerAuth: [] }],
             body: {
                 type: "object",
-                required: ["pairId", "kind", "side", "triggerPrice", "qty"], // scope too: resolveTradeScope says scope_required
+                required: ["pairId", "kind", "side", "triggerPrice"], // scope too: resolveTradeScope says scope_required
                 properties: {
                     pairId: { type: "string", format: "uuid" },
                     kind: { type: "string", enum: ["STOP_MARKET", "STOP_LIMIT", "TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT", "TRAILING_STOP_MARKET"] },
                     side: { type: "string", enum: ["BUY", "SELL"] },
                     triggerPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
                     limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for *_LIMIT kinds, forbidden for *_MARKET kinds" },
-                    qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$" },
+                    qty: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Ignored: a trigger always covers the whole position" },
                     trailingOffset: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for TRAILING_STOP_MARKET" },
                 },
             },
@@ -148,20 +147,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             if (b.kind === "TRAILING_STOP_MARKET") await assertTrailingOffset(b.pairId, b.trailingOffset!);
             // Scope fixed at creation: the account this trigger acts on.
             const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
-            await assertTriggerPlacement(actor.id, b.pairId, matchId, [b]);
-
-            const trigger = await createTriggerOrder({
-                userId: actor.id,
-                pairId: b.pairId,
-                kind: b.kind,
-                side: b.side,
-                triggerPrice: b.triggerPrice,
-                limitPrice: b.limitPrice,
-                qty: b.qty,
-                trailingOffset: b.trailingOffset,
-                trailingHighWaterMark: b.kind === "TRAILING_STOP_MARKET" ? b.triggerPrice : undefined,
-                matchId,
-            });
+            const [trigger] = await placePositionTriggers(actor.id, b.pairId, matchId, [b]);
 
             return reply.code(201).send(trigger);
         } catch (err) {
@@ -364,35 +350,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             const ocoGroupId = crypto.randomUUID();
             // Both legs share one scope, resolved once at creation.
             const matchId = await resolveTradeScope(actor.id, (req.body as { scope?: unknown }).scope);
-            await assertTriggerPlacement(actor.id, b.pairId, matchId, [b.legA, b.legB]);
-
-            const legA = await createTriggerOrder({
-                userId: actor.id,
-                pairId: b.pairId,
-                kind: b.legA.kind,
-                side: b.legA.side,
-                triggerPrice: b.legA.triggerPrice,
-                limitPrice: b.legA.limitPrice,
-                qty: b.legA.qty,
-                ocoGroupId,
-                trailingOffset: b.legA.trailingOffset,
-                trailingHighWaterMark: b.legA.kind === "TRAILING_STOP_MARKET" ? b.legA.triggerPrice : undefined,
-                matchId,
-            });
-
-            const legB = await createTriggerOrder({
-                userId: actor.id,
-                pairId: b.pairId,
-                kind: b.legB.kind,
-                side: b.legB.side,
-                triggerPrice: b.legB.triggerPrice,
-                limitPrice: b.legB.limitPrice,
-                qty: b.legB.qty,
-                ocoGroupId,
-                trailingOffset: b.legB.trailingOffset,
-                trailingHighWaterMark: b.legB.kind === "TRAILING_STOP_MARKET" ? b.legB.triggerPrice : undefined,
-                matchId,
-            });
+            const [legA, legB] = await placePositionTriggers(actor.id, b.pairId, matchId, [b.legA, b.legB], ocoGroupId);
 
             return reply.code(201).send({ ocoGroupId, legA, legB });
         } catch (err) {

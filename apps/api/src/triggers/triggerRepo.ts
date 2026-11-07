@@ -24,8 +24,8 @@ export async function createTriggerOrder(params: {
      * it, never by whatever match the user is in when it fires.
      */
     matchId: string | null;
-}): Promise<TriggerOrderRow> {
-    const result = await pool.query<TriggerOrderRow>(
+}, db: Pick<PoolClient, "query"> = pool): Promise<TriggerOrderRow> {
+    const result = await db.query<TriggerOrderRow>(
         `
         INSERT INTO trigger_orders (user_id, pair_id, kind, side, trigger_price, limit_price, qty, oco_group_id, trailing_offset, trailing_high_water_mark, trade_proposal_id, match_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -308,6 +308,73 @@ export async function cancelReducingTriggersTx(
         [userId, pairId, side, reason, matchId],
     );
     return result.rows;
+}
+
+/**
+ * Lock the user's position row in one scope and return its signed base_qty
+ * ("0" with no row). Trading locks the same row, so the size can't move until
+ * the caller's transaction ends.
+ */
+export async function lockPositionQtyTx(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    matchId: string | null,
+): Promise<string> {
+    const { rows } = await client.query<{ base_qty: string }>(
+        `SELECT base_qty::text FROM positions
+         WHERE user_id = $1 AND pair_id = $2 AND competition_id IS NULL
+           AND match_id IS NOT DISTINCT FROM $3::uuid
+         FOR UPDATE`,
+        [userId, pairId, matchId],
+    );
+    return rows[0]?.base_qty ?? "0";
+}
+
+/** Cancel the ACTIVE triggers of these kinds on a position, in one scope. */
+export async function cancelTriggerSlotTx(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    matchId: string | null,
+    kinds: TriggerKind[],
+    reason: string,
+): Promise<TriggerOrderRow[]> {
+    const result = await client.query<TriggerOrderRow>(
+        `UPDATE trigger_orders
+         SET status = 'CANCELED', fail_reason = $5
+         WHERE user_id = $1 AND pair_id = $2 AND status = 'ACTIVE'
+           AND match_id IS NOT DISTINCT FROM $3::uuid
+           AND kind = ANY($4)
+         RETURNING ${TRIGGER_COLUMNS}`,
+        [userId, pairId, matchId, kinds, reason],
+    );
+    return result.rows;
+}
+
+/**
+ * A fill moved this position: its triggers follow it to the new size. Only the
+ * side that closes it; a position that went flat or flipped has already had
+ * those canceled (positionCloseTriggers). Runs in the fill's transaction.
+ */
+export async function resizeTriggersToPositionTx(
+    client: PoolClient,
+    userId: string,
+    pairId: string,
+    matchId: string | null,
+): Promise<void> {
+    await client.query(
+        `UPDATE trigger_orders t
+         SET qty = abs(p.base_qty)
+         FROM positions p
+         WHERE p.user_id = $1 AND p.pair_id = $2 AND p.competition_id IS NULL
+           AND p.match_id IS NOT DISTINCT FROM $3::uuid
+           AND t.user_id = $1 AND t.pair_id = $2 AND t.status = 'ACTIVE'
+           AND t.match_id IS NOT DISTINCT FROM $3::uuid
+           AND t.side = CASE WHEN p.base_qty > 0 THEN 'SELL' WHEN p.base_qty < 0 THEN 'BUY' END
+           AND t.qty <> abs(p.base_qty)`,
+        [userId, pairId, matchId],
+    );
 }
 
 /**

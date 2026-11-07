@@ -162,6 +162,8 @@ describe("orders that open or add keep TP/SL", () => {
     await settle();
     expect(triggerPosts()).toHaveLength(1);
     expect(triggerPosts()[0]!.body).toMatchObject({ kind: "STOP_MARKET", side: "SELL", triggerPrice: "65000" });
+    // The server sizes it to the whole position.
+    expect(triggerPosts()[0]!.body).not.toHaveProperty("qty");
   });
 });
 

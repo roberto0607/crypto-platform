@@ -7,6 +7,7 @@ import type {
   UUID,
 } from "@/types/api";
 
+/** A TP/SL covers the whole position and replaces the one before it: the server sets its size. */
 export function createTrigger(params: {
   /** "free" or a match id. Required: see lib/orderScope. */
   scope: string;
@@ -15,7 +16,6 @@ export function createTrigger(params: {
   side: OrderSide;
   triggerPrice: DecimalString;
   limitPrice?: DecimalString;
-  qty: DecimalString;
   trailingOffset?: DecimalString;
 }) {
   return client.post<TriggerOrder>("/v1/triggers", params);
@@ -56,7 +56,6 @@ export function createOco(params: {
     side: OrderSide;
     triggerPrice: DecimalString;
     limitPrice?: DecimalString;
-    qty: DecimalString;
     trailingOffset?: DecimalString;
   };
   legB: {
@@ -64,7 +63,6 @@ export function createOco(params: {
     side: OrderSide;
     triggerPrice: DecimalString;
     limitPrice?: DecimalString;
-    qty: DecimalString;
     trailingOffset?: DecimalString;
   };
 }) {
