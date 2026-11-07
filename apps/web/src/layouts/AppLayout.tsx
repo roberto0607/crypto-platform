@@ -43,10 +43,10 @@ const NAV_SECTIONS = [
   },
 ];
 
-function breadcrumbLabel(pathname: string): string {
+export function breadcrumbLabel(pathname: string): string {
   if (pathname.startsWith("/admin")) return "ADMIN";
   if (pathname.startsWith("/trade")) return "TRADE";
-  if (pathname.startsWith("/arena")) return "ARENA";
+  if (pathname.startsWith("/arena") || pathname.startsWith("/matches")) return "ARENA";
   if (pathname.startsWith("/messages")) return "MESSAGES";
   if (pathname.startsWith("/replay")) return "REPLAY";
   if (pathname.startsWith("/cycle")) return "CYCLES";
