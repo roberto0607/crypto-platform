@@ -1,4 +1,17 @@
 import type { PoolClient } from "pg";
+import { config } from "../config.js";
+import {
+    UPSET_MIN_GAP,
+    isEarlyForfeit,
+    matchActivityTx,
+    pairScale,
+    priorPairMatchesTx,
+    qualifies,
+    roundDelta,
+    writeMatchRatingsTx,
+    type MatchActivity,
+    type UnratedReason,
+} from "./eloIntegrity.js";
 
 // ── Trade Wars Tier System (4 tiers) ──
 
@@ -22,7 +35,7 @@ export const ELO_TABLE: Record<TWTier, { win: number; lose: number }> = {
 };
 
 /** Win streak multipliers — checked AFTER incrementing streak */
-function getStreakMultiplier(newStreak: number): number {
+export function getStreakMultiplier(newStreak: number): number {
     if (newStreak >= 10) return 2.0;
     if (newStreak >= 5) return 1.5;
     if (newStreak >= 3) return 1.2;
@@ -94,15 +107,24 @@ export interface MatchEloResult {
     badgesEarned: string[];
     winnerWinStreak: number;
     streakMultiplier: number;
+    /** Set when the winner got no ELO (ELO_INTEGRITY_ENABLED). */
+    winnerUnratedReason: UnratedReason | null;
+}
+
+export interface ResolveEloOptions {
+    /** Per-player fills from before match-end settlement (ELO_INTEGRITY_ENABLED). */
+    activity?: Map<string, MatchActivity>;
 }
 
 /**
  * Calculate ELO change for a match result.
  * Uses flat tier-based deltas (not classic K-factor formula).
+ * With integrity rules, the upset bonus needs the loser 50+ ELO higher.
  */
-export function calculateEloChange(winnerElo: number, loserElo: number, tier: TWTier): EloChange {
+export function calculateEloChange(winnerElo: number, loserElo: number, tier: TWTier, integrity = false): EloChange {
     const table = ELO_TABLE[tier];
-    const upsetBonus = winnerElo < loserElo ? 3 : 0;
+    const upset = integrity ? loserElo - winnerElo >= UPSET_MIN_GAP : winnerElo < loserElo;
+    const upsetBonus = upset ? 3 : 0;
     return {
         winnerDelta: table.win + upsetBonus,
         loserDelta: table.lose,
@@ -125,7 +147,10 @@ export function calculateEloChange(winnerElo: number, loserElo: number, tier: TW
 export async function resolveMatchElo(
     matchId: string,
     client: PoolClient,
+    opts: ResolveEloOptions = {},
 ): Promise<MatchEloResult | null> {
+    const integrity = config.eloIntegrityEnabled;
+
     // ── Load match (FOR UPDATE for idempotency check) ──
     const { rows: matchRows } = await client.query<{
         id: string;
@@ -134,8 +159,13 @@ export async function resolveMatchElo(
         challenger_id: string;
         opponent_id: string;
         elo_resolved: boolean;
+        started_at: Date | null;
+        completed_at: Date | null;
+        duration_hours: number;
+        starting_capital: string;
     }>(
-        `SELECT id, status, winner_id, challenger_id, opponent_id, elo_resolved
+        `SELECT id, status, winner_id, challenger_id, opponent_id, elo_resolved,
+                started_at, completed_at, duration_hours, starting_capital
          FROM matches WHERE id = $1 FOR UPDATE`,
         [matchId],
     );
@@ -150,6 +180,15 @@ export async function resolveMatchElo(
     if (!match.winner_id) {
         // Draw — mark resolved but no ELO changes
         await client.query(`UPDATE matches SET elo_resolved = true WHERE id = $1`, [matchId]);
+        if (integrity) {
+            const side = (userId: string, opponentId: string) => ({
+                userId, opponentId, result: "DRAW" as const, reason: null, pairScale: 1, eloDelta: 0, seasonDelta: () => 0,
+            });
+            await writeMatchRatingsTx(client, matchId, match.completed_at ?? new Date(), [
+                side(match.challenger_id, match.opponent_id),
+                side(match.opponent_id, match.challenger_id),
+            ]);
+        }
         return null;
     }
 
@@ -180,30 +219,50 @@ export async function resolveMatchElo(
     const winnerTier: TWTier = isTWTier(winnerTierRaw) ? winnerTierRaw : "ROOKIE";
     const loserTier: TWTier = isTWTier(loserTierRaw) ? loserTierRaw : "ROOKIE";
 
+    // ── Integrity gate: is the winner rated, and the pair's 24h scale ──
+    let unratedReason: UnratedReason | null = null;
+    let scale = 1;
+    if (integrity) {
+        const activity = opts.activity ?? await matchActivityTx(client, matchId);
+        const capital = Number(match.starting_capital);
+        const completedAt = match.completed_at ?? new Date();
+        scale = pairScale(await priorPairMatchesTx(client, matchId, winnerId, loserId, completedAt));
+        if (isEarlyForfeit(match)) unratedReason = "EARLY_FORFEIT";
+        else if (!qualifies(activity.get(winnerId), capital) || !qualifies(activity.get(loserId), capital)) {
+            unratedReason = "NOT_QUALIFIED";
+        } else if (scale === 0) unratedReason = "REPEAT_OPPONENT";
+    }
+    const winnerRated = unratedReason === null;
+
     // ── Calculate base ELO deltas ──
-    const winnerBase = calculateEloChange(winner.elo_rating, loser.elo_rating, winnerTier);
-    const loserChange = calculateEloChange(loser.elo_rating, winner.elo_rating, loserTier);
+    const winnerBase = calculateEloChange(winner.elo_rating, loser.elo_rating, winnerTier, integrity);
+    const loserChange = calculateEloChange(loser.elo_rating, winner.elo_rating, loserTier, integrity);
 
     // ── Win streak: increment BEFORE checking multiplier ──
-    const newWinStreak = winner.win_streak + 1;
-    const streakMultiplier = getStreakMultiplier(newWinStreak);
-    const winnerDelta = Math.round(winnerBase.winnerDelta * streakMultiplier);
-    const loserDelta = loserChange.loserDelta; // negative number
+    // An unrated winner keeps their streak and gains nothing.
+    const newWinStreak = winnerRated ? winner.win_streak + 1 : winner.win_streak;
+    const streakMultiplier = winnerRated ? getStreakMultiplier(newWinStreak) : 1;
+    const winnerDelta = winnerRated ? roundDelta(winnerBase.winnerDelta * streakMultiplier * scale) : 0;
+    const loserDelta = integrity
+        ? roundDelta(loserChange.loserDelta * scale)
+        : loserChange.loserDelta; // negative number
 
     // ── Apply ELO ──
     const winnerNewElo = Math.max(0, winner.elo_rating + winnerDelta);
     const loserNewElo = Math.max(0, loser.elo_rating + loserDelta);
 
     // ── Update winner: ELO, win_count+1, win_streak+1, loss_streak=0 ──
-    await client.query(
-        `UPDATE users SET
-            elo_rating = $1,
-            win_count = win_count + 1,
-            win_streak = $2,
-            loss_streak = 0
-         WHERE id = $3`,
-        [winnerNewElo, newWinStreak, winnerId],
-    );
+    if (winnerRated) {
+        await client.query(
+            `UPDATE users SET
+                elo_rating = $1,
+                win_count = win_count + 1,
+                win_streak = $2,
+                loss_streak = 0
+             WHERE id = $3`,
+            [winnerNewElo, newWinStreak, winnerId],
+        );
+    }
 
     // ── Update loser: ELO, loss_count+1, loss_streak+1, win_streak=0 ──
     const newLossStreak = loser.loss_streak + 1;
@@ -218,10 +277,12 @@ export async function resolveMatchElo(
     );
 
     // ── ELO history ──
-    await client.query(
-        `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id) VALUES ($1, $2, $3, $4, $5)`,
-        [winnerId, winner.elo_rating, winnerNewElo, "MATCH_WIN", matchId],
-    );
+    if (winnerRated) {
+        await client.query(
+            `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id) VALUES ($1, $2, $3, $4, $5)`,
+            [winnerId, winner.elo_rating, winnerNewElo, "MATCH_WIN", matchId],
+        );
+    }
     await client.query(
         `INSERT INTO elo_history (user_id, old_elo, new_elo, change_reason, match_id) VALUES ($1, $2, $3, $4, $5)`,
         [loserId, loser.elo_rating, loserNewElo, "MATCH_LOSS", matchId],
@@ -231,7 +292,7 @@ export async function resolveMatchElo(
     const winnerNewWins = winner.win_count + 1;
 
     let winnerTierAfter = winnerTier;
-    const winnerPromo = checkPromotion(winnerTier, winnerNewElo, winnerNewWins);
+    const winnerPromo = winnerRated ? checkPromotion(winnerTier, winnerNewElo, winnerNewWins) : null;
     if (winnerPromo) {
         winnerTierAfter = winnerPromo;
         await updateUserTierTx(client, winnerId, winnerPromo, winnerTier, "MATCH_PROMOTION");
@@ -249,7 +310,7 @@ export async function resolveMatchElo(
 
     // ── Streak badges ──
     const badges: string[] = [];
-    const streakBadge = getStreakBadge(newWinStreak);
+    const streakBadge = winnerRated ? getStreakBadge(newWinStreak) : null;
     if (streakBadge) {
         badges.push(streakBadge);
         await client.query(
@@ -275,8 +336,8 @@ export async function resolveMatchElo(
             winner_tier_before, winner_tier_after,
             loser_tier_before, loser_tier_after,
             winner_win_streak, loser_loss_streak,
-            streak_multiplier, badges_earned
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+            streak_multiplier, badges_earned, winner_unrated_reason
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
             matchId, winnerId, loserId,
             winner.elo_rating, winnerNewElo, winnerDelta,
@@ -284,9 +345,24 @@ export async function resolveMatchElo(
             winnerTier, winnerTierAfter,
             loserTier, loserTierAfter,
             newWinStreak, newLossStreak,
-            streakMultiplier, JSON.stringify(badges),
+            streakMultiplier, JSON.stringify(badges), unratedReason,
         ],
     );
+
+    if (integrity) {
+        // Season points: the same gain, with the streak counted from the season start.
+        await writeMatchRatingsTx(client, matchId, match.completed_at ?? new Date(), [
+            {
+                userId: winnerId, opponentId: loserId, result: "WIN", reason: unratedReason, pairScale: scale,
+                eloDelta: winnerDelta,
+                seasonDelta: (streak) => roundDelta(winnerBase.winnerDelta * getStreakMultiplier(streak) * scale),
+            },
+            {
+                userId: loserId, opponentId: winnerId, result: "LOSS", reason: null, pairScale: scale,
+                eloDelta: loserDelta, seasonDelta: () => loserDelta,
+            },
+        ]);
+    }
 
     return {
         winnerId,
@@ -302,6 +378,7 @@ export async function resolveMatchElo(
         badgesEarned: badges,
         winnerWinStreak: newWinStreak,
         streakMultiplier,
+        winnerUnratedReason: unratedReason,
     };
 }
 

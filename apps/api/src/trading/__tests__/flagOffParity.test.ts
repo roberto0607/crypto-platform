@@ -163,6 +163,7 @@ async function scenario(): Promise<Record<string, Row[]>> {
 describe("LEVERAGE_ENABLED off", () => {
     it("leaves exactly the rows the pre-leverage engine left", async () => {
         expect(config.leverage.enabled).toBe(false);
+        expect(config.eloIntegrityEnabled).toBe(false);
         const dump = await scenario();
 
         if (process.env.WRITE_GOLDEN === "1") {

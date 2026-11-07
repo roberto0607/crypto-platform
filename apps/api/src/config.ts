@@ -189,6 +189,11 @@ export const config = {
   // rollout allowlist. Off: trading is exactly as before leverage.
   leverage: parseLeverageConfig(process.env),
 
+  // ── ELO integrity (competitions/eloIntegrity.ts) ──
+  // Anti-farming rules for 1v1 ELO and season score. Off: ELO is exactly as
+  // before. Applies only to matches resolved while it's on.
+  eloIntegrityEnabled: booleanEnv("ELO_INTEGRITY_ENABLED", false),
+
   // Set this to a random UUID in production via Railway env vars.
   botUserId: process.env.BOT_USER_ID ?? "00000000-0000-0000-0000-000000000001",
 

@@ -186,6 +186,7 @@ All new indicators follow this pattern:
 | `MARKET_COLLAR_MAX_BOOK_AGE_MS` | no | `5000` | Max Kraken book age for the MARKET reference (collar + system-fill price = best ask/bid). Older → falls back to the Kraken ticker |
 | `MARKET_TICKER_MAX_AGE_MS` | no | `10000` | Max Kraken ticker age for that fallback. Both stale → MARKET orders reject with `stale_price_source` (TP/SL triggers re-arm instead of failing); never priced off `trading_pairs.last_price` |
 | `AGENTS_ENABLED` | no | `false` in prod, `true` elsewhere | Master switch ANDed into every `*_AGENT_ENABLED` flag |
+| `ELO_INTEGRITY_ENABLED` | no | `false` | Anti-farming ELO + season rules (`competitions/eloIntegrity.ts`): blocked wins are unrated, 24h same-opponent scale 100/50/0%, upset bonus needs a 50+ gap, season points stored per match. Off = ELO exactly as before |
 | `MARKET_SYMBOLS` | no | `BTC-USD,ETH-USD,SOL-USD` | Only pairs whose candle/footprint history is written to Postgres |
 | `DB_SIZE_LIMIT_MB` | no (set in prod) | `0` (guardrail off) | Postgres volume size; warn at 70%, pause non-essential writes at 85%. See `docs/runbooks/db-recovery.md` |
 | `TRUST_PROXY_HOPS` | no | `0` | Reverse-proxy hops to trust for `req.ip` (X-Forwarded-For). `0` = TCP peer, which on Railway is the edge proxy — per-IP limits (quick-call 30/hr, global limiter's IP fallback) bucket all visitors together until set |
