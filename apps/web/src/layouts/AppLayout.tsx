@@ -1,5 +1,6 @@
 import "@/styles/match.css";
 import { MatchEndGate } from "@/components/arena/MatchEndGate";
+import { ChallengeCard } from "@/components/arena/ChallengeCard";
 import { useState, useEffect, useRef } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
@@ -151,6 +152,7 @@ export default function AppLayout() {
       <MatchEndGate />
       <SystemBanner />
       <UsernamePromptBanner />
+      <ChallengeCard />
 
       {sessionExpired && (
         <div

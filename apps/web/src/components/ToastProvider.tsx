@@ -146,7 +146,7 @@ export default function ToastProvider({
 
     function onChallengeReceived(e: Event) {
       const d = (e as CustomEvent<ChallengeReceivedEvent>).detail;
-      if (d) addToast("info", `⚔️ ${d.challengerName} challenged you. Open the Arena to respond.`);
+      if (d) addToast("info", `⚔️ ${d.challengerName} challenged you.`);
     }
 
     function onChallengeClosed(e: Event) {

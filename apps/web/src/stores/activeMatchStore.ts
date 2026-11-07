@@ -214,6 +214,10 @@ export function acquireActiveMatchPolling(): void {
         // Paused while the tab is hidden; SSE match.started/ended still land.
         stopPoll = setVisibleInterval(handleRefresh, POLL_INTERVAL_MS);
         window.addEventListener("sse:match.started", handleRefresh);
+        // A challenge sent to you, or yours declined / withdrawn: the
+        // receiver card on every page reads this store.
+        window.addEventListener("sse:challenge.received", handleRefresh);
+        window.addEventListener("sse:challenge.closed", handleRefresh);
         window.addEventListener("sse:reconnected", handleRefresh);
         window.addEventListener("sse:match.ended", handleMatchEnded);
         window.addEventListener("sse:match.pnl.update", handlePnlUpdate);
@@ -226,6 +230,8 @@ export function releaseActiveMatchPolling(): void {
         stopPoll();
         stopPoll = null;
         window.removeEventListener("sse:match.started", handleRefresh);
+        window.removeEventListener("sse:challenge.received", handleRefresh);
+        window.removeEventListener("sse:challenge.closed", handleRefresh);
         window.removeEventListener("sse:reconnected", handleRefresh);
         window.removeEventListener("sse:match.ended", handleMatchEnded);
         window.removeEventListener("sse:match.pnl.update", handlePnlUpdate);
