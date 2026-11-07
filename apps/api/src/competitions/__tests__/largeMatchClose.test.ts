@@ -117,8 +117,8 @@ describe("match end, a $1M position", () => {
         expect(exit).toBeLessThan(99_990);
         const pnl = 10 * (exit - 100_013);
         expect(await realized(id)).toBeCloseTo(pnl, 4);
-        // Margin 200,026 back, plus the (negative) P&L.
-        expect(await usdBalance(id)).toBeCloseTo(afterOpen + 200_026 + pnl, 4);
+        // Margin 200,026 back, plus the (negative) P&L, less the 5 bps close fee.
+        expect(await usdBalance(id)).toBeCloseTo(afterOpen + 200_026 + pnl - 10 * exit * 0.0005, 4);
     });
 
     it("ISOLATED: a thin book past bankruptcy loses the margin and no more, the shortfall is booked", async () => {
@@ -152,7 +152,7 @@ describe("match end, a $1M position", () => {
 
         const exit = await closingPrice(id);
         expect(exit).toBeCloseTo(WALKED_SELL, 4);
-        expect(await usdBalance(id)).toBeCloseTo(afterOpen + 10 * exit, 4);
+        expect(await usdBalance(id)).toBeCloseTo(afterOpen + 10 * exit * (1 - 0.0005), 4);
     });
 
     it("a short pays the walk on the ask", async () => {

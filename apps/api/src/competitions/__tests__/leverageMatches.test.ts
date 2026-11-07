@@ -238,10 +238,10 @@ describe("match end settles ISOLATED positions with the loss cap", () => {
         seedReferenceBook(pairId, "84000", "84000");
         await completeMatch(id);
 
-        // Long: +0.1 × 1,000 = +100. Short: −100. Margin back, no close fee
-        // (the force-close is fee-free, as for SPOT matches).
-        const aliceUsd = CAPITAL.minus("1664.15").plus("1660").plus("100");
-        const bobUsd = CAPITAL.minus("1664.15").plus("1660").minus("100");
+        // Long: +0.1 × 1,000 = +100. Short: −100. Margin back, less the 5 bps
+        // close fee on 8,400, as on any close.
+        const aliceUsd = CAPITAL.minus("1664.15").plus("1660").plus("100").minus("4.20");
+        const bobUsd = CAPITAL.minus("1664.15").plus("1660").minus("100").minus("4.20");
         expect((await balance(alice, usdAssetId, id)).balance).toBe(aliceUsd.toFixed(8));
         expect((await balance(bob, usdAssetId, id)).balance).toBe(bobUsd.toFixed(8));
         expect(await usdLedger(alice, id)).toEqual([
@@ -250,6 +250,7 @@ describe("match end settles ISOLATED positions with the loss cap", () => {
             ["FEE", "-4.15000000"],
             ["MARGIN_RELEASE", "1660.00000000"],
             ["REALIZED_PNL", "100.00000000"],
+            ["FEE", "-4.20000000"],
         ]);
 
         for (const uid of [alice, bob]) {

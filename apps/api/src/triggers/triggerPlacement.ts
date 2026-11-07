@@ -9,18 +9,28 @@
  *
  * Without this such a trigger sat ACTIVE and showed on the position card, and
  * only got canceled when it fired (fireTrigger's reduce-only clamp, no_position).
+ *
+ * TP/SL belong to the position, not to an order: at most one TP, one SL and one
+ * trailing stop per position per scope, always at its full size. Sized from the
+ * order instead, an add left part of the position unprotected. So any qty a
+ * client sends is ignored.
  */
+import { pool } from "../db/pool";
 import { AppError } from "../errors/AppError";
-import { D } from "../utils/decimal";
+import { publish } from "../events/eventBus";
+import { D, toFixed8 } from "../utils/decimal";
+import { REPLACED_REASON, triggerCanceledEvent } from "./positionCloseTriggers";
 import { liveMidPrice } from "./trailingOffset";
 import { shouldTrigger } from "./triggerEngine";
-import { reducibleQty } from "./triggerRepo";
+import { cancelTriggerSlotTx, createTriggerOrder, lockPositionQtyTx } from "./triggerRepo";
 import type { TriggerKind, TriggerOrderRow } from "./triggerTypes";
 
 interface TriggerLeg {
     kind: TriggerKind;
     side: "BUY" | "SELL";
     triggerPrice: string;
+    limitPrice?: string;
+    trailingOffset?: string;
 }
 
 /**
@@ -42,16 +52,67 @@ export async function assertTriggerPrice(pairId: string, leg: TriggerLeg): Promi
     }
 }
 
-/** Check every leg before any is created, so an OCO is all or nothing. */
-export async function assertTriggerPlacement(
+/** The kinds that share a position's one TP, one SL or one trailing stop. */
+const SLOTS: TriggerKind[][] = [
+    ["TAKE_PROFIT_MARKET", "TAKE_PROFIT_LIMIT"],
+    ["STOP_MARKET", "STOP_LIMIT"],
+    ["TRAILING_STOP_MARKET"],
+];
+const slotOf = (kind: TriggerKind) => SLOTS.find((slot) => slot.includes(kind))!;
+
+/**
+ * Put `legs` on the position, at its full size, each replacing what's in its
+ * slot. All or nothing: an OCO is checked before anything changes. The position
+ * row stays locked to the end, so a fill can't resize it under this; fills then
+ * keep the size right (resizeTriggersToPositionTx).
+ */
+export async function placePositionTriggers(
     userId: string,
     pairId: string,
     matchId: string | null,
     legs: TriggerLeg[],
-): Promise<void> {
-    for (const leg of legs) {
-        const reducible = await reducibleQty(userId, pairId, leg.side, { competitionId: null, matchId });
-        if (D(reducible).lte(0)) throw new AppError("trigger_not_reducing", { side: leg.side });
-        await assertTriggerPrice(pairId, leg);
+    ocoGroupId?: string,
+): Promise<TriggerOrderRow[]> {
+    if (new Set(legs.map((leg) => slotOf(leg.kind))).size !== legs.length) {
+        throw new AppError("invalid_input", { message: "An OCO pair needs two different kinds: a TP and an SL." });
     }
+    for (const leg of legs) await assertTriggerPrice(pairId, leg);
+
+    const client = await pool.connect();
+    const replaced: TriggerOrderRow[] = [];
+    const placed: TriggerOrderRow[] = [];
+    try {
+        await client.query("BEGIN");
+        const position = D(await lockPositionQtyTx(client, userId, pairId, matchId));
+        for (const leg of legs) {
+            if (leg.side === "SELL" ? position.lte(0) : position.gte(0)) {
+                throw new AppError("trigger_not_reducing", { side: leg.side });
+            }
+        }
+        for (const leg of legs) {
+            replaced.push(...await cancelTriggerSlotTx(client, userId, pairId, matchId, slotOf(leg.kind), REPLACED_REASON));
+            placed.push(await createTriggerOrder({
+                userId,
+                pairId,
+                kind: leg.kind,
+                side: leg.side,
+                triggerPrice: leg.triggerPrice,
+                limitPrice: leg.limitPrice,
+                qty: toFixed8(position.abs()),
+                ocoGroupId,
+                trailingOffset: leg.trailingOffset,
+                trailingHighWaterMark: leg.kind === "TRAILING_STOP_MARKET" ? leg.triggerPrice : undefined,
+                matchId,
+            }, client));
+        }
+        await client.query("COMMIT");
+    } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
+
+    for (const row of replaced) publish(triggerCanceledEvent(row, REPLACED_REASON));
+    return placed;
 }

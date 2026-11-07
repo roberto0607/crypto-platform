@@ -329,9 +329,9 @@ describe("scoring and settlement price", () => {
              WHERE w.match_id = $1 AND le.entry_type = 'MATCH_SETTLEMENT'`, [m.id]);
         const byUser = new Map(rows.map((r) => [r.user_id, r]));
         expect(Number(byUser.get(alice)!.price)).toBe(51000); // long sells at the bid
-        expect(Number(byUser.get(alice)!.amount)).toBeCloseTo(5100, 6);
+        expect(Number(byUser.get(alice)!.amount)).toBeCloseTo(5100 - 2.55, 6); // less the 5 bps close fee
         expect(Number(byUser.get(bob)!.price)).toBe(51200); // short buys at the ask
-        expect(Number(byUser.get(bob)!.amount)).toBeCloseTo(-5120, 6);
+        expect(Number(byUser.get(bob)!.amount)).toBeCloseTo(-5120 - 2.56, 6);
 
         // The score was booked at the same prices.
         for (const uid of [alice, bob]) {

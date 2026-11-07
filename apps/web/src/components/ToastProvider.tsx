@@ -119,6 +119,7 @@ export default function ToastProvider({
     const recentPositionToasts = new Map<string, number>();
     function onTriggerCanceled(e: Event) {
       const d = (e as CustomEvent).detail;
+      if (d?.reason === "replaced") return; // the player's own new TP/SL took its place
       if (d?.reason === "position_closed" || d?.reason === "match_ended") {
         const key = `${d.reason}:${d.pairId}`;
         const now = Date.now();

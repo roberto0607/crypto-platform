@@ -20,6 +20,7 @@ import {
     triggerCanceledEvent,
     POSITION_CLOSED_REASON,
 } from "../triggers/positionCloseTriggers";
+import { resizeTriggersToPositionTx } from "../triggers/triggerRepo";
 import { buildLogContext, logger } from "../observability/logContext";
 import {
   marketFillOffBookTotal,
@@ -295,6 +296,8 @@ export async function placeOrderWithSnapshot(
                     scope: { competitionId: string | null; matchId: string | null };
                 };
                 const closedPositions = new Map<string, ClosedPosition>();
+                // Every position this order moved: its triggers follow its size.
+                const movedPositions = new Map<string, Omit<ClosedPosition, "triggerSide">>();
                 const noteClose = (
                     uid: string,
                     fillSide: "BUY" | "SELL",
@@ -302,6 +305,7 @@ export async function placeOrderWithSnapshot(
                     afterQty: string,
                     scope: ClosedPosition["scope"],
                 ) => {
+                    movedPositions.set(`${uid}:${scope.competitionId ?? ""}:${scope.matchId ?? ""}`, { userId: uid, scope });
                     const triggerSide = closedTriggerSide(fillSide, qty, afterQty);
                     if (triggerSide) {
                         closedPositions.set(
@@ -442,6 +446,11 @@ export async function placeOrderWithSnapshot(
                     const canceled = await cancelTriggersForClosedPositionTx(client, closedUserId, body.pairId, triggerSide, scope);
                     for (const row of canceled) pendingEvents.push(triggerCanceledEvent(row, POSITION_CLOSED_REASON));
                     canceledOrders.push(...await cancelReduceOnlyOrdersTx(client, closedUserId, body.pairId, triggerSide, scope));
+                }
+                for (const { userId: movedUserId, scope } of movedPositions.values()) {
+                    if (scope.competitionId === null) {
+                        await resizeTriggersToPositionTx(client, movedUserId, body.pairId, scope.matchId);
+                    }
                 }
 
                 // ── Idempotency key ──

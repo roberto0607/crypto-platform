@@ -215,13 +215,22 @@ export class ClosePrices {
     }
 }
 
+/** Each SPOT force-close's taker fee, keyed `${userId}:${pairId}`. */
+export type SettlementFees = Map<string, string>;
+
 /**
  * Settle the match's wallets to USD: every base wallet goes to 0, and its
- * USD wallet moves by balance × the fair close price (MATCH_SETTLEMENT on
- * both legs). Caller holds the wallet locks (lockMatchWalletsTx) and has
- * already canceled the match's orders, so nothing is reserved.
+ * USD wallet moves by balance × the fair close price, less the close's fee,
+ * in one entry, as a trade's proceeds do (MATCH_SETTLEMENT on both legs).
+ * Caller holds the wallet locks (lockMatchWalletsTx) and has already canceled
+ * the match's orders, so nothing is reserved.
  */
-export async function settleMatchWalletsTx(client: PoolClient, matchId: string, prices: ClosePrices): Promise<void> {
+export async function settleMatchWalletsTx(
+    client: PoolClient,
+    matchId: string,
+    prices: ClosePrices,
+    closeFees: SettlementFees,
+): Promise<void> {
     const { rows } = await client.query<{
         id: string; user_id: string; balance: string; pair_id: string | null; usd_wallet_id: string | null;
     }>(
@@ -252,20 +261,21 @@ export async function settleMatchWalletsTx(client: PoolClient, matchId: string, 
         const { price, source } = await prices.get(client, {
             userId: w.user_id, pairId: w.pair_id, closingLong: qty.isPositive(), qty, entryFallback: pos[0]?.avg_entry_price ?? null,
         });
-        const proceeds = toFixed8(qty.mul(price)); // negative when buying back a short
-        const meta = JSON.stringify({ matchId, pairId: w.pair_id, qty: toFixed8(qty), price: toFixed8(price), priceSource: source });
+        const fee = closeFees.get(`${w.user_id}:${w.pair_id}`) ?? "0.00000000";
+        const proceeds = toFixed8(qty.mul(price).minus(fee)); // negative when buying back a short
+        const meta = { matchId, pairId: w.pair_id, qty: toFixed8(qty), price: toFixed8(price), priceSource: source };
 
         await client.query(
             `WITH u AS (UPDATE wallets SET balance = 0 WHERE id = $1 RETURNING balance)
              INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
              SELECT $1, $2, $3, u.balance, $4, 'MATCH', $5::jsonb FROM u`,
-            [w.id, MATCH_SETTLEMENT, toFixed8(qty.neg()), matchId, meta],
+            [w.id, MATCH_SETTLEMENT, toFixed8(qty.neg()), matchId, JSON.stringify(meta)],
         );
         await client.query(
             `WITH u AS (UPDATE wallets SET balance = balance + $3 WHERE id = $1 RETURNING balance)
              INSERT INTO ledger_entries (wallet_id, entry_type, amount, balance_after, reference_id, reference_type, metadata)
              SELECT $1, $2, $3, u.balance, $4, 'MATCH', $5::jsonb FROM u`,
-            [w.usd_wallet_id, MATCH_SETTLEMENT, proceeds, matchId, meta],
+            [w.usd_wallet_id, MATCH_SETTLEMENT, proceeds, matchId, JSON.stringify({ ...meta, fee })],
         );
     }
 }
