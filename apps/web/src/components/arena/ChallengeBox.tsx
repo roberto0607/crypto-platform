@@ -18,6 +18,11 @@ const DURATION_OPTIONS = [
     { value: 672, label: "4 WEEKS" },
 ];
 
+/** A match length as the challenge box shows it: 15M, 1H, … 4 WEEKS. */
+export function durationLabel(hours: number): string {
+    return DURATION_OPTIONS.find((d) => d.value === Number(hours))?.label ?? `${hours}H`;
+}
+
 interface ChallengeBoxProps {
     /** A challenge was sent or a stuck match cancelled: reload match state. */
     onChanged: () => void | Promise<void>;

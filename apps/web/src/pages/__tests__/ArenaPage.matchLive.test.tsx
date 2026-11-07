@@ -84,13 +84,19 @@ describe("a match starting while on the Arena", () => {
     expect(where()).toBe("/trade");
   });
 
-  it("ACCEPT takes the player to /trade", async () => {
+  it("a pending challenge is left to the global card: the Arena doesn't show it twice", async () => {
     api.getActiveMatch.mockResolvedValue({ data: { match: PENDING } });
     await mount();
-    api.getActiveMatch.mockResolvedValue({ data: { match: LIVE } });
-    await userEvent.click(screen.getByRole("button", { name: "ACCEPT" }));
-    await flush();
-    expect(api.acceptMatch).toHaveBeenCalledWith("m1");
-    expect(where()).toBe("/trade");
+    expect(screen.queryByRole("button", { name: "ACCEPT" })).toBeNull();
+    expect(screen.queryByText(/challenged you/i)).toBeNull();
+  });
+
+  it("reads the shared store: a challenge closed elsewhere is gone here too", async () => {
+    api.getActiveMatch.mockResolvedValue({ data: { match: null } });
+    await mount();
+    act(() => useActiveMatchStore.getState().setActiveMatch(LIVE));
+    expect(screen.getByText("MATCH LIVE")).toBeTruthy();
+    act(() => useActiveMatchStore.getState().setActiveMatch(null));
+    expect(screen.queryByText("MATCH LIVE")).toBeNull();
   });
 });

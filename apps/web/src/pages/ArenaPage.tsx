@@ -2,20 +2,16 @@ import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { useCompetitionStore } from "@/stores/competitionStore";
-import { useMatchPnl } from "@/stores/activeMatchStore";
+import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
 import {
-    acceptMatch,
-    getActiveMatch,
     getMatchHistory,
     getActiveMatches,
     type Match,
     type ActiveMatchListEntry,
 } from "@/api/endpoints/matches";
 import { getCurrentSeason, getLeaderboard, type CurrentSeason, type LeaderboardEntry } from "@/api/endpoints/competitions";
-import { useToast } from "@/components/ToastProvider";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 import { ChallengeBox } from "@/components/arena/ChallengeBox";
-import { PendingChallengeCard } from "@/components/arena/PendingChallengeCard";
 import { formatMatchPnl, formatPnlPct } from "@/lib/matchPnl";
 
 /* ─────────────────────────────────────────
@@ -198,12 +194,13 @@ export default function ArenaPage() {
     const navigate = useNavigate();
     const userId = useAuthStore((s) => s.user?.id);
     const userTier = useCompetitionStore((s) => s.userTier);
-    const { addToast } = useToast();
 
     const prefill = useSearchParams()[0].get("challenge");
 
     const [tab, setTab] = useState<"SEASON" | "1V1" | "LIVE">("1V1");
-    const [activeMatch, setActiveMatch] = useState<Match | null>(null);
+    // The shared store, also behind the global challenge card: one truth.
+    const activeMatch = useActiveMatchStore((s) => s.activeMatch);
+    const refreshMatch = useActiveMatchStore((s) => s.refreshMatch);
     const [matchHistory, setMatchHistory] = useState<Match[]>([]);
     const [historyTotal, setHistoryTotal] = useState(0);
     const [liveMatches, setLiveMatches] = useState<ActiveMatchListEntry[]>([]);
@@ -215,12 +212,7 @@ export default function ArenaPage() {
     const [seasonLoading, setSeasonLoading] = useState(true);
     const [seasonError, setSeasonError] = useState(false);
 
-    const loadActiveMatch = useCallback(async () => {
-        try {
-            const { data } = await getActiveMatch();
-            setActiveMatch(data.match);
-        } catch { /* ignore */ }
-    }, []);
+    const loadActiveMatch = useCallback(() => refreshMatch(), [refreshMatch]);
 
     const loadMatchHistory = useCallback(async () => {
         try {
@@ -284,20 +276,6 @@ export default function ArenaPage() {
         return () => { window.removeEventListener("sse:match.started", handler); };
     }, [navigate]);
 
-    // Show incoming challenge when opponent sends one (SSE push)
-    useEffect(() => {
-        const handler = () => { loadActiveMatch(); };
-        window.addEventListener("sse:challenge.received", handler);
-        return () => { window.removeEventListener("sse:challenge.received", handler); };
-    }, [loadActiveMatch]);
-
-    // The other player declined or withdrew
-    useEffect(() => {
-        const handler = () => { loadActiveMatch(); };
-        window.addEventListener("sse:challenge.closed", handler);
-        return () => { window.removeEventListener("sse:challenge.closed", handler); };
-    }, [loadActiveMatch]);
-
     // A pre-filled challenge lives on the 1V1 tab, wherever it came from
     useEffect(() => {
         if (prefill) setTab("1V1");
@@ -310,16 +288,6 @@ export default function ArenaPage() {
         return () => { window.removeEventListener("sse:reconnected", handler); };
     }, [loadActiveMatch, loadMatchHistory]);
 
-    async function handleAccept() {
-        if (!activeMatch) return;
-        try {
-            await acceptMatch(activeMatch.id);
-            navigate("/trade");
-        } catch (err: any) {
-            const msg = err?.response?.data?.message;
-            addToast("error", msg ?? "Couldn't accept the match. Try again.");
-        }
-    }
 
     const daysLeft = seasonInfo ? formatTimeRemaining(seasonInfo.end_at) : "--";
     const myEntry = leaderboard.find((e) => e.user_id === userId);
@@ -409,14 +377,7 @@ export default function ArenaPage() {
                 {/* ═══ 1V1 TAB ═══ */}
                 {tab === "1V1" && (
                     <>
-                        {activeMatch?.status === "PENDING" && userId && (
-                            <PendingChallengeCard
-                                match={activeMatch}
-                                userId={userId}
-                                onAccept={handleAccept}
-                                onClosed={loadActiveMatch}
-                            />
-                        )}
+                        {/* A pending challenge: the global card (ChallengeCard) above every page. */}
 
                         {activeMatch?.status === "ACTIVE" && userId && (
                             <MatchLiveCard match={activeMatch} userId={userId} onEnter={() => navigate("/trade")} />
