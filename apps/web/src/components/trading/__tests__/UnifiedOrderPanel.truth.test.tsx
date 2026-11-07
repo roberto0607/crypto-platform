@@ -634,11 +634,18 @@ describe("F-04: the actions live outside the scrolled card", () => {
     expect(screen.queryByTestId("confirm-box")).toBeNull();
   });
 
-  it("the trade page pins that bar in its CSS", async () => {
+  it("the form scrolls in its own box above the bar, so the bar can't cover a field", async () => {
+    mount(isoPosition("0.10000000"));
+    await settle();
+    const form = document.querySelector(".tr-order-form")!;
+    expect(form.contains(amount())).toBe(true);
+    expect(form.contains(screen.getByTestId("position-actions"))).toBe(false);
+
     const proc = (globalThis as { process?: { cwd(): string } }).process!;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fs: any = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
-    const read = (f: string): string => fs.readFileSync(`${proc.cwd()}/src/${f}`, "utf8");
-    expect(read("pages/TradingPage.tsx")).toMatch(/\.tr-pos-actions \{\s*position:sticky;bottom:0/);
+    const css: string = fs.readFileSync(`${proc.cwd()}/src/pages/TradingPage.tsx`, "utf8");
+    expect(css).toMatch(/\.tr-order-form \{\s*flex:1 1 0;min-height:0;overflow-y:auto/);
+    expect(css).toMatch(/\.tr-pos-actions \{\s*flex:none/);
   });
 });

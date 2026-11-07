@@ -57,8 +57,8 @@ async function mount(position: Position | null) {
 describe.each(["tr"] as const)("%s: the card, the form and summary + OPEN don't overlap", (p) => {
   it("with a position open, the card is first in the panel (above LONG/SHORT); summary + OPEN close it, in flow", async () => {
     const c = await mount(POS);
-    const section = c.querySelector(`.${p}-order-section`)!;
-    const kids = [...section.children].map((el) => el.className);
+    const form = c.querySelector(`.${p}-order-form`)!;
+    const kids = [...form.children].map((el) => el.className);
     expect(kids[0]).toBe(`${p}-position-card-sticky`);
     expect(kids[1]).toContain(`${p}-dir-toggle`);
     const footer = c.querySelector(`.${p}-order-footer`)!;
@@ -68,8 +68,9 @@ describe.each(["tr"] as const)("%s: the card, the form and summary + OPEN don't 
     expect(fkids.some((k) => k.includes(`${p}-place-btn`))).toBe(true);
     expect(footer.querySelector(`.${p}-position-card-sticky`)).toBeNull();
     // Then the pinned actions, and nothing of the order form after it.
-    expect(footer.nextElementSibling?.className).toBe(`${p}-pos-actions`);
-    expect(footer.nextElementSibling?.nextElementSibling).toBeNull();
+    expect(footer.nextElementSibling).toBeNull();
+    expect(form.nextElementSibling?.className).toBe(`${p}-pos-actions`);
+    expect(form.nextElementSibling?.nextElementSibling).toBeNull();
   });
 
   it("without a position: unchanged (no card, no with-position class)", async () => {
