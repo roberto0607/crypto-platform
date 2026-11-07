@@ -16,6 +16,8 @@ const ERROR_STATUS: Record<string, number> = {
   order_too_large: 400,
   trigger_not_cancelable: 400,
   trigger_not_editable: 400,
+  trigger_not_reducing: 400,
+  trigger_wrong_side_of_mark: 400,
   alert_not_cancelable: 400,
   alert_limit_exceeded: 400,
   chart_layout_limit_exceeded: 400,

@@ -27,6 +27,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   book_stale_for_size: "Price feed stale, try a smaller order or retry.",
   trigger_not_cancelable: "This trigger order cannot be canceled.",
   trigger_not_editable: "Only an active trigger order can be edited.",
+  trigger_not_reducing: "A TP or SL needs an open position to close: a SELL trigger protects a long, a BUY trigger a short. It can't go on an order that only reduces or closes a position.",
+  trigger_wrong_side_of_mark: "Stop loss must be below the mark on a long and above it on a short; take profit the opposite.",
   alert_not_cancelable: "This alert cannot be canceled.",
   alert_limit_exceeded: "You've reached the maximum of 50 active alerts.",
   chart_layout_limit_exceeded: "You've reached the maximum of 20 saved chart layouts.",

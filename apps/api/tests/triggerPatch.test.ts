@@ -22,6 +22,11 @@ let assetIds: string[] = [];
 
 const uid = Math.random().toString(36).slice(2, 7).toUpperCase();
 
+const holdLong = (matchId: string | null) => getPool().query(
+    `INSERT INTO positions (user_id, pair_id, match_id, base_qty, avg_entry_price) VALUES ($1, $2, $3, 1, 100)`,
+    [userId, pairId, matchId],
+);
+
 beforeAll(async () => {
     app = await getTestApp();
     const pool = getPool();
@@ -45,11 +50,15 @@ beforeAll(async () => {
         [base!.id, quote!.id, allowSymbolForTest(`TP${uid}/USD`)],
     );
     pairId = pair!.id;
+    // A trigger needs a live mark and a position to close.
+    seedReferenceBook(pairId, "100", "100");
+    await holdLong(null);
 });
 
 afterAll(async () => {
     const pool = getPool();
     await pool.query(`DELETE FROM trigger_orders WHERE pair_id = $1`, [pairId]);
+    await pool.query(`DELETE FROM positions WHERE pair_id = $1`, [pairId]);
     await pool.query(`DELETE FROM matches WHERE id = ANY($1)`, [matchIds]);
     await pool.query(`DELETE FROM trading_pairs WHERE id = $1`, [pairId]);
     await pool.query(`DELETE FROM assets WHERE id = ANY($1)`, [assetIds]);
@@ -112,6 +121,7 @@ describe("trigger scope (match_id) over HTTP", () => {
             [userId, otherUserId],
         );
         matchIds.push(m!.id);
+        await holdLong(m!.id);
 
         const single = await post("/v1/triggers", { scope: m!.id, pairId, ...leg("STOP_MARKET", "90") });
         expect(single.json().match_id).toBe(m!.id);
