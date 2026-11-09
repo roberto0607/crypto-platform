@@ -13,6 +13,7 @@ import { getCurrentSeason, getLeaderboard, type CurrentSeason, type LeaderboardE
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 import { ChallengeBox } from "@/components/arena/ChallengeBox";
 import { formatMatchPnlPair, formatPnlPct, formatPnlPctPair } from "@/lib/matchPnl";
+import { eloChangeText, eloReason } from "@/lib/eloReason";
 
 /* ─────────────────────────────────────────
    ARENA PAGE CSS — Trade Wars
@@ -422,13 +423,11 @@ export default function ArenaPage() {
                                             const [yourPnlText, theirPnlText] = formatPnlPctPair(yourPnl, theirPnl);
                                             const won = m.winner_id === userId;
                                             const lost = m.winner_id && m.winner_id !== userId;
-                                            const eloDisplay = won && m.winner_unrated_reason
-                                                ? "UNRATED"
-                                                : won
-                                                ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
-                                                : lost
-                                                    ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`
-                                                    : "0";
+                                            const eloDisplay = eloChangeText({
+                                                won, lost: !!lost, unrated: !!m.winner_unrated_reason,
+                                                delta: won ? (m.winner_elo_delta ?? m.elo_delta ?? 0) : (m.loser_elo_delta ?? -(m.elo_delta ?? 0)),
+                                            });
+                                            const eloWhy = won || lost ? eloReason(m, won ? "winner" : "loser") : null;
 
                                             return (
                                                 <tr key={m.id}>
@@ -447,7 +446,12 @@ export default function ArenaPage() {
                                                     </td>
                                                     <td style={{ color: "rgba(255,255,255,0.4)" }}>{theirPnlText}</td>
                                                     <td style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}>
-                                                        {eloDisplay}
+                                                        <span data-testid="history-elo">{eloDisplay}</span>
+                                                        {eloWhy && (
+                                                            <div data-testid="history-elo-reason" style={{ fontSize: 9, letterSpacing: 0.5, color: "var(--ar-muted)", marginTop: 2 }}>
+                                                                {eloWhy}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
                                                         {m.completed_at ? new Date(m.completed_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "--"}

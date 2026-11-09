@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { Match } from "@/api/endpoints/matches";
 import client from "@/api/client";
 import { formatMatchPnlPair } from "@/lib/matchPnl";
+import { eloChangeText, eloReason } from "@/lib/eloReason";
 
 interface EloResult {
     winner_id: string;
@@ -22,6 +23,10 @@ interface EloResult {
     badges_earned: string[];
     /** Set when the winner got no ELO (anti-farming rules). */
     winner_unrated_reason?: string | null;
+    /** The pair's match number in 24h and who traded enough: for the reason line. */
+    pair_match_number?: number | null;
+    winner_qualified?: boolean | null;
+    loser_qualified?: boolean | null;
 }
 
 interface MatchEndOverlayProps {
@@ -77,6 +82,8 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
     const streakMultiplier = eloResult ? parseFloat(eloResult.streak_multiplier) : 1;
     const badges = eloResult?.badges_earned ?? [];
     const unrated = won && isWinner && !!eloResult?.winner_unrated_reason;
+    // Why the change was unrated or scaled, in plain words (null: full value).
+    const reason = eloResult && (won || lost) ? eloReason(eloResult, isWinner ? "winner" : "loser") : null;
 
     // ── ELO count-up animation ──
     // Counts the NEW ELO from old → new and the delta from 0 → final over 800ms
@@ -163,13 +170,18 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}
                         >
-                            {unrated ? "UNRATED" : won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
+                            <span data-testid="elo-change">{eloChangeText({ won, lost, delta: displayDelta, unrated })}</span>
                             {streakMultiplier > 1 && won && (
                                 <span style={{ fontSize: "0.7em", marginLeft: 6, color: "var(--ar-gold)" }}>
                                     {streakMultiplier}x STREAK
                                 </span>
                             )}
                         </div>
+                        {reason && (
+                            <div data-testid="elo-reason" style={{ fontSize: 10, letterSpacing: 1, color: "var(--ar-muted)", marginTop: 4 }}>
+                                {reason}
+                            </div>
+                        )}
                     </div>
                     <div>
                         <div className="mt-end-label">NEW ELO</div>

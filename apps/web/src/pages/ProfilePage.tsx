@@ -5,6 +5,7 @@ import { getMatchHistory, type Match } from "@/api/endpoints/matches";
 import { getTierForElo, TIER_COLORS } from "@/lib/tiers";
 import { CopyInviteLink } from "@/components/arena/CopyInviteLink";
 import { formatPnlPct } from "@/lib/matchPnl";
+import { eloChangeText, eloReason } from "@/lib/eloReason";
 
 const PROFILE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
@@ -221,13 +222,11 @@ export default function ProfilePage() {
                                 const lost = m.winner_id && m.winner_id !== user?.id;
                                 // Mirror Arena: show this user's real per-match ELO change —
                                 // winner_elo_delta on a win, loser_elo_delta (already negative) on a loss.
-                                const eloDisplay = won && m.winner_unrated_reason
-                                    ? "UNRATED"
-                                    : won
-                                    ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
-                                    : lost
-                                        ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`
-                                        : "0";
+                                const eloDisplay = eloChangeText({
+                                    won, lost: !!lost, unrated: !!m.winner_unrated_reason,
+                                    delta: won ? (m.winner_elo_delta ?? m.elo_delta ?? 0) : (m.loser_elo_delta ?? -(m.elo_delta ?? 0)),
+                                });
+                                const eloWhy = won || lost ? eloReason(m, won ? "winner" : "loser") : null;
                                 return (
                                     <tr key={m.id}>
                                         <td style={{ color: "rgba(255,255,255,0.7)" }}>{opponentName}</td>
@@ -242,7 +241,12 @@ export default function ProfilePage() {
                                             {yourPnl ? formatPnlPct(yourPnl) : "--"}
                                         </td>
                                         <td style={{ color: won ? "var(--pf-g)" : lost ? "var(--pf-red)" : "var(--pf-muted)" }}>
-                                            {eloDisplay}
+                                            <span data-testid="history-elo">{eloDisplay}</span>
+                                            {eloWhy && (
+                                                <div data-testid="history-elo-reason" style={{ fontSize: 9, letterSpacing: 0.5, color: "var(--pf-muted)", marginTop: 2 }}>
+                                                    {eloWhy}
+                                                </div>
+                                            )}
                                         </td>
                                         <td style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
                                             {m.completed_at ? new Date(m.completed_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "--"}
