@@ -305,7 +305,13 @@ export async function settleIsolatedFillTx(
     if (mode === "SPOT" && !state.qty.isZero()) throw new Error("position_mode_conflict");
 
     const r = applyIsolatedFill(state, p.side, D(p.qty), D(p.price), D(p.fee), p.leverage, p.mmrBps);
+    // Each leg's entries carry the epoch of the position they belong to: a
+    // flip's closing leg (release, P&L, its share of the fee) is the old
+    // position's, its opening leg the new one's. GET /positions sums a
+    // position's fees by epoch, so tagging the close with the new epoch
+    // charged the new position the old one's closing fee.
     const meta: LedgerMeta = { pairId: p.pairId, feeRole: p.feeRole, epoch: r.next.epoch };
+    const closeMeta: LedgerMeta = { ...meta, epoch: state.epoch };
 
     let bookedPnl = ZERO;
     let feeBooked = ZERO;
@@ -318,18 +324,18 @@ export async function settleIsolatedFillTx(
         feeBooked = feeBooked.plus(s.bookedFee);
         // Release first, so the P&L debit and fee are always covered by it.
         if (r.reduce.released.gt(0)) {
-            await postUsd(client, p.usdWalletId, r.reduce.released, "MARGIN_RELEASE", p.tradeId, meta);
+            await postUsd(client, p.usdWalletId, r.reduce.released, "MARGIN_RELEASE", p.tradeId, closeMeta);
         }
         if (!s.bookedPnl.isZero()) {
-            await postUsd(client, p.usdWalletId, s.bookedPnl, "REALIZED_PNL", p.tradeId, meta);
+            await postUsd(client, p.usdWalletId, s.bookedPnl, "REALIZED_PNL", p.tradeId, closeMeta);
         }
         if (s.bookedFee.gt(0)) {
             await postUsd(client, p.usdWalletId, s.bookedFee.neg(), "FEE", p.tradeId,
-                { ...meta, ...(s.uncollectedFee.gt(0) ? { uncollectedFee: toFixed8(s.uncollectedFee) } : {}) });
+                { ...closeMeta, ...(s.uncollectedFee.gt(0) ? { uncollectedFee: toFixed8(s.uncollectedFee) } : {}) });
         }
         if (s.shortfall.gt(0)) {
             await postUsd(client, p.usdWalletId, ZERO, "LIQUIDATION_SHORTFALL", p.tradeId, {
-                ...meta,
+                ...closeMeta,
                 shortfall: toFixed8(s.shortfall),
                 uncollectedFee: toFixed8(s.uncollectedFee),
             });
