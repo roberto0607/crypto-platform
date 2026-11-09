@@ -28,7 +28,9 @@ const placeOrderBody = z.object({
   // 1–100, at most 2 decimals (NUMERIC(6, 2)). The engine enforces the
   // per-mode cap; above 1 needs LEVERAGE_ENABLED (leverage_exceeds_cap).
   leverage: z.number().min(1).max(100).multipleOf(0.01).optional(),
-  // Only shrink the position (the CLOSE button). MARKET only.
+  // Only shrink the position (the CLOSE button, a reduce or close from the
+  // order panel). MARKET or LIMIT: a resting reduce-only LIMIT can only ever
+  // fill what's left of the position, and a close cancels it.
   reduceOnly: z.boolean().optional(),
   // Which book the order trades: "free" or a match id. Required (the route
   // says scope_required when it's missing); never inferred.
@@ -40,9 +42,6 @@ const placeOrderBody = z.object({
     return true;
   },
   { message: "limitPrice required for LIMIT orders, forbidden for MARKET orders" }
-).refine(
-  (data) => !(data.reduceOnly && data.type !== "MARKET"),
-  { message: "reduceOnly is for MARKET orders only", path: ["reduceOnly"] }
 );
 
 const orderIdParams = z.object({ id: z.string().uuid() });
@@ -134,7 +133,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           limitPrice: { type: "string", pattern: "^\\d+(\\.\\d{1,8})?$", description: "Required for LIMIT orders, forbidden for MARKET orders" },
           leverage: { type: "number", minimum: 1, maximum: 100, description: "Leverage (default 1x). Above 1 needs leverage enabled; capped per mode (free-play / match / competition)." },
           scope: { type: "string", description: "Required. 'free', or the id of the user's ACTIVE match. An order is never rerouted: an ended match is match_ended." },
-          reduceOnly: { type: "boolean", description: "MARKET only. Only shrinks the position: trimmed to it, rejected with reduce_only_no_position when there's nothing to reduce. Never opens or flips." },
+          reduceOnly: { type: "boolean", description: "Only shrinks the position: trimmed to it, rejected with reduce_only_no_position when there's nothing to reduce. Never opens or flips. A LIMIT one rests reduce-only: its fills are capped at what's left of the position, and closing the position cancels it." },
         },
       },
       response: {
@@ -176,7 +175,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           properties: {
             ok: { type: "boolean", const: false },
             message: { type: "string" },
-            error: { type: "string", enum: ["scope_required", "invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable", "invalid_leverage", "leverage_exceeds_cap", "leverage_mismatch", "spot_orders_open", "isolated_orders_open", "reduce_only_no_position", "reduce_only_market_only"] },
+            error: { type: "string", enum: ["scope_required", "invalid_input", "insufficient_balance", "risk_check_failed", "governance_check_failed", "trading_paused_global", "trading_paused_pair", "quota_exceeded", "pair_not_tradable", "invalid_leverage", "leverage_exceeds_cap", "leverage_mismatch", "spot_orders_open", "isolated_orders_open", "reduce_only_no_position"] },
             details: { type: "object", additionalProperties: true },
           },
         },

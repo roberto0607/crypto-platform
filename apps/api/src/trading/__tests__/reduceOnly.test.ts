@@ -2,8 +2,9 @@
  * reduceOnly.test.ts: reduce-only orders (leverage PR 6a).
  *
  * A reduce-only order can only shrink the position it closes, in the scope
- * it lands in. POST /orders takes it on MARKET orders only (a LIMIT one
- * comes only from a TP/SL limit fire: reduceOnlyLimit.test.ts). Under the
+ * it lands in. POST /orders takes it on MARKET and LIMIT orders (a resting
+ * reduce-only LIMIT behaves like a TP/SL limit fire: reduceOnlyLimit.test.ts).
+ * Under the
  * pair lock (which every writer of a position holds: orders, triggers,
  * liquidations, match end, the conversion) the matching engine trims it to
  * what's left of the position,
@@ -167,7 +168,7 @@ describe.each([
 });
 
 describe("a reduce-only LIMIT (a TP/SL limit fire; PR 7)", () => {
-    it("the engine accepts it, trimmed to the position (POST /orders still refuses one: see below)", async () => {
+    it("the engine accepts it, trimmed to the position", async () => {
         const u = await trader();
         await order(u, "BUY", "0.01000000");
         const r = await placeOrderWithSnapshot(u, { pairId, side: "SELL", type: "LIMIT", qty: "0.05000000", limitPrice: "90000", reduceOnly: true });
@@ -327,12 +328,54 @@ describe("POST /orders reduceOnly", () => {
         expect(again.json().error).toBe("reduce_only_no_position");
     });
 
-    it("LIMIT + reduceOnly is a 400; a non-boolean reduceOnly is a 400", async () => {
+    it("a non-boolean reduceOnly is a 400", async () => {
         const u = await trader();
-        const limit = await post(u, { side: "SELL", type: "LIMIT", qty: "0.01000000", limitPrice: "90000", reduceOnly: true });
-        expect(limit.statusCode).toBe(400);
         const bad = await post(u, { side: "SELL", type: "MARKET", qty: "0.01000000", reduceOnly: "yes" });
         expect(bad.statusCode).toBe(400);
+    });
+
+    describe("a reduce-only LIMIT close (the order panel's LIMIT reduce / close)", () => {
+        const openOrders = async (uid: string) => (await pool.query<{ status: string; reduce_only: boolean; qty: string }>(
+            `SELECT status, reduce_only, qty::text FROM orders WHERE user_id = $1 AND type = 'LIMIT' ORDER BY created_at`, [uid])).rows;
+
+        it("rests reduce-only, trimmed to the position; nothing to reduce is a 400", async () => {
+            const u = await trader();
+            expect((await post(u, { side: "BUY", type: "MARKET", qty: "0.01000000" })).statusCode).toBe(201);
+            const res = await post(u, { side: "SELL", type: "LIMIT", qty: "0.03000000", limitPrice: "90000", reduceOnly: true });
+            expect(res.statusCode).toBe(201);
+            expect(res.json().order).toMatchObject({ qty: "0.01000000", status: "OPEN" });
+            expect(await openOrders(u)).toEqual([{ status: "OPEN", reduce_only: true, qty: "0.01000000" }]);
+
+            const flat = await trader();
+            const none = await post(flat, { side: "SELL", type: "LIMIT", qty: "0.01000000", limitPrice: "90000", reduceOnly: true });
+            expect(none.statusCode).toBe(400);
+            expect(none.json().error).toBe("reduce_only_no_position");
+            expect(await openOrders(flat)).toEqual([]);
+        });
+
+        it("the position closes another way: the resting close is canceled and can never open a short", async () => {
+            const u = await trader();
+            await post(u, { side: "BUY", type: "MARKET", qty: "0.01000000" });
+            await post(u, { side: "SELL", type: "LIMIT", qty: "0.01000000", limitPrice: "90000", reduceOnly: true });
+            // CLOSE POSITION (market, reduce-only) gets there first.
+            expect((await post(u, { side: "SELL", type: "MARKET", qty: "0.01000000", reduceOnly: true })).statusCode).toBe(201);
+            expect((await openOrders(u)).map((o) => o.status)).toEqual(["CANCELED"]);
+
+            // A buyer lifts every ask up to 90,000: nothing of u's is left to fill.
+            const buyer = await trader("100000.00000000");
+            await post(buyer, { side: "BUY", type: "LIMIT", qty: "0.01000000", limitPrice: "90000" });
+            expect((await position(u)).base_qty).toBe("0.00000000");
+        });
+
+        it("the position shrank: a buyer fills only what's left; never flips", async () => {
+            const u = await trader();
+            await post(u, { side: "BUY", type: "MARKET", qty: "0.01000000" });
+            await post(u, { side: "SELL", type: "LIMIT", qty: "0.01000000", limitPrice: "84000", reduceOnly: true });
+            await post(u, { side: "SELL", type: "MARKET", qty: "0.00600000" });
+            const buyer = await trader("100000.00000000");
+            await post(buyer, { side: "BUY", type: "LIMIT", qty: "0.01000000", limitPrice: "84000" });
+            expect((await position(u)).base_qty).toBe("0.00000000");
+        });
     });
 
     it("without reduceOnly, a SELL with no position still opens a short (unchanged)", async () => {

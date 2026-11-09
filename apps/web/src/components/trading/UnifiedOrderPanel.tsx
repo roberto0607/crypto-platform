@@ -607,13 +607,14 @@ export function UnifiedOrderPanel({
                 solvedQty = fresh?.qty ?? preset.qty;
             }
             // `leverage` only for a leveraged order, `qty` only for a preset,
-            // `reduceOnly` only for a MARKET reduce or close (the API refuses
-            // it on a LIMIT): otherwise the body is the pre-leverage one.
+            // `reduceOnly` only for a reduce or close, MARKET or LIMIT (a
+            // resting LIMIT close then never opens the other side if the
+            // position shrinks first): otherwise the body is the pre-leverage one.
             const opts = {
                 scope: orderScope,
                 ...(leveraged ? { leverage } : {}),
                 ...(solvedQty ? { qty: solvedQty } : {}),
-                ...(reduces && orderType === "MARKET" ? { reduceOnly: true } : {}),
+                ...(reduces ? { reduceOnly: true } : {}),
             };
             const result = await submitOrder(opts);
             const fills = result?.fills ?? [];
