@@ -39,7 +39,8 @@ export interface ReplayPlayer {
 
 export interface MatchReplay {
     ok: true;
-    source: "match_positions";
+    /** match_positions: the demo seed's rows; fills: a real match, rebuilt from its trades. */
+    source: "match_positions" | "fills";
     match: {
         id: string;
         startedAt: number | null;
