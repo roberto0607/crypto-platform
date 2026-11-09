@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Match } from "@/api/endpoints/matches";
 import client from "@/api/client";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatMatchPnlPair } from "@/lib/matchPnl";
 
 interface EloResult {
     winner_id: string;
@@ -46,6 +46,8 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
     const opponentName = isChallenger ? match.opponent_name : match.challenger_name;
     const yourPnl = isChallenger ? match.challenger_pnl_pct : match.opponent_pnl_pct;
     const oppPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
+    // Both at one precision, with dollars: different results never look tied.
+    const [yourPnlText, oppPnlText] = formatMatchPnlPair(yourPnl, oppPnl, match.starting_capital);
     const won = match.winner_id === userId;
     const lost = match.winner_id != null && match.winner_id !== userId;
     const forfeited = match.forfeit_user_id === userId;
@@ -140,7 +142,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnlPct(yourPnl)}
+                            {yourPnlText}
                         </div>
                     </div>
                     <div>
@@ -149,7 +151,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: parseFloat(oppPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnlPct(oppPnl)}
+                            {oppPnlText}
                         </div>
                     </div>
                 </div>

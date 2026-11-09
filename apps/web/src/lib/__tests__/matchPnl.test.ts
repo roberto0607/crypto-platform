@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatPnlPct, formatMatchPnl, formatPnlUsd } from "@/lib/matchPnl";
+import { formatPnlPct, formatMatchPnl, formatPnlUsd, formatPnlPctPair, formatMatchPnlPair } from "@/lib/matchPnl";
 
 describe("formatPnlPct", () => {
   it.each([
@@ -92,5 +92,51 @@ describe("formatMatchPnl: never a frozen $0.00", () => {
         expect(formatMatchPnl(pct, "100000")).not.toMatch(/^[+-]?\$0\.00 /);
       }
     }
+  });
+});
+
+describe("formatPnlPctPair: two players' results at one precision", () => {
+  it("the prod tie: -$10.26 vs -$9.78 on $50,000 no longer both read -0.02%", () => {
+    const [a, b] = formatPnlPctPair("-0.02052", "-0.01956");
+    expect(a).not.toBe(b);
+    expect(a.split(".")[1]!.length).toBe(b.split(".")[1]!.length);  // same decimals
+  });
+
+  it("the end overlay's mix (-0.0084% next to -0.02%): both at four decimals", () => {
+    expect(formatPnlPctPair("-0.0084", "-0.02")).toEqual(["-0.0084%", "-0.0200%"]);
+  });
+
+  it("two decimals when two are enough", () => {
+    expect(formatPnlPctPair("12.5", "-3.25")).toEqual(["+12.50%", "-3.25%"]);
+    expect(formatPnlPctPair("1.234", "1.236")).toEqual(["+1.23%", "+1.24%"]);
+  });
+
+  it("a real tie stays a tie", () => {
+    expect(formatPnlPctPair("-0.02", "-0.02")).toEqual(["-0.02%", "-0.02%"]);
+    expect(formatPnlPctPair("0", "0")).toEqual(["0.00%", "0.00%"]);
+  });
+
+  it("zero next to a tiny loss", () => {
+    expect(formatPnlPctPair("0", "-0.0005")).toEqual(["0.0000%", "-0.0005%"]);
+  });
+
+  it("different results never print the same, from -0.03% to 0", () => {
+    for (let i = 0; i < 3_000; i += 7) {
+      const a = -i / 100_000;
+      const b = a - 0.0000123;
+      const [x, y] = formatPnlPctPair(a, b);
+      expect(x).not.toBe(y);
+      expect(x).not.toMatch(/^-0\.0+%$/);
+    }
+  });
+});
+
+describe("formatMatchPnlPair: dollars next to the percent", () => {
+  it("the prod tie, with dollars", () => {
+    const [a, b] = formatMatchPnlPair("-0.02052", "-0.01956", "50000");
+    expect([a, b]).toEqual(["-$10.26 (-0.021%)", "-$9.78 (-0.020%)"]);
+  });
+  it("no capital: the percents alone", () => {
+    expect(formatMatchPnlPair("-0.0084", "-0.02", null)).toEqual(["-0.0084%", "-0.0200%"]);
   });
 });

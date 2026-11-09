@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getMatchBreakdown, type MatchBreakdown, type BreakdownOrder, type BreakdownSummary } from "@/api/endpoints/matchBreakdown";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatPnlPctPair } from "@/lib/matchPnl";
 
 const CHAL = "#FF6B00"; // challenger (war-theme orange)
 const OPP = "#22D3EE"; // opponent (cyan)
@@ -51,9 +51,10 @@ const signColor = (value: string | null) => {
     return n > 0 ? "#16a34a" : n < 0 ? "#dc2626" : undefined;
 };
 
-function Summary({ summary, testId }: { summary: BreakdownSummary; testId: string }) {
+/** pnlText: this player's P&L %, at the precision both players share (formatPnlPctPair). */
+function Summary({ summary, pnlText, testId }: { summary: BreakdownSummary; pnlText: string; testId: string }) {
     const items: [string, string, string | undefined][] = [
-        ["P&L", formatPnlPct(summary.pnlPct), signColor(summary.pnlPct)],
+        ["P&L", pnlText, signColor(summary.pnlPct)],
         ["REALIZED", signedUsd(summary.realizedPnlQuote), signColor(summary.realizedPnlQuote)],
         ["FEES", usd(summary.feesQuote), undefined],
         ["NET", signedUsd(summary.netPnlQuote), signColor(summary.netPnlQuote)],
@@ -147,6 +148,7 @@ export default function MatchBreakdownPage() {
     }
 
     const { match } = data;
+    const [challengerPnlText, opponentPnlText] = formatPnlPctPair(data.challengerSummary.pnlPct, data.opponentSummary.pnlPct);
 
     return (
         <div className="mb-wrap">
@@ -164,7 +166,7 @@ export default function MatchBreakdownPage() {
                         <span className="mb-dot" style={{ background: CHAL }} />
                         {match.challenger.name}
                     </div>
-                    <Summary summary={data.challengerSummary} testId="breakdown-summary-challenger" />
+                    <Summary summary={data.challengerSummary} pnlText={challengerPnlText} testId="breakdown-summary-challenger" />
                     <OrdersTable orders={data.challengerOrders} color={CHAL} />
                 </div>
                 <div className="mb-col">
@@ -172,7 +174,7 @@ export default function MatchBreakdownPage() {
                         <span className="mb-dot" style={{ background: OPP }} />
                         {match.opponent.name}
                     </div>
-                    <Summary summary={data.opponentSummary} testId="breakdown-summary-opponent" />
+                    <Summary summary={data.opponentSummary} pnlText={opponentPnlText} testId="breakdown-summary-opponent" />
                     <OrdersTable orders={data.opponentOrders} color={OPP} />
                 </div>
             </div>
