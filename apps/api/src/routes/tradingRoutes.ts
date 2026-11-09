@@ -184,7 +184,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: false },
-            error: { type: "string", enum: ["idempotency_conflict", "match_ended"] },
+            error: { type: "string", enum: ["idempotency_conflict", "match_ended", "competition_ended"] },
           },
         },
         503: {

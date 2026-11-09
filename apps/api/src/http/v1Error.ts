@@ -18,6 +18,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_input: "The request input is invalid.",
   insufficient_balance: "Insufficient wallet balance.",
   match_ended: "This match has ended — its wallets are closed.",
+  competition_ended: "This competition has ended — it takes no more orders.",
   scope_required: SCOPE_REQUIRED_MESSAGE,
   match_wallets_missing: "This match has no wallets for this account.",
   no_price_available: "No market price is currently available.",

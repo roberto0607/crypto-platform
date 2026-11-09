@@ -26,3 +26,21 @@ export async function resolveTradeScope(userId: string, raw: unknown): Promise<s
     if (match.status !== "ACTIVE") throw new AppError("match_ended");
     return scope;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A competition's wallets trade only while it runs: past end_at, or once it
+ * is ENDED or CANCELLED, an order is refused (competition_ended). Final ranks
+ * are written when it ends, so a later order would only move wallets nobody
+ * scores. An unknown id is left to the orders FK, as before.
+ */
+export async function assertCompetitionOpen(competitionId: string): Promise<void> {
+    if (!UUID_RE.test(competitionId)) return;
+    const { rows } = await pool.query<{ open: boolean }>(
+        `SELECT status NOT IN ('ENDED', 'CANCELLED') AND end_at > now() AS open
+           FROM competitions WHERE id = $1`,
+        [competitionId],
+    );
+    if (rows[0] && !rows[0].open) throw new AppError("competition_ended");
+}

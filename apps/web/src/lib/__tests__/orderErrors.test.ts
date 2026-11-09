@@ -10,6 +10,9 @@ describe("orderErrorText", () => {
     expect(orderErrorText(fail(400, { code: "insufficient_balance", message: "x" }), ctx)).toBe("Insufficient balance — $1,234.50 available");
     expect(orderErrorText(fail(429, { statusCode: 429, error: "Too Many Requests" }), ctx)).toBe("Too many requests — wait a moment and retry");
   });
+  it("an ended competition says so", () => {
+    expect(orderErrorText(fail(409, { ok: false, error: "competition_ended" }), ctx)).toBe("This competition has ended — it takes no more orders");
+  });
   it("order_too_large without details falls back to the pair's cap", () => {
     expect(orderErrorText(fail(400, { error: "order_too_large" }), ctx)).toBe("Max order $5,000,000 on BTC");
   });

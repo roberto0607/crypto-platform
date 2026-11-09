@@ -13,6 +13,7 @@ import type { Snapshot } from "../market/snapshotStore";
 import { getLatestSimCandle } from "../sim/simCandleRepo";
 import { D, toFixed8 } from "../utils/decimal";
 import { AppError } from "../errors/AppError";
+import { assertCompetitionOpen } from "../competitions/tradeScope";
 import { createEvent } from "../events/eventTypes";
 import {
     closedTriggerSide,
@@ -167,6 +168,20 @@ export async function placeOrderWithSnapshot(
                 snapshot: snap,
                 fromIdempotencyCache: true,
             };
+        }
+    }
+
+    // ── 1b. An ended competition takes no orders (after the idempotency
+    // replay, so a retry of an order placed before the end still answers) ──
+    if (competitionId) {
+        try {
+            await assertCompetitionOpen(competitionId);
+        } catch (err) {
+            ordersRejectedTotal.inc({ reason: "competition_ended" });
+            logger.warn({ ...logCtx, eventType: "order.rejected", reason: "competition_ended", competitionId },
+                "Order rejected: the competition has ended");
+            orderPlacementLatency.observe(performance.now() - startMs);
+            throw err;
         }
     }
 
