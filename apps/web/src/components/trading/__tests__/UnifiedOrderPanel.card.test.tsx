@@ -282,7 +282,8 @@ describe("CLOSE & REVERSE: never one click", () => {
     const user = await orderLong("1000"); // $10,000 notional > $5,000 short
     expect(placeOrder).not.toHaveBeenCalled();
     expect(screen.getByTestId("confirm-box").textContent).toContain(
-      "This closes your SHORT (+$67.82) and opens a LONG. Confirm?");
+      // 0.0616523 BTC at 80,000 closes; the rest of the $10,000 opens.
+      "Closes your $4,932.18 SHORT (+$67.82) and opens a $5,067.82 LONG. Confirm?");
     await user.click(screen.getByRole("button", { name: "CONFIRM" }));
     await settle();
     expect(placeOrder).toHaveBeenCalledTimes(1);

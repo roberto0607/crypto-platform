@@ -150,9 +150,21 @@ export function openButtonLabel(args: {
     return `OPEN ${mode}`;
 }
 
-/** The CLOSE & REVERSE confirm text, with the position's P&L now. */
-export function reverseMessage(positionSide: "LONG" | "SHORT", openSide: "LONG" | "SHORT", pnl: number): string {
-    return `This closes your ${positionSide} (${fmtSigned(pnl)}) and opens a ${openSide}. Confirm?`;
+/**
+ * What CLOSE & REVERSE does, in dollars at the expected fill: the position it
+ * closes (with its P&L now) and the one it opens with the rest of the order.
+ * "Closes your $1,000.00 LONG (+$12.50) and opens a $3,000.00 SHORT".
+ */
+export function flipSummary(p: {
+    positionSide: "LONG" | "SHORT"; positionUsd: number; pnl: number;
+    openSide: "LONG" | "SHORT"; openUsd: number;
+}): string {
+    return `Closes your ${fmtUsd(p.positionUsd)} ${p.positionSide} (${fmtSigned(p.pnl)}) and opens a ${fmtUsd(p.openUsd)} ${p.openSide}`;
+}
+
+/** A signed dollar estimate: "+$37.50", "-$37.50". */
+function fmtSignedUsd(n: number): string {
+    return `${n >= 0 ? "+" : "-"}${fmtUsd(Math.abs(n))}`;
 }
 
 function RefreshButton() {
@@ -425,6 +437,12 @@ export function UnifiedOrderPanel({
         : null;
 
     const reduces = reverse?.kind === "reduce" || reverse?.kind === "close";
+    // A flip closes the position and opens only the rest of the order on the
+    // other side: the TP/SL estimates and est. liq are about that resulting
+    // position, not the whole order. (The order itself is unchanged.)
+    const flip = reverse?.kind === "flip" ? reverse : null;
+    const resultQty = flip ? flip.openQty : baseQty;
+    const resultShare = flip && baseQty > 0 ? flip.openQty / baseQty : 1;
     // A TP/SL protects a position this order would open or grow; a reduce or
     // close opens nothing (the server refuses it too: trigger_not_reducing).
     // Hidden, not erased: typing a flip's size passes through reduce sizes.
@@ -436,14 +454,15 @@ export function UnifiedOrderPanel({
     const tpNum = tpShown ? parseFloat(tpShown) : 0;
     const slNum = slShown ? parseFloat(slShown) : 0;
     const tslNum = tslShown ? parseFloat(tslShown) : 0;
-    const tpEstProfit = tpNum > 0 && baseQty > 0
-        ? (activeMode === "LONG" ? (tpNum - effectivePrice) : (effectivePrice - tpNum)) * baseQty
+    const tpEstProfit = tpNum > 0 && resultQty > 0
+        ? (activeMode === "LONG" ? (tpNum - effectivePrice) : (effectivePrice - tpNum)) * resultQty
         : 0;
-    const slEstLoss = slNum > 0 && baseQty > 0
-        ? (activeMode === "LONG" ? (slNum - effectivePrice) : (effectivePrice - slNum)) * baseQty
+    const slEstLoss = slNum > 0 && resultQty > 0
+        ? (activeMode === "LONG" ? (slNum - effectivePrice) : (effectivePrice - slNum)) * resultQty
         : 0;
-    const tpEstPct = usdNum > 0 && tpEstProfit !== 0 ? (tpEstProfit / usdNum) * 100 : 0;  // % of margin
-    const slEstPct = usdNum > 0 && slEstLoss !== 0 ? (slEstLoss / usdNum) * 100 : 0;
+    const resultMargin = usdNum * resultShare;
+    const tpEstPct = resultMargin > 0 && tpEstProfit !== 0 ? (tpEstProfit / resultMargin) * 100 : 0;  // % of margin
+    const slEstPct = resultMargin > 0 && slEstLoss !== 0 ? (slEstLoss / resultMargin) * 100 : 0;
 
     // Validations
     const tpValid = !tpNum || (activeMode === "LONG" ? tpNum > effectivePrice : tpNum < effectivePrice);
@@ -506,8 +525,16 @@ export function UnifiedOrderPanel({
     const balanceWarning = short && !quoteHint ? `Not enough available: need ${fmtUsd(orderCost)} incl. fee — use MAX` : null;
 
     const newLiq = () => estLiqPrice({
-        side: activeMode, qty: baseQtyStr, entry: estFill ?? 0, leverage, mmrBps: levInfo?.mmrBps ?? 0,
+        side: activeMode, qty: flip ? flip.openQty.toFixed(8) : baseQtyStr, entry: estFill ?? 0, leverage, mmrBps: levInfo?.mmrBps ?? 0,
     });
+    // The flip in dollars at the expected fill (the ticker until a quote lands).
+    const flipPrice = estFill ?? effectivePrice;
+    const flipText = flip && hasPosition
+        ? flipSummary({
+            positionSide: posDirection!, positionUsd: posAbsQty * flipPrice, pnl: pnlValue,
+            openSide: flip.openSide, openUsd: flip.openQty * flipPrice,
+        })
+        : null;
     const estLiq: { price: number | null; note: string } | null = (() => {
         if (!preview || !baseQtyStr) return null;
         if (!isoView) return { price: newLiq(), note: "this order" };
@@ -1056,7 +1083,7 @@ export function UnifiedOrderPanel({
                     <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {tpError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{tpError}</div>}
-                {!tpError && tpNum > 0 && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {tpEstProfit >= 0 ? "+" : ""}{fmtUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
+                {!tpError && tpNum > 0 && tpEstProfit !== 0 && <div style={{ fontSize: 9, color: tpEstProfit > 0 ? "#00ff41" : "#ff3b3b", marginTop: 3 }}>Est. profit: {fmtSignedUsd(tpEstProfit)} ({tpEstPct >= 0 ? "+" : ""}{tpEstPct.toFixed(1)}%)</div>}
             </div>
 
             {/* ── STOP LOSS ── */}
@@ -1067,7 +1094,7 @@ export function UnifiedOrderPanel({
                     <span className={`tr-field-unit`}>USD</span>
                 </div>
                 {slError && <div style={{ fontSize: 9, color: "#ff3b3b", marginTop: 3 }}>{slError}</div>}
-                {!slError && slNum > 0 && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {slEstLoss >= 0 ? "+" : ""}{fmtUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
+                {!slError && slNum > 0 && slEstLoss !== 0 && <div style={{ fontSize: 9, color: slEstLoss < 0 ? "#ff3b3b" : "#00ff41", marginTop: 3 }}>Est. loss: {fmtSignedUsd(slEstLoss)} ({slEstPct >= 0 ? "+" : ""}{slEstPct.toFixed(1)}%)</div>}
             </div>
             </div>{/* /tr-ts-row */}
 
@@ -1098,6 +1125,11 @@ export function UnifiedOrderPanel({
                 group covered the form above it (MARKET/LIMIT clipped). */}
             <div className={`tr-order-footer${hasPosition ? ` tr-order-footer-with-position` : ` tr-order-footer-pinned`}`}>
             {/* ── SUMMARY ── */}
+            {flipText && (
+                <div data-testid="flip-summary" style={{ fontSize: 10, lineHeight: 1.4, color: "#f59e0b", marginBottom: 6, letterSpacing: 0.5 }}>
+                    {flipText}
+                </div>
+            )}
             <div className={`tr-summary`}>
                 <div className={`tr-sum-row`}>
                     <span className={`tr-sum-lbl`} title={PRICE_HELP.estFill}>EST. FILL</span>
@@ -1120,8 +1152,10 @@ export function UnifiedOrderPanel({
                     </div>
                 )}
                 <div className={`tr-sum-row`}>
-                    <span className={`tr-sum-lbl`}>{leveraged ? "NOTIONAL" : "POSITION SIZE"}</span>
-                    <span className={`tr-sum-val`} style={dim}>{quoteDash ? "—" : shownNotional > 0 ? fmtUsd(shownNotional) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`tr-sum-empty`}>--</span>}</span>
+                    <span className={`tr-sum-lbl`} title={flip ? "The position this leaves you: the order less what closes the current one" : undefined}>
+                        {flip ? "NEW POSITION" : leveraged ? "NOTIONAL" : "POSITION SIZE"}
+                    </span>
+                    <span className={`tr-sum-val`} style={dim}>{quoteDash ? "—" : shownNotional > 0 ? fmtUsd(shownNotional * resultShare) : lastOrderUsd ? fmtUsd(lastOrderUsd) : <span className={`tr-sum-empty`}>--</span>}</span>
                 </div>
                 {orderType === "MARKET" && (
                     <div className={`tr-sum-row tr-sum-wide`}>
@@ -1132,7 +1166,9 @@ export function UnifiedOrderPanel({
                     </div>
                 )}
                 <div className={`tr-sum-row`}>
-                    <span className={`tr-sum-lbl`}>{feeLabel}</span>
+                    <span className={`tr-sum-lbl`} title={flip ? "The whole order's fee: closing the current position and opening the new one" : undefined}>
+                        {flip ? `${feeLabel} · BOTH LEGS` : feeLabel}
+                    </span>
                     <span className={`tr-sum-val`} style={dim}>{quoteDash ? "—" : shownFee > 0 ? fmtFee(shownFee) : lastOrderFee ? fmtFee(lastOrderFee) : <span className={`tr-sum-empty`}>--</span>}</span>
                 </div>
                 {leveraged && (
@@ -1214,7 +1250,7 @@ export function UnifiedOrderPanel({
                 <div className={`tr-pos-actions`} data-testid="position-actions">
                     {confirmingFlip && (
                         <ConfirmBox
-                            message={reverseMessage(posDirection!, activeMode, pnlValue)}
+                            message={`${flipText}. Confirm?`}
                             confirmLabel="CONFIRM"
                             busy={orderSubmitting}
                             onConfirm={() => { void handlePlaceOrder(); }}
