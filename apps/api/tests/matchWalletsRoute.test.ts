@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { getTestApp, closeTestApp, registerAndLogin, getPool } from "./helpers";
-import { fundTestMatchWallets } from "../src/testing/fixtures";
+import { createTestAssetAndPair, fundTestMatchWallets } from "../src/testing/fixtures";
 
 let app: FastifyInstance;
 let me: { accessToken: string; userId: string };
@@ -20,6 +20,10 @@ const get = (url: string, token: string) =>
 
 beforeAll(async () => {
     app = await getTestApp();
+    // Match wallets are funded for the tradable pairs. Another file's
+    // resetTestData may have truncated them: don't depend on file order.
+    const { rows: [pair] } = await getPool().query(`SELECT 1 FROM trading_pairs WHERE symbol = 'BTC/USD'`);
+    if (!pair) await createTestAssetAndPair(getPool());
     me = await registerAndLogin(app, "mw-me");
     opp = await registerAndLogin(app, "mw-opp");
     outsider = await registerAndLogin(app, "mw-out");
