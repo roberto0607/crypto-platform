@@ -21,7 +21,7 @@ function fill(username: string) {
 describe("RegisterPage username", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    register.mockResolvedValue({ data: { ok: true } });
+    register.mockResolvedValue({ data: { ok: true, accessToken: "tok", user: { id: "u1", email: "a@b.co", role: "USER" } } });
     render(
       <MemoryRouter>
         <RegisterPage />
