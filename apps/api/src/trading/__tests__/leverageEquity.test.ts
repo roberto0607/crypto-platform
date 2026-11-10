@@ -134,6 +134,30 @@ describe("with the engine", () => {
         expect(p.position_fees_paid).toBe(new Decimal("0.24999973").plus("0.0415").toFixed(8));
     });
 
+    it("GET /positions: after a flip, the new position's fees are its opening leg's only", async () => {
+        // Prod: a $1,000 long flipped by a $4,000 SHORT. The fill's fee is
+        // $2.00 (5 bps on $4,000): $0.50 closes the long, $1.50 opens the
+        // $3,000 short. The new short showed $2.00, so its break-even was off.
+        Object.assign(config.leverage, { enabled: true, maxFreePlay: 10, allowlist: [] });
+        await pool.query(`UPDATE wallets SET balance = 10000 WHERE user_id = $1 AND asset_id = $2`, [userId, usdAssetId]);
+        const positions = async () => (await app.inject({ method: "GET", url: "/positions", headers: auth(userId) })).json().positions;
+        const long = new Decimal(1000).div(83000).toFixed(8, Decimal.ROUND_DOWN);   // 0.01204819
+        const flip = new Decimal(4000).div(83000).toFixed(8, Decimal.ROUND_DOWN);   // 0.04819277
+        expect((await post({ side: "BUY", type: "MARKET", qty: long, leverage: 10 })).statusCode).toBe(201);
+        expect((await post({ side: "SELL", type: "MARKET", qty: flip, leverage: 10 })).statusCode).toBe(201);
+
+        const [p] = await positions();
+        const shortQty = new Decimal(flip).minus(long);
+        expect(p.base_qty).toBe(shortQty.neg().toFixed(8));
+        // The fill's whole fee, split by size like the settlement splits it.
+        const fee = new Decimal(flip).mul(83000).mul(5).div(10_000).toDecimalPlaces(8);
+        const closeFee = fee.mul(long).div(flip).toDecimalPlaces(8);
+        expect(p.position_fees_paid).toBe(fee.minus(closeFee).toFixed(8));
+        expect(Number(p.position_fees_paid)).toBeCloseTo(1.5, 2);
+        // The row's lifetime total still counts both legs (and the long's open).
+        expect(Number(p.fees_paid_quote)).toBeCloseTo(0.5 + 2, 2);
+    });
+
     it("GET /positions: a SPOT row has exactly the keys it had before leverage", async () => {
         expect((await post({ side: "BUY", type: "MARKET", qty: "0.00100000" })).statusCode).toBe(201);
         const list = await app.inject({ method: "GET", url: "/positions", headers: auth(userId) });

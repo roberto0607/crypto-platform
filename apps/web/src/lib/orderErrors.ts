@@ -41,6 +41,7 @@ const TEXT: Record<string, string> = {
   insufficient_liquidity: "Not enough liquidity — try a smaller order",
   pair_queue_overloaded: "Too many orders on this pair — retry in a moment",
   match_ended: "Match ended",
+  competition_ended: "This competition has ended — it takes no more orders",
   POSITION_LIMIT: "Position limit reached",
   PAIR_DISABLED: "Pair disabled",
 };

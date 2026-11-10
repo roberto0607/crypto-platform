@@ -517,11 +517,21 @@ describe("REDUCE and CLOSE can never open or flip", () => {
     expect(last()).not.toHaveProperty("reduceOnly");
   });
 
-  it("a LIMIT reduce doesn't send it: the API takes reduceOnly on MARKET only", async () => {
+  it("a LIMIT reduce is reduce-only too: a resting close can never open the other side", async () => {
     const user = await against("1000");
     await user.click(screen.getByText("LIMIT"));
     act(() => { useTradingStore.setState({ limitPrice: "101000" }); });
     await user.click(screen.getByRole("button", { name: "REDUCE LONG" }));
+    await settle();
+    expect(last()).toMatchObject({ type: "LIMIT", limitPrice: "101000", reduceOnly: true });
+  });
+
+  it("a LIMIT flip stays a normal order", async () => {
+    const user = await against("3000");
+    await user.click(screen.getByText("LIMIT"));
+    act(() => { useTradingStore.setState({ limitPrice: "101000" }); });
+    await user.click(screen.getByRole("button", { name: "CLOSE & REVERSE" }));
+    await user.click(screen.getByRole("button", { name: "CONFIRM" }));
     await settle();
     expect(last().type).toBe("LIMIT");
     expect(last()).not.toHaveProperty("reduceOnly");

@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 
@@ -44,12 +44,38 @@ const loginBody = z.object({
 // ── Plugin (registered with prefix "/auth") ──
 const authRoutes: FastifyPluginAsync = async (app) => {
 
+  /**
+   * Log a user in: an access token, and the refresh token as the HttpOnly
+   * cookie (its hash stored). Login and signup both end here.
+   */
+  async function startSession(reply: FastifyReply, user: { id: string; role: string }): Promise<{ accessToken: string; familyId: string }> {
+    const accessToken = app.jwt.sign(
+      { sub: user.id, role: user.role },
+      { expiresIn: config.jwtAccessTtlSeconds }
+    );
+    const { token: refreshToken, tokenHash } = newRefreshToken();
+    const refreshExpiresAt = new Date(Date.now() + config.jwtRefreshTtlSeconds * 1000);
+    const stored = await storeRefreshToken({ userId: user.id, tokenHash, expiresAt: refreshExpiresAt });
+    reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieSetOptions(refreshExpiresAt));
+    return { accessToken, familyId: stored.familyId };
+  }
+
+  /** The user object login and signup answer with. */
+  const sessionUser = (user: { id: string; email: string; role: string; display_name: string; email_verified_at?: string | Date | null; username_chosen_at?: string | Date | null }) => ({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    emailVerified: !!user.email_verified_at,
+    displayName: user.display_name,
+    usernameChosen: !!user.username_chosen_at,
+  });
+
   // POST /auth/register — rate limit: 3/min per IP
   app.post("/register", {
     schema: {
       tags: ["Auth"],
       summary: "Register a new user",
-      description: "**Rate limit:** 3 requests per minute per IP.\n\nCreates a new user account. In beta mode, requires a valid invite code. Sends a verification email on success.",
+      description: "**Rate limit:** 3 requests per minute per IP.\n\nCreates a new user account and logs it in (access token + refresh cookie, like POST /auth/login). In beta mode, requires a valid invite code. Sends a verification email on success.",
       body: {
         type: "object",
         required: ["email", "password"],
@@ -65,12 +91,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           type: "object",
           properties: {
             ok: { type: "boolean", const: true },
+            accessToken: { type: "string", description: "JWT access token (15min TTL); the refresh cookie is set too" },
             user: {
               type: "object",
               properties: {
                 id: { type: "string", format: "uuid" },
                 email: { type: "string" },
                 role: { type: "string", enum: ["USER", "ADMIN"] },
+                emailVerified: { type: "boolean" },
+                displayName: { type: "string" },
+                usernameChosen: { type: "boolean" },
               },
             },
           },
@@ -160,9 +190,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           .then(() => emailsSentTotal.inc({ kind: "verification" }))
           .catch((err) => logger.error({ err, userId: user.id }, "Failed to send verification email"));
 
+        // Signed up = logged in.
+        const { accessToken } = await startSession(reply, user);
         return reply.code(201).send({
           ok: true,
-          user: { id: user.id, email: user.email, role: user.role },
+          accessToken,
+          user: { ...sessionUser(user), usernameChosen: username !== undefined },
         });
       } catch (err: any) {
         await client.query("ROLLBACK").catch(() => {});
@@ -207,9 +240,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         .then(() => emailsSentTotal.inc({ kind: "verification" }))
         .catch((err) => logger.error({ err, userId: user.id }, "Failed to send verification email"));
 
+      // Signed up = logged in.
+      const { accessToken } = await startSession(reply, user);
       return reply.code(201).send({
         ok: true,
-        user: { id: user.id, email: user.email, role: user.role },
+        accessToken,
+        user: { ...sessionUser(user), usernameChosen: username !== undefined },
       });
     } catch (err: any) {
       if (isUsernameConflict(err)) return handleError(reply, new AppError("username_taken"));
@@ -319,25 +355,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     // Record successful login (resets effective window)
     await recordLoginAttempt({ emailNormalized, ipAddress: clientIp(req), success: true });
 
-    // Issue access token
-    const accessToken = app.jwt.sign(
-      { sub: user.id, role: user.role },
-      { expiresIn: config.jwtAccessTtlSeconds }
-    );
-
-    // Issue refresh token (HttpOnly cookie) + store hash in DB
-    const { token: refreshToken, tokenHash } = newRefreshToken();
-    const refreshExpiresAt = new Date(
-      Date.now() + config.jwtRefreshTtlSeconds * 1000
-    );
-
-    const stored = await storeRefreshToken({
-      userId: user.id,
-      tokenHash,
-      expiresAt: refreshExpiresAt,
-    });
-
-    reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieSetOptions(refreshExpiresAt));
+    const { accessToken, familyId } = await startSession(reply, user);
     await transferAnonQuickCallState(req, reply, user.id);
 
     await auditLog({
@@ -348,21 +366,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       requestId: req.id,
       ip: clientIp(req),
       userAgent: req.headers["user-agent"] ?? null,
-      metadata: { emailNormalized, familyId: stored.familyId },
+      metadata: { emailNormalized, familyId },
     });
 
-    return reply.code(200).send({
-      ok: true,
-      accessToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        emailVerified: !!user.email_verified_at,
-        displayName: user.display_name,
-        usernameChosen: !!user.username_chosen_at,
-      },
-    });
+    return reply.code(200).send({ ok: true, accessToken, user: sessionUser(user) });
   });
 
   // POST /auth/refresh

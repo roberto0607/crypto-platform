@@ -2,10 +2,11 @@ import { useState, useRef, useEffect, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AxiosError } from "axios";
 import { useAppStore } from "@/stores/appStore";
+import { useAuthStore } from "@/stores/authStore";
 import { register } from "@/api/endpoints/auth";
 import { getSystemStatus } from "@/api/endpoints/status";
 import { normalizeApiError } from "@/lib/errors";
-import { withRedirect } from "@/lib/safeRedirect";
+import { safeRedirectTarget, withRedirect } from "@/lib/safeRedirect";
 import type { LegacyApiError, V1ApiError } from "@/types/api";
 import Input from "@/components/Input";
 import Button from "@/components/Button";
@@ -16,6 +17,7 @@ export default function RegisterPage() {
   const redirect = useSearchParams()[0].get("redirect");
   const systemStatus = useAppStore((s) => s.systemStatus);
   const setSystemStatus = useAppStore((s) => s.setSystemStatus);
+  const setAuth = useAuthStore((s) => s.setAuth);
 
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -64,8 +66,11 @@ export default function RegisterPage() {
 
     setSubmitting(true);
     try {
-      await register(email, password, betaMode ? inviteCode.trim() : undefined, username);
-      navigate(withRedirect("/login?registered=1", redirect), { replace: true });
+      // Signing up logs you in (access token here, refresh cookie set):
+      // straight to where you were headed, e.g. an invite's challenge.
+      const res = await register(email, password, betaMode ? inviteCode.trim() : undefined, username);
+      setAuth(res.data.accessToken, res.data.user);
+      navigate(safeRedirectTarget(redirect), { replace: true });
     } catch (err) {
       const { message } = normalizeApiError(
         err as AxiosError<LegacyApiError | V1ApiError>,

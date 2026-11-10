@@ -21,8 +21,10 @@ export interface LoginResponse {
   user: User;
 }
 
+/** Signing up logs you in, like LoginResponse (the refresh cookie is set too). */
 export interface RegisterResponse {
   ok: true;
+  accessToken: string;
   user: User;
 }
 

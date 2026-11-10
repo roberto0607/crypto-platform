@@ -6,7 +6,9 @@ vi.mock("@/api/endpoints/auth", () => ({
   login: vi.fn(() => Promise.resolve({
     data: { accessToken: "tok", user: { id: "u1", email: "a@b.co", role: "USER" } },
   })),
-  register: vi.fn(() => Promise.resolve({ data: { ok: true } })),
+  register: vi.fn(() => Promise.resolve({
+    data: { ok: true, accessToken: "tok2", user: { id: "u2", email: "a@b.co", role: "USER" } },
+  })),
   me: vi.fn(),
   logout: vi.fn(() => Promise.resolve()),
 }));
@@ -65,7 +67,7 @@ describe("invite link /challenge/:username", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/arena?challenge=bob_t"));
   });
 
-  it("logged out, new account: signup, login, then the pre-filled challenge", async () => {
+  it("logged out, new account: signup logs in and lands on the pre-filled challenge", async () => {
     renderAt("/challenge/bob_t");
     fireEvent.click(await screen.findByText(/create one free/i));
 
@@ -75,9 +77,9 @@ describe("invite link /challenge/:username", () => {
     fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "pw-123456" } });
     fireEvent.submit(document.querySelector("form")!);
 
-    await screen.findByText(/create one free/i);
-    logIn();
+    // No login page in between: signing up is logging in.
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/arena?challenge=bob_t"));
+    expect(useAuthStore.getState().accessToken).toBe("tok2");
   });
 
   it("signup never forwards an off-site redirect", async () => {

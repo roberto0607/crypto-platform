@@ -1193,7 +1193,11 @@ run the API-key check in `optionalUserId` too.
 
 ---
 
-## 🟡 MEDIUM — Ended competitions stay tradable
+## ✅ RESOLVED — Ended competitions stay tradable
+
+**Resolved:** the order pipeline refuses an order on a competition past
+`end_at`, or `ENDED` / `CANCELLED`, with `competition_ended` (409)
+(`competitions/tradeScope.ts` `assertCompetitionOpen`).
 
 **Discovered:** 2026-11-04, seasons plan.
 
