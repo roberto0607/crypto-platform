@@ -23,11 +23,21 @@ function auth(app: FastifyInstance, sub: string) {
 
 const swingConfig = {
     version: 1,
-    indicators: { ema20: true, ema50: true, ema200: true, keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true },
-    params: { vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 } },
+    indicators: { keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true },
+    params: {
+        vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 },
+        movingAverages: [
+            { id: "ma1", type: "EMA", length: 21, color: "#3b82f6" },
+            { id: "ma2", type: "SMA", length: 50, color: "#f59e0b" },
+            { id: "ma3", type: "SMA", length: 200, color: "#ef4444" },
+        ],
+        maCross: { fast: "ma2", slow: "ma3" },
+    },
     panes: { order: ["rsi", "atr", "volume"], collapsed: { rsi: false, atr: true }, heights: { rsi: 120 } },
     timeframe: "4h",
 };
+
+const ma = (over: Record<string, unknown> = {}) => ({ id: "ma1", type: "EMA", length: 20, color: "#3b82f6", ...over });
 
 describe("/v1/chart-layouts", () => {
     let app: FastifyInstance;
@@ -149,6 +159,18 @@ describe("/v1/chart-layouts", () => {
         ["unknown param key", { version: 1, params: { rsi: { period: 14, source: "close" } } }],
         ["param value not allowed", { version: 1, params: { rsi: { period: 21 } } }],
         ["bad vpvr mode", { version: 1, params: { vpvr: { mode: "monthly" } } }],
+        ["unknown MA type", { version: 1, params: { movingAverages: [ma({ type: "WMA" })] } }],
+        ["MA length 0", { version: 1, params: { movingAverages: [ma({ length: 0 })] } }],
+        ["MA length over 500", { version: 1, params: { movingAverages: [ma({ length: 501 })] } }],
+        ["fractional MA length", { version: 1, params: { movingAverages: [ma({ length: 20.5 })] } }],
+        ["bad MA color", { version: 1, params: { movingAverages: [ma({ color: "red" })] } }],
+        ["bad MA id", { version: 1, params: { movingAverages: [ma({ id: "MA 1" })] } }],
+        ["unknown MA key", { version: 1, params: { movingAverages: [{ ...ma(), source: "close" }] } }],
+        ["duplicate MA id", { version: 1, params: { movingAverages: [ma(), ma({ length: 50 })] } }],
+        ["more than 10 MAs", { version: 1, params: { movingAverages: Array.from({ length: 11 }, (_, i) => ma({ id: `m${i}` })) } }],
+        ["cross on an unknown MA", { version: 1, params: { movingAverages: [ma()], maCross: { fast: "ma1", slow: "nope" } } }],
+        ["cross on the same MA", { version: 1, params: { movingAverages: [ma()], maCross: { fast: "ma1", slow: "ma1" } } }],
+        ["cross without MAs", { version: 1, params: { maCross: { fast: "a", slow: "b" } } }],
         ["unknown pane", { version: 1, panes: { order: ["rsi", "stoch"] } }],
         ["duplicate pane in order", { version: 1, panes: { order: ["rsi", "rsi"] } }],
         ["pane height too small", { version: 1, panes: { heights: { rsi: 10 } } }],
@@ -168,6 +190,41 @@ describe("/v1/chart-layouts", () => {
             expect(await list(alice.id)).toEqual([]);
         });
     }
+
+    // ── Old EMA toggles (a tab still running the pre-list build) ──────────
+    it("converts the old ema20/50/200 toggles into the same EMA lines on create and PATCH", async () => {
+        const old = {
+            version: 1,
+            indicators: { ema20: true, ema50: true, ema200: true, rsi: true },
+            params: { rsi: { period: 14 } },
+        };
+        const expected = {
+            version: 1,
+            indicators: { rsi: true },
+            params: {
+                rsi: { period: 14 },
+                movingAverages: [
+                    { id: "ema20", type: "EMA", length: 20, color: "#3b82f6" },
+                    { id: "ema50", type: "EMA", length: 50, color: "#f59e0b" },
+                    { id: "ema200", type: "EMA", length: 200, color: "#ef4444" },
+                ],
+                maCross: { fast: "ema50", slow: "ema200" },
+            },
+        };
+        const created = await create(alice.id, { name: "Old tab", config: old });
+        expect(created.statusCode).toBe(201);
+        expect(created.json().layout.config).toEqual(expected);
+
+        const l = created.json().layout;
+        const res = await patch(alice.id, l.id, { config: { version: 1, indicators: { ema20: true, ema200: false } } });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().layout.config).toEqual({
+            version: 1,
+            indicators: {},
+            params: { movingAverages: [{ id: "ema20", type: "EMA", length: 20, color: "#3b82f6" }] },
+        });
+        expect((await list(alice.id))[0]!.config).toEqual(res.json().layout.config);
+    });
 
     it("rejects the same bad config on PATCH", async () => {
         const l = (await create(alice.id, { name: "Ok", config: { version: 1 } })).json().layout;
