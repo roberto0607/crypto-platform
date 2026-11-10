@@ -20,12 +20,14 @@ import type { Candle, Timeframe } from "@/api/endpoints/candles";
 import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/lib/datafeedAdapter";
 import { applyTick, bucketTime, planClosedCandle, reconcileForming, withForming, type Bar } from "@/lib/formingCandle";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import {
     prevPeriodHighLow,
     computeEMA,
+    computeSMA,
     computeVWAP,
     computeBollingerBands,
     computeRSI,
@@ -110,6 +112,8 @@ const LIVE_VIEW_BARS = 120;
 // stack from a top:12-or-48 base — shift that base down by this much so they
 // land below the legend instead of underneath it.
 const CHART_LEGEND_STACK_OFFSET = 64;
+// The study-values row (moving averages) under O/H/L/C, when it shows.
+const STUDY_LEGEND_ROW_H = 18;
 
 /**
  * Whether the time scale is parked at the live (right) edge.
@@ -227,6 +231,11 @@ const CONTEXT_BAR_CSS = `
   .tr-cr-ohlc .val { color:rgba(255,255,255,0.95); } /* brightened values */
   .tr-chart-legend .val { color:rgba(255,255,255,0.85);margin-left:3px; }
   .tr-chart-legend .val.muted { color:rgba(255,255,255,0.3); }
+  .tr-cr-studies {
+    display:flex;align-items:center;flex-wrap:wrap;column-gap:12px;row-gap:2px;
+    font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums;
+  }
+  .tr-cr-studies .val { color:rgba(255,255,255,0.95); }
   .tr-cr-funding {
     display:flex;align-items:center;gap:4px;
     font-size:11px;white-space:nowrap;
@@ -523,10 +532,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const pdlConnectorRef = useRef<HTMLDivElement>(null);
 
     // Overlay line series refs
-    const ema20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const ema50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const ema200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    // EMA golden/death cross markers plugin (v5: createSeriesMarkers).
+    // Moving-average lines by id (the list lives in indicatorSettingsStore).
+    const maSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
+    // Legend readout per line: value by (chart) time + the last closed value.
+    const maLegendRef = useRef<Array<{ id: string; label: string; color: string; byTime: Map<number, number>; last: number | null }>>([]);
+    const [, setMaLegendVersion] = useState(0);
+    // MA golden/death cross markers plugin (v5: createSeriesMarkers).
     const emaCrossMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     // Live-alert dedup: time of the newest cross we've already toasted, keyed by
     // pair:timeframe so a load/switch primes (never re-toasts history).
@@ -580,6 +591,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
     const selectedPairId = useTradingStore((s) => s.selectedPairId);
     const indicatorConfig = useTradingStore(useShallow((s) => s.indicatorConfig));
+    const movingAverages = useIndicatorSettingsStore((s) => s.movingAverages);
+    const maCross = useIndicatorSettingsStore((s) => s.maCross);
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
@@ -1030,6 +1043,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // The markers plugin lives on the (now-removed) series; drop the ref
             // so the next mount recreates it cleanly.
             emaCrossMarkersRef.current = null;
+            maSeriesRef.current.clear();
             // Detach any drawing primitives too — the next mount's sync effect
             // starts from an empty map and re-attaches from the store's array.
             drawingPrimitivesRef.current.clear();
@@ -1284,48 +1298,46 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         if (chart) {
             const toLineData = (pts: Point[]) => pts.map((p) => ({ time: p.time as Time, value: p.value }));
 
-            // EMA 20
-            if (indicatorConfig.ema20) {
-                if (!ema20SeriesRef.current) {
-                    ema20SeriesRef.current = chart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+            // Moving averages — one line per entry in the list (indicator
+            // settings store / chart layout), keyed by id so editing a line's
+            // length or color updates it in place.
+            const maPoints = new Map<string, Point[]>();
+            const maSeries = maSeriesRef.current;
+            for (const ma of movingAverages) {
+                const pts = ma.type === "SMA" ? computeSMA(indCandles, ma.length) : computeEMA(indCandles, ma.length);
+                maPoints.set(ma.id, pts);
+                let series = maSeries.get(ma.id);
+                if (!series) {
+                    series = chart.addSeries(LineSeries, { color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+                    maSeries.set(ma.id, series);
+                } else {
+                    series.applyOptions({ color: ma.color });
                 }
-                ema20SeriesRef.current.setData(toLineData(computeEMA(indCandles, 20)));
-            } else if (ema20SeriesRef.current) {
-                chart.removeSeries(ema20SeriesRef.current); ema20SeriesRef.current = null;
+                series.setData(toLineData(pts));
             }
-
-            // EMA 50 / 200 — compute once; the arrays feed both the line series
-            // (when toggled) and the golden/death cross detection (which runs
-            // unconditionally below so alerts fire even when the lines are hidden).
-            const ema50pts = computeEMA(indCandles, 50);
-            const ema200pts = computeEMA(indCandles, 200);
-
-            // EMA 50
-            if (indicatorConfig.ema50) {
-                if (!ema50SeriesRef.current) {
-                    ema50SeriesRef.current = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-                }
-                ema50SeriesRef.current.setData(toLineData(ema50pts));
-            } else if (ema50SeriesRef.current) {
-                chart.removeSeries(ema50SeriesRef.current); ema50SeriesRef.current = null;
+            for (const [id, series] of maSeries) {
+                if (!maPoints.has(id)) { chart.removeSeries(series); maSeries.delete(id); }
             }
+            maLegendRef.current = movingAverages.map((ma) => ({
+                id: ma.id,
+                label: `${ma.type} ${ma.length}`,
+                color: ma.color,
+                byTime: new Map(maPoints.get(ma.id)!.map((p) => [p.time, p.value])),
+                last: maPoints.get(ma.id)!.at(-1)?.value ?? null,
+            }));
+            setMaLegendVersion((v) => v + 1);
 
-            // EMA 200
-            if (indicatorConfig.ema200) {
-                if (!ema200SeriesRef.current) {
-                    ema200SeriesRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-                }
-                ema200SeriesRef.current.setData(toLineData(ema200pts));
-            } else if (ema200SeriesRef.current) {
-                chart.removeSeries(ema200SeriesRef.current); ema200SeriesRef.current = null;
-            }
+            // Golden/death crosses between the two chosen lines: chart markers
+            // + live alert. With no pair chosen the alert still watches EMA
+            // 50/200 (hidden), as it always has; markers need a chosen pair.
+            const crossPts = maCross
+                ? { fast: maPoints.get(maCross.fast) ?? [], slow: maPoints.get(maCross.slow) ?? [] }
+                : { fast: computeEMA(indCandles, 50), slow: computeEMA(indCandles, 200) };
+            const emaCrosses = detectEMACrosses(crossPts.fast, crossPts.slow);
 
-            // EMA golden/death crosses: chart markers (Step 2) + live alert (Step 3).
-            const emaCrosses = detectEMACrosses(ema50pts, ema200pts);
-
-            // Markers render ONLY when BOTH EMA lines are toggled on. detectEMACrosses
-            // already returns ascending by time (the library requires sorted markers).
-            if (indicatorConfig.ema50 && indicatorConfig.ema200) {
+            // detectEMACrosses already returns ascending by time (the library
+            // requires sorted markers).
+            if (maCross) {
                 const markers: SeriesMarker<Time>[] = emaCrosses.map((c) =>
                     c.type === "golden"
                         ? { time: c.time as Time, position: "belowBar", shape: "arrowUp", text: "GC", color: "#00ff41" }
@@ -1460,7 +1472,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, clearPriceLines, fundingRateHourly, addToast]);
+    }, [indicatorConfig, movingAverages, maCross, clearPriceLines, fundingRateHourly, addToast]);
 
     // History fetching and the live handlers call renderOverlays through this
     // ref, so an indicator toggle or a funding-rate update re-renders overlays
@@ -2018,6 +2030,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         return () => { active = false; };
     }, [indicatorConfig.keyLevels]);
 
+    const legendStackOffset = CHART_LEGEND_STACK_OFFSET + (maLegendRef.current.length > 0 ? STUDY_LEGEND_ROW_H : 0);
+
     return (
         <div className="tr-chart-wrap flex flex-col h-full">
             {/* Chart container — the toolbar row (timeframe/search/indicators/
@@ -2177,6 +2191,20 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
                         <PressureCell pair={selectedPairSymbol} />
                     </div>
+
+                    {maLegendRef.current.length > 0 && (
+                        <div className="tr-chart-legend-row tr-cr-studies" data-testid="study-legend">
+                            {maLegendRef.current.map((m) => {
+                                // Hovered bar's value, else the last closed bar's.
+                                const v = crosshairData ? m.byTime.get(crosshairData.time) : m.last;
+                                return (
+                                    <span key={m.id} style={{ color: m.color }}>
+                                        {m.label} <span className="val">{v == null ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </span>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* ── PDH/PDL DOM overlay — sits OVER the chart, outside TradingView's canvas ── */}
@@ -2303,7 +2331,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 {/* ── Proximity alert badge ── */}
                 {pdhProximity && (
                     <div style={{
-                        position: "absolute", top: 12 + CHART_LEGEND_STACK_OFFSET, left: 12, zIndex: 10,
+                        position: "absolute", top: 12 + legendStackOffset, left: 12, zIndex: 10,
                         background: "rgba(8,12,18,0.85)",
                         border: `1px solid ${pdhProximity === "pdh" ? "rgba(255,77,77,0.5)" : "rgba(0,230,118,0.5)"}`,
                         borderLeft: `3px solid ${pdhProximity === "pdh" ? "#ff4d4d" : "#00e676"}`,
@@ -2337,7 +2365,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     const tint = below ? "#ff3b3b" : "#00ff41";
                     return (
                         <div style={{
-                            position: "absolute", top: (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET, left: 12, zIndex: 10,
+                            position: "absolute", top: (pdhProximity ? 48 : 12) + legendStackOffset, left: 12, zIndex: 10,
                             background: "rgba(8,12,18,0.85)",
                             border: "1px solid rgba(196,181,253,0.35)",
                             borderLeft: `3px solid ${VWAP_COLOR}`,
@@ -2361,7 +2389,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     %. SQUEEZE flag tints amber (neutral-bright, NOT green/red which
                     mean direction) when bandwidth sits at/near its lookback low. */}
                 {indicatorConfig.bollingerBands && bbBandwidth != null && (() => {
-                    const base = (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET;
+                    const base = (pdhProximity ? 48 : 12) + legendStackOffset;
                     const vwapShown = indicatorConfig.vwap && vwapValue != null;
                     const top = base + (vwapShown ? 36 : 0);
                     return (
@@ -2571,7 +2599,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             {/* Dominant side badge */}
                             <div style={{
                                 position: "absolute",
-                                top: (pdhProximity ? 48 : 12) + CHART_LEGEND_STACK_OFFSET,
+                                top: (pdhProximity ? 48 : 12) + legendStackOffset,
                                 left: 12, zIndex: 10,
                                 background: "rgba(8,12,18,0.85)",
                                 border: `1px solid ${isBalanced ? "rgba(255,255,255,0.25)" : isSellHeavy ? "rgba(255,60,60,0.45)" : "rgba(0,230,118,0.45)"}`,

@@ -1,10 +1,24 @@
 import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { MovingAveragesEditor } from "./MovingAveragesEditor";
 
-const STANDARD_INDICATORS = [
-  { key: "ema20", label: "EMA 20", color: "#3b82f6" },
-  { key: "ema50", label: "EMA 50", color: "#f59e0b" },
-  { key: "ema200", label: "EMA 200", color: "#ef4444" },
+/** Not a toggle: a list of lines (indicatorSettingsStore), edited inline. */
+const MOVING_AVERAGES_KEY = "movingAverages";
+
+interface MenuItem {
+  key: string;
+  label: string;
+  color: string;
+  /** Extra search terms (the label always matches too). */
+  aliases?: readonly string[];
+}
+
+const STANDARD_INDICATORS: readonly MenuItem[] = [
+  {
+    key: MOVING_AVERAGES_KEY, label: "Moving Averages", color: "#3b82f6",
+    aliases: ["moving average", "ma", "sma", "ema", "simple moving average", "exponential moving average", "golden cross", "death cross"],
+  },
   { key: "vwap", label: "VWAP", color: "#a855f7" },
   { key: "bollingerBands", label: "Bollinger Bands", color: "#6366f1" },
   { key: "volume", label: "Volume", color: "#22c55e" },
@@ -12,9 +26,9 @@ const STANDARD_INDICATORS = [
   { key: "macd", label: "MACD", color: "#3b82f6" },
   { key: "atr", label: "ATR", color: "#a855f7" },
   { key: "delta", label: "Est. Delta", color: "#22c55e" },
-] as const;
+];
 
-const ADVANCED_INDICATORS = [
+const ADVANCED_INDICATORS: readonly MenuItem[] = [
   { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#ff4d4d" },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
@@ -26,7 +40,7 @@ const ADVANCED_INDICATORS = [
   { key: "footprint", label: "Footprint", color: "#F59E0B" },
   { key: "liquidationLevels", label: "Liquidation Levels (EST.)", color: "#ff3232" },
   { key: "cotReport", label: "COT Report (CFTC)", color: "#22c55e" },
-] as const;
+];
 
 const ALL_INDICATORS = [...STANDARD_INDICATORS, ...ADVANCED_INDICATORS];
 
@@ -42,6 +56,7 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
   const ref = useRef<HTMLDivElement>(null);
   const config = useTradingStore((s) => s.indicatorConfig);
   const toggle = useTradingStore((s) => s.toggleIndicator);
+  const maCount = useIndicatorSettingsStore((s) => s.movingAverages.length);
 
   useEffect(() => {
     if (!open) return;
@@ -58,15 +73,31 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
     if (!open) setQuery("");
   }, [open]);
 
-  const activeCount = ALL_INDICATORS.filter((i) => (config as Record<string, boolean>)[i.key]).length;
+  // Each moving-average line counts as one indicator.
+  const activeCount = ALL_INDICATORS.filter((i) => (config as Record<string, boolean>)[i.key]).length + maCount;
 
   const trimmedQuery = query.trim().toLowerCase();
-  const matches = (label: string) => label.toLowerCase().startsWith(trimmedQuery);
-  const filteredStandard = trimmedQuery ? STANDARD_INDICATORS.filter((i) => matches(i.label)) : [];
-  const filteredAdvanced = trimmedQuery ? ADVANCED_INDICATORS.filter((i) => matches(i.label)) : [];
+  const matches = (i: MenuItem) => [i.label, ...(i.aliases ?? [])].some((t) => t.toLowerCase().startsWith(trimmedQuery));
+  const filteredStandard = trimmedQuery ? STANDARD_INDICATORS.filter(matches) : [];
+  const filteredAdvanced = trimmedQuery ? ADVANCED_INDICATORS.filter(matches) : [];
   const noMatches = trimmedQuery.length > 0 && filteredStandard.length === 0 && filteredAdvanced.length === 0;
 
-  function renderRow(ind: { key: string; label: string; color: string }) {
+  function renderMovingAverages(ind: MenuItem) {
+    return (
+      <div key={ind.key}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 12px" }}>
+          <span style={{ width: 14, flexShrink: 0 }} />
+          <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, backgroundColor: ind.color }} />
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "'Space Mono', monospace" }}>{ind.label}</span>
+          {maCount > 0 && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontFamily: "'Space Mono', monospace" }}>({maCount})</span>}
+        </div>
+        <MovingAveragesEditor />
+      </div>
+    );
+  }
+
+  function renderRow(ind: MenuItem) {
+    if (ind.key === MOVING_AVERAGES_KEY) return renderMovingAverages(ind);
     const active = config[ind.key as keyof typeof config];
     return (
       <button

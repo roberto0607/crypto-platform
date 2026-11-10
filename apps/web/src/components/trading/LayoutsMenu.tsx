@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useChartLayoutStore, layoutConfigById } from "@/stores/chartLayoutStore";
+import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { PRESETS, isModified, isPresetId, type IndicatorToggles } from "@/lib/chartLayouts/layoutConfig";
 import { CHART_LAYOUT_CATALOG } from "@/lib/chartLayouts/catalog";
 
@@ -58,6 +59,8 @@ export function LayoutsMenu() {
 
     // Everything the modified dot compares.
     const indicators = useTradingStore((s) => s.indicatorConfig);
+    const movingAverages = useIndicatorSettingsStore((s) => s.movingAverages);
+    const maCross = useIndicatorSettingsStore((s) => s.maCross);
     const vpvrMode = useChartLayoutStore((s) => s.vpvrMode);
     const paneOrder = useChartLayoutStore((s) => s.paneOrder);
     const paneCollapsed = useChartLayoutStore((s) => s.paneCollapsed);
@@ -92,7 +95,7 @@ export function LayoutsMenu() {
         ? PRESETS.find((p) => p.id === activeId)?.name
         : layouts.find((l) => l.id === activeId)?.name;
     const modified = activeConfig !== null && isModified(activeConfig, {
-        indicators: indicators as IndicatorToggles, vpvrMode, paneOrder, paneCollapsed, paneHeights, timeframe,
+        indicators: indicators as IndicatorToggles, settings: { movingAverages, maCross }, vpvrMode, paneOrder, paneCollapsed, paneHeights, timeframe,
     });
     const activeSaved = activeId && !isPresetId(activeId) ? layouts.find((l) => l.id === activeId) ?? null : null;
     const atCap = layouts.length >= CHART_LAYOUT_CATALOG.maxLayoutsPerUser;
