@@ -18,6 +18,7 @@
  */
 import "dotenv/config";
 import { pool } from "../db/pool";
+import { rollupAllWeeksFromDaily } from "../market/weeklyRollupFromDaily";
 import {
     fetchCoinbaseCandles,
     sleep as cbSleep,
@@ -399,27 +400,8 @@ async function rollup4hFromHourly(pairId: string, pairSymbol: string): Promise<n
 async function rollup1wFromDaily(pairId: string, pairSymbol: string): Promise<number> {
     const label = `[${pairSymbol}] 1w (rollup)`;
 
-    const result = await pool.query(
-        `INSERT INTO candles (pair_id, timeframe, ts, open, high, low, close, volume)
-         SELECT
-             pair_id,
-             '1w',
-             date_trunc('week', ts) AS bucket,
-             (ARRAY_AGG(open ORDER BY ts ASC))[1],
-             MAX(high),
-             MIN(low),
-             (ARRAY_AGG(close ORDER BY ts DESC))[1],
-             SUM(volume)
-         FROM candles
-         WHERE pair_id = $1
-           AND timeframe = '1d'
-         GROUP BY pair_id, bucket
-         HAVING COUNT(*) >= 5
-         ON CONFLICT (pair_id, timeframe, ts) DO NOTHING`,
-        [pairId],
-    );
+    const inserted = await rollupAllWeeksFromDaily(pool, pairId);
 
-    const inserted = result.rowCount ?? 0;
     if (inserted > 0) {
         console.log(`${label}: ${inserted} candles rolled up from 1d data`);
     } else {
