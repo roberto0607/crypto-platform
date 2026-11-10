@@ -57,7 +57,7 @@ describe("API copy", () => {
 
 describe("web indicator exports", () => {
   it("are the shared implementations, not a separate copy", () => {
-    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta", "prevPeriodHighLow"] as const) {
+    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta", "prevPeriodHighLow", "computeSMA", "computePineATR", "computeADX", "computeUTBot", "prevPeriodLevelSeries", "findSwingPoints", "firstRealTime"] as const) {
       expect(webIndicators[name]).toBe(shared[name]);
     }
   });

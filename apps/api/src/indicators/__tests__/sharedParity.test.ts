@@ -34,7 +34,7 @@ describe.each(Object.keys(PARITY_TIMEFRAME_SEC))("shared indicators on %s BTC-US
 
 describe("API indicator exports", () => {
   it("are the shared implementations, not a separate copy", () => {
-    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta"] as const) {
+    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta", "prevPeriodHighLow", "computeSMA", "computePineATR", "computeADX", "computeUTBot", "prevPeriodLevelSeries", "findSwingPoints", "firstRealTime"] as const) {
       expect(publicApi[name]).toBe(shared[name]);
     }
   });

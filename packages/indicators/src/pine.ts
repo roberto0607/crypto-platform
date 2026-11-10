@@ -1,0 +1,60 @@
+/**
+ * Pine Script building blocks, so ports of TradingView indicators reproduce
+ * its numbers. `NaN` plays the part of Pine's `na`.
+ */
+
+/**
+ * `ta.rma(src, length)`: Wilder's moving average. Seeded with the SMA of the
+ * first `length` consecutive non-na values, then
+ * `alpha * src + (1 - alpha) * prev` with `alpha = 1 / length`. Bars before the
+ * seed are NaN.
+ */
+export function pineRma(src: ArrayLike<number>, length: number): Float64Array {
+  const n = src.length;
+  const out = new Float64Array(n).fill(NaN);
+  const alpha = 1 / length;
+  let prev = NaN;
+  let run = 0; // consecutive non-na values ending at i
+  for (let i = 0; i < n; i++) {
+    const x = src[i]!;
+    run = Number.isNaN(x) ? 0 : run + 1;
+    if (Number.isNaN(prev)) {
+      // Unseeded (or reset by an na): Pine re-seeds with ta.sma, which needs
+      // `length` consecutive non-na values.
+      if (run < length) continue;
+      let sum = 0;
+      for (let j = i - length + 1; j <= i; j++) sum += src[j]!;
+      prev = sum / length;
+    } else {
+      // Pine's nz(prev) keeps the average going; an na input yields na.
+      prev = alpha * x + (1 - alpha) * prev;
+      if (Number.isNaN(prev)) continue;
+    }
+    out[i] = prev;
+  }
+  return out;
+}
+
+/**
+ * `ta.tr(handle_na)`: true range. Bar 0 has no previous close: with
+ * `handleNa = true` (what `ta.atr` uses) it is high - low, otherwise na
+ * (what the built-in ADX/DMI uses via the bare `ta.tr`).
+ */
+export function pineTrueRange(
+  high: ArrayLike<number>,
+  low: ArrayLike<number>,
+  close: ArrayLike<number>,
+  handleNa: boolean,
+): Float64Array {
+  const n = high.length;
+  const tr = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    if (i === 0) {
+      tr[0] = handleNa ? high[0]! - low[0]! : NaN;
+      continue;
+    }
+    const pc = close[i - 1]!;
+    tr[i] = Math.max(high[i]! - low[i]!, Math.abs(high[i]! - pc), Math.abs(low[i]! - pc));
+  }
+  return tr;
+}

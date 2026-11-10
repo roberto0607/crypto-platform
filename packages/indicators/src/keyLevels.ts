@@ -1,4 +1,4 @@
-import type { Candle } from "./types";
+import type { Candle, Point } from "./types";
 
 const DAY_SEC = 86_400;
 const WEEK_SEC = 7 * DAY_SEC;
@@ -37,4 +37,43 @@ export function prevPeriodHighLow(
     if (c.low < pdl) pdl = c.low;
   }
   return pdh === -Infinity ? null : { pdh, pdl };
+}
+
+/**
+ * Previous-period high/low as a series (PDH/PDL with `period: "day"`,
+ * PWH/PWL with `period: "week"`, weeks starting Monday 00:00 UTC): at each
+ * bar, the value `prevPeriodHighLow` returns when that bar is the last closed
+ * one — the level in force for the next bar, known at this bar's close.
+ *
+ * Only real values are emitted: a bar gets a point once its previous period is
+ * fully inside the loaded data (the first candle is at or before that
+ * period's start), so a series never reports a partial day/week as PDH/PWH.
+ * Assumes candles are contiguous.
+ */
+export function prevPeriodLevelSeries(
+  candles: Candle[],
+  opts: { candleSec: number; period: KeyLevelPeriod; tzOffsetSec?: number },
+): { high: Point[]; low: Point[] } {
+  const out = { high: [] as Point[], low: [] as Point[] };
+  const first = candles[0];
+  if (!first) return out;
+  const tz = opts.tzOffsetSec ?? 0;
+  const [len, anchor] = opts.period === "week" ? [WEEK_SEC, WEEK_ANCHOR_SEC] : [DAY_SEC, 0];
+  const bucket = (utcSec: number) => Math.floor((utcSec - anchor) / len);
+  const firstUtc = first.time - tz;
+
+  const highs = new Map<number, number>();
+  const lows = new Map<number, number>();
+  for (const c of candles) {
+    const b = bucket(c.time - tz);
+    highs.set(b, Math.max(highs.get(b) ?? -Infinity, c.high));
+    lows.set(b, Math.min(lows.get(b) ?? Infinity, c.low));
+
+    const prev = bucket(c.time - tz + opts.candleSec) - 1;
+    const hi = highs.get(prev);
+    if (hi === undefined || firstUtc > prev * len + anchor) continue;
+    out.high.push({ time: c.time, value: hi });
+    out.low.push({ time: c.time, value: lows.get(prev)! });
+  }
+  return out;
 }

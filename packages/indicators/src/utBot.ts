@@ -1,0 +1,73 @@
+import type { Candle, Point } from "./types";
+import { computePineATR } from "./pineAtr";
+
+export interface UTBotSignal {
+  index: number;
+  time: number;
+  side: "buy" | "sell";
+  /** The close the signal fired on. */
+  price: number;
+}
+
+export interface UTBotResult {
+  /** ATR trailing stop, from bar `atrPeriod - 1`. */
+  stop: Point[];
+  signals: UTBotSignal[];
+}
+
+/**
+ * ATR trailing stop + signals, as TradingView's "UT Bot Alerts" (source =
+ * close, Heikin Ashi off):
+ *
+ *   nLoss = keyValue * ta.atr(atrPeriod)
+ *   prev  = nz(stop[1])
+ *   stop  = close > prev and close[1] > prev ? max(prev, close - nLoss)
+ *         : close < prev and close[1] < prev ? min(prev, close + nLoss)
+ *         : close > prev ? close - nLoss : close + nLoss
+ *   buy   = close > stop and crossover(close, stop)
+ *   sell  = close < stop and crossover(stop, close)
+ *
+ * A signal is final only once its bar has closed. Pass closed bars only, or
+ * set `lastIsForming` so the last bar's stop is still drawn but it never
+ * emits a signal.
+ */
+export function computeUTBot(
+  candles: Candle[],
+  opts: { keyValue?: number; atrPeriod?: number; lastIsForming?: boolean } = {},
+): UTBotResult {
+  const keyValue = opts.keyValue ?? 1;
+  const atrPeriod = opts.atrPeriod ?? 10;
+  const n = candles.length;
+
+  const atr = new Float64Array(n).fill(NaN);
+  const atrPoints = computePineATR(candles, atrPeriod);
+  for (let k = 0; k < atrPoints.length; k++) atr[atrPeriod - 1 + k] = atrPoints[k]!.value;
+
+  const stop = new Float64Array(n).fill(NaN);
+  const result: UTBotResult = { stop: [], signals: [] };
+  const lastSignalBar = opts.lastIsForming ? n - 2 : n - 1;
+
+  for (let i = 0; i < n; i++) {
+    const src = candles[i]!.close;
+    const srcPrev = i > 0 ? candles[i - 1]!.close : NaN;
+    const prevRaw = i > 0 ? stop[i - 1]! : NaN;
+    const prev = Number.isNaN(prevRaw) ? 0 : prevRaw;
+    const nLoss = keyValue * atr[i]!;
+
+    // NaN comparisons are false and Math.max/min(x, NaN) is NaN, as in Pine.
+    if (src > prev && srcPrev > prev) stop[i] = Math.max(prev, src - nLoss);
+    else if (src < prev && srcPrev < prev) stop[i] = Math.min(prev, src + nLoss);
+    else stop[i] = src > prev ? src - nLoss : src + nLoss;
+
+    const s = stop[i]!;
+    if (Number.isNaN(s)) continue;
+    const time = candles[i]!.time;
+    result.stop.push({ time, value: s });
+    if (i === 0 || i > lastSignalBar) continue;
+
+    // crossover(a, b) = a > b and a[1] <= b[1]; false when anything is na.
+    if (src > s && srcPrev <= prevRaw) result.signals.push({ index: i, time, side: "buy", price: src });
+    else if (s > src && prevRaw <= srcPrev) result.signals.push({ index: i, time, side: "sell", price: src });
+  }
+  return result;
+}

@@ -1,5 +1,6 @@
-// EMA/RSI/ATR/MACD/Bollinger/VWAP/Delta/PDH-PDL come from the shared source in
-// packages/indicators, generated into ./sharedIndicators — the API and agents
+// Indicator math (EMA/SMA/RSI/ATR/MACD/BB/VWAP/Delta/ADX/UT Bot/levels/swings)
+// comes from the shared source in packages/indicators, generated into
+// ./sharedIndicators — the API and agents
 // run the same copy, and a parity test + `sync-indicators --check` keep them
 // equal. Edit packages/indicators/src, then `node scripts/sync-indicators.mjs`.
 export {
@@ -11,44 +12,24 @@ export {
   computeVWAP,
   computeCandleDelta,
   prevPeriodHighLow,
+  prevPeriodLevelSeries,
+  computeSMA,
+  computePineATR,
+  computeADX,
+  computeUTBot,
+  findSwingPoints,
+  WARMUP,
+  firstRealTime,
+  type ADXResult,
+  type UTBotResult,
+  type UTBotSignal,
+  type SwingPoint,
   type Candle,
   type Point,
   type MACDResult,
   type KeyLevelPeriod,
 } from "./sharedIndicators";
-import type { Candle, Point } from "./sharedIndicators";
-
-/**
- * Swing Highs/Lows (fractals)
- * A swing high at bar i if: high(i) > high(j) for all j in [i-lookback, i+lookback], j !== i
- * Same logic inverted for swing lows. Default lookback = 5.
- */
-export function swingPoints(
-  candles: Candle[],
-  lookback = 5,
-): { highs: Point[]; lows: Point[] } {
-  const highs: Point[] = [];
-  const lows: Point[] = [];
-
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const ci = candles[i]!;
-    let isHigh = true;
-    let isLow = true;
-
-    for (let j = i - lookback; j <= i + lookback; j++) {
-      if (j === i) continue;
-      const cj = candles[j]!;
-      if (cj.high >= ci.high) isHigh = false;
-      if (cj.low <= ci.low) isLow = false;
-      if (!isHigh && !isLow) break;
-    }
-
-    if (isHigh) highs.push({ time: ci.time, value: ci.high });
-    if (isLow) lows.push({ time: ci.time, value: ci.low });
-  }
-
-  return { highs, lows };
-}
+import type { Point } from "./sharedIndicators";
 
 /**
  * EMA 50/200 golden/death cross detection.
