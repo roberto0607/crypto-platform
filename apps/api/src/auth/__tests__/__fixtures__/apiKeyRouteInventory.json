@@ -1,0 +1,774 @@
+[
+  {
+    "route": "DELETE /orders/:id",
+    "access": "trade"
+  },
+  {
+    "route": "DELETE /v1/alerts/:id",
+    "access": "none"
+  },
+  {
+    "route": "DELETE /v1/chart-layouts/:id",
+    "access": "none"
+  },
+  {
+    "route": "DELETE /v1/triggers/:id",
+    "access": "trade"
+  },
+  {
+    "route": "GET /admin/queue",
+    "access": "read"
+  },
+  {
+    "route": "GET /admin/users",
+    "access": "read"
+  },
+  {
+    "route": "GET /api-keys",
+    "access": "read"
+  },
+  {
+    "route": "GET /api/errors",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /api/market/gamma",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /api/market/onchain",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /assets",
+    "access": "read"
+  },
+  {
+    "route": "GET /auth/me",
+    "access": "read"
+  },
+  {
+    "route": "GET /dev/jwt-test",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs/json",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs/static/*",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs/static/index.html",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs/static/swagger-initializer.js",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /docs/yaml",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /equity",
+    "access": "read"
+  },
+  {
+    "route": "GET /health",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /health/db",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /health/deep",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /health/instance",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /health/pool",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /leverage",
+    "access": "read"
+  },
+  {
+    "route": "GET /market/basis",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /market/book/:symbol",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /market/macro",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /market/orderbook-signal",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /metrics",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /orders",
+    "access": "read"
+  },
+  {
+    "route": "GET /orders/:id",
+    "access": "read"
+  },
+  {
+    "route": "GET /pairs",
+    "access": "read"
+  },
+  {
+    "route": "GET /pairs/:id/book",
+    "access": "read"
+  },
+  {
+    "route": "GET /pairs/:id/snapshot",
+    "access": "read"
+  },
+  {
+    "route": "GET /pnl/summary",
+    "access": "read"
+  },
+  {
+    "route": "GET /positions",
+    "access": "read"
+  },
+  {
+    "route": "GET /replay/active",
+    "access": "read"
+  },
+  {
+    "route": "GET /replay/state",
+    "access": "read"
+  },
+  {
+    "route": "GET /risk/status",
+    "access": "read"
+  },
+  {
+    "route": "GET /stats",
+    "access": "read"
+  },
+  {
+    "route": "GET /status/system",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /status/user",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/event-stream",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/event-stream/:id",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/incidents",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/incidents/:id",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/incidents/:id/events",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/incidents/:id/proof-pack",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/invites",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/jobs",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/outbox",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/outbox/stats",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/retention-status",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/retention/stats",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/system/backups",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/admin/system/migration-status",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/alerts",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/chart-layouts",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/competitions",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/competitions/:id",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/competitions/:id/comparison",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/competitions/:id/equity-curve",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/competitions/:id/leaderboard",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/competitions/me",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/competitions/weekly/current",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/competitions/weekly/history",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/conversations",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/conversations/:id/messages",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/debug/pressure-aggregator",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/equity",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/events",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/friends",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/market/cot/:ccy",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/feed-health",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/market/footprint",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/footprint/live",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/funding-rate",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/indicators/:pairId",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/market/liquidation-levels/:ccy",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/open-interest",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/pressure",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/pressure/stream",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/market/tickers",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/matches/:id",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/:id/breakdown",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/:id/chat/messages",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/:id/replay",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/:id/result",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/:id/wallets",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/active",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/active-list",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/matches/history",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/notifications",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/orders",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/pairs",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/pairs/:pairId/candles",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/pairs/:pairId/liquidity-zones",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/players/:username",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/portfolio/equity",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/portfolio/performance",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/portfolio/summary",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/profile",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/profile/badges",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/profile/tier",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/quick-call/current",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/seasons/current",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/sim/config",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/sim/quote",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/trades/journal",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/trades/journal/export",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/trades/journal/summary",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/triggers",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/users/:id/badges",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "GET /v1/users/search",
+    "access": "read"
+  },
+  {
+    "route": "GET /v1/wallets/:id/transactions",
+    "access": "read"
+  },
+  {
+    "route": "GET /wallets",
+    "access": "read"
+  },
+  {
+    "route": "GET /wallets/:id/transactions",
+    "access": "read"
+  },
+  {
+    "route": "OPTIONS *",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "PATCH /admin/pairs/:id/price",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /admin/users/:id/role",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/admin/competitions/:id/cancel",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/admin/competitions/:id/participants/:userId/disqualify",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/admin/jobs/:name",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/chart-layouts/:id",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/profile",
+    "access": "none"
+  },
+  {
+    "route": "PATCH /v1/triggers/:id",
+    "access": "trade"
+  },
+  {
+    "route": "POST /admin/assets",
+    "access": "none"
+  },
+  {
+    "route": "POST /admin/pairs",
+    "access": "none"
+  },
+  {
+    "route": "POST /admin/queue/flush",
+    "access": "none"
+  },
+  {
+    "route": "POST /admin/wallets/:id/credit",
+    "access": "none"
+  },
+  {
+    "route": "POST /admin/wallets/:id/debit",
+    "access": "none"
+  },
+  {
+    "route": "POST /api-keys",
+    "access": "none"
+  },
+  {
+    "route": "POST /api-keys/:id/revoke",
+    "access": "none"
+  },
+  {
+    "route": "POST /auth/forgot-password",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/login",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/logout",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/refresh",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/register",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/resend-verification",
+    "access": "none"
+  },
+  {
+    "route": "POST /auth/reset-password",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /auth/verify-email",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /orders",
+    "access": "trade"
+  },
+  {
+    "route": "POST /replay/pause",
+    "access": "trade"
+  },
+  {
+    "route": "POST /replay/resume",
+    "access": "trade"
+  },
+  {
+    "route": "POST /replay/seek",
+    "access": "trade"
+  },
+  {
+    "route": "POST /replay/start",
+    "access": "trade"
+  },
+  {
+    "route": "POST /replay/stop",
+    "access": "trade"
+  },
+  {
+    "route": "POST /v1/admin/competitions",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/event-stream/verify",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/incidents/:id/ack",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/incidents/:id/note",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/incidents/:id/resolve",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/invites",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/invites/:id/disable",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/jobs/:name/run",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/orders/cancel-all",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/outbox/replay",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/outbox/retry/:id",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/pairs/:id/trading",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/retention/run",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/system/agent-actions",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/system/read-only",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/system/restore-drill",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/admin/system/trading-global",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/alerts",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/chart-layouts",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/competitions/:id/join",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/competitions/:id/withdraw",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/conversations/:id/messages",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/conversations/dm",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/debug/feed-fault",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/events/subscribe",
+    "access": "read"
+  },
+  {
+    "route": "POST /v1/friends/:id/accept",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/friends/:id/reject",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/friends/block",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/friends/request",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/:id/accept",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/:id/chat/messages",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/:id/forfeit",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/:id/spectate",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/:id/unspectate",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/active/cancel",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/matches/challenge",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/messages/:id/report",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/notifications/:id/read",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/notifications/read-all",
+    "access": "none"
+  },
+  {
+    "route": "POST /v1/oco",
+    "access": "trade"
+  },
+  {
+    "route": "POST /v1/quick-call",
+    "access": "no API-key auth"
+  },
+  {
+    "route": "POST /v1/triggers",
+    "access": "trade"
+  },
+  {
+    "route": "POST /wallets",
+    "access": "trade"
+  },
+  {
+    "route": "PUT /v1/sim/config",
+    "access": "none"
+  }
+]

@@ -325,6 +325,8 @@ const v1Events: FastifyPluginAsync = async (app) => {
       },
     },
     preHandler: requireUser,
+    // Picks which pairs a stream receives: a read, like the stream itself.
+    config: { apiKeyScope: "read" },
   }, async (req, reply) => {
     try {
       const { streamId, pairIds } = req.body as { streamId: string; pairIds: string[] };

@@ -6,6 +6,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { requireUser } from "./auth/requireUser";
+import { makeInventoryHook, type ApiKeyRouteEntry } from "./auth/apiKeyScope";
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -92,6 +94,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     trustProxy: trustProxyOption(opts.trustProxyHops ?? config.trustProxyHops),
     genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
   });
+
+  // ── API-key route inventory (auth/apiKeyScope.ts) ──
+  // First, so it sees every route. betaAdminRoutes installs requireUser as a
+  // plugin-level hook, which onRoute can't see: named by its prefix.
+  const apiKeyRouteInventory: ApiKeyRouteEntry[] = [];
+  app.decorate("apiKeyRoutes", apiKeyRouteInventory);
+  app.addHook("onRoute", makeInventoryHook(apiKeyRouteInventory, [requireUser], ["/v1/admin"]));
 
   // ── Echo X-Request-Id on every response ──
   app.addHook("onSend", async (req, reply) => {

@@ -429,9 +429,9 @@ export async function reducibleQty(
 export async function findTriggerForUser(
     userId: string,
     triggerId: string,
-): Promise<Pick<TriggerOrderRow, "pair_id" | "kind" | "side" | "status"> | null> {
-    const { rows } = await pool.query<Pick<TriggerOrderRow, "pair_id" | "kind" | "side" | "status">>(
-        `SELECT pair_id, kind, side, status FROM trigger_orders WHERE id = $1 AND user_id = $2`,
+): Promise<Pick<TriggerOrderRow, "pair_id" | "kind" | "side" | "status" | "match_id"> | null> {
+    const { rows } = await pool.query<Pick<TriggerOrderRow, "pair_id" | "kind" | "side" | "status" | "match_id">>(
+        `SELECT pair_id, kind, side, status, match_id FROM trigger_orders WHERE id = $1 AND user_id = $2`,
         [triggerId, userId],
     );
     return rows[0] ?? null;

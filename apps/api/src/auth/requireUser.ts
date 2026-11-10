@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { validateApiKey } from "../security/apiKeyService";
 import { checkApiKeyRateLimit } from "../security/apiKeyRateLimiter";
 import { apiKeyAuthTotal, apiKeyRateLimitedTotal } from "../metrics";
+import { enforceApiKeyScope } from "./apiKeyScope";
 
 type JwtPayload = {
   sub?: string;
@@ -46,6 +47,9 @@ export async function requireUser(req: FastifyRequest, reply: FastifyReply) {
     req.authType = "API_KEY";
     req.apiKeyId = apiKey.id;
     req.apiKeyScopes = apiKey.scopes;
+    // The route's scope requirement (auth/apiKeyScope.ts): read for GET/HEAD,
+    // trade where the route says so, and session-only for every other write.
+    enforceApiKeyScope(req, reply);
     return;
   }
 

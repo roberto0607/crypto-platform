@@ -25,6 +25,11 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 function mockReq(overrides: Partial<FastifyRequest> = {}): FastifyRequest {
   return {
     headers: {},
+    method: "GET",
+    url: "/test",
+    id: "req-1",
+    routeOptions: { config: {} },
+    log: { warn: vi.fn() },
     jwtVerify: vi.fn(),
     user: undefined as any,
     authType: undefined as any,
@@ -252,5 +257,57 @@ describe("requireScope", () => {
     await middleware(req, reply);
 
     expect(reply.code).not.toHaveBeenCalled();
+  });
+});
+
+/* ════════════════════════════════════════════════════════════
+   Route scope enforcement (auth/apiKeyScope.ts), API keys only
+   ════════════════════════════════════════════════════════════ */
+
+describe("requireUser — API key scope per route", () => {
+  const key = (scopes: string[]) => ({
+    id: "ak9", user_id: "u9", scopes, key_hash: "h", name: "t", last_used_at: null, created_at: "",
+  }) as any;
+
+  async function run(scopes: string[], method: string, apiKeyScope?: "read" | "trade" | "none"): Promise<{ code: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> }> {
+    vi.mocked(validateApiKey).mockResolvedValueOnce(key(scopes));
+    const req = mockReq({
+      headers: { authorization: "ApiKey cpk_x" },
+      method,
+      routeOptions: { config: apiKeyScope ? { apiKeyScope } : {} } as any,
+    } as Partial<FastifyRequest>);
+    const reply = mockReply();
+    await requireUser(req, reply);
+    // FastifyReply is a thenable: hand back its mocks, not the reply itself.
+    const { code, send } = reply as unknown as { code: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+    return { code, send };
+  }
+
+  it("GET needs read: a read key passes, a trade-only key gets 403 insufficient_scope", async () => {
+    expect((await run(["read"], "GET")).code).not.toHaveBeenCalled();
+    const reply = await run(["trade"], "GET");
+    expect(reply.code).toHaveBeenCalledWith(403);
+    expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ error: "insufficient_scope", requiredScope: "read" }));
+  });
+
+  it("a trade route needs trade (or admin)", async () => {
+    expect((await run(["read"], "POST", "trade")).code).toHaveBeenCalledWith(403);
+    expect((await run(["trade"], "POST", "trade")).code).not.toHaveBeenCalled();
+    expect((await run(["admin"], "DELETE", "trade")).code).not.toHaveBeenCalled();
+  });
+
+  it("an untagged write is session-only: 403 api_key_not_allowed even for read+trade+admin", async () => {
+    const reply = await run(["read", "trade", "admin"], "POST");
+    expect(reply.code).toHaveBeenCalledWith(403);
+    expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ error: "api_key_not_allowed", code: "api_key_not_allowed" }));
+  });
+
+  it("JWT callers never see a scope check", async () => {
+    const req = mockReq({ headers: { authorization: "Bearer x" }, method: "POST" } as Partial<FastifyRequest>);
+    vi.mocked(req.jwtVerify as any).mockResolvedValueOnce({ sub: "u1", role: "USER" });
+    const reply = mockReply();
+    await requireUser(req, reply);
+    expect(reply.code).not.toHaveBeenCalled();
+    expect(req.authType).toBe("JWT");
   });
 });

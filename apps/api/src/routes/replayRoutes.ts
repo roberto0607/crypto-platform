@@ -44,7 +44,7 @@ const stateQuery = z.object ({
 const replayRoutes: FastifyPluginAsync = async (app) => {
 
     // POST /replay/start
-    app.post("/start", { schema: { tags: ["Replay"], summary: "Start replay session", description: "Creates or restarts a historical replay session for a trading pair.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "startTs"], properties: { pairId: { type: "string", format: "uuid" }, startTs: { type: "string", format: "date-time" }, endTs: { type: "string", format: "date-time" }, timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }, speed: { type: "number", minimum: 0.1, maximum: 100, default: 1 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/start", { schema: { tags: ["Replay"], summary: "Start replay session", description: "Creates or restarts a historical replay session for a trading pair.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "startTs"], properties: { pairId: { type: "string", format: "uuid" }, startTs: { type: "string", format: "date-time" }, endTs: { type: "string", format: "date-time" }, timeframe: { type: "string", enum: ["1m", "5m", "15m", "1h", "4h", "1d"], default: "1m" }, speed: { type: "number", minimum: 0.1, maximum: 100, default: 1 } } }, response: { 201: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } }, 404: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser, config: { apiKeyScope: "trade" } }, async (req, reply) => {
         const parsed = startBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -86,7 +86,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
     });
 
     // POST /replay/pause
-    app.post("/pause", { schema: { tags: ["Replay"], summary: "Pause replay", description: "Pauses a running replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/pause", { schema: { tags: ["Replay"], summary: "Pause replay", description: "Pauses a running replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser, config: { apiKeyScope: "trade" } }, async (req, reply) => {
         const parsed = pairIdBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -115,7 +115,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
     });
 
     // POST /replay/resume
-    app.post("/resume", { schema: { tags: ["Replay"], summary: "Resume replay", description: "Resumes a paused replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/resume", { schema: { tags: ["Replay"], summary: "Resume replay", description: "Resumes a paused replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser, config: { apiKeyScope: "trade" } }, async (req, reply) => {
         const parsed = pairIdBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -143,7 +143,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
     });
 
     // POST /replay/seek
-    app.post("/seek", { schema: { tags: ["Replay"], summary: "Seek replay", description: "Jumps to a specific timestamp in the replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "ts"], properties: { pairId: { type: "string", format: "uuid" }, ts: { type: "string", format: "date-time" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/seek", { schema: { tags: ["Replay"], summary: "Seek replay", description: "Jumps to a specific timestamp in the replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId", "ts"], properties: { pairId: { type: "string", format: "uuid" }, ts: { type: "string", format: "date-time" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, session: { type: "object", additionalProperties: true } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser, config: { apiKeyScope: "trade" } }, async (req, reply) => {
         const parsed = seekBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
@@ -170,7 +170,7 @@ const replayRoutes: FastifyPluginAsync = async (app) => {
     });
 
     // POST /replay/stop
-    app.post("/stop", { schema: { tags: ["Replay"], summary: "Stop replay", description: "Stops and deletes a replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, stopped: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser }, async (req, reply) => {
+    app.post("/stop", { schema: { tags: ["Replay"], summary: "Stop replay", description: "Stops and deletes a replay session.", security: [{ bearerAuth: [] }], body: { type: "object", required: ["pairId"], properties: { pairId: { type: "string", format: "uuid" } } }, response: { 200: { type: "object", properties: { ok: { type: "boolean" }, stopped: { type: "boolean" } } }, 400: { type: "object", properties: { ok: { type: "boolean" }, error: { type: "string" } } } } }, preHandler: requireUser, config: { apiKeyScope: "trade" } }, async (req, reply) => {
         const parsed = pairIdBody.safeParse(req.body);
         if (!parsed.success) {
             return reply.code(400).send({ ok: false, error: "invalid_input", details: parsed.error.flatten() });
