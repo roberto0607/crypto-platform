@@ -1,9 +1,16 @@
 import type { Candle, Point } from "./types";
 
 /**
- * ATR — Average True Range (Wilder smoothing).
- * Ported verbatim from apps/web/src/lib/indicators.ts — keep the two in
- * sync if this changes.
+ * ATR — Average True Range (Wilder smoothing), as the chart's ATR panel and
+ * the agents' snapshot show it. Uses Float64Array for performance.
+ *
+ * Seeding: the first ATR (at bar `period`) is the plain average of
+ * TR[1..period], skipping bar 0. TradingView's `ta.atr` instead seeds at bar
+ * `period - 1` with the average of TR[0..period-1], where TR[0] = high - low.
+ * The difference decays by (period-1)/period per bar, so on a long history
+ * the two agree to many digits, but on a short series they differ. Bars before
+ * `period` are padded with the first real value so the panel's logical range
+ * lines up with the candles.
  */
 export function computeATR(candles: Candle[], period = 14): Point[] {
   const n = candles.length;
@@ -17,10 +24,12 @@ export function computeATR(candles: Candle[], period = 14): Point[] {
     tr[i] = Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
   }
 
+  // First ATR = simple average of first `period` TR values (starting at index 1)
   let atrSum = 0;
   for (let i = 1; i <= period; i++) atrSum += tr[i]!;
   let atr = atrSum / period;
 
+  // Compute all valid ATR values
   const atrValues = new Float64Array(n);
   atrValues[period] = atr;
   for (let i = period + 1; i < n; i++) {
@@ -28,6 +37,7 @@ export function computeATR(candles: Candle[], period = 14): Point[] {
     atrValues[i] = atr;
   }
 
+  // Build padded output — same length as input candles
   const firstValid = atrValues[period]!;
   const result: Point[] = [];
   for (let i = 0; i < n; i++) {
