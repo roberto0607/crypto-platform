@@ -181,7 +181,7 @@ scanner-agent job (every 30 min, advisory-locked)
 | `MARKET_SYMBOLS` | Same (`matchingEngine.ts:240`) | |
 | Leverage | Never sent, so 1x SPOT | |
 | **Buying-power 2× rule** | **Skipped**: bot is a system user (`buyingPower.ts:93`, `matchingEngine.ts:660`) | Can go arbitrarily short or long |
-| **`max_order_notional`** | **Skipped** for system users (`phase6OrderService.ts:192`) | The Risk Agent's 20% cap is the only size cap |
+| **`max_order_notional`** | **Skipped** for system users (`phase6OrderService.ts:194`) | The Risk Agent's 20% cap is the only size cap |
 | Reduce-only | Entry: no (correct). SL/TP fires: yes, enforced by the trigger engine (`triggerEngine.ts:190`) | Auto-flatten is **not** reduce-only (`executor.ts:632`) |
 | Idempotency key | `execution-agent:<proposalId>` / `…:flatten` | |
 | Kill switch | `source='agent'` only | Trigger fires carry `source` null, so SL/TP keep working when the switch is off |
