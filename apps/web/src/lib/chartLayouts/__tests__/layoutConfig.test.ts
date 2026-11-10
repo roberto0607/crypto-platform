@@ -10,10 +10,12 @@ import {
     type ChartState,
 } from "../layoutConfig";
 import { DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
+import { DEFAULT_INDICATOR_SETTINGS } from "../layoutConfig";
 import { DEFAULT_HEIGHTS } from "@/components/trading/DragHandle";
 
 const base = (): ChartState => ({
     indicators: allIndicators(false),
+    settings: { ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [] },
     vpvrMode: "visible",
     paneOrder: [...PANE_IDS],
     paneCollapsed: Object.fromEntries(PANE_IDS.map((p) => [p, true])) as ChartState["paneCollapsed"],
@@ -43,10 +45,11 @@ describe("chart layout catalog", () => {
 describe("presets", () => {
     const get = (name: string) => resolveConfig(PRESETS.find((p) => p.name === name)!.config, base());
 
-    it("Swing: EMA 20/50/200, PDH/PDL, VPVR (POC+VAH/VAL), RSI 14, ATR 14, Volume — all else off", () => {
+    it("Swing: EMA 20/50/200 (crossing 50/200), PDH/PDL, VPVR (POC+VAH/VAL), RSI 14, ATR 14, Volume — all else off", () => {
         const s = get("Swing");
         const on = Object.entries(s.indicators).filter(([, v]) => v).map(([k]) => k).sort();
-        expect(on).toEqual(["atr", "ema20", "ema200", "ema50", "keyLevels", "rsi", "volume", "vpvr"]);
+        expect(on).toEqual(["atr", "keyLevels", "rsi", "volume", "vpvr"]);
+        expect(s.settings).toEqual(LEGACY_SETTINGS);
         expect(s.vpvrMode).toBe("visible");
         expect(s.paneOrder.slice(0, 3)).toEqual(["rsi", "atr", "volume"]);
         expect(s.paneCollapsed.rsi).toBe(false);
@@ -54,13 +57,17 @@ describe("presets", () => {
         expect(s.paneCollapsed.volume).toBe(false);
     });
 
-    it("Everything: every indicator on", () => {
+    it("Everything: every indicator on, plus EMA 20/50/200", () => {
         expect(Object.values(get("Everything").indicators).every(Boolean)).toBe(true);
-        expect(Object.keys(get("Everything").indicators)).toHaveLength(21);
+        expect(Object.keys(get("Everything").indicators)).toHaveLength(18);
+        expect(get("Everything").settings).toEqual(LEGACY_SETTINGS);
     });
 
-    it("Clean: candles only", () => {
-        expect(Object.values(get("Clean").indicators).some(Boolean)).toBe(false);
+    it("Clean: candles only (no moving averages either)", () => {
+        const cur = { ...base(), settings: LEGACY_SETTINGS };
+        const s = resolveConfig(PRESETS.find((p) => p.name === "Clean")!.config, cur);
+        expect(Object.values(s.indicators).some(Boolean)).toBe(false);
+        expect(s.settings).toEqual({ movingAverages: [], maCross: null });
     });
 
     it("presets don't touch the timeframe", () => {
@@ -69,11 +76,68 @@ describe("presets", () => {
     });
 });
 
+/** What the old EMA 20/50/200 toggles (all on) draw now. */
+const LEGACY_SETTINGS: ChartState["settings"] = {
+    movingAverages: [
+        { id: "ema20", type: "EMA", length: 20, color: "#3b82f6" },
+        { id: "ema50", type: "EMA", length: 50, color: "#f59e0b" },
+        { id: "ema200", type: "EMA", length: 200, color: "#ef4444" },
+    ],
+    maCross: { fast: "ema50", slow: "ema200" },
+};
+
+describe("moving averages in a layout", () => {
+    it("an old layout's EMA toggles draw the same lines, colors and cross", () => {
+        const s = resolveConfig({ version: 1, indicators: { ema20: true, ema50: true, ema200: true, rsi: true } }, base());
+        expect(s.settings).toEqual(LEGACY_SETTINGS);
+        expect(Object.entries(s.indicators).filter(([, v]) => v).map(([k]) => k)).toEqual(["rsi"]);
+    });
+
+    it("only the old toggles that were on, cross only with 50 AND 200", () => {
+        const s = resolveConfig({ version: 1, indicators: { ema20: true, ema50: true, ema200: false } }, base());
+        expect(s.settings.movingAverages.map((m) => m.id)).toEqual(["ema20", "ema50"]);
+        expect(s.settings.maCross).toBeNull();
+    });
+
+    it("a layout without moving averages draws none", () => {
+        const cur = { ...base(), settings: LEGACY_SETTINGS };
+        expect(resolveConfig({ version: 1, indicators: { rsi: true } }, cur).settings).toEqual({ movingAverages: [], maCross: null });
+    });
+
+    it("drops bad lines, repeated ids and a cross on a missing line; clamps lengths", () => {
+        const s = resolveConfig({
+            version: 1,
+            params: {
+                movingAverages: [
+                    { id: "a", type: "SMA", length: 9999, color: "#112233" },
+                    { id: "a", type: "EMA", length: 20, color: "#112233" },
+                    { id: "b", type: "WMA", length: 20, color: "#112233" },
+                    { id: "c", type: "EMA", length: 0.4, color: "#112233" },
+                    { id: "d", type: "EMA", length: 20, color: "blue" },
+                    "junk",
+                ],
+                maCross: { fast: "a", slow: "b" },
+            },
+        }, base());
+        expect(s.settings.movingAverages).toEqual([
+            { id: "a", type: "SMA", length: 500, color: "#112233" },
+            { id: "c", type: "EMA", length: 1, color: "#112233" },
+        ]);
+        expect(s.settings.maCross).toBeNull();
+    });
+
+    it("caps the list at the catalog max", () => {
+        const many = Array.from({ length: 14 }, (_, i) => ({ id: `m${i}`, type: "EMA", length: i + 1, color: "#112233" }));
+        expect(resolveConfig({ version: 1, params: { movingAverages: many } }, base()).settings.movingAverages)
+            .toHaveLength(CHART_LAYOUT_CATALOG.movingAverages.maxLines);
+    });
+});
+
 describe("resolveConfig (forward-compatible reader)", () => {
     it("skips an indicator this build doesn't know, silently", () => {
         const s = resolveConfig({ version: 1, indicators: { rsi: true, stochRsi: true, ema21: true } }, base());
         expect(s.indicators.rsi).toBe(true);
-        expect(Object.keys(s.indicators)).toHaveLength(21);
+        expect(Object.keys(s.indicators)).toHaveLength(18);
         expect("stochRsi" in s.indicators).toBe(false);
     });
 
@@ -113,6 +177,13 @@ describe("captureConfig + isModified", () => {
         const s: ChartState = {
             ...base(),
             indicators: { ...allIndicators(false), rsi: true, vpvr: true },
+            settings: {
+                movingAverages: [
+                    { id: "ma1", type: "SMA", length: 20, color: "#3b82f6" },
+                    { id: "ma2", type: "EMA", length: 200, color: "#ef4444" },
+                ],
+                maCross: { fast: "ma1", slow: "ma2" },
+            },
             vpvrMode: "weekly",
             paneOrder: ["cvd", ...PANE_IDS.filter((p) => p !== "cvd")],
             paneCollapsed: { ...base().paneCollapsed, rsi: false },
@@ -131,6 +202,7 @@ describe("captureConfig + isModified", () => {
         expect(cfg.params).toEqual({
             vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 },
             macd: { fast: 12, slow: 26, signal: 9 }, bollingerBands: { period: 20, stdDev: 2 },
+            movingAverages: [],
         });
     });
 
@@ -142,6 +214,13 @@ describe("captureConfig + isModified", () => {
         expect(isModified(cfg, { ...s, paneHeights: { ...s.paneHeights, rsi: 81 } })).toBe(true);
         expect(isModified(cfg, { ...s, paneCollapsed: { ...s.paneCollapsed, rsi: false } })).toBe(true);
         expect(isModified(cfg, { ...s, paneOrder: [...s.paneOrder].reverse() })).toBe(true);
+        const line = { id: "ma1", type: "SMA" as const, length: 20, color: "#3b82f6" };
+        const withLine = { ...s, settings: { movingAverages: [line], maCross: null } };
+        const lineCfg = captureConfig(withLine);
+        expect(isModified(cfg, withLine)).toBe(true);
+        expect(isModified(lineCfg, withLine)).toBe(false);
+        expect(isModified(lineCfg, { ...s, settings: { movingAverages: [{ ...line, length: 21 }], maCross: null } })).toBe(true);
+        expect(isModified(lineCfg, { ...s, settings: { movingAverages: [{ ...line, color: "#ffffff" }], maCross: null } })).toBe(true);
     });
 
     it("ignores fields a preset doesn't name (timeframe, heights)", () => {

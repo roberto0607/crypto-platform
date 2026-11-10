@@ -1,7 +1,8 @@
 /**
  * Chart layout store — the chart state a layout controls that ISN'T the
- * indicator toggles (those stay in tradingStore.indicatorConfig), plus the
- * saved layouts and which one is active.
+ * indicator toggles (those stay in tradingStore.indicatorConfig) or the
+ * indicator settings (indicatorSettingsStore), plus the saved layouts and
+ * which one is active.
  *
  * With no saved default, every initial value here equals what the chart used
  * before layouts existed: timeframe 1h, VPVR "visible", panes in their fixed
@@ -28,6 +29,7 @@ import {
   type IndicatorToggles,
 } from "@/lib/chartLayouts/layoutConfig";
 import { useTradingStore, type IndicatorConfig } from "./tradingStore";
+import { currentIndicatorSettings, useIndicatorSettingsStore } from "./indicatorSettingsStore";
 
 /** COT has no entry in DragHandle's DEFAULT_HEIGHTS; the chart fell back to 120. */
 const COT_DEFAULT_HEIGHT = 120;
@@ -89,6 +91,7 @@ export function currentChartState(): ChartState {
   const s = useChartLayoutStore.getState();
   return {
     indicators: { ...(useTradingStore.getState().indicatorConfig as IndicatorToggles) },
+    settings: currentIndicatorSettings(),
     vpvrMode: s.vpvrMode,
     paneOrder: s.paneOrder,
     paneCollapsed: s.paneCollapsed,
@@ -106,6 +109,7 @@ export function layoutConfigById(id: string | null): ChartLayoutConfig | null {
 
 function applyState(next: ChartState) {
   useTradingStore.getState().setIndicatorConfig(next.indicators as IndicatorConfig);
+  useIndicatorSettingsStore.getState().setSettings(next.settings);
   savePanelHeights(next.paneHeights);
   useChartLayoutStore.setState({
     vpvrMode: next.vpvrMode,

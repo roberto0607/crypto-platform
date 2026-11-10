@@ -11,6 +11,7 @@ import * as api from "@/api/endpoints/chartLayouts";
 import type { SavedChartLayout } from "@/api/endpoints/chartLayouts";
 import { useChartLayoutStore, currentChartState } from "@/stores/chartLayoutStore";
 import { useTradingStore, DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
+import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { DEFAULT_HEIGHTS } from "@/components/trading/DragHandle";
 import { PANE_IDS, captureConfig, isModified } from "@/lib/chartLayouts/layoutConfig";
 
@@ -37,6 +38,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
     useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG } });
+    useIndicatorSettingsStore.setState({ movingAverages: [], maCross: null });
     useChartLayoutStore.getState().resetSession();
     useChartLayoutStore.setState({ layouts: [] });
 });
@@ -121,7 +123,11 @@ describe("default on load", () => {
 describe("presets", () => {
     it("applies Swing instantly", () => {
         useChartLayoutStore.getState().applyLayout("preset:swing");
-        expect(on()).toEqual(["atr", "ema20", "ema200", "ema50", "keyLevels", "rsi", "volume", "vpvr"]);
+        expect(on()).toEqual(["atr", "keyLevels", "rsi", "volume", "vpvr"]);
+        const ma = useIndicatorSettingsStore.getState();
+        expect(ma.movingAverages.map((m) => `${m.type} ${m.length}`)).toEqual(["EMA 20", "EMA 50", "EMA 200"]);
+        expect(ma.maCross).toEqual({ fast: "ema50", slow: "ema200" });
+        expect(JSON.parse(localStorage.getItem("indicator-settings")!).movingAverages).toHaveLength(3);
         const s = useChartLayoutStore.getState();
         expect(s.paneOrder.slice(0, 3)).toEqual(["rsi", "atr", "volume"]);
         expect(s.activeLayoutId).toBe("preset:swing");
@@ -131,9 +137,47 @@ describe("presets", () => {
 
     it("Everything then Clean", () => {
         useChartLayoutStore.getState().applyLayout("preset:everything");
-        expect(on()).toHaveLength(21);
+        expect(on()).toHaveLength(18);
         useChartLayoutStore.getState().applyLayout("preset:clean");
         expect(on()).toEqual([]);
+        expect(useIndicatorSettingsStore.getState().movingAverages).toEqual([]);
+    });
+});
+
+describe("moving averages", () => {
+    it("a saved layout from before the list applies its EMA toggles as the same lines", async () => {
+        const def = layout({ is_default: true, config: { version: 1, indicators: { ema50: true, ema200: true } } as never });
+        mocked.listChartLayouts.mockReturnValue(ok({ layouts: [def] }));
+        await useChartLayoutStore.getState().loadLayouts();
+        const s = useIndicatorSettingsStore.getState();
+        expect(s.movingAverages).toEqual([
+            { id: "ema50", type: "EMA", length: 50, color: "#f59e0b" },
+            { id: "ema200", type: "EMA", length: 200, color: "#ef4444" },
+        ]);
+        expect(s.maCross).toEqual({ fast: "ema50", slow: "ema200" });
+        expect(isModified(def.config, currentChartState())).toBe(false);
+    });
+
+    it("are saved with the layout, and editing one marks the layout modified", async () => {
+        useIndicatorSettingsStore.getState().addMovingAverage();
+        useIndicatorSettingsStore.getState().addMovingAverage();
+        useIndicatorSettingsStore.getState().updateMovingAverage("ma1", { type: "SMA" });
+        useIndicatorSettingsStore.getState().setMaCross({ fast: "ma1", slow: "ma2" });
+        mocked.createChartLayout.mockImplementation((body) => ok({ layout: layout({ name: body.name, config: body.config }) }));
+
+        await useChartLayoutStore.getState().saveAs("MAs");
+        const cfg = mocked.createChartLayout.mock.calls[0]![0].config;
+        expect(cfg.params?.movingAverages).toEqual([
+            { id: "ma1", type: "SMA", length: 20, color: "#3b82f6" },
+            { id: "ma2", type: "EMA", length: 50, color: "#f59e0b" },
+        ]);
+        expect(cfg.params?.maCross).toEqual({ fast: "ma1", slow: "ma2" });
+        expect(isModified(cfg, currentChartState())).toBe(false);
+
+        useIndicatorSettingsStore.getState().updateMovingAverage("ma2", { length: 100 });
+        expect(isModified(cfg, currentChartState())).toBe(true);
+        useChartLayoutStore.getState().applyLayout(useChartLayoutStore.getState().activeLayoutId!);
+        expect(useIndicatorSettingsStore.getState().movingAverages[1]!.length).toBe(50);
     });
 });
 

@@ -61,11 +61,10 @@ const INDICATOR_STORAGE_KEY = "indicator-config";
 const INDICATOR_VERSION_KEY = "indicator-config-version";
 const INDICATOR_CONFIG_VERSION = 10; // Bump to reset stale localStorage defaults
 
+// Moving averages are a list, not toggles: indicatorSettingsStore (which also
+// converts the old ema20/ema50/ema200 toggles stored under this key).
 const defaultIndicatorConfig = {
   // Standard
-  ema20: false,
-  ema50: false,
-  ema200: false,
   vwap: false,
   bollingerBands: false,
   volume: false,
