@@ -5,6 +5,7 @@ import { pool } from "../db/pool";
 import { timedQuery } from "../observability/dbTiming";
 import { requireUser } from "../auth/requireUser";
 import { requireVerified } from "../auth/requireVerified";
+import { rejectApiKeyOutsideFreePlay, requestedMatchId } from "../auth/apiKeyScope";
 import { auditLog } from "../audit/log";
 import { handleError } from "../http/handleError";
 import { findPairById, listActivePairsForDisplay } from "../trading/pairRepo";
@@ -196,7 +197,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     preHandler: [requireUser, requireVerified],
-    config: { rateLimit: { max: 60, timeWindow: 60_000 } },
+    config: { rateLimit: { max: 60, timeWindow: 60_000 }, apiKeyScope: "trade" },
   }, async (req, reply) => {
     const parsed = placeOrderBody.safeParse(req.body);
     if (!parsed.success) {
@@ -208,6 +209,14 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     if (parsed.data.scope === undefined) {
         return reply.code(400).send({ ok: false, error: "scope_required", message: SCOPE_REQUIRED_MESSAGE });
     }
+
+    // An API key trades free-play only: never a match, never a competition
+    // (auth/apiKeyScope.ts). Checked before the scope is resolved, so the
+    // answer doesn't depend on whether the named match exists.
+    if (rejectApiKeyOutsideFreePlay(req, reply, {
+        matchId: requestedMatchId(parsed.data.scope),
+        competitionId: req.headers["x-competition-id"] as string | undefined,
+    })) return reply;
 
         try {
         const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
@@ -421,6 +430,7 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     preHandler: [requireUser, requireVerified],
+    config: { apiKeyScope: "trade" },
   }, async (req, reply) => {
     const paramsParsed = orderIdParams.safeParse(req.params);
     if (!paramsParsed.success) {
@@ -428,6 +438,19 @@ const tradingRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const actor = req.user!;
+
+    // An API key can't cancel a match or competition order. Someone else's
+    // order (or none) falls through to the usual order_not_found.
+    if (req.authType === "API_KEY") {
+        const { rows: [existing] } = await pool.query<{ match_id: string | null; competition_id: string | null }>(
+            `SELECT match_id, competition_id FROM orders WHERE id = $1 AND user_id = $2`,
+            [paramsParsed.data.id, actor.id],
+        );
+        if (existing && rejectApiKeyOutsideFreePlay(req, reply, {
+            matchId: existing.match_id,
+            competitionId: existing.competition_id,
+        })) return reply;
+    }
 
     try {
         const result = await cancelOrderWithOutbox(actor.id, paramsParsed.data.id, req.id);

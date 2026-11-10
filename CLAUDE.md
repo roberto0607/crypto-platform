@@ -110,6 +110,12 @@ All new indicators follow this pattern:
 - **Web**: `lib/orderScope` is the only place the scope comes from; every request names it. Don't add a read or write on the trade page without it.
 - **Timed-out matches**: `matchCleanupJob` completes them, every 15 s with no grace period. Orders are accepted until it runs.
 
+### API keys (`Authorization: ApiKey <key>`)
+- Scopes are enforced in one place: `requireUser` → `enforceApiKeyScope` (`auth/apiKeyScope.ts`). Browser sessions (JWT) are never checked.
+- A route's requirement is `config.apiKeyScope`, else by method: GET/HEAD → `read`, any other write → `none` (session-only, 403 `api_key_not_allowed`). New routes fail closed; tag a trading write with `config: { apiKeyScope: "trade" }`.
+- An API key **never** trades a match or competition, whatever its scopes (403 `api_key_scope_forbidden`). Every trade route calls `rejectApiKeyOutsideFreePlay` with the scope it targets (new orders/triggers: the request's `scope` + `X-Competition-Id`; cancels/edits: the existing row's `match_id` / `competition_id`).
+- `auth/__tests__/__fixtures__/apiKeyRouteInventory.json` pins every route's requirement; regenerate with `WRITE_GOLDEN=1` after reviewing a change.
+
 ### Error Handling
 - Never use `process.exit()` silently — always log before exiting
 - Migration guard throws errors (not `process.exit`) so they propagate to the top-level catch

@@ -3,6 +3,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import { requireUser } from "../../auth/requireUser";
+import { rejectApiKeyOutsideFreePlay, requestedMatchId } from "../../auth/apiKeyScope";
 import { v1HandleError } from "../../http/v1Error";
 import { decodeCursor, parseLimit, slicePage } from "../../http/pagination";
 import { parseMatchScope } from "../../http/matchScopeQuery";
@@ -135,9 +136,12 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             },
         },
         preHandler: requireUser,
+        config: { apiKeyScope: "trade" },
     }, async (req, reply) => {
         try {
             const actor = req.user!;
+            // An API key never sets a match trigger (auth/apiKeyScope.ts).
+            if (rejectApiKeyOutsideFreePlay(req, reply, { matchId: requestedMatchId((req.body as { scope?: unknown }).scope) })) return reply;
             const parsed = createTriggerBody.safeParse(req.body);
             if (!parsed.success) {
                 throw new AppError("invalid_input", parsed.error.flatten());
@@ -232,11 +236,16 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 },
             },
             preHandler: requireUser,
+            config: { apiKeyScope: "trade" },
         },
         async (req, reply) => {
             try {
                 const actor = req.user!;
                 const { id } = req.params as { id: string };
+                if (req.authType === "API_KEY") {
+                    const existing = await findTriggerForUser(actor.id, id);
+                    if (rejectApiKeyOutsideFreePlay(req, reply, { matchId: existing?.match_id })) return reply;
+                }
 
                 const trigger = await cancelTriggerByUser(actor.id, id);
 
@@ -278,6 +287,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 },
             },
             preHandler: requireUser,
+            config: { apiKeyScope: "trade" },
         },
         async (req, reply) => {
             try {
@@ -290,6 +300,7 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
                 // Unknown, not-owned or finished triggers fall through to
                 // updateTriggerByUser's 404 / trigger_not_editable.
                 const existing = await findTriggerForUser(actor.id, id);
+                if (rejectApiKeyOutsideFreePlay(req, reply, { matchId: existing?.match_id })) return reply;
                 if (existing?.status === "ACTIVE") {
                     const { trailingOffset, triggerPrice } = parsed.data;
                     if (trailingOffset !== undefined) await assertTrailingOffset(existing.pair_id, trailingOffset);
@@ -334,9 +345,11 @@ const v1Triggers: FastifyPluginAsync = async (app) => {
             },
         },
         preHandler: requireUser,
+        config: { apiKeyScope: "trade" },
     }, async (req, reply) => {
         try {
             const actor = req.user!;
+            if (rejectApiKeyOutsideFreePlay(req, reply, { matchId: requestedMatchId((req.body as { scope?: unknown }).scope) })) return reply;
             const parsed = createOcoBody.safeParse(req.body);
             if (!parsed.success) {
                 throw new AppError("invalid_input", parsed.error.flatten());
