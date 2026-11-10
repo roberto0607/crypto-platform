@@ -14,7 +14,7 @@ import { waitForStreamId } from "@/api/sse";
 import { createDatafeedAdapter } from "@/lib/datafeedAdapter";
 import { applyTick, planClosedCandle, reconcileForming, type Bar } from "@/lib/formingCandle";
 import { useAppStore } from "@/stores/appStore";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatPnlPctPair } from "@/lib/matchPnl";
 import type {
     MatchPnlUpdateEvent,
     MatchEndedEvent,
@@ -423,14 +423,14 @@ export default function SpectateMatchPage() {
                         <div>
                             <div className="sm-player">{match.challenger_name ?? "CHALLENGER"} ({match.challenger_elo})</div>
                             <div className="sm-pnl" style={{ color: parseFloat(challengerPnl ?? "0") >= 0 ? "#00ff41" : "#ff3b3b" }}>
-                                {formatPnlPct(challengerPnl)}
+                                {formatPnlPctPair(challengerPnl, opponentPnl)[0]}
                             </div>
                         </div>
                         <div className="sm-divider" />
                         <div>
                             <div className="sm-player">{match.opponent_name ?? "OPPONENT"} ({match.opponent_elo})</div>
                             <div className="sm-pnl" style={{ color: parseFloat(opponentPnl ?? "0") >= 0 ? "#00ff41" : "#ff3b3b" }}>
-                                {formatPnlPct(opponentPnl)}
+                                {formatPnlPctPair(challengerPnl, opponentPnl)[1]}
                             </div>
                         </div>
                     </div>

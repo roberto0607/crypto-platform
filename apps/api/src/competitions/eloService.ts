@@ -222,15 +222,22 @@ export async function resolveMatchElo(
     // ── Integrity gate: is the winner rated, and the pair's 24h scale ──
     let unratedReason: UnratedReason | null = null;
     let scale = 1;
+    // Kept for the UI's plain-words reason (null with the flag off).
+    let pairMatchNumber: number | null = null;
+    let winnerQualified: boolean | null = null;
+    let loserQualified: boolean | null = null;
     if (integrity) {
         const activity = opts.activity ?? await matchActivityTx(client, matchId);
         const capital = Number(match.starting_capital);
         const completedAt = match.completed_at ?? new Date();
-        scale = pairScale(await priorPairMatchesTx(client, matchId, winnerId, loserId, completedAt));
+        const prior = await priorPairMatchesTx(client, matchId, winnerId, loserId, completedAt);
+        scale = pairScale(prior);
+        pairMatchNumber = prior + 1;
+        winnerQualified = qualifies(activity.get(winnerId), capital);
+        loserQualified = qualifies(activity.get(loserId), capital);
         if (isEarlyForfeit(match)) unratedReason = "EARLY_FORFEIT";
-        else if (!qualifies(activity.get(winnerId), capital) || !qualifies(activity.get(loserId), capital)) {
-            unratedReason = "NOT_QUALIFIED";
-        } else if (scale === 0) unratedReason = "REPEAT_OPPONENT";
+        else if (!winnerQualified || !loserQualified) unratedReason = "NOT_QUALIFIED";
+        else if (scale === 0) unratedReason = "REPEAT_OPPONENT";
     }
     const winnerRated = unratedReason === null;
 
@@ -336,8 +343,9 @@ export async function resolveMatchElo(
             winner_tier_before, winner_tier_after,
             loser_tier_before, loser_tier_after,
             winner_win_streak, loser_loss_streak,
-            streak_multiplier, badges_earned, winner_unrated_reason
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+            streak_multiplier, badges_earned, winner_unrated_reason,
+            pair_match_number, winner_qualified, loser_qualified
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
         [
             matchId, winnerId, loserId,
             winner.elo_rating, winnerNewElo, winnerDelta,
@@ -346,6 +354,7 @@ export async function resolveMatchElo(
             loserTier, loserTierAfter,
             newWinStreak, newLossStreak,
             streakMultiplier, JSON.stringify(badges), unratedReason,
+            pairMatchNumber, winnerQualified, loserQualified,
         ],
     );
 

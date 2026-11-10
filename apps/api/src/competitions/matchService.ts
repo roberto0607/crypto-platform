@@ -79,6 +79,10 @@ export interface MatchWithPlayers extends MatchRow {
     winner_elo_delta: number | null;
     loser_elo_delta: number | null;
     winner_unrated_reason: string | null;
+    /** The pair's match number in the 24h window, and who traded enough (ELO integrity; null before it). */
+    pair_match_number?: number | null;
+    winner_qualified?: boolean | null;
+    loser_qualified?: boolean | null;
 }
 
 /** Starting capital per tier */
@@ -792,7 +796,10 @@ export async function getMatchHistory(
                 o.elo_rating AS opponent_elo,
                 mer.winner_delta AS winner_elo_delta,
                 mer.loser_delta AS loser_elo_delta,
-                mer.winner_unrated_reason
+                mer.winner_unrated_reason,
+                mer.pair_match_number,
+                mer.winner_qualified,
+                mer.loser_qualified
          FROM matches m
          JOIN users c ON c.id = m.challenger_id
          JOIN users o ON o.id = m.opponent_id

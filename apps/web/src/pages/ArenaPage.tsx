@@ -12,7 +12,8 @@ import {
 import { getCurrentSeason, getLeaderboard, type CurrentSeason, type LeaderboardEntry } from "@/api/endpoints/competitions";
 import { SeasonLeaderboard } from "@/components/arena/SeasonLeaderboard";
 import { ChallengeBox } from "@/components/arena/ChallengeBox";
-import { formatMatchPnl, formatPnlPct } from "@/lib/matchPnl";
+import { formatMatchPnlPair, formatPnlPct, formatPnlPctPair } from "@/lib/matchPnl";
+import { eloChangeText, eloReason } from "@/lib/eloReason";
 
 /* ─────────────────────────────────────────
    ARENA PAGE CSS — Trade Wars
@@ -164,6 +165,7 @@ function MatchLiveCard({ match, userId, onEnter }: { match: Match; userId: strin
         { id: match.challenger_id, name: match.challenger_name ?? "CHALLENGER", pnl: challengerPnlPct },
         { id: match.opponent_id, name: match.opponent_name ?? "OPPONENT", pnl: opponentPnlPct },
     ];
+    const pnlTexts = formatMatchPnlPair(challengerPnlPct, opponentPnlPct, match.starting_capital);
     return (
         <div className="ar-match-card">
             <div className="ar-mc-header">
@@ -177,7 +179,7 @@ function MatchLiveCard({ match, userId, onEnter }: { match: Match; userId: strin
                         <div>
                             <div className="ar-mc-player">{p.id === userId ? "YOU" : p.name}</div>
                             <div className="ar-mc-pnl" style={{ color: parseFloat(p.pnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                {formatMatchPnl(p.pnl, match.starting_capital)}
+                                {pnlTexts[i]}
                             </div>
                         </div>
                     </Fragment>
@@ -418,15 +420,14 @@ export default function ArenaPage() {
                                             const opponentName = isChallenger ? (m.opponent_name ?? "?") : (m.challenger_name ?? "?");
                                             const yourPnl = isChallenger ? m.challenger_pnl_pct : m.opponent_pnl_pct;
                                             const theirPnl = isChallenger ? m.opponent_pnl_pct : m.challenger_pnl_pct;
+                                            const [yourPnlText, theirPnlText] = formatPnlPctPair(yourPnl, theirPnl);
                                             const won = m.winner_id === userId;
                                             const lost = m.winner_id && m.winner_id !== userId;
-                                            const eloDisplay = won && m.winner_unrated_reason
-                                                ? "UNRATED"
-                                                : won
-                                                ? `+${m.winner_elo_delta ?? m.elo_delta ?? 0}`
-                                                : lost
-                                                    ? `${m.loser_elo_delta ?? -(m.elo_delta ?? 0)}`
-                                                    : "0";
+                                            const eloDisplay = eloChangeText({
+                                                won, lost: !!lost, unrated: !!m.winner_unrated_reason,
+                                                delta: won ? (m.winner_elo_delta ?? m.elo_delta ?? 0) : (m.loser_elo_delta ?? -(m.elo_delta ?? 0)),
+                                            });
+                                            const eloWhy = won || lost ? eloReason(m, won ? "winner" : "loser") : null;
 
                                             return (
                                                 <tr key={m.id}>
@@ -441,11 +442,16 @@ export default function ArenaPage() {
                                                                     : <span className="ar-draw">DRAW</span>}
                                                     </td>
                                                     <td style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                                        {formatPnlPct(yourPnl)}
+                                                        {yourPnlText}
                                                     </td>
-                                                    <td style={{ color: "rgba(255,255,255,0.4)" }}>{formatPnlPct(theirPnl)}</td>
+                                                    <td style={{ color: "rgba(255,255,255,0.4)" }}>{theirPnlText}</td>
                                                     <td style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}>
-                                                        {eloDisplay}
+                                                        <span data-testid="history-elo">{eloDisplay}</span>
+                                                        {eloWhy && (
+                                                            <div data-testid="history-elo-reason" style={{ fontSize: 9, letterSpacing: 0.5, color: "var(--ar-muted)", marginTop: 2 }}>
+                                                                {eloWhy}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
                                                         {m.completed_at ? new Date(m.completed_at).toLocaleDateString([], { month: "short", day: "numeric" }) : "--"}
@@ -501,14 +507,14 @@ export default function ArenaPage() {
                                     <div>
                                         <div className="ar-mc-player">{m.challenger_name ?? "CHALLENGER"} ({m.challenger_elo})</div>
                                         <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.challenger_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                            {formatPnlPct(m.challenger_pnl_pct)}
+                                            {formatPnlPctPair(m.challenger_pnl_pct, m.opponent_pnl_pct)[0]}
                                         </div>
                                     </div>
                                     <div className="ar-mc-divider" />
                                     <div>
                                         <div className="ar-mc-player">{m.opponent_name ?? "OPPONENT"} ({m.opponent_elo})</div>
                                         <div className="ar-mc-pnl" style={{ fontSize: 24, color: parseFloat(m.opponent_pnl_pct ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}>
-                                            {formatPnlPct(m.opponent_pnl_pct)}
+                                            {formatPnlPctPair(m.challenger_pnl_pct, m.opponent_pnl_pct)[1]}
                                         </div>
                                     </div>
                                 </div>

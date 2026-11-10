@@ -4,7 +4,7 @@ import type { Match } from "@/api/endpoints/matches";
 import { MatchScopeSwitch } from "@/components/trading/MatchScopeSwitch";
 import { useToast } from "@/components/ToastProvider";
 import { usePnlFlash } from "@/hooks/usePnlFlash";
-import { formatMatchPnl } from "@/lib/matchPnl";
+import { formatMatchPnlPair } from "@/lib/matchPnl";
 import { useActiveMatchStore, useMatchPnl } from "@/stores/activeMatchStore";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -31,10 +31,11 @@ function isUrgent(match: Match): boolean {
 
 const flashTint = (dir: string): string => (dir === "up" ? "rgba(0,255,65,0.45)" : "rgba(255,59,59,0.45)");
 
-function PlayerScore({ name, pnl, capital, matchId, side, leading }: {
+function PlayerScore({ name, pnl, text, matchId, side, leading }: {
     name: string;
     pnl: string | null;
-    capital: string;
+    /** Dollars and percent, at the precision both players share (formatMatchPnlPair). */
+    text: string;
     matchId: string;
     side: "you" | "opponent";
     leading: boolean;
@@ -53,7 +54,7 @@ function PlayerScore({ name, pnl, capital, matchId, side, leading }: {
                     "--pnl-flash-tint": flashTint(flash.dir),
                 } as CSSProperties}
             >
-                {formatMatchPnl(pnl, capital)}
+                {text}
             </span>
         </div>
     );
@@ -91,6 +92,7 @@ export function MatchHeaderBar({ match, chatOpen, chatUnread, onToggleChat }: Ma
     const yourPnl = isChallenger ? challengerPnlPct : opponentPnlPct;
     const opponentPnl = isChallenger ? opponentPnlPct : challengerPnlPct;
     const youLead = parseFloat(yourPnl ?? "0") >= parseFloat(opponentPnl ?? "0");
+    const [yourText, opponentText] = formatMatchPnlPair(yourPnl, opponentPnl, match.starting_capital);
 
     const confirmForfeit = async () => {
         setShowForfeitConfirm(false);
@@ -104,7 +106,7 @@ export function MatchHeaderBar({ match, chatOpen, chatUnread, onToggleChat }: Ma
     return (
         <>
             <div className="mt-header">
-                <PlayerScore name={yourName} pnl={yourPnl} capital={match.starting_capital} matchId={match.id} side="you" leading={youLead} />
+                <PlayerScore name={yourName} pnl={yourPnl} text={yourText} matchId={match.id} side="you" leading={youLead} />
 
                 <div className="mt-h-center">
                     <span className="mt-h-badge">1V1 LIVE</span>
@@ -114,7 +116,7 @@ export function MatchHeaderBar({ match, chatOpen, chatUnread, onToggleChat }: Ma
                     <MatchScopeSwitch />
                 </div>
 
-                <PlayerScore name={opponentName} pnl={opponentPnl} capital={match.starting_capital} matchId={match.id} side="opponent" leading={!youLead} />
+                <PlayerScore name={opponentName} pnl={opponentPnl} text={opponentText} matchId={match.id} side="opponent" leading={!youLead} />
 
                 <div className="mt-h-actions">
                     <button type="button" className={`mt-chat-toggle${chatOpen ? " active" : ""}`} onClick={onToggleChat}>

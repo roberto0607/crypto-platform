@@ -399,7 +399,8 @@ const v1Matches: FastifyPluginAsync = async (app) => {
                         winner_tier_before, winner_tier_after,
                         loser_tier_before, loser_tier_after,
                         winner_win_streak, loser_loss_streak,
-                        streak_multiplier, badges_earned, winner_unrated_reason, created_at
+                        streak_multiplier, badges_earned, winner_unrated_reason,
+                        pair_match_number, winner_qualified, loser_qualified, created_at
                  FROM match_elo_results WHERE match_id = $1`,
                 [id],
             );

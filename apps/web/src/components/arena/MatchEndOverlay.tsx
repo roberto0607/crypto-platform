@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Match } from "@/api/endpoints/matches";
 import client from "@/api/client";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { formatMatchPnlPair } from "@/lib/matchPnl";
+import { eloChangeText, eloReason } from "@/lib/eloReason";
 
 interface EloResult {
     winner_id: string;
@@ -22,6 +23,10 @@ interface EloResult {
     badges_earned: string[];
     /** Set when the winner got no ELO (anti-farming rules). */
     winner_unrated_reason?: string | null;
+    /** The pair's match number in 24h and who traded enough: for the reason line. */
+    pair_match_number?: number | null;
+    winner_qualified?: boolean | null;
+    loser_qualified?: boolean | null;
 }
 
 interface MatchEndOverlayProps {
@@ -46,6 +51,8 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
     const opponentName = isChallenger ? match.opponent_name : match.challenger_name;
     const yourPnl = isChallenger ? match.challenger_pnl_pct : match.opponent_pnl_pct;
     const oppPnl = isChallenger ? match.opponent_pnl_pct : match.challenger_pnl_pct;
+    // Both at one precision, with dollars: different results never look tied.
+    const [yourPnlText, oppPnlText] = formatMatchPnlPair(yourPnl, oppPnl, match.starting_capital);
     const won = match.winner_id === userId;
     const lost = match.winner_id != null && match.winner_id !== userId;
     const forfeited = match.forfeit_user_id === userId;
@@ -75,6 +82,8 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
     const streakMultiplier = eloResult ? parseFloat(eloResult.streak_multiplier) : 1;
     const badges = eloResult?.badges_earned ?? [];
     const unrated = won && isWinner && !!eloResult?.winner_unrated_reason;
+    // Why the change was unrated or scaled, in plain words (null: full value).
+    const reason = eloResult && (won || lost) ? eloReason(eloResult, isWinner ? "winner" : "loser") : null;
 
     // ── ELO count-up animation ──
     // Counts the NEW ELO from old → new and the delta from 0 → final over 800ms
@@ -140,7 +149,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: parseFloat(yourPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnlPct(yourPnl)}
+                            {yourPnlText}
                         </div>
                     </div>
                     <div>
@@ -149,7 +158,7 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: parseFloat(oppPnl ?? "0") >= 0 ? "var(--ar-g)" : "var(--ar-red)" }}
                         >
-                            {formatPnlPct(oppPnl)}
+                            {oppPnlText}
                         </div>
                     </div>
                 </div>
@@ -161,13 +170,18 @@ export function MatchEndOverlay({ match, userId, onBackToArena, onViewBreakdown 
                             className="mt-end-val"
                             style={{ color: won ? "var(--ar-g)" : lost ? "var(--ar-red)" : "var(--ar-muted)" }}
                         >
-                            {unrated ? "UNRATED" : won ? `+${displayDelta}` : lost ? `-${displayDelta}` : "0"}
+                            <span data-testid="elo-change">{eloChangeText({ won, lost, delta: displayDelta, unrated })}</span>
                             {streakMultiplier > 1 && won && (
                                 <span style={{ fontSize: "0.7em", marginLeft: 6, color: "var(--ar-gold)" }}>
                                     {streakMultiplier}x STREAK
                                 </span>
                             )}
                         </div>
+                        {reason && (
+                            <div data-testid="elo-reason" style={{ fontSize: 10, letterSpacing: 1, color: "var(--ar-muted)", marginTop: 4 }}>
+                                {reason}
+                            </div>
+                        )}
                     </div>
                     <div>
                         <div className="mt-end-label">NEW ELO</div>

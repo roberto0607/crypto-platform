@@ -32,6 +32,10 @@ export interface Match {
     loser_elo_delta: number | null;
     /** Set when the winner got no ELO (anti-farming rules). */
     winner_unrated_reason?: string | null;
+    /** The pair's match number in 24h and who traded enough (lib/eloReason). */
+    pair_match_number?: number | null;
+    winner_qualified?: boolean | null;
+    loser_qualified?: boolean | null;
 }
 
 export function challengeUser(body: {
