@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeEMA } from "../ema";
-import { computeRSI } from "../rsi";
-import { computeATR } from "../atr";
-import type { Candle } from "../types";
+import { computeEMA, computeRSI, computeATR, type Candle } from "../index";
 
 function candle(time: number, overrides: Partial<Candle> = {}): Candle {
   return { time, open: 100, high: 100, low: 100, close: 100, volume: 1, ...overrides };

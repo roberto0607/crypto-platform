@@ -1,11 +1,13 @@
 import type { Candle, Point } from "./types";
 
+const DAY_SEC = 86_400;
+
 /**
- * VWAP — resets at each UTC midnight boundary.
- * Ported verbatim from apps/web/src/lib/indicators.ts — keep the two in
- * sync if this changes.
+ * VWAP — resets at each UTC midnight boundary. `tzOffsetSec` = the display
+ * shift baked into `candle.time` on the chart (0 on the server); output times
+ * keep it.
  */
-export function computeVWAP(candles: Candle[]): Point[] {
+export function computeVWAP(candles: Candle[], tzOffsetSec = 0): Point[] {
   if (candles.length === 0) return [];
   const result: Point[] = [];
   let cumPV = 0;
@@ -13,7 +15,7 @@ export function computeVWAP(candles: Candle[]): Point[] {
   let currentDay = -1;
 
   for (const c of candles) {
-    const day = Math.floor(c.time / 86400);
+    const day = Math.floor((c.time - tzOffsetSec) / DAY_SEC);
     if (day !== currentDay) {
       cumPV = 0;
       cumVol = 0;

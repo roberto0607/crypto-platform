@@ -1,11 +1,20 @@
-export type { Candle, Point } from "./types";
-export { computeEMA } from "./ema";
-export { computeRSI } from "./rsi";
-export { computeATR } from "./atr";
-export { computeMACD, type MACDResult } from "./macd";
-export { computeBollingerBands } from "./bollinger";
-export { computeVWAP } from "./vwap";
-export { computeCandleDelta } from "./delta";
+// EMA/RSI/ATR/MACD/Bollinger/VWAP/Delta/key levels come from the shared
+// source in packages/indicators, generated into ./shared — the chart runs the
+// same copy, and a parity test + `sync-indicators --check` keep them equal.
+export {
+  computeEMA,
+  computeRSI,
+  computeATR,
+  computeMACD,
+  computeBollingerBands,
+  computeVWAP,
+  computeCandleDelta,
+  prevPeriodHighLow,
+  type Candle,
+  type Point,
+  type MACDResult,
+  type KeyLevelPeriod,
+} from "./shared";
 export {
   computeCVD,
   type CvdPoint,

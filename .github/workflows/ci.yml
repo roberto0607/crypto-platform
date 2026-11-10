@@ -53,6 +53,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Shared indicator math lives in packages/indicators/src and is committed
+      # as generated copies in apps/api and apps/web (each Docker build only
+      # sees its own app dir). Fail if a copy was edited or not regenerated.
+      - name: Shared indicators in sync
+        run: node ../../scripts/sync-indicators.mjs --check
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -93,6 +99,12 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
+
+      # Shared indicator math lives in packages/indicators/src and is committed
+      # as generated copies in apps/api and apps/web (each Docker build only
+      # sees its own app dir). Fail if a copy was edited or not regenerated.
+      - name: Shared indicators in sync
+        run: node ../../scripts/sync-indicators.mjs --check
 
       - name: Typecheck
         run: pnpm typecheck
