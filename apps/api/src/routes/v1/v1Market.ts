@@ -22,6 +22,7 @@ import { requireUser } from "../../auth/requireUser";
 import { v1HandleError } from "../../http/v1Error";
 import { parseIntParam } from "../../http/pagination";
 import { getKrakenWsHealth } from "../../market/krakenWs";
+import { TIMEFRAME_SECONDS } from "../../market/formingCandle";
 import {
     getSnapshot as getPressureSnapshot,
     getStatus as getPressureStatus,
@@ -225,27 +226,62 @@ export interface IndicatorSnapshot {
     indicators: Record<string, unknown>;
 }
 
+/** CVD and VPVR describe a window, not a converging value: keep them on 300 bars. */
+const SNAPSHOT_WINDOW_BARS = 300;
+const MAX_SNAPSHOT_BARS = 5000;
+
+/**
+ * Closed bars an indicator needs before its last value is real. EMAs keep
+ * (1 - 2/(p+1))^n of their SMA seed, so 10×period leaves ~2e-9 of it; the
+ * Wilder RMA in RSI/ATR (α = 1/14) needs ~20×period for the same. VWAP resets
+ * at UTC midnight, so it needs the whole current day.
+ */
+export function snapshotHistoryBars(key: IndicatorKey, timeframeSec: number): number {
+    switch (key) {
+        case "ema20": return 10 * 20;
+        case "ema50": return 10 * 50;
+        case "ema200": return 10 * 200;
+        case "rsi":
+        case "atr": return 20 * 14;
+        case "macd": return 10 * 26 + 10 * 9;
+        case "vwap": return Math.ceil(86_400 / timeframeSec);
+        default: return SNAPSHOT_WINDOW_BARS;
+    }
+}
+
 export async function computeIndicatorSnapshot(
     pairId: string,
     timeframe: string,
     requested: IndicatorKey[],
+    opts: { nowMs?: number } = {},
 ): Promise<IndicatorSnapshot> {
     const cacheKey = `indicators:${pairId}:${timeframe}:${[...requested].sort().join(",")}`;
-    const cached = getCached<IndicatorSnapshot>(cacheKey);
+    const cached = opts.nowMs === undefined ? getCached<IndicatorSnapshot>(cacheKey) : null;
     if (cached) return cached;
 
-    // 300 candles covers the longest lookback we compute (EMA 200).
+    const timeframeSec = TIMEFRAME_SECONDS[timeframe];
+    if (timeframeSec === undefined) throw new Error(`unknown timeframe: ${timeframe}`);
+    const limit = Math.min(
+        MAX_SNAPSHOT_BARS,
+        Math.max(SNAPSHOT_WINDOW_BARS, ...requested.map((k) => snapshotHistoryBars(k, timeframeSec))),
+    );
+    // Closed bars only: a row whose bucket hasn't ended yet (the rollups
+    // re-write the current 4h/1d/1w bucket) is still forming. The chart keeps
+    // its live candle; this snapshot is for the agents.
+    const nowSec = (opts.nowMs ?? Date.now()) / 1000;
     const { rows } = await pool.query<{
         ts: string; open: string; high: string; low: string; close: string;
         volume: string; buy_volume: string | null; sell_volume: string | null;
     }>(
         `SELECT ts, open, high, low, close, volume, buy_volume, sell_volume
          FROM candles WHERE pair_id = $1 AND timeframe = $2
-         ORDER BY ts DESC LIMIT 300`,
-        [pairId, timeframe],
+           AND ts <= to_timestamp($3::double precision)
+         ORDER BY ts DESC LIMIT $4`,
+        [pairId, timeframe, nowSec - timeframeSec, limit],
     );
     rows.reverse();
     const candles = rows.map(toIndicatorCandle);
+    const window = candles.slice(-SNAPSHOT_WINDOW_BARS);
 
     if (candles.length === 0) {
         return { ok: true, pairId, timeframe, asOf: null, indicators: {} };
@@ -277,7 +313,7 @@ export async function computeIndicatorSnapshot(
                 break;
             }
             case "cvd": {
-                const result = computeCVD(candles);
+                const result = computeCVD(window);
                 indicators.cvd = {
                     value: lastValue(result.values),
                     dataSource: result.dataSource,
@@ -285,7 +321,7 @@ export async function computeIndicatorSnapshot(
                 break;
             }
             case "vpvr": {
-                const profile = computeVolumeProfile(candles);
+                const profile = computeVolumeProfile(window);
                 indicators.vpvr = profile ? { poc: profile.poc, vah: profile.vah, val: profile.val } : null;
                 break;
             }
@@ -299,7 +335,7 @@ export async function computeIndicatorSnapshot(
         asOf: candles[candles.length - 1]!.time,
         indicators,
     };
-    setCache(cacheKey, response, 5000);
+    if (opts.nowMs === undefined) setCache(cacheKey, response, 5000);
     return response;
 }
 
