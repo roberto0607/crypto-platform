@@ -29,6 +29,13 @@ fingerprint of every indicator's output on it. The API suite
 the golden to 1e-9, and the web suite checks that the API copy is
 byte-identical to its own.
 
+`fixtures/tradingview-reference.json` is a small sample of TradingView's own
+values (COINBASE:BTCUSD: SMA 20/50/200, RSI 14, ATR 14, ADX 14/14) and every
+UT Bot Alerts signal in the window that overlaps the fixture;
+`indicators/__tests__/tradingViewReference.test.ts` checks our output against
+it. Its header lists the known Coinbase-vs-TradingView data differences that
+set its tolerances.
+
 Regenerate the golden only for an intended math change, and say in the PR
 which values moved:
 

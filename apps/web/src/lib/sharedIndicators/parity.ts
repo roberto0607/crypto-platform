@@ -13,7 +13,12 @@ import { computeMACD } from "./macd";
 import { computeBollingerBands } from "./bollinger";
 import { computeVWAP } from "./vwap";
 import { computeCandleDelta } from "./delta";
-import { prevPeriodHighLow } from "./keyLevels";
+import { prevPeriodHighLow, prevPeriodLevelSeries } from "./keyLevels";
+import { computeSMA } from "./sma";
+import { computePineATR } from "./pineAtr";
+import { computeADX } from "./adx";
+import { computeUTBot } from "./utBot";
+import { findSwingPoints, type SwingPoint } from "./swings";
 
 export interface CandleFixture {
   columns: string[];
@@ -52,6 +57,14 @@ export function computeParitySeries(candles: Candle[], timeframeSec: number): Se
   const bb = computeBollingerBands(candles);
   const day = keyLevelSeries(candles, timeframeSec, "day");
   const week = keyLevelSeries(candles, timeframeSec, "week");
+  const dayLv = prevPeriodLevelSeries(candles, { candleSec: timeframeSec, period: "day" });
+  const weekLv = prevPeriodLevelSeries(candles, { candleSec: timeframeSec, period: "week" });
+  const adx = computeADX(candles);
+  const ut = computeUTBot(candles);
+  const swings = findSwingPoints(candles);
+  // Signals/pivots as points: time = the bar, value = +1 buy / -1 sell, or the pivot price.
+  const pivots = (s: SwingPoint[]): Point[] => s.map((p) => ({ time: p.time, value: p.price }));
+  const confirmations = (s: SwingPoint[]): Point[] => s.map((p) => ({ time: p.confirmedTime, value: p.index }));
   return {
     ema20: computeEMA(candles, 20),
     ema50: computeEMA(candles, 50),
@@ -70,6 +83,24 @@ export function computeParitySeries(candles: Candle[], timeframeSec: number): Se
     pdl: day.low,
     pwh: week.high,
     pwl: week.low,
+    sma20: computeSMA(candles, 20),
+    sma50: computeSMA(candles, 50),
+    sma200: computeSMA(candles, 200),
+    pineAtr10: computePineATR(candles, 10),
+    pineAtr14: computePineATR(candles, 14),
+    plusDI: adx.plusDI,
+    minusDI: adx.minusDI,
+    adx: adx.adx,
+    utStop: ut.stop,
+    utSignal: ut.signals.map((x) => ({ time: x.time, value: x.side === "buy" ? 1 : -1 })),
+    pdhSeries: dayLv.high,
+    pdlSeries: dayLv.low,
+    pwhSeries: weekLv.high,
+    pwlSeries: weekLv.low,
+    swingHigh: pivots(swings.highs),
+    swingHighConfirmed: confirmations(swings.highs),
+    swingLow: pivots(swings.lows),
+    swingLowConfirmed: confirmations(swings.lows),
   };
 }
 

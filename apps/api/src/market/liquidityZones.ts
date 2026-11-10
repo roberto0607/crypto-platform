@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import { getOrderFlow } from "./orderFlowFeatures.js";
 import { getDollarLiquidityAtPrice } from "./orderBookService.js";
+import { findSwingPoints } from "../indicators/index.js";
 
 interface SimpleCandle {
     ts: string;
@@ -50,25 +51,13 @@ function computeATR(candles: SimpleCandle[], period: number): number {
     return atr;
 }
 
-function findSwingPoints(candles: SimpleCandle[], lookback: number = 3): { highs: number[]; lows: number[] } {
-    const highs: number[] = [];
-    const lows: number[] = [];
-
-    for (let i = lookback; i < candles.length - lookback; i++) {
-        let isHigh = true;
-        let isLow = true;
-        const c = candles[i]!;
-
-        for (let j = 1; j <= lookback; j++) {
-            if (candles[i - j]!.high >= c.high || candles[i + j]!.high >= c.high) isHigh = false;
-            if (candles[i - j]!.low <= c.low || candles[i + j]!.low <= c.low) isLow = false;
-        }
-
-        if (isHigh) highs.push(c.high);
-        if (isLow) lows.push(c.low);
-    }
-
-    return { highs, lows };
+/** Swing-high/low prices (strict pivots, 3 bars each side) via the shared finder. */
+function swingPrices(candles: SimpleCandle[]): { highs: number[]; lows: number[] } {
+    const { highs, lows } = findSwingPoints(
+        candles.map((c) => ({ ...c, time: Date.parse(c.ts) / 1000 })),
+        { left: 3, right: 3 },
+    );
+    return { highs: highs.map((p) => p.price), lows: lows.map((p) => p.price) };
 }
 
 function findEqualLevels(values: number[], tolerance: number): number[] {
@@ -152,7 +141,7 @@ export async function computeLiquidityZones(
     const totalCandles = candles.length;
 
     // 1. Swing points (weight: 25)
-    const swings = findSwingPoints(candles, 3);
+    const swings = swingPrices(candles);
     for (const h of swings.highs) {
         candidates.push({ price: h, source: "SW", weight: 25, recency: 0.7 });
     }

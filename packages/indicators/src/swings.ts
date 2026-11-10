@@ -1,0 +1,50 @@
+import type { Candle } from "./types";
+
+export interface SwingPoint {
+  /** The pivot bar. */
+  index: number;
+  time: number;
+  /** Its high (swing high) or low (swing low). */
+  price: number;
+  /**
+   * The bar whose close confirms the pivot: `index + right`. A backtest may
+   * act on the pivot only from this bar's close on; using it earlier would
+   * read `right` bars of the future.
+   */
+  confirmedIndex: number;
+  confirmedTime: number;
+}
+
+/**
+ * Swing highs/lows (pivots / fractals). Bar i is a swing high when its high is
+ * strictly greater than every high in the `left` bars before and the `right`
+ * bars after it (a tie disqualifies); swing lows mirror that on lows.
+ * Ascending by `index`.
+ */
+export function findSwingPoints(
+  candles: Candle[],
+  opts: { left?: number; right?: number } = {},
+): { highs: SwingPoint[]; lows: SwingPoint[] } {
+  const left = opts.left ?? 5;
+  const right = opts.right ?? 5;
+  const highs: SwingPoint[] = [];
+  const lows: SwingPoint[] = [];
+
+  for (let i = left; i < candles.length - right; i++) {
+    const ci = candles[i]!;
+    let isHigh = true;
+    let isLow = true;
+    for (let j = i - left; j <= i + right; j++) {
+      if (j === i) continue;
+      const cj = candles[j]!;
+      if (cj.high >= ci.high) isHigh = false;
+      if (cj.low <= ci.low) isLow = false;
+      if (!isHigh && !isLow) break;
+    }
+    const confirmedIndex = i + right;
+    const confirmedTime = candles[confirmedIndex]!.time;
+    if (isHigh) highs.push({ index: i, time: ci.time, price: ci.high, confirmedIndex, confirmedTime });
+    if (isLow) lows.push({ index: i, time: ci.time, price: ci.low, confirmedIndex, confirmedTime });
+  }
+  return { highs, lows };
+}
