@@ -84,6 +84,9 @@ const defaultIndicatorConfig = {
   footprint: false,
   liquidationLevels: false,
   cotReport: false,
+  adx: false,
+  utBot: false,
+  swings: false,
 };
 
 export type IndicatorConfig = typeof defaultIndicatorConfig;

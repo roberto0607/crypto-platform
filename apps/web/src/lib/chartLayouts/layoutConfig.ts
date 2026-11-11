@@ -21,6 +21,8 @@ import {
     type ChartIndicatorId,
     type ChartLayoutConfig,
     type ChartPaneId,
+    type AdxParams,
+    type UtBotParams,
     type MaCrossSpec,
     type MovingAverageSpec,
     type VpvrMode,
@@ -34,9 +36,23 @@ export interface IndicatorSettings {
     movingAverages: MovingAverageSpec[];
     /** Golden/death-cross markers between two of the lines, or none. */
     maCross: MaCrossSpec | null;
+    adx: AdxParams;
+    utBot: UtBotParams;
 }
 
-export const DEFAULT_INDICATOR_SETTINGS: Readonly<IndicatorSettings> = { movingAverages: [], maCross: null };
+type NumericGroup = keyof typeof C.numericParams;
+
+function numericDefaults<G extends NumericGroup>(group: G) {
+    const spec = C.numericParams[group] as Record<string, { default: number }>;
+    return Object.fromEntries(Object.entries(spec).map(([k, r]) => [k, r.default]));
+}
+
+export const DEFAULT_INDICATOR_SETTINGS: Readonly<IndicatorSettings> = {
+    movingAverages: [],
+    maCross: null,
+    adx: numericDefaults("adx") as unknown as AdxParams,
+    utBot: numericDefaults("utBot") as unknown as UtBotParams,
+};
 
 export interface ChartState {
     indicators: IndicatorToggles;
@@ -89,11 +105,33 @@ export function sanitizeMaCross(raw: unknown, lines: MovingAverageSpec[]): MaCro
     return has(raw.fast) && has(raw.slow) ? { fast: raw.fast, slow: raw.slow } : null;
 }
 
-/** Settings from a config's `params` (unmentioned → none drawn). */
+/** `v` clamped to the catalog range and rounded to its step. */
+export function clampParam(range: { min: number; max: number; step: number }, v: number): number {
+    const clamped = Math.max(range.min, Math.min(range.max, v));
+    const decimals = (String(range.step).split(".")[1] ?? "").length;
+    return Number((Math.round(clamped / range.step) * range.step).toFixed(decimals));
+}
+
+/** One numeric param group: each key clamped, or its default when missing/not a number. */
+export function sanitizeNumeric<G extends NumericGroup>(group: G, raw: unknown): IndicatorSettings[G] {
+    const r = isObj(raw) ? raw : {};
+    const spec = C.numericParams[group] as Record<string, { min: number; max: number; step: number; default: number }>;
+    return Object.fromEntries(Object.entries(spec).map(([k, range]) => {
+        const v = r[k];
+        return [k, typeof v === "number" && Number.isFinite(v) ? clampParam(range, v) : range.default];
+    })) as unknown as IndicatorSettings[G];
+}
+
+/** Settings from a config's `params`: unmentioned lines → none drawn, unmentioned ADX/UT Bot → defaults. */
 export function resolveSettings(params: unknown): IndicatorSettings {
     const p = isObj(params) ? params : {};
     const movingAverages = sanitizeMovingAverages(p.movingAverages);
-    return { movingAverages, maCross: sanitizeMaCross(p.maCross, movingAverages) };
+    return {
+        movingAverages,
+        maCross: sanitizeMaCross(p.maCross, movingAverages),
+        adx: sanitizeNumeric("adx", p.adx),
+        utBot: sanitizeNumeric("utBot", p.utBot),
+    };
 }
 
 export function settingsEqual(a: IndicatorSettings, b: IndicatorSettings): boolean {
@@ -170,6 +208,8 @@ export function captureConfig(s: ChartState): ChartLayoutConfig {
             bollingerBands: { period: 20, stdDev: 2 },
             movingAverages: s.settings.movingAverages.map((m) => ({ ...m })),
             ...(s.settings.maCross ? { maCross: { ...s.settings.maCross } } : {}),
+            adx: { ...s.settings.adx },
+            utBot: { ...s.settings.utBot },
         },
         panes: {
             order: [...s.paneOrder],

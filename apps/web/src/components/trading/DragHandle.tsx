@@ -11,6 +11,7 @@ export const DEFAULT_HEIGHTS: Record<string, number> = {
     cvd: 60,
     fundingRate: 80,
     openInterest: 100,
+    adx: 100,
 };
 
 const MIN_HEIGHT = 40;

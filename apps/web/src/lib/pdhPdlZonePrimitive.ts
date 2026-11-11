@@ -19,6 +19,8 @@ interface RenderTarget {
 export interface PdhPdlZoneData {
     pdh: number;
     pdl: number;
+    /** Previous week's high/low, drawn in the same style (labels say PWH/PWL). */
+    weekly?: { pwh: number; pwl: number } | null;
     currentPrice: number;
     pdhProximity: boolean;
     pdlProximity: boolean;
@@ -110,6 +112,25 @@ class PdhPdlMainPaneView implements IPrimitivePaneView {
                     context.moveTo(0, yPdl);
                     context.lineTo(mediaSize.width, yPdl);
                     context.stroke();
+
+                    // PWH / PWL — the normal (non-proximity) PDH/PDL style.
+                    const yPwh = data.weekly ? series.priceToCoordinate(data.weekly.pwh) : null;
+                    const yPwl = data.weekly ? series.priceToCoordinate(data.weekly.pwl) : null;
+                    context.lineWidth = 1;
+                    if (yPwh != null) {
+                        context.strokeStyle = "rgba(255, 77, 77, 0.9)";
+                        context.beginPath();
+                        context.moveTo(0, yPwh);
+                        context.lineTo(mediaSize.width, yPwh);
+                        context.stroke();
+                    }
+                    if (yPwl != null) {
+                        context.strokeStyle = "rgba(0, 230, 118, 0.55)";
+                        context.beginPath();
+                        context.moveTo(0, yPwl);
+                        context.lineTo(mediaSize.width, yPwl);
+                        context.stroke();
+                    }
 
                     context.restore();
                 });
