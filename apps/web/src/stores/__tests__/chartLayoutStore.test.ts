@@ -12,6 +12,7 @@ import type { SavedChartLayout } from "@/api/endpoints/chartLayouts";
 import { useChartLayoutStore, currentChartState } from "@/stores/chartLayoutStore";
 import { useTradingStore, DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { DEFAULT_INDICATOR_SETTINGS } from "@/lib/chartLayouts/layoutConfig";
 import { DEFAULT_HEIGHTS } from "@/components/trading/DragHandle";
 import { PANE_IDS, captureConfig, isModified } from "@/lib/chartLayouts/layoutConfig";
 
@@ -38,7 +39,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
     useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG } });
-    useIndicatorSettingsStore.setState({ movingAverages: [], maCross: null });
+    useIndicatorSettingsStore.setState({ ...DEFAULT_INDICATOR_SETTINGS });
     useChartLayoutStore.getState().resetSession();
     useChartLayoutStore.setState({ layouts: [] });
 });
@@ -48,7 +49,7 @@ describe("no saved layouts, no default → today's chart, untouched", () => {
         const s = useChartLayoutStore.getState();
         expect(s.timeframe).toBe("1h");
         expect(s.vpvrMode).toBe("visible");
-        expect(s.paneOrder).toEqual(["volume", "macd", "rsi", "atr", "delta", "cvd", "fundingRate", "openInterest", "cotReport"]);
+        expect(s.paneOrder).toEqual(["volume", "macd", "rsi", "atr", "delta", "cvd", "fundingRate", "openInterest", "cotReport", "adx"]);
         expect(Object.values(s.paneCollapsed).every(Boolean)).toBe(true);
         expect(s.paneHeights).toEqual({ ...DEFAULT_HEIGHTS, cotReport: 120 });
         expect(s.activeLayoutId).toBeNull();
@@ -137,7 +138,7 @@ describe("presets", () => {
 
     it("Everything then Clean", () => {
         useChartLayoutStore.getState().applyLayout("preset:everything");
-        expect(on()).toHaveLength(18);
+        expect(on()).toHaveLength(21);
         useChartLayoutStore.getState().applyLayout("preset:clean");
         expect(on()).toEqual([]);
         expect(useIndicatorSettingsStore.getState().movingAverages).toEqual([]);

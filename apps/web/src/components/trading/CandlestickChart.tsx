@@ -7,7 +7,6 @@ import {
     LineStyle,
     createSeriesMarkers,
     type ISeriesMarkersPluginApi,
-    type SeriesMarker,
     type IChartApi,
     type ISeriesApi,
     type CandlestickData,
@@ -25,9 +24,12 @@ import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
 import {
-    prevPeriodHighLow,
     computeEMA,
     computeSMA,
+    computeADX,
+    computeUTBot,
+    findSwingPoints,
+    type ADXResult,
     computeVWAP,
     computeBollingerBands,
     computeRSI,
@@ -75,6 +77,8 @@ import { parseAnchorExternalId } from "@/lib/drawings/drawingPrimitiveShared";
 import { computeMeasureStats, formatDuration, TIMEFRAME_SECONDS } from "@/lib/drawings/measureFormat";
 import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
+import { ADXPanel } from "./ADXPanel";
+import { buildStudyMarkers, keyLevelSets, nudgeClear, utBotLine, UT_LONG } from "@/lib/chartStudies";
 import { PressureCell } from "./PressureCell";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 import { formatFundingRate } from "@/lib/fundingFormat";
@@ -112,6 +116,8 @@ const LIVE_VIEW_BARS = 120;
 // stack from a top:12-or-48 base — shift that base down by this much so they
 // land below the legend instead of underneath it.
 const CHART_LEGEND_STACK_OFFSET = 64;
+const EMPTY_ADX: ADXResult = { plusDI: [], minusDI: [], adx: [] };
+
 // The study-values row (moving averages) under O/H/L/C, when it shows.
 const STUDY_LEGEND_ROW_H = 18;
 
@@ -293,6 +299,12 @@ const CONTEXT_BAR_CSS = `
      O/H/L/C strip doesn't wrap, so at 390px the close value ran onto the
      price axis. Stop the legend short of the axis (~80px wide at BTC
      prices; 96px leaves room) and let both rows wrap. */
+  /* PWH/PWL cards: the PDH/PDL card style; on narrow charts only the label
+     + price line, so four cards still fit. */
+  @media (max-width: 768px) {
+    .tr-wk-detail { display:none !important; }
+    .tr-wk-card { padding:3px 8px !important; gap:0 !important; }
+  }
   @media (max-width: 768px) {
     .tr-chart-legend { right:96px; }
     .tr-chart-legend-row { flex-wrap:wrap;row-gap:2px; }
@@ -512,6 +524,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const [orderBlocksState, setOrderBlocksState] = useState<OrderBlock[]>([]);
     const pdhPdlZonePrimitiveRef = useRef<PdhPdlZonePrimitive | null>(null);
     const keyLevelsRef = useRef<{ pdh: number; pdl: number } | null>(null);
+    // PWH/PWL next to PDH/PDL (null on 1w, where the main pair is already weekly).
+    const weeklyLevelsRef = useRef<{ pwh: number; pwl: number } | null>(null);
     const liquidityZonesRef = useRef<LiquidityZone[]>([]);
     const [loading, setLoading] = useState(false);
     const [cvdData, setCvdData] = useState<CvdPoint[]>([]);
@@ -530,6 +544,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const priceLabelRef = useRef<HTMLDivElement>(null);
     const pdhConnectorRef = useRef<HTMLDivElement>(null);
     const pdlConnectorRef = useRef<HTMLDivElement>(null);
+    const pwhLabelRef = useRef<HTMLDivElement>(null);
+    const pwlLabelRef = useRef<HTMLDivElement>(null);
 
     // Overlay line series refs
     // Moving-average lines by id (the list lives in indicatorSettingsStore).
@@ -537,7 +553,18 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // Legend readout per line: value by (chart) time + the last closed value.
     const maLegendRef = useRef<Array<{ id: string; label: string; color: string; byTime: Map<number, number>; last: number | null }>>([]);
     const [, setMaLegendVersion] = useState(0);
-    // MA golden/death cross markers plugin (v5: createSeriesMarkers).
+    const legendRef = useRef<HTMLDivElement>(null);
+    const [legendHeight, setLegendHeight] = useState(0);
+    useEffect(() => {
+        const el = legendRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(() => setLegendHeight(Math.ceil(el.offsetHeight)));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+    const utBotSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    // Markers plugin for the candle series (v5: createSeriesMarkers): MA
+    // crosses + UT Bot signals + swing points, one sorted list.
     const emaCrossMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     // Live-alert dedup: time of the newest cross we've already toasted, keyed by
     // pair:timeframe so a load/switch primes (never re-toasts history).
@@ -561,6 +588,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const [macdData, setMacdData] = useState<MACDResult>({ macd: [], signal: [], histogram: [] });
     const [atrData, setAtrData] = useState<Point[]>([]);
     const [deltaData, setDeltaData] = useState<Point[]>([]);
+    const [adxData, setAdxData] = useState<ADXResult>(EMPTY_ADX);
 
     // Pane heights + order live in chartLayoutStore so a layout can set them
     // (heights still persist to localStorage `tradr_panel_heights` on drag end).
@@ -593,6 +621,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const indicatorConfig = useTradingStore(useShallow((s) => s.indicatorConfig));
     const movingAverages = useIndicatorSettingsStore((s) => s.movingAverages);
     const maCross = useIndicatorSettingsStore((s) => s.maCross);
+    const adxParams = useIndicatorSettingsStore((s) => s.adx);
+    const utBotParams = useIndicatorSettingsStore((s) => s.utBot);
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
@@ -1216,7 +1246,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
         const indCandles = candles.map(apiCandleToIndicator);
 
-        // Key Levels — PDH/PDL
+        // Key Levels — PDH/PDL (+ PWH/PWL below 1w)
         // Lines + zone fills drawn by PdhPdlZonePrimitive; labels are DOM overlays.
         if (indicatorConfig.keyLevels) {
             candleSeries.applyOptions({ lastValueVisible: false, priceLineVisible: false });
@@ -1224,11 +1254,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // timeframeRef, not the prop: renderOverlays must not re-run (on the
             // old candles) when the timeframe changes — see the cross alert below.
             const levelsTf = timeframeRef.current;
-            const levels = prevPeriodHighLow(indCandles, {
+            const sets = keyLevelSets(indCandles, {
+                timeframe: levelsTf,
                 candleSec: TIMEFRAME_SECONDS[levelsTf],
-                period: levelsTf === "1w" ? "week" : "day",
                 tzOffsetSec: TZ_OFFSET_SEC,
             });
+            const levels = sets.daily ? { pdh: sets.daily.high, pdl: sets.daily.low } : null;
+            weeklyLevelsRef.current = sets.weekly ? { pwh: sets.weekly.high, pwl: sets.weekly.low } : null;
             if (levels) {
                 keyLevelsRef.current = levels;
                 const lastCandle = candles[candles.length - 1];
@@ -1251,6 +1283,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 pdhPdlZonePrimitiveRef.current?.setData({
                     pdh: levels.pdh,
                     pdl: levels.pdl,
+                    weekly: weeklyLevelsRef.current,
                     currentPrice: price,
                     pdhProximity: pdhProx,
                     pdlProximity: pdlProx,
@@ -1263,6 +1296,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         } else {
             candleSeries.applyOptions({ lastValueVisible: true, priceLineVisible: true });
             keyLevelsRef.current = null;
+            weeklyLevelsRef.current = null;
             pdhPdlZonePrimitiveRef.current?.setData(null);
             setPdhProximity(null);
         }
@@ -1325,7 +1359,6 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 byTime: new Map(maPoints.get(ma.id)!.map((p) => [p.time, p.value])),
                 last: maPoints.get(ma.id)!.at(-1)?.value ?? null,
             }));
-            setMaLegendVersion((v) => v + 1);
 
             // Golden/death crosses between the two chosen lines: chart markers
             // + live alert. With no pair chosen the alert still watches EMA
@@ -1335,22 +1368,45 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 : { fast: computeEMA(indCandles, 50), slow: computeEMA(indCandles, 200) };
             const emaCrosses = detectEMACrosses(crossPts.fast, crossPts.slow);
 
-            // detectEMACrosses already returns ascending by time (the library
-            // requires sorted markers).
-            if (maCross) {
-                const markers: SeriesMarker<Time>[] = emaCrosses.map((c) =>
-                    c.type === "golden"
-                        ? { time: c.time as Time, position: "belowBar", shape: "arrowUp", text: "GC", color: "#00ff41" }
-                        : { time: c.time as Time, position: "aboveBar", shape: "arrowDown", text: "DC", color: "#ff3b3b" },
-                );
-                if (!emaCrossMarkersRef.current) {
-                    emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, markers);
-                } else {
-                    emaCrossMarkersRef.current.setMarkers(markers);
+            // UT Bot — trailing stop (green on the long side, red short) +
+            // buy/sell markers. renderOverlays only gets CLOSED candles, so a
+            // signal never appears on the forming bar.
+            const ut = indicatorConfig.utBot ? computeUTBot(indCandles, utBotParams) : null;
+            if (ut) {
+                if (!utBotSeriesRef.current) {
+                    utBotSeriesRef.current = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
                 }
-            } else if (emaCrossMarkersRef.current) {
-                emaCrossMarkersRef.current.setMarkers([]);
+                const line = utBotLine(indCandles, ut.stop);
+                utBotSeriesRef.current.setData(line.map((p) => ({ time: p.time as Time, value: p.value, color: p.color })));
+                const lastPt = line.at(-1);
+                maLegendRef.current.push({
+                    id: "utBot",
+                    label: `UT Bot ${utBotParams.keyValue}/${utBotParams.atrPeriod}`,
+                    color: lastPt?.color ?? UT_LONG,
+                    byTime: new Map(line.map((p) => [p.time, p.value])),
+                    last: lastPt?.value ?? null,
+                });
+            } else if (utBotSeriesRef.current) {
+                chart.removeSeries(utBotSeriesRef.current); utBotSeriesRef.current = null;
             }
+
+            // One markers list on the candle series: MA crosses (when a pair is
+            // chosen), UT Bot signals, swing highs/lows (confirmed pivots only:
+            // closed candles, `right` bars after).
+            const markers = buildStudyMarkers({
+                crosses: maCross ? emaCrosses : [],
+                utSignals: ut?.signals ?? [],
+                swings: indicatorConfig.swings ? findSwingPoints(indCandles) : undefined,
+            });
+            if (!emaCrossMarkersRef.current) {
+                if (markers.length > 0) emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, markers);
+            } else {
+                emaCrossMarkersRef.current.setMarkers(markers);
+            }
+
+            // ADX / DMI (computed here, rendered in the ADX pane)
+            setAdxData(indicatorConfig.adx ? computeADX(indCandles, adxParams) : EMPTY_ADX);
+            setMaLegendVersion((v) => v + 1);
 
             // Live alert: detection runs regardless of toggle, but the toast is
             // gated to 4h/1d. renderOverlays also runs on every load / pair /
@@ -1472,7 +1528,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, movingAverages, maCross, clearPriceLines, fundingRateHourly, addToast]);
+    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, clearPriceLines, fundingRateHourly, addToast]);
 
     // History fetching and the live handlers call renderOverlays through this
     // ref, so an indicator toggle or a funding-rate update re-renders overlays
@@ -1821,6 +1877,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 pdhPdlZonePrimitiveRef.current?.setData({
                     pdh: levels.pdh,
                     pdl: levels.pdl,
+                    weekly: weeklyLevelsRef.current,
                     currentPrice: price,
                     pdhProximity: pdhProx,
                     pdlProximity: pdlProx,
@@ -1921,7 +1978,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
     // RAF loop: position DOM label overlays with collision avoidance
     useEffect(() => {
-        const allRefs = [pdhLabelRef, pdlLabelRef, priceLabelRef, pdhConnectorRef, pdlConnectorRef];
+        const allRefs = [pdhLabelRef, pdlLabelRef, priceLabelRef, pdhConnectorRef, pdlConnectorRef, pwhLabelRef, pwlLabelRef];
         if (!indicatorConfig.keyLevels) {
             for (const r of allRefs) r.current?.style.setProperty("display", "none");
             return;
@@ -2023,6 +2080,41 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         pdlConnectorRef.current.style.display = "none";
                     }
                 }
+
+                // PWH / PWL cards: at their level, pushed away from the live
+                // price (up above it, down below) past the price box and the
+                // PDH/PDL cards so nothing overlaps.
+                const boxOf = (el: HTMLDivElement | null, y: number | null) => {
+                    if (!el || y == null || el.style.display === "none") return null;
+                    const half = el.offsetHeight / 2;
+                    return { top: y - half, bottom: y + half };
+                };
+                const boxes = [
+                    boxOf(priceLabelRef.current, yPrice),
+                    boxOf(pdhLabelRef.current, adjustedPdhY),
+                    boxOf(pdlLabelRef.current, adjustedPdlY),
+                ].filter((b): b is { top: number; bottom: number } => b != null);
+                const weekly = weeklyLevelsRef.current;
+                // Nearest-to-price first, so a farther level is pushed further
+                // out and the cards keep the levels' price order.
+                const weeklyCards = ([[pwhLabelRef.current, weekly?.pwh], [pwlLabelRef.current, weekly?.pwl]] as const)
+                    .slice()
+                    .sort((a, b) => Math.abs((a[1] ?? 0) - price) - Math.abs((b[1] ?? 0) - price));
+                for (const [el, level] of weeklyCards) {
+                    if (!el) continue;
+                    const y = level != null ? series.priceToCoordinate(level) : null;
+                    if (y == null) { el.style.display = "none"; continue; }
+                    el.style.display = "flex";
+                    const half = el.offsetHeight / 2;
+                    const dir = price > 0 && level! < price ? 1 : -1;
+                    const paneH = containerRef.current?.clientHeight ?? Infinity;
+                    const fits = (v: number) => v - half >= 0 && v + half <= paneH;
+                    let placed = nudgeClear(y, half, boxes, dir, GAP);
+                    if (!fits(placed)) placed = nudgeClear(y, half, boxes, dir === 1 ? -1 : 1, GAP);
+                    if (!fits(placed)) { el.style.display = "none"; continue; }
+                    el.style.top = `${placed}px`;
+                    boxes.push({ top: placed - half, bottom: placed + half });
+                }
             }
             requestAnimationFrame(tick);
         };
@@ -2030,7 +2122,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         return () => { active = false; };
     }, [indicatorConfig.keyLevels]);
 
-    const legendStackOffset = CHART_LEGEND_STACK_OFFSET + (maLegendRef.current.length > 0 ? STUDY_LEGEND_ROW_H : 0);
+    // Chips stack under the legend: its measured height (it wraps on narrow
+    // charts), never less than the fixed offset they always used.
+    const legendStackOffset = Math.max(
+        CHART_LEGEND_STACK_OFFSET + (maLegendRef.current.length > 0 ? STUDY_LEGEND_ROW_H : 0),
+        legendHeight,
+    );
 
     return (
         <div className="tr-chart-wrap flex flex-col h-full">
@@ -2116,7 +2213,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     funding rate, buy/sell pressure. Floats over the chart's
                     top-left corner; the proximity/VWAP/BB chips below stack
                     beneath it (see CHART_LEGEND_HEIGHT). */}
-                <div className="tr-chart-legend">
+                <div className="tr-chart-legend" ref={legendRef}>
                     <div className="tr-chart-legend-row">
                         <span className={`tr-price-big ${dayDir} ${heroTickFlash}`} title={PRICE_HELP.last}>
                             ${heroPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -2322,6 +2419,33 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                                             <span style={{ color: pdlG, WebkitTextFillColor: pdlG, fontSize: 11, opacity: 0.7, whiteSpace: "nowrap" }}>{price > 0 ? ((price - levels.pdl) / price * 100).toFixed(2) : "0.00"}% away</span>
                                         </div>
                                     </div>
+
+                                    {/* PWH / PWL cards — the PDH/PDL card style (placed by the RAF loop) */}
+                                    {weeklyLevelsRef.current && ([
+                                        { ref: pwhLabelRef, label: "PWH", level: weeklyLevelsRef.current.pwh, c: "#ff3c3c", bg: "#0d1219", border: "rgba(255,60,60,0.45)", badge: "RESISTANCE", badgeBg: "rgba(255,60,60,0.15)" },
+                                        { ref: pwlLabelRef, label: "PWL", level: weeklyLevelsRef.current.pwl, c: "#00e676", bg: "#0a140f", border: "rgba(0,230,118,0.4)", badge: "SUPPORT", badgeBg: "rgba(0,230,118,0.12)" },
+                                    ] as const).map((w) => {
+                                        const diff = w.level - price;
+                                        return (
+                                            <div key={w.label} ref={w.ref} className="tr-wk-card" data-testid={`level-card-${w.label}`} style={{
+                                                position: "absolute", right: 65, transform: "translateY(-50%)",
+                                                display: "none", flexDirection: "column", gap: 4,
+                                                background: w.bg, border: `1px solid ${w.border}`, borderLeft: `3px solid ${w.c}`,
+                                                borderRadius: 6, padding: "6px 10px", width: "fit-content", color: "unset",
+                                            }}>
+                                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                                                    <span style={{ color: w.c, WebkitTextFillColor: w.c, fontWeight: 900, fontSize: 11, letterSpacing: 2 }}>{w.label}</span>
+                                                    <span className="tr-wk-detail" style={{ background: w.badgeBg, color: w.c, WebkitTextFillColor: w.c, fontSize: 7, padding: "1px 5px", borderRadius: 3, letterSpacing: 1 }}>{w.badge}</span>
+                                                </div>
+                                                <div style={{ color: "#ffffff", WebkitTextFillColor: "#ffffff", fontWeight: 700, fontSize: 13, letterSpacing: 0.3 }}>{fmtP(w.level)}</div>
+                                                <div className="tr-wk-detail" style={{ display: "flex", alignItems: "center", gap: 5, borderTop: `1px solid ${w.border}`, paddingTop: 4 }}>
+                                                    <span style={{ color: w.c, WebkitTextFillColor: w.c, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>{diff >= 0 ? "\u2191" : "\u2193"} ${Math.round(Math.abs(diff)).toLocaleString()}</span>
+                                                    <span style={{ color: "#333", WebkitTextFillColor: "#333", fontSize: 10 }}>{"\u00b7"}</span>
+                                                    <span style={{ color: w.c, WebkitTextFillColor: w.c, fontSize: 11, opacity: 0.7, whiteSpace: "nowrap" }}>{price > 0 ? (Math.abs(diff) / price * 100).toFixed(2) : "0.00"}% away</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </>
                             );
                         })()}
@@ -2722,6 +2846,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     fundingRate: indicatorConfig.fundingRate,
                     openInterest: indicatorConfig.openInterest,
                     cotReport: indicatorConfig.cotReport,
+                    adx: indicatorConfig.adx && adxData.plusDI.length > 0,
                 };
                 const visible = paneOrder.filter((p) => shown[p]);
                 const renderPane = (pane: ChartPaneId) => {
@@ -2736,6 +2861,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         case "fundingRate": return <FundingRatePanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
                         case "openInterest": return <OpenInterestPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
                         case "cotReport": return <COTPanel mainChart={chartRef.current} pairSymbol={selectedPairSymbol} height={h} />;
+                        case "adx": return <ADXPanel data={adxData} params={adxParams} mainChart={chartRef.current} height={h} />;
                     }
                 };
                 return visible.map((pane) => (

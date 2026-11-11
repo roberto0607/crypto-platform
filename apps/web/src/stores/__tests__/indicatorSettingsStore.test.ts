@@ -5,12 +5,13 @@ import {
     nextMovingAverage,
     useIndicatorSettingsStore,
 } from "@/stores/indicatorSettingsStore";
+import { DEFAULT_INDICATOR_SETTINGS } from "@/lib/chartLayouts/layoutConfig";
 
 const store = () => useIndicatorSettingsStore.getState();
 
 beforeEach(() => {
     localStorage.clear();
-    useIndicatorSettingsStore.setState({ movingAverages: [], maCross: null });
+    useIndicatorSettingsStore.setState({ ...DEFAULT_INDICATOR_SETTINGS });
 });
 
 describe("first load after the list shipped (no saved settings)", () => {
@@ -29,13 +30,14 @@ describe("first load after the list shipped (no saved settings)", () => {
     it("only the toggles that were on; no cross unless 50 and 200 both were", () => {
         localStorage.setItem("indicator-config", JSON.stringify({ ema20: false, ema50: false, ema200: true }));
         expect(loadIndicatorSettings()).toEqual({
+            ...DEFAULT_INDICATOR_SETTINGS,
             movingAverages: [{ id: "ema200", type: "EMA", length: 200, color: "#ef4444" }],
             maCross: null,
         });
     });
 
     it("nothing stored → no lines", () => {
-        expect(loadIndicatorSettings()).toEqual({ movingAverages: [], maCross: null });
+        expect(loadIndicatorSettings()).toEqual({ ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [], maCross: null });
     });
 
     it("saved settings win over old toggles; garbage → no lines", () => {
@@ -43,7 +45,7 @@ describe("first load after the list shipped (no saved settings)", () => {
         localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({ movingAverages: [] }));
         expect(loadIndicatorSettings().movingAverages).toEqual([]);
         localStorage.setItem(INDICATOR_SETTINGS_KEY, "{not json");
-        expect(loadIndicatorSettings()).toEqual({ movingAverages: [], maCross: null });
+        expect(loadIndicatorSettings()).toEqual({ ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [], maCross: null });
     });
 });
 
@@ -88,5 +90,24 @@ describe("editing", () => {
         expect(store().maCross).toBeNull();
         store().setMaCross({ fast: "ma1", slow: "zz" });
         expect(store().maCross).toBeNull();
+    });
+});
+
+describe("ADX / UT Bot settings", () => {
+    it("settings saved before ADX/UT Bot existed load with the defaults", () => {
+        localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({ movingAverages: [], maCross: null }));
+        const s = loadIndicatorSettings();
+        expect(s.adx).toEqual({ diLength: 14, adxSmoothing: 14, threshold: 25 });
+        expect(s.utBot).toEqual({ keyValue: 1, atrPeriod: 10 });
+    });
+
+    it("edits one field at a time, clamped, and persists (survives reload)", () => {
+        store().setAdx({ threshold: 20 });
+        store().setAdx({ diLength: 500 });
+        store().setUtBot({ keyValue: 2.04 });
+        store().setUtBot({ atrPeriod: 14 });
+        expect(store().adx).toEqual({ diLength: 200, adxSmoothing: 14, threshold: 20 });
+        expect(store().utBot).toEqual({ keyValue: 2, atrPeriod: 14 });
+        expect(loadIndicatorSettings()).toMatchObject({ adx: store().adx, utBot: store().utBot });
     });
 });

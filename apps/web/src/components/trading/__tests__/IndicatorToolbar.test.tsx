@@ -4,13 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { IndicatorToolbar } from "@/components/trading/IndicatorToolbar";
 import { useTradingStore, DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { DEFAULT_INDICATOR_SETTINGS } from "@/lib/chartLayouts/layoutConfig";
 
 const settings = () => useIndicatorSettingsStore.getState();
 
 beforeEach(() => {
     localStorage.clear();
     useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG } });
-    useIndicatorSettingsStore.setState({ movingAverages: [], maCross: null });
+    useIndicatorSettingsStore.setState({ ...DEFAULT_INDICATOR_SETTINGS });
 });
 
 async function openAndSearch(q: string) {
@@ -99,5 +100,58 @@ describe("moving average editor", () => {
         useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG, rsi: true } });
         render(<IndicatorToolbar />);
         expect(screen.getByRole("button", { name: "Indicators" }).textContent).toContain("3");
+    });
+});
+
+describe("ADX, UT Bot, key levels, swings", () => {
+    const cases: Array<[string, string]> = [
+        ["adx", "ADX / DMI"],
+        ["trend strength", "ADX / DMI"],
+        ["DMI", "ADX / DMI"],
+        ["ut bot", "UT Bot"],
+        ["trailing stop", "UT Bot"],
+        ["weekly high", "Key Levels (PDH/PDL/PWH/PWL)"],
+        ["pwl", "Key Levels (PDH/PDL/PWH/PWL)"],
+        ["previous day", "Key Levels (PDH/PDL/PWH/PWL)"],
+        ["swing", "Swing Highs/Lows"],
+        ["pivot", "Swing Highs/Lows"],
+    ];
+    for (const [q, label] of cases) {
+        it(`"${q}" finds ${label}`, async () => {
+            await openAndSearch(q);
+            expect(screen.getByText(label)).toBeTruthy();
+        });
+    }
+
+    it("all three are off by default", () => {
+        const c = useTradingStore.getState().indicatorConfig;
+        expect([c.adx, c.utBot, c.swings]).toEqual([false, false, false]);
+    });
+
+    it("ADX settings show once it's on and edit the store", async () => {
+        const user = await openAndSearch("adx");
+        expect(screen.queryByLabelText("ADX DI length")).toBeNull();
+        await user.click(screen.getByText("ADX / DMI"));
+        expect(useTradingStore.getState().indicatorConfig.adx).toBe(true);
+
+        const threshold = screen.getByLabelText("ADX threshold");
+        await user.clear(threshold);
+        await user.type(threshold, "20");
+        const di = screen.getByLabelText("ADX DI length");
+        await user.clear(di);
+        await user.type(di, "10");
+        expect(settings().adx).toEqual({ diLength: 10, adxSmoothing: 14, threshold: 20 });
+    });
+
+    it("UT Bot settings: key value (0.1 steps) and ATR period", async () => {
+        useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG, utBot: true } });
+        const user = await openAndSearch("ut bot");
+        const key = screen.getByLabelText("UT Bot key value");
+        await user.clear(key);
+        await user.type(key, "2.5");
+        const atr = screen.getByLabelText("UT Bot ATR period");
+        await user.clear(atr);
+        await user.type(atr, "14");
+        expect(settings().utBot).toEqual({ keyValue: 2.5, atrPeriod: 14 });
     });
 });

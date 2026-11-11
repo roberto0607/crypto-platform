@@ -59,7 +59,7 @@ describe("presets", () => {
 
     it("Everything: every indicator on, plus EMA 20/50/200", () => {
         expect(Object.values(get("Everything").indicators).every(Boolean)).toBe(true);
-        expect(Object.keys(get("Everything").indicators)).toHaveLength(18);
+        expect(Object.keys(get("Everything").indicators)).toHaveLength(21);
         expect(get("Everything").settings).toEqual(LEGACY_SETTINGS);
     });
 
@@ -67,7 +67,7 @@ describe("presets", () => {
         const cur = { ...base(), settings: LEGACY_SETTINGS };
         const s = resolveConfig(PRESETS.find((p) => p.name === "Clean")!.config, cur);
         expect(Object.values(s.indicators).some(Boolean)).toBe(false);
-        expect(s.settings).toEqual({ movingAverages: [], maCross: null });
+        expect(s.settings).toEqual({ ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [], maCross: null });
     });
 
     it("presets don't touch the timeframe", () => {
@@ -78,6 +78,7 @@ describe("presets", () => {
 
 /** What the old EMA 20/50/200 toggles (all on) draw now. */
 const LEGACY_SETTINGS: ChartState["settings"] = {
+    ...DEFAULT_INDICATOR_SETTINGS,
     movingAverages: [
         { id: "ema20", type: "EMA", length: 20, color: "#3b82f6" },
         { id: "ema50", type: "EMA", length: 50, color: "#f59e0b" },
@@ -101,7 +102,7 @@ describe("moving averages in a layout", () => {
 
     it("a layout without moving averages draws none", () => {
         const cur = { ...base(), settings: LEGACY_SETTINGS };
-        expect(resolveConfig({ version: 1, indicators: { rsi: true } }, cur).settings).toEqual({ movingAverages: [], maCross: null });
+        expect(resolveConfig({ version: 1, indicators: { rsi: true } }, cur).settings).toEqual({ ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [], maCross: null });
     });
 
     it("drops bad lines, repeated ids and a cross on a missing line; clamps lengths", () => {
@@ -133,11 +134,43 @@ describe("moving averages in a layout", () => {
     });
 });
 
+describe("ADX / UT Bot settings in a layout", () => {
+    it("default to TradingView's (ADX 14/14, line at 25; UT Bot 1 / ATR 10)", () => {
+        expect(DEFAULT_INDICATOR_SETTINGS.adx).toEqual({ diLength: 14, adxSmoothing: 14, threshold: 25 });
+        expect(DEFAULT_INDICATOR_SETTINGS.utBot).toEqual({ keyValue: 1, atrPeriod: 10 });
+    });
+
+    it("a layout without them (saved before) gets the defaults", () => {
+        const cur = { ...base(), settings: { ...base().settings, adx: { diLength: 5, adxSmoothing: 5, threshold: 40 } } };
+        expect(resolveConfig({ version: 1, indicators: { adx: true } }, cur).settings.adx).toEqual(DEFAULT_INDICATOR_SETTINGS.adx);
+    });
+
+    it("clamps to the catalog range and grid; bad values fall back per key", () => {
+        const s = resolveConfig({
+            version: 1,
+            params: { adx: { diLength: 0, adxSmoothing: 999, threshold: "x" }, utBot: { keyValue: 1.26, atrPeriod: 7.6 } },
+        }, base()).settings;
+        expect(s.adx).toEqual({ diLength: 1, adxSmoothing: 200, threshold: 25 });
+        expect(s.utBot).toEqual({ keyValue: 1.3, atrPeriod: 8 });
+    });
+
+    it("editing one marks the layout modified", () => {
+        const s = base();
+        const cfg = captureConfig(s);
+        expect(isModified(cfg, { ...s, settings: { ...s.settings, adx: { ...s.settings.adx, threshold: 20 } } })).toBe(true);
+        expect(isModified(cfg, { ...s, settings: { ...s.settings, utBot: { ...s.settings.utBot, keyValue: 2 } } })).toBe(true);
+    });
+
+    it("the ADX pane is a layout pane", () => {
+        expect(PANE_IDS).toContain("adx");
+    });
+});
+
 describe("resolveConfig (forward-compatible reader)", () => {
     it("skips an indicator this build doesn't know, silently", () => {
         const s = resolveConfig({ version: 1, indicators: { rsi: true, stochRsi: true, ema21: true } }, base());
         expect(s.indicators.rsi).toBe(true);
-        expect(Object.keys(s.indicators)).toHaveLength(18);
+        expect(Object.keys(s.indicators)).toHaveLength(21);
         expect("stochRsi" in s.indicators).toBe(false);
     });
 
@@ -149,7 +182,7 @@ describe("resolveConfig (forward-compatible reader)", () => {
 
     it("skips unknown/duplicate panes in order and appends missing ones in default order", () => {
         const s = resolveConfig({ version: 1, panes: { order: ["atr", "stoch", "atr", "rsi"] } }, base());
-        expect(s.paneOrder).toEqual(["atr", "rsi", "volume", "macd", "delta", "cvd", "fundingRate", "openInterest", "cotReport"]);
+        expect(s.paneOrder).toEqual(["atr", "rsi", "volume", "macd", "delta", "cvd", "fundingRate", "openInterest", "cotReport", "adx"]);
     });
 
     it("clamps heights and ignores unknown panes / bad values", () => {
@@ -178,6 +211,9 @@ describe("captureConfig + isModified", () => {
             ...base(),
             indicators: { ...allIndicators(false), rsi: true, vpvr: true },
             settings: {
+                ...DEFAULT_INDICATOR_SETTINGS,
+                adx: { diLength: 10, adxSmoothing: 20, threshold: 30 },
+                utBot: { keyValue: 2.5, atrPeriod: 14 },
                 movingAverages: [
                     { id: "ma1", type: "SMA", length: 20, color: "#3b82f6" },
                     { id: "ma2", type: "EMA", length: 200, color: "#ef4444" },
@@ -203,6 +239,8 @@ describe("captureConfig + isModified", () => {
             vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 },
             macd: { fast: 12, slow: 26, signal: 9 }, bollingerBands: { period: 20, stdDev: 2 },
             movingAverages: [],
+            adx: { diLength: 14, adxSmoothing: 14, threshold: 25 },
+            utBot: { keyValue: 1, atrPeriod: 10 },
         });
     });
 
@@ -215,12 +253,12 @@ describe("captureConfig + isModified", () => {
         expect(isModified(cfg, { ...s, paneCollapsed: { ...s.paneCollapsed, rsi: false } })).toBe(true);
         expect(isModified(cfg, { ...s, paneOrder: [...s.paneOrder].reverse() })).toBe(true);
         const line = { id: "ma1", type: "SMA" as const, length: 20, color: "#3b82f6" };
-        const withLine = { ...s, settings: { movingAverages: [line], maCross: null } };
+        const withLine = { ...s, settings: { ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [line], maCross: null } };
         const lineCfg = captureConfig(withLine);
         expect(isModified(cfg, withLine)).toBe(true);
         expect(isModified(lineCfg, withLine)).toBe(false);
-        expect(isModified(lineCfg, { ...s, settings: { movingAverages: [{ ...line, length: 21 }], maCross: null } })).toBe(true);
-        expect(isModified(lineCfg, { ...s, settings: { movingAverages: [{ ...line, color: "#ffffff" }], maCross: null } })).toBe(true);
+        expect(isModified(lineCfg, { ...s, settings: { ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [{ ...line, length: 21 }], maCross: null } })).toBe(true);
+        expect(isModified(lineCfg, { ...s, settings: { ...DEFAULT_INDICATOR_SETTINGS, movingAverages: [{ ...line, color: "#ffffff" }], maCross: null } })).toBe(true);
     });
 
     it("ignores fields a preset doesn't name (timeframe, heights)", () => {

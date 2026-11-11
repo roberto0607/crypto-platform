@@ -27,10 +27,10 @@ export const CHART_LAYOUT_CATALOG = {
     indicators: [
         "vwap", "bollingerBands", "volume", "rsi", "macd", "atr", "delta",
         "keyLevels", "liquidityZones", "orderBlocks", "cvd", "fundingRate", "openInterest", "vpvr",
-        "orderbook", "footprint", "liquidationLevels", "cotReport",
+        "orderbook", "footprint", "liquidationLevels", "cotReport", "adx", "utBot", "swings",
     ],
     /** Sub-panes, in today's default render order. */
-    panes: ["volume", "macd", "rsi", "atr", "delta", "cvd", "fundingRate", "openInterest", "cotReport"],
+    panes: ["volume", "macd", "rsi", "atr", "delta", "cvd", "fundingRate", "openInterest", "cotReport", "adx"],
     timeframes: ["1m", "5m", "15m", "1h", "4h", "1d", "1w"],
     params: {
         vpvr: { mode: ["visible", "weekly", "daily"] },
@@ -38,6 +38,21 @@ export const CHART_LAYOUT_CATALOG = {
         atr: { period: [14] },
         macd: { fast: [12], slow: [26], signal: [9] },
         bollingerBands: { period: [20], stdDev: [2] },
+    },
+    /**
+     * Editable numeric params: [min, max, step]. step 1 = whole numbers only.
+     * Defaults are TradingView's (built-in ADX/DMI; "UT Bot Alerts").
+     */
+    numericParams: {
+        adx: {
+            diLength: { min: 1, max: 200, step: 1, default: 14 },
+            adxSmoothing: { min: 1, max: 200, step: 1, default: 14 },
+            threshold: { min: 1, max: 99, step: 1, default: 25 },
+        },
+        utBot: {
+            keyValue: { min: 0.1, max: 20, step: 0.1, default: 1 },
+            atrPeriod: { min: 1, max: 200, step: 1, default: 10 },
+        },
     },
     movingAverages: {
         maxLines: 10,
@@ -68,6 +83,18 @@ export interface MovingAverageSpec {
     color: string;
 }
 
+export interface AdxParams {
+    diLength: number;
+    adxSmoothing: number;
+    /** The horizontal "trend" line (TradingView convention: 25). */
+    threshold: number;
+}
+
+export interface UtBotParams {
+    keyValue: number;
+    atrPeriod: number;
+}
+
 /** Golden/death-cross markers between two of the lines (by id). */
 export interface MaCrossSpec {
     fast: string;
@@ -86,6 +113,8 @@ export interface ChartLayoutConfig {
         bollingerBands?: { period: 20; stdDev: 2 };
         movingAverages?: MovingAverageSpec[];
         maCross?: MaCrossSpec;
+        adx?: AdxParams;
+        utBot?: UtBotParams;
     };
     panes?: {
         order?: ChartPaneId[];

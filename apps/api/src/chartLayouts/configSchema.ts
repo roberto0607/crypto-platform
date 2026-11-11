@@ -28,9 +28,22 @@ const movingAverageSchema = z
     })
     .strict();
 
+/** A number in [min, max] on the step grid (step 1 → integer). Every key required. */
+function numericGroup(spec: Record<string, { min: number; max: number; step: number }>) {
+    return z
+        .object(Object.fromEntries(Object.entries(spec).map(([k, r]) => [
+            k,
+            z.number().min(r.min).max(r.max).refine((v) => Math.abs(v / r.step - Math.round(v / r.step)) < 1e-9, {
+                message: `must be a multiple of ${r.step}`,
+            }),
+        ])))
+        .strict();
+}
+
 const paramsSchema = z
     .object({
         ...Object.fromEntries(Object.entries(C.params).map(([group, spec]) => [group, paramGroup(spec).optional()])),
+        ...Object.fromEntries(Object.entries(C.numericParams).map(([group, spec]) => [group, numericGroup(spec).optional()])),
         movingAverages: z
             .array(movingAverageSchema)
             .max(MA.maxLines)

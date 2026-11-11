@@ -23,7 +23,7 @@ function auth(app: FastifyInstance, sub: string) {
 
 const swingConfig = {
     version: 1,
-    indicators: { keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true },
+    indicators: { keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true, adx: true, utBot: true, swings: false },
     params: {
         vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 },
         movingAverages: [
@@ -32,8 +32,10 @@ const swingConfig = {
             { id: "ma3", type: "SMA", length: 200, color: "#ef4444" },
         ],
         maCross: { fast: "ma2", slow: "ma3" },
+        adx: { diLength: 10, adxSmoothing: 20, threshold: 20 },
+        utBot: { keyValue: 2.5, atrPeriod: 14 },
     },
-    panes: { order: ["rsi", "atr", "volume"], collapsed: { rsi: false, atr: true }, heights: { rsi: 120 } },
+    panes: { order: ["rsi", "adx", "atr", "volume"], collapsed: { rsi: false, atr: true, adx: false }, heights: { rsi: 120, adx: 150 } },
     timeframe: "4h",
 };
 
@@ -170,6 +172,15 @@ describe("/v1/chart-layouts", () => {
         ["more than 10 MAs", { version: 1, params: { movingAverages: Array.from({ length: 11 }, (_, i) => ma({ id: `m${i}` })) } }],
         ["cross on an unknown MA", { version: 1, params: { movingAverages: [ma()], maCross: { fast: "ma1", slow: "nope" } } }],
         ["cross on the same MA", { version: 1, params: { movingAverages: [ma()], maCross: { fast: "ma1", slow: "ma1" } } }],
+        ["ADX length 0", { version: 1, params: { adx: { diLength: 0, adxSmoothing: 14, threshold: 25 } } }],
+        ["ADX fractional length", { version: 1, params: { adx: { diLength: 14.5, adxSmoothing: 14, threshold: 25 } } }],
+        ["ADX threshold 100", { version: 1, params: { adx: { diLength: 14, adxSmoothing: 14, threshold: 100 } } }],
+        ["ADX missing a key", { version: 1, params: { adx: { diLength: 14, adxSmoothing: 14 } } }],
+        ["ADX unknown key", { version: 1, params: { adx: { diLength: 14, adxSmoothing: 14, threshold: 25, source: "close" } } }],
+        ["UT Bot key value 0", { version: 1, params: { utBot: { keyValue: 0, atrPeriod: 10 } } }],
+        ["UT Bot key value off the 0.1 step", { version: 1, params: { utBot: { keyValue: 1.25, atrPeriod: 10 } } }],
+        ["UT Bot key value over 20", { version: 1, params: { utBot: { keyValue: 20.1, atrPeriod: 10 } } }],
+        ["UT Bot ATR period string", { version: 1, params: { utBot: { keyValue: 1, atrPeriod: "10" } } }],
         ["cross without MAs", { version: 1, params: { maCross: { fast: "a", slow: "b" } } }],
         ["unknown pane", { version: 1, panes: { order: ["rsi", "stoch"] } }],
         ["duplicate pane in order", { version: 1, panes: { order: ["rsi", "rsi"] } }],

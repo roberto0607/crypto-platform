@@ -10,7 +10,14 @@
  * looks exactly as it did.
  */
 import { create } from "zustand";
-import { CHART_LAYOUT_CATALOG, upgradeLegacyEmaConfig, type MaCrossSpec, type MovingAverageSpec } from "@/lib/chartLayouts/catalog";
+import {
+    CHART_LAYOUT_CATALOG,
+    upgradeLegacyEmaConfig,
+    type AdxParams,
+    type MaCrossSpec,
+    type MovingAverageSpec,
+    type UtBotParams,
+} from "@/lib/chartLayouts/catalog";
 import {
     DEFAULT_INDICATOR_SETTINGS,
     resolveSettings,
@@ -77,6 +84,9 @@ interface IndicatorSettingsState extends IndicatorSettings {
     /** Removing a line also removes cross markers that use it. */
     removeMovingAverage: (id: string) => void;
     setMaCross: (cross: MaCrossSpec | null) => void;
+    /** Change some ADX / UT Bot params (clamped to the catalog range). */
+    setAdx: (patch: Partial<AdxParams>) => void;
+    setUtBot: (patch: Partial<UtBotParams>) => void;
     /** Replace everything (applying a chart layout). */
     setSettings: (s: IndicatorSettings) => void;
 }
@@ -89,6 +99,8 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
         const s = resolveSettings({
             movingAverages: next.movingAverages ?? cur.movingAverages,
             maCross: "maCross" in next ? next.maCross : cur.maCross,
+            adx: next.adx ?? cur.adx,
+            utBot: next.utBot ?? cur.utBot,
         });
         persist(s);
         set(s);
@@ -105,12 +117,14 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
             commit({ movingAverages: get().movingAverages.map((m) => (m.id === id ? { ...m, ...patch, id } : m)) }),
         removeMovingAverage: (id) => commit({ movingAverages: get().movingAverages.filter((m) => m.id !== id) }),
         setMaCross: (maCross) => commit({ maCross }),
-        setSettings: (s) => commit({ movingAverages: s.movingAverages, maCross: s.maCross }),
+        setAdx: (patch) => commit({ adx: { ...get().adx, ...patch } }),
+        setUtBot: (patch) => commit({ utBot: { ...get().utBot, ...patch } }),
+        setSettings: (s) => commit({ movingAverages: s.movingAverages, maCross: s.maCross, adx: s.adx, utBot: s.utBot }),
     };
 });
 
 /** The settings part of the store, as a plain object. */
 export function currentIndicatorSettings(): IndicatorSettings {
-    const { movingAverages, maCross } = useIndicatorSettingsStore.getState();
-    return { movingAverages, maCross };
+    const { movingAverages, maCross, adx, utBot } = useIndicatorSettingsStore.getState();
+    return { movingAverages, maCross, adx, utBot };
 }

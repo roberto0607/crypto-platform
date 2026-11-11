@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { MovingAveragesEditor } from "./MovingAveragesEditor";
+import { IndicatorParamsEditor } from "./IndicatorParamsEditor";
 
 /** Not a toggle: a list of lines (indicatorSettingsStore), edited inline. */
 const MOVING_AVERAGES_KEY = "movingAverages";
@@ -26,10 +27,25 @@ const STANDARD_INDICATORS: readonly MenuItem[] = [
   { key: "macd", label: "MACD", color: "#3b82f6" },
   { key: "atr", label: "ATR", color: "#a855f7" },
   { key: "delta", label: "Est. Delta", color: "#22c55e" },
+  {
+    key: "adx", label: "ADX / DMI", color: "#e5e7eb",
+    aliases: ["adx", "dmi", "trend strength", "average directional index", "directional movement", "di+", "di-"],
+  },
 ];
 
 const ADVANCED_INDICATORS: readonly MenuItem[] = [
-  { key: "keyLevels", label: "Key Levels (PDH/PDL)", color: "#ff4d4d" },
+  {
+    key: "keyLevels", label: "Key Levels (PDH/PDL/PWH/PWL)", color: "#ff4d4d",
+    aliases: ["key levels", "pdh", "pdl", "pwh", "pwl", "previous day", "previous week", "daily high", "daily low", "weekly high", "weekly low"],
+  },
+  {
+    key: "utBot", label: "UT Bot", color: "#22c55e",
+    aliases: ["ut bot", "ut bot alerts", "trailing stop", "atr trailing stop", "buy sell signals"],
+  },
+  {
+    key: "swings", label: "Swing Highs/Lows", color: "#e5e7eb",
+    aliases: ["swing", "swing high", "swing low", "pivot", "pivots", "fractal"],
+  },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
   { key: "cvd", label: "CVD", color: "#06b6d4" },
@@ -99,6 +115,19 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
   function renderRow(ind: MenuItem) {
     if (ind.key === MOVING_AVERAGES_KEY) return renderMovingAverages(ind);
     const active = config[ind.key as keyof typeof config];
+    const settings = ind.key === "adx" || ind.key === "utBot" ? ind.key : null;
+    if (settings) {
+      return (
+        <div key={ind.key}>
+          {renderToggle(ind, active)}
+          {active && <IndicatorParamsEditor group={settings} />}
+        </div>
+      );
+    }
+    return renderToggle(ind, active);
+  }
+
+  function renderToggle(ind: MenuItem, active: boolean) {
     return (
       <button
         key={ind.key}
