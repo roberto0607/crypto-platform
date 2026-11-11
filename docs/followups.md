@@ -1253,3 +1253,17 @@ It trades a throwaway pair that the `MARKET_SYMBOLS` allowlist rejects
 (`pair_not_tradable`), and it isn't in CI, so nothing notices. It also predates
 the trigger rules: triggers need an open position and a live mark. Fix it or
 delete it.
+
+---
+
+## 🔵 LOW — 1d / 1w crosshair label shows a local time (and can show the wrong date)
+
+**Discovered:** 2026-11-11, higher-timeframe indicators PR.
+
+The crosshair time label (`formatDateTime12h`, `CandlestickChart.tsx`) prints
+"Month D, h:mm AM/PM" on every timeframe. Chart times are UTC + the viewer's
+offset (`TZ_OFFSET_SEC`), so a daily bar (UTC midnight) reads e.g.
+"November 9, 7:00 PM" in New York for the 2026-11-10 candle: a time that means
+nothing on a daily bar, and the previous day's date west of UTC. On 1d and 1w
+the label should show the bar's UTC date only ("Nov 10, 2026"; the week's
+Monday on 1w), from the unshifted time. Intraday timeframes keep date + time.

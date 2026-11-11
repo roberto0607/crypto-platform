@@ -17,6 +17,7 @@ import { computePineATR } from "./pineAtr";
 import { computeADX } from "./adx";
 import { computeUTBot } from "./utBot";
 import { findSwingPoints, type SwingPoint } from "./swings";
+import { computeMovingAverage, htfStepSeries, TIMEFRAME_SEC, type MovingAverageKind } from "./htf";
 
 export interface CandleFixture {
   columns: string[];
@@ -100,6 +101,31 @@ export function computeParitySeries(candles: Candle[], timeframeSec: number): Se
     swingLow: pivots(swings.lows),
     swingLowConfirmed: confirmations(swings.lows),
   };
+}
+
+/**
+ * The higher-timeframe lines checked on the 4h fixture: [name, HTF, type, length].
+ * The chart test runs its own line assembly over the same inputs and must
+ * reproduce these, so chart and server agree on every 4h bar, including the
+ * first bar after each daily/weekly close.
+ */
+export const HTF_PARITY_LINES: readonly [string, "1d" | "1w", MovingAverageKind, number][] = [
+  ["sma200_1d", "1d", "SMA", 200],
+  ["sma50_1d", "1d", "SMA", 50],
+  ["ema50_1d", "1d", "EMA", 50],
+  ["sma50_1w", "1w", "SMA", 50],
+  ["ema21_1w", "1w", "EMA", 21],
+];
+
+/** HTF lines on the 4h bars, from the fixture's own 1d / 1w candles. */
+export function computeHtfParitySeries(fixture: CandleFixture): SeriesMap {
+  const ltfTimes = fixtureCandles(fixture.timeframes["4h"]!).map((c) => c.time);
+  const out: SeriesMap = {};
+  for (const [name, tf, type, length] of HTF_PARITY_LINES) {
+    const htf = computeMovingAverage(fixtureCandles(fixture.timeframes[tf]!), type, length);
+    out[name] = htfStepSeries(htf, TIMEFRAME_SEC[tf], ltfTimes);
+  }
+  return out;
 }
 
 /** Every point of every series must match: same names, lengths, times, values. */

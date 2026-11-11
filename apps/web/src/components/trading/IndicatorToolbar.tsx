@@ -18,7 +18,7 @@ interface MenuItem {
 const STANDARD_INDICATORS: readonly MenuItem[] = [
   {
     key: MOVING_AVERAGES_KEY, label: "Moving Averages", color: "#3b82f6",
-    aliases: ["moving average", "ma", "sma", "ema", "simple moving average", "exponential moving average", "golden cross", "death cross"],
+    aliases: ["moving average", "ma", "sma", "ema", "simple moving average", "exponential moving average", "golden cross", "death cross", "htf", "higher timeframe", "multi timeframe", "mtf", "daily sma", "weekly sma"],
   },
   { key: "vwap", label: "VWAP", color: "#a855f7" },
   { key: "bollingerBands", label: "Bollinger Bands", color: "#6366f1" },

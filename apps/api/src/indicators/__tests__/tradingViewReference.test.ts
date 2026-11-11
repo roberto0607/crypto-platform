@@ -19,13 +19,16 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   computeSMA, computeRSI, computePineATR, computeADX, computeUTBot, fixtureCandles, WARMUP,
+  htfStepSeries, TIMEFRAME_SEC,
   type CandleFixture, type Point,
 } from "../shared";
 
 const dir = new URL("../../../../../packages/indicators/fixtures/", import.meta.url);
 const fixture = JSON.parse(readFileSync(new URL("btcusd-coinbase.json", dir), "utf8")) as CandleFixture;
+interface HtfReference { length: number; closes: [number, number][]; sma: [number, number][] }
 const tv = JSON.parse(readFileSync(new URL("tradingview-reference.json", dir), "utf8")) as {
   timeframes: Record<string, { window: [number, number]; signals: [number, 1 | -1][]; rows: number[][] }>;
+  htf: { window4h: [number, number]; "1d": HtfReference; "1w": HtfReference };
 };
 
 /** Per timeframe: [SMA relative, RSI absolute, ATR relative, ADX absolute]. */
@@ -68,5 +71,50 @@ describe.each(Object.keys(TOL))("TradingView reference, %s", (tf) => {
       .filter((s) => s.time >= from && s.time <= to)
       .map((s) => [s.time, s.side === "buy" ? 1 : -1]);
     expect(signals).toEqual(ref.signals);
+  });
+});
+
+/**
+ * Higher timeframe on the 4h chart: the 1D SMA 200 / 1W SMA 50 at each 4h bar
+ * must be TradingView's value for the last CLOSED day/week. The expected bar
+ * is found here by plain date math (floor to the UTC day / Monday week, minus
+ * one), independently of htfStepSeries.
+ */
+describe.each([["1d", 0], ["1w", 4 * 86_400]] as const)("TradingView reference, %s SMA on 4h bars", (tf, anchor) => {
+  const sec = TIMEFRAME_SEC[tf];
+  const ref = tv.htf[tf];
+  const tvSma = new Map(ref.sma);
+  const [from, to] = tv.htf.window4h;
+  const times: number[] = [];
+  for (let t = from; t <= to; t += TIMEFRAME_SEC["4h"]) times.push(t);
+  const lastClosed = (t: number) => Math.floor((t - anchor) / sec) * sec + anchor - sec;
+  const rel = (a: number, b: number) => Math.abs(a - b) / Math.abs(b);
+  const asCandles = (rows: [number, number][]) => rows.map(([time, close]) => ({ time, open: close, high: close, low: close, close, volume: 0 }));
+
+  it("from TradingView's own closes: every 4h bar, through the last closed bar of the export", () => {
+    const step = htfStepSeries(computeSMA(asCandles(ref.closes), ref.length), sec, times);
+    expect(step.map((p) => p.time)).toEqual(times);
+    const [lastDay, lastSma] = ref.sma.at(-1)!;
+    for (const p of step) {
+      // TradingView's 1D SMA 200 for 2026-11-09, its last closed day, was
+      // computed from a close 1.50 lower than the 75,259.28 it exports for
+      // that day (75,257.78 — the next day opened at 75,257.77): 1e-7
+      // relative, the same 73,153.80 to the cent. Every other bar: 1e-12.
+      const tol = tf === "1d" && lastClosed(p.time) === lastDay ? 2e-7 : 1e-12;
+      expect(rel(p.value, tvSma.get(lastClosed(p.time))!)).toBeLessThanOrEqual(tol);
+    }
+    // The last 4h bar of the export (1D: 2026-11-10 16:00) shows the last closed day's value.
+    const last = step.at(-1)!;
+    expect(lastClosed(last.time)).toBe(lastDay);
+    expect(last.value.toFixed(2)).toBe(lastSma!.toFixed(2));
+  });
+
+  it("from our Coinbase fixture: same values wherever the fixture has the closed bar", () => {
+    const htf = fixtureCandles(fixture.timeframes[tf]!);
+    const covered = times.filter((t) => lastClosed(t) <= htf.at(-1)!.time);
+    expect(covered.length).toBeGreaterThan(250);
+    const step = htfStepSeries(computeSMA(htf, ref.length), sec, covered);
+    expect(step.length).toBe(covered.length);
+    for (const p of step) expect(rel(p.value, tvSma.get(lastClosed(p.time))!)).toBeLessThanOrEqual(1e-12);
   });
 });

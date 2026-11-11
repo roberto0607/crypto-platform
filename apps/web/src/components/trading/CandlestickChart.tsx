@@ -5,6 +5,7 @@ import {
     CandlestickSeries,
     LineSeries,
     LineStyle,
+    LineType,
     createSeriesMarkers,
     type ISeriesMarkersPluginApi,
     type IChartApi,
@@ -20,6 +21,8 @@ import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/
 import { applyTick, bucketTime, planClosedCandle, reconcileForming, withForming, type Bar } from "@/lib/formingCandle";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { buildHtfLine, htfBarsNeeded, lineMode, movingAverageLabel, timeframeLabel } from "@/lib/htfLines";
+import { peekHtfCandles } from "@/lib/htfCandleCache";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
@@ -1335,26 +1338,69 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // Moving averages — one line per entry in the list (indicator
             // settings store / chart layout), keyed by id so editing a line's
             // length or color updates it in place.
+            //
+            // A line with a higher timeframe (e.g. SMA 200 on 1D, on a 4h
+            // chart) runs on that timeframe's CLOSED candles, drawn as a step
+            // that changes on the first bar after each HTF close (lib/htfLines,
+            // shared rule in packages/indicators htf.ts). Those candles load in
+            // the background (lib/htfCandleCache) and redraw when they land;
+            // until then the line is empty. A timeframe below the chart's is
+            // not drawn.
             const maPoints = new Map<string, Point[]>();
             const maSeries = maSeriesRef.current;
-            for (const ma of movingAverages) {
-                const pts = ma.type === "SMA" ? computeSMA(indCandles, ma.length) : computeEMA(indCandles, ma.length);
-                maPoints.set(ma.id, pts);
-                let series = maSeries.get(ma.id);
+            const liveSeries = new Set<string>();
+            const chartTf = timeframeRef.current;
+            const pairId = selectedPairIdRef.current;
+            const redraw = () => {
+                if (selectedPairIdRef.current === pairId) renderOverlaysRef.current(rawCandlesRef.current);
+            };
+            const lineSeries = (key: string, opts: { color: string; step: boolean; dotted?: boolean }) => {
+                let series = maSeries.get(key);
+                const style = {
+                    color: opts.color,
+                    lineType: opts.step ? LineType.WithSteps : LineType.Simple,
+                    lineStyle: opts.dotted ? LineStyle.Dotted : LineStyle.Solid,
+                };
                 if (!series) {
-                    series = chart.addSeries(LineSeries, { color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-                    maSeries.set(ma.id, series);
+                    series = chart.addSeries(LineSeries, { ...style, lineWidth: opts.dotted ? 2 : 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: !opts.dotted });
+                    maSeries.set(key, series);
                 } else {
-                    series.applyOptions({ color: ma.color });
+                    series.applyOptions(style);
                 }
-                series.setData(toLineData(pts));
+                liveSeries.add(key);
+                return series;
+            };
+            for (const ma of movingAverages) {
+                const mode = lineMode(ma, chartTf);
+                let pts: Point[] = [];
+                if (mode === "chart") {
+                    pts = ma.type === "SMA" ? computeSMA(indCandles, ma.length) : computeEMA(indCandles, ma.length);
+                } else if (mode === "htf" && pairId && ma.timeframe && ma.timeframe !== "chart") {
+                    const tf = ma.timeframe;
+                    const need = htfBarsNeeded(ma, indCandles, TIMEFRAME_SECONDS[tf]);
+                    const htf = peekHtfCandles(pairId, tf, need, redraw);
+                    if (htf) {
+                        const built = buildHtfLine(ma, tf, indCandles, htf.map(apiCandleToIndicator));
+                        pts = built.step;
+                        if (ma.forming && built.forming) {
+                            const f = built.forming;
+                            lineSeries(`${ma.id}~forming`, { color: ma.color, step: false, dotted: true }).setData(
+                                toLineData(f.from === f.to ? [{ time: f.from, value: f.value }] : [{ time: f.from, value: f.value }, { time: f.to, value: f.value }]),
+                            );
+                        }
+                    }
+                }
+                maPoints.set(ma.id, pts);
+                lineSeries(ma.id, { color: ma.color, step: mode === "htf" }).setData(toLineData(pts));
             }
             for (const [id, series] of maSeries) {
-                if (!maPoints.has(id)) { chart.removeSeries(series); maSeries.delete(id); }
+                if (!liveSeries.has(id)) { chart.removeSeries(series); maSeries.delete(id); }
             }
             maLegendRef.current = movingAverages.map((ma) => ({
                 id: ma.id,
-                label: `${ma.type} ${ma.length}`,
+                label: lineMode(ma, chartTf) === "lower"
+                    ? `${movingAverageLabel(ma)} n/a on ${timeframeLabel(chartTf)}`
+                    : movingAverageLabel(ma),
                 color: ma.color,
                 byTime: new Map(maPoints.get(ma.id)!.map((p) => [p.time, p.value])),
                 last: maPoints.get(ma.id)!.at(-1)?.value ?? null,
@@ -1415,8 +1461,16 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // without toasting) the first time a key is seen. Only a cross newer
             // than the primed value on the SAME key — i.e. a fresh live
             // candle.closed — fires exactly one toast.
+            //
+            // The key also names the two lines and whether both have data, so
+            // editing them or a higher-timeframe line loading in the
+            // background re-primes instead of toasting an old cross.
             const tf = timeframeRef.current;
-            const alertKey = `${selectedPairIdRef.current ?? ""}:${tf}`;
+            const crossLines = maCross
+                ? JSON.stringify([maCross.fast, maCross.slow].map((id) => movingAverages.find((m) => m.id === id)))
+                : "ema50/ema200";
+            const crossReady = crossPts.fast.length > 0 && crossPts.slow.length > 0;
+            const alertKey = `${selectedPairIdRef.current ?? ""}:${tf}:${crossLines}:${crossReady}`;
             const newestCross = emaCrosses.length > 0 ? emaCrosses[emaCrosses.length - 1]! : null;
             if (lastAlertKeyRef.current !== alertKey) {
                 lastAlertKeyRef.current = alertKey;

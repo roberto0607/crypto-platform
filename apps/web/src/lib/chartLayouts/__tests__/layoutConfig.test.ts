@@ -127,6 +127,33 @@ describe("moving averages in a layout", () => {
         expect(s.settings.maCross).toBeNull();
     });
 
+    it("keeps a higher timeframe (and forming with it); \"chart\" or unknown → the chart's", () => {
+        const line = { type: "SMA", length: 200, color: "#112233" };
+        const s = resolveConfig({
+            version: 1,
+            params: {
+                movingAverages: [
+                    { id: "a", ...line, timeframe: "1d", forming: true },
+                    { id: "b", ...line, timeframe: "1w", forming: "yes" },
+                    { id: "c", ...line, timeframe: "chart", forming: true },
+                    { id: "d", ...line, timeframe: "2h" },
+                    { id: "e", ...line, forming: true },
+                ],
+            },
+        }, base());
+        expect(s.settings.movingAverages).toEqual([
+            { id: "a", type: "SMA", length: 200, color: "#112233", timeframe: "1d", forming: true },
+            { id: "b", type: "SMA", length: 200, color: "#112233", timeframe: "1w" },
+            { id: "c", type: "SMA", length: 200, color: "#112233" },
+            { id: "d", type: "SMA", length: 200, color: "#112233" },
+            { id: "e", type: "SMA", length: 200, color: "#112233" },
+        ]);
+        // saved in a layout and read back unchanged
+        const st = { ...base(), settings: { ...base().settings, movingAverages: s.settings.movingAverages } };
+        expect(resolveConfig(captureConfig(st), base()).settings.movingAverages).toEqual(s.settings.movingAverages);
+        expect(isModified(captureConfig(st), { ...st, settings: { ...st.settings, movingAverages: [{ ...s.settings.movingAverages[0]!, timeframe: "1w" }, ...s.settings.movingAverages.slice(1)] } })).toBe(true);
+    });
+
     it("caps the list at the catalog max", () => {
         const many = Array.from({ length: 14 }, (_, i) => ({ id: `m${i}`, type: "EMA", length: i + 1, color: "#112233" }));
         expect(resolveConfig({ version: 1, params: { movingAverages: many } }, base()).settings.movingAverages)

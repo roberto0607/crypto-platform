@@ -15,7 +15,20 @@ export { findSwingPoints, type SwingPoint } from "./swings";
 export { WARMUP, firstRealTime } from "./warmup";
 export { pineRma, pineTrueRange } from "./pine";
 export {
+  TIMEFRAME_SEC,
+  HTF_TIMEFRAMES,
+  computeMovingAverage,
+  htfValueAt,
+  htfStepSeries,
+  htfFormingMovingAverage,
+  type IndicatorTimeframe,
+  type HtfTimeframe,
+  type MovingAverageKind,
+} from "./htf";
+export {
   computeParitySeries,
+  computeHtfParitySeries,
+  HTF_PARITY_LINES,
   compareSeries,
   fingerprint,
   fromGolden,

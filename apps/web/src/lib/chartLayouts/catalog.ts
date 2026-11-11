@@ -58,6 +58,13 @@ export const CHART_LAYOUT_CATALOG = {
         maxLines: 10,
         types: ["EMA", "SMA"],
         length: { min: 1, max: 500 },
+        /**
+         * The timeframe a line is computed on: "chart" (the default, also when
+         * missing) or a higher one, drawn as a step line from CLOSED bars of
+         * that timeframe (packages/indicators htf.ts). `forming: true` also
+         * shows the still-forming bar's value, dotted, at the right edge.
+         */
+        timeframes: ["chart", "1h", "4h", "1d", "1w"],
         /** Line ids: lowercase letters/digits, unique within a layout. */
         idPattern: "^[a-z0-9]{1,16}$",
         /** `#rrggbb`. */
@@ -74,6 +81,7 @@ export type ChartPaneId = (typeof CHART_LAYOUT_CATALOG.panes)[number];
 export type ChartTimeframe = (typeof CHART_LAYOUT_CATALOG.timeframes)[number];
 export type VpvrMode = (typeof CHART_LAYOUT_CATALOG.params.vpvr.mode)[number];
 export type MovingAverageType = (typeof CHART_LAYOUT_CATALOG.movingAverages.types)[number];
+export type MovingAverageTimeframe = (typeof CHART_LAYOUT_CATALOG.movingAverages.timeframes)[number];
 
 /** One moving-average line on the price chart. */
 export interface MovingAverageSpec {
@@ -81,6 +89,10 @@ export interface MovingAverageSpec {
     type: MovingAverageType;
     length: number;
     color: string;
+    /** Missing = "chart". */
+    timeframe?: MovingAverageTimeframe;
+    /** Higher timeframe only: also draw the forming bar's value (dotted). */
+    forming?: boolean;
 }
 
 export interface AdxParams {
