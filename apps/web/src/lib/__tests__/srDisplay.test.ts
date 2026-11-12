@@ -9,6 +9,7 @@ import {
     srComputeOpts,
     srConfirmText,
     srLabel,
+    srLabelled,
     srParamsForTimeframe,
     SR_COLORS,
 } from "../srDisplay";
@@ -200,3 +201,29 @@ describe("pivot length on the chart's timeframe (Auto / hand-set)", () => {
     });
 });
 
+describe("labels: only full-strength levels", () => {
+    it("full unbroken levels get a label; faded, old and broken ones draw without one", () => {
+        const levels = [
+            lv({ price: 101 }), lv({ price: 102 }), lv({ price: 103 }), lv({ price: 104 }), // above: 3 full, 1 faded
+            lv({ price: 99, role: "support" }),
+            lv({ price: 98, role: "support", staleIndex: 3, staleTime: 300 }), // old
+            lv({ price: 97, role: "support", brokenIndex: 4, brokenTime: 400 }), // broken
+        ];
+        const d = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true });
+        const labelled = d.filter(srLabelled).map((x) => x.price).sort();
+        expect(labelled).toEqual([101, 102, 103, 99].sort());
+        expect(d.find((x) => x.price === 98)!.label).toContain("old");
+        expect(srLabelled(d.find((x) => x.price === 98)!)).toBe(false);
+        expect(srLabelled(d.find((x) => x.price === 104)!)).toBe(false);
+        expect(srLabelled(d.find((x) => x.price === 97)!)).toBe(false);
+    });
+
+    it("never more than `nearest` labels each side per timeframe, however many levels exist", () => {
+        const levels = Array.from({ length: 40 }, (_, i) => lv({ price: 60 + i * 2, role: i % 2 ? "resistance" : "support" }));
+        const chart = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true });
+        const htf = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true, tag: "1D" });
+        expect(chart.length).toBe(40);
+        expect(chart.filter(srLabelled).length).toBe(6);
+        expect(htf.filter(srLabelled).length).toBe(6);
+    });
+});

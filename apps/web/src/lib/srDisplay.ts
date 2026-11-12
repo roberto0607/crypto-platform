@@ -11,6 +11,8 @@
  *   recent; hidden when "show broken" is off);
  * - a flip is its own level, in its new role's color from the break bar on;
  * - higher-timeframe levels are dashed and tagged "1D"/"1W";
+ * - only full levels carry a right-edge label (srLabelled), so labels never
+ *   pile up on the price axis; faded and "old" levels draw line + zone only.
  * - the chart's pivot length is Auto per timeframe unless set by hand there
  *   (srParamsForTimeframe; the HTF levels keep htfLeft/htfRight).
  */
@@ -121,6 +123,11 @@ export function buildSRDrawables(input: {
         dashed: tag !== undefined,
         label: srLabel(l, tag),
     }));
+}
+
+/** Whether a level gets a right-edge label: full strength and unbroken only. */
+export function srLabelled(d: SRDrawable): boolean {
+    return !d.broken && d.emphasis === "full";
 }
 
 export interface SRBanner {
