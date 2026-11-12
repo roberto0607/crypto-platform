@@ -10,9 +10,14 @@
  * - broken levels are faded and end at their break bar (at most the 30 most
  *   recent; hidden when "show broken" is off);
  * - a flip is its own level, in its new role's color from the break bar on;
- * - higher-timeframe levels are dashed and tagged "1D"/"1W".
+ * - higher-timeframe levels are dashed and tagged "1D"/"1W";
+ * - only full levels carry a right-edge label (srLabelled), so labels never
+ *   pile up on the price axis; faded and "old" levels draw line + zone only.
+ * - the chart's pivot length is Auto per timeframe unless set by hand there
+ *   (srParamsForTimeframe; the HTF levels keep htfLeft/htfRight).
  */
-import type { SupportResistanceOptions, SupportResistanceParams } from "./chartLayouts/catalog";
+import type { ChartTimeframe, SupportResistanceOptions, SupportResistanceParams, SupportResistancePivot } from "./chartLayouts/catalog";
+import { srPivotFor } from "./chartLayouts/layoutConfig";
 import {
     TIMEFRAME_SEC,
     computePineATR,
@@ -44,6 +49,16 @@ export function srComputeOpts(p: SupportResistanceParams, o: SupportResistanceOp
         volumeMult: p.volumeMult,
         maxAge: o.maxAge === "on" ? p.maxAgeBars : 0,
     };
+}
+
+/** The params with left/right = the pivot length in use on chart timeframe `tf` (Auto or hand-set). */
+export function srParamsForTimeframe(
+    p: SupportResistanceParams,
+    pivots: Partial<Record<ChartTimeframe, SupportResistancePivot>>,
+    tf: string,
+): SupportResistanceParams {
+    const { left, right } = srPivotFor({ supportResistancePivots: pivots }, tf);
+    return { ...p, left, right };
 }
 
 const letter = (role: SRRole) => (role === "resistance" ? "R" : "S");
@@ -108,6 +123,11 @@ export function buildSRDrawables(input: {
         dashed: tag !== undefined,
         label: srLabel(l, tag),
     }));
+}
+
+/** Whether a level gets a right-edge label: full strength and unbroken only. */
+export function srLabelled(d: SRDrawable): boolean {
+    return !d.broken && d.emphasis === "full";
 }
 
 export interface SRBanner {

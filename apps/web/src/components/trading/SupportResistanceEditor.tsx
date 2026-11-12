@@ -1,5 +1,7 @@
-import { CHART_LAYOUT_CATALOG, type SupportResistanceOptions } from "@/lib/chartLayouts/catalog";
-import { srConfirmText } from "@/lib/srDisplay";
+import { useEffect, useState } from "react";
+import { CHART_LAYOUT_CATALOG, type ChartTimeframe, type SupportResistanceOptions } from "@/lib/chartLayouts/catalog";
+import { clampParam, srPivotFor } from "@/lib/chartLayouts/layoutConfig";
+import { srConfirmText, srParamsForTimeframe } from "@/lib/srDisplay";
 import { useChartLayoutStore } from "@/stores/chartLayoutStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { ParamInput, SR_FIELDS } from "./IndicatorParamsEditor";
@@ -20,6 +22,75 @@ function Field({ k }: { k: Key }) {
     );
 }
 
+const PIVOT_RANGE = CHART_LAYOUT_CATALOG.numericParams.supportResistance.left;
+
+/** LEFT/RIGHT of the hand-set pivot on one timeframe (same typed-number behavior as ParamInput). */
+function PivotInput({ tf, side }: { tf: ChartTimeframe; side: "left" | "right" }) {
+    const pivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
+    const pivot = srPivotFor({ supportResistancePivots: pivots }, tf);
+    const setPivot = useIndicatorSettingsStore((s) => s.setSupportResistancePivot);
+    const value = pivot[side];
+    const [draft, setDraft] = useState(String(value));
+    useEffect(() => setDraft(String(value)), [value]);
+
+    function commit(text: string) {
+        setDraft(text);
+        const n = Number(text);
+        if (text.trim() === "" || !Number.isFinite(n) || n < PIVOT_RANGE.min) return;
+        setPivot(tf, { left: pivot.left, right: pivot.right, [side]: clampParam(PIVOT_RANGE, n) });
+    }
+
+    return (
+        <label style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={LABEL}>{side.toUpperCase()}</span>
+            <input
+                aria-label={`S/R pivot bars ${side}`}
+                type="number"
+                inputMode="numeric"
+                min={PIVOT_RANGE.min}
+                max={PIVOT_RANGE.max}
+                step={PIVOT_RANGE.step}
+                value={draft}
+                onChange={(e) => commit(e.target.value)}
+                onBlur={() => setDraft(String(value))}
+                style={{
+                    width: 48, height: 22, boxSizing: "border-box", padding: "0 4px",
+                    fontFamily: FONT, fontSize: 10,
+                    background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.85)",
+                    border: "1px solid rgba(255,255,255,0.12)", borderRadius: 2, outline: "none",
+                }}
+            />
+        </label>
+    );
+}
+
+/**
+ * Pivot length on the chart's current timeframe: AUTO (the catalog's length
+ * for it) or set by hand there — each timeframe keeps its own.
+ */
+function PivotControl({ tf }: { tf: ChartTimeframe }) {
+    const pivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
+    const pivot = srPivotFor({ supportResistancePivots: pivots }, tf);
+    const setPivot = useIndicatorSettingsStore((s) => s.setSupportResistancePivot);
+    return (
+        <>
+            <Switch
+                name="AUTO"
+                aria="S/R pivot length auto"
+                on={pivot.auto}
+                onChange={(on) => setPivot(tf, on ? null : { left: pivot.left, right: pivot.right })}
+            />
+            {pivot.auto ? (
+                <span style={{ ...LABEL, color: "rgba(255,255,255,0.6)" }}>
+                    PIVOT <span data-testid="sr-pivot-auto">{pivot.left} / {pivot.right}</span>
+                </span>
+            ) : (
+                <><PivotInput tf={tf} side="left" /><PivotInput tf={tf} side="right" /></>
+            )}
+        </>
+    );
+}
+
 function Switch({ name, aria, on, onChange }: { name: string; aria: string; on: boolean; onChange: (on: boolean) => void }) {
     return (
         <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
@@ -30,7 +101,8 @@ function Switch({ name, aria, on, onChange }: { name: string; aria: string; on: 
 }
 
 /**
- * Support/resistance settings under its menu row: pivot lengths and the
+ * Support/resistance settings under its menu row: the pivot length on this
+ * timeframe (Auto or by hand), the
  * × ATR distances, how many levels are drawn in full, HTF levels, broken
  * history, the volume filter and max age (their numbers only while on), and
  * how late a level is confirmed on the current timeframe.
@@ -39,6 +111,7 @@ export function SupportResistanceEditor() {
     const timeframe = useChartLayoutStore((s) => s.timeframe);
     const params = useIndicatorSettingsStore((s) => s.supportResistance);
     const opts = useIndicatorSettingsStore((s) => s.supportResistanceOptions);
+    const pivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
     const setOpts = useIndicatorSettingsStore((s) => s.setSupportResistanceOptions);
     const onOff = (on: boolean): "on" | "off" => (on ? "on" : "off");
 
@@ -49,8 +122,7 @@ export function SupportResistanceEditor() {
             onClick={(e) => e.stopPropagation()}
         >
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-                <Field k="left" />
-                <Field k="right" />
+                <PivotControl tf={timeframe as ChartTimeframe} />
                 <Field k="nearest" />
                 <Field k="mergeAtr" />
                 <Field k="breakAtr" />
@@ -83,7 +155,7 @@ export function SupportResistanceEditor() {
                 {opts.maxAge === "on" && <Field k="maxAgeBars" />}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                {srConfirmText(params, opts, timeframe).map((t) => (
+                {srConfirmText(srParamsForTimeframe(params, pivots, timeframe), opts, timeframe).map((t) => (
                     <span key={t} style={{ ...LABEL, letterSpacing: 0.5, color: "rgba(255,255,255,0.5)" }}>{t}</span>
                 ))}
             </div>

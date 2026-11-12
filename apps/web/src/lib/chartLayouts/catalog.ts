@@ -88,6 +88,15 @@ export const CHART_LAYOUT_CATALOG = {
             htfRight: { min: 2, max: 50, step: 1, default: 5 },
         },
     },
+    /**
+     * Support/resistance pivot bars (left = right) on each chart timeframe
+     * while the pivot length is on Auto. `params.supportResistancePivots`
+     * holds the timeframes set by hand ({ left, right }, the left/right
+     * ranges above); a timeframe it doesn't name is on Auto. A layout saved
+     * before Auto existed has no such key: its supportResistance.left/right
+     * apply on every timeframe, as they did.
+     */
+    supportResistanceAutoPivot: { "1m": 5, "5m": 5, "15m": 5, "1h": 8, "4h": 10, "1d": 5, "1w": 3 },
     movingAverages: {
         maxLines: 10,
         types: ["EMA", "SMA"],
@@ -157,6 +166,12 @@ export interface SupportResistanceParams {
     htfRight: number;
 }
 
+/** Pivot bars each side of a swing, set by hand for one chart timeframe. */
+export interface SupportResistancePivot {
+    left: number;
+    right: number;
+}
+
 /** Golden/death-cross markers between two of the lines (by id). */
 export interface MaCrossSpec {
     fast: string;
@@ -179,6 +194,8 @@ export interface ChartLayoutConfig {
         utBot?: UtBotParams;
         supportResistance?: SupportResistanceParams;
         supportResistanceOptions?: SupportResistanceOptions;
+        /** Timeframes whose pivot length is set by hand; the rest are on Auto. */
+        supportResistancePivots?: Partial<Record<ChartTimeframe, SupportResistancePivot>>;
     };
     panes?: {
         order?: ChartPaneId[];

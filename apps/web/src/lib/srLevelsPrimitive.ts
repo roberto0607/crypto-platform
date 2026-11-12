@@ -1,8 +1,8 @@
 /**
  * Draws support/resistance levels (lib/srDisplay drawables) on the price pane:
  * a zone band (min..max of the level's pivots), a line at the anchor from the
- * pivot to the break bar (or the right edge), and a label pill at the right
- * end. Full levels at full strength, the rest faded; HTF levels dashed.
+ * pivot to the break bar (or the right edge), and — full levels only — a
+ * label pill at the right end. Full levels at full strength, the rest faded; HTF levels dashed.
  */
 import type {
     IChartApi,
@@ -13,7 +13,7 @@ import type {
     SeriesType,
     Time,
 } from "lightweight-charts";
-import type { SRDrawable } from "./srDisplay";
+import { srLabelled, type SRDrawable } from "./srDisplay";
 import { nudgeClear } from "./chartStudies";
 
 interface MediaScope {
@@ -97,12 +97,13 @@ class SRPaneView implements IPrimitivePaneView {
                         ctx.stroke();
                         ctx.restore();
 
-                        // Labels: every unbroken level at the right edge; broken ones carry a break marker instead.
-                        if (!d.broken) labels.push({ y, text: d.label, color: d.color, alpha, xRight: x2 - 6 });
+                        // Labels: full levels only, at the right edge. Faded/old levels are line + zone;
+                        // broken ones carry a break marker instead.
+                        if (srLabelled(d)) labels.push({ y, text: d.label, color: d.color, alpha, xRight: x2 - 6 });
                     }
 
-                    // Full labels claim space first; faded ones move out of their way.
-                    labels.sort((a, b) => b.alpha - a.alpha || a.y - b.y);
+                    // Top to bottom; a label that would overlap the one above moves up.
+                    labels.sort((a, b) => a.y - b.y);
                     const boxes: Array<{ top: number; bottom: number }> = [];
                     ctx.font = LABEL_FONT;
                     ctx.textBaseline = "middle";

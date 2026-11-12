@@ -9,6 +9,8 @@ import {
     srComputeOpts,
     srConfirmText,
     srLabel,
+    srLabelled,
+    srParamsForTimeframe,
     SR_COLORS,
 } from "../srDisplay";
 import { computeSupportResistance, type SRLevel } from "../sharedIndicators";
@@ -176,5 +178,52 @@ describe("srChartState (what the chart draws from its closed candles + HTF candl
         expect(at(21 * D - 2 * H).drawables).toEqual([]); // forming bar opens 23:00 on day 20
         expect(at(21 * D - H).drawables.map((d) => [d.label, d.dashed])).toEqual([["1D R ×1", true]]);
         expect(at(21 * D - H).breaks).toEqual([]);
+    });
+});
+
+describe("pivot length on the chart's timeframe (Auto / hand-set)", () => {
+    it("Auto picks the timeframe's length for left and right; other params unchanged", () => {
+        expect(srParamsForTimeframe(P, {}, "1m")).toEqual({ ...P, left: 5, right: 5 });
+        expect(srParamsForTimeframe(P, {}, "1h")).toEqual({ ...P, left: 8, right: 8 });
+        expect(srParamsForTimeframe(P, {}, "4h")).toEqual({ ...P, left: 10, right: 10 });
+        expect(srParamsForTimeframe(P, {}, "1d")).toEqual({ ...P, left: 5, right: 5 });
+        expect(srParamsForTimeframe(P, {}, "1w")).toEqual({ ...P, left: 3, right: 3 });
+    });
+
+    it("a hand-set timeframe uses its own left/right", () => {
+        expect(srParamsForTimeframe(P, { "4h": { left: 7, right: 6 } }, "4h")).toEqual({ ...P, left: 7, right: 6 });
+        expect(srParamsForTimeframe(P, { "4h": { left: 7, right: 6 } }, "15m")).toEqual({ ...P, left: 5, right: 5 });
+    });
+
+    it("the confirmation text follows the pivot length in use", () => {
+        expect(srConfirmText(srParamsForTimeframe(P, {}, "1w"), O, "1w")).toEqual(["confirms after 3w"]);
+        expect(srConfirmText(srParamsForTimeframe(P, {}, "1m"), O, "1m")).toEqual(["confirms after 5m"]);
+    });
+});
+
+describe("labels: only full-strength levels", () => {
+    it("full unbroken levels get a label; faded, old and broken ones draw without one", () => {
+        const levels = [
+            lv({ price: 101 }), lv({ price: 102 }), lv({ price: 103 }), lv({ price: 104 }), // above: 3 full, 1 faded
+            lv({ price: 99, role: "support" }),
+            lv({ price: 98, role: "support", staleIndex: 3, staleTime: 300 }), // old
+            lv({ price: 97, role: "support", brokenIndex: 4, brokenTime: 400 }), // broken
+        ];
+        const d = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true });
+        const labelled = d.filter(srLabelled).map((x) => x.price).sort();
+        expect(labelled).toEqual([101, 102, 103, 99].sort());
+        expect(d.find((x) => x.price === 98)!.label).toContain("old");
+        expect(srLabelled(d.find((x) => x.price === 98)!)).toBe(false);
+        expect(srLabelled(d.find((x) => x.price === 104)!)).toBe(false);
+        expect(srLabelled(d.find((x) => x.price === 97)!)).toBe(false);
+    });
+
+    it("never more than `nearest` labels each side per timeframe, however many levels exist", () => {
+        const levels = Array.from({ length: 40 }, (_, i) => lv({ price: 60 + i * 2, role: i % 2 ? "resistance" : "support" }));
+        const chart = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true });
+        const htf = buildSRDrawables({ levels, price: 100, nearest: 3, showBroken: true, tag: "1D" });
+        expect(chart.length).toBe(40);
+        expect(chart.filter(srLabelled).length).toBe(6);
+        expect(htf.filter(srLabelled).length).toBe(6);
     });
 });

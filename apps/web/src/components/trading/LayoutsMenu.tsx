@@ -65,6 +65,7 @@ export function LayoutsMenu() {
     const utBot = useIndicatorSettingsStore((s) => s.utBot);
     const supportResistance = useIndicatorSettingsStore((s) => s.supportResistance);
     const supportResistanceOptions = useIndicatorSettingsStore((s) => s.supportResistanceOptions);
+    const supportResistancePivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
     const vpvrMode = useChartLayoutStore((s) => s.vpvrMode);
     const paneOrder = useChartLayoutStore((s) => s.paneOrder);
     const paneCollapsed = useChartLayoutStore((s) => s.paneCollapsed);
@@ -99,7 +100,7 @@ export function LayoutsMenu() {
         ? PRESETS.find((p) => p.id === activeId)?.name
         : layouts.find((l) => l.id === activeId)?.name;
     const modified = activeConfig !== null && isModified(activeConfig, {
-        indicators: indicators as IndicatorToggles, settings: { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions }, vpvrMode, paneOrder, paneCollapsed, paneHeights, timeframe,
+        indicators: indicators as IndicatorToggles, settings: { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions, supportResistancePivots }, vpvrMode, paneOrder, paneCollapsed, paneHeights, timeframe,
     });
     const activeSaved = activeId && !isPresetId(activeId) ? layouts.find((l) => l.id === activeId) ?? null : null;
     const atCap = layouts.length >= CHART_LAYOUT_CATALOG.maxLayoutsPerUser;
