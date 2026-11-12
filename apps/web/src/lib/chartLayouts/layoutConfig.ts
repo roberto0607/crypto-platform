@@ -23,6 +23,8 @@ import {
     type ChartPaneId,
     type AdxParams,
     type UtBotParams,
+    type SupportResistanceParams,
+    type SupportResistanceOptions,
     type MaCrossSpec,
     type MovingAverageSpec,
     type VpvrMode,
@@ -38,6 +40,9 @@ export interface IndicatorSettings {
     maCross: MaCrossSpec | null;
     adx: AdxParams;
     utBot: UtBotParams;
+    supportResistance: SupportResistanceParams;
+    /** HTF levels, broken-level history, volume filter, max-age flag. */
+    supportResistanceOptions: SupportResistanceOptions;
 }
 
 type NumericGroup = keyof typeof C.numericParams;
@@ -47,11 +52,26 @@ function numericDefaults<G extends NumericGroup>(group: G) {
     return Object.fromEntries(Object.entries(spec).map(([k, r]) => [k, r.default]));
 }
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const SR_OPTIONS = C.params.supportResistanceOptions;
+
+/** Each S/R switch: its value when it is one the catalog lists, else the default (the first). */
+export function sanitizeSupportResistanceOptions(raw: unknown): SupportResistanceOptions {
+    const r = isObj(raw) ? raw : {};
+    return Object.fromEntries(Object.entries(SR_OPTIONS).map(([k, values]) => {
+        const v = r[k];
+        return [k, (values as readonly unknown[]).includes(v) ? v : values[0]];
+    })) as SupportResistanceOptions;
+}
+
 export const DEFAULT_INDICATOR_SETTINGS: Readonly<IndicatorSettings> = {
     movingAverages: [],
     maCross: null,
     adx: numericDefaults("adx") as unknown as AdxParams,
     utBot: numericDefaults("utBot") as unknown as UtBotParams,
+    supportResistance: numericDefaults("supportResistance") as unknown as SupportResistanceParams,
+    supportResistanceOptions: sanitizeSupportResistanceOptions(null),
 };
 
 export interface ChartState {
@@ -69,7 +89,6 @@ export const PANE_IDS = C.panes as readonly ChartPaneId[];
 
 const isIndicator = (k: string): k is ChartIndicatorId => (INDICATOR_IDS as readonly string[]).includes(k);
 const isPane = (k: string): k is ChartPaneId => (PANE_IDS as readonly string[]).includes(k);
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export function allIndicators(on: boolean): IndicatorToggles {
     return Object.fromEntries(INDICATOR_IDS.map((id) => [id, on])) as IndicatorToggles;
@@ -129,7 +148,7 @@ export function sanitizeNumeric<G extends NumericGroup>(group: G, raw: unknown):
     })) as unknown as IndicatorSettings[G];
 }
 
-/** Settings from a config's `params`: unmentioned lines → none drawn, unmentioned ADX/UT Bot → defaults. */
+/** Settings from a config's `params`: unmentioned lines → none drawn, unmentioned ADX/UT Bot/S/R → defaults. */
 export function resolveSettings(params: unknown): IndicatorSettings {
     const p = isObj(params) ? params : {};
     const movingAverages = sanitizeMovingAverages(p.movingAverages);
@@ -138,6 +157,8 @@ export function resolveSettings(params: unknown): IndicatorSettings {
         maCross: sanitizeMaCross(p.maCross, movingAverages),
         adx: sanitizeNumeric("adx", p.adx),
         utBot: sanitizeNumeric("utBot", p.utBot),
+        supportResistance: sanitizeNumeric("supportResistance", p.supportResistance),
+        supportResistanceOptions: sanitizeSupportResistanceOptions(p.supportResistanceOptions),
     };
 }
 
@@ -217,6 +238,8 @@ export function captureConfig(s: ChartState): ChartLayoutConfig {
             ...(s.settings.maCross ? { maCross: { ...s.settings.maCross } } : {}),
             adx: { ...s.settings.adx },
             utBot: { ...s.settings.utBot },
+            supportResistance: { ...s.settings.supportResistance },
+            supportResistanceOptions: { ...s.settings.supportResistanceOptions },
         },
         panes: {
             order: [...s.paneOrder],

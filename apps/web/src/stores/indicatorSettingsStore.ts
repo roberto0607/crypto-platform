@@ -16,6 +16,8 @@ import {
     type AdxParams,
     type MaCrossSpec,
     type MovingAverageSpec,
+    type SupportResistanceOptions,
+    type SupportResistanceParams,
     type UtBotParams,
 } from "@/lib/chartLayouts/catalog";
 import {
@@ -87,6 +89,8 @@ interface IndicatorSettingsState extends IndicatorSettings {
     /** Change some ADX / UT Bot params (clamped to the catalog range). */
     setAdx: (patch: Partial<AdxParams>) => void;
     setUtBot: (patch: Partial<UtBotParams>) => void;
+    setSupportResistance: (patch: Partial<SupportResistanceParams>) => void;
+    setSupportResistanceOptions: (patch: Partial<SupportResistanceOptions>) => void;
     /** Replace everything (applying a chart layout). */
     setSettings: (s: IndicatorSettings) => void;
 }
@@ -101,6 +105,8 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
             maCross: "maCross" in next ? next.maCross : cur.maCross,
             adx: next.adx ?? cur.adx,
             utBot: next.utBot ?? cur.utBot,
+            supportResistance: next.supportResistance ?? cur.supportResistance,
+            supportResistanceOptions: next.supportResistanceOptions ?? cur.supportResistanceOptions,
         });
         persist(s);
         set(s);
@@ -119,12 +125,18 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
         setMaCross: (maCross) => commit({ maCross }),
         setAdx: (patch) => commit({ adx: { ...get().adx, ...patch } }),
         setUtBot: (patch) => commit({ utBot: { ...get().utBot, ...patch } }),
-        setSettings: (s) => commit({ movingAverages: s.movingAverages, maCross: s.maCross, adx: s.adx, utBot: s.utBot }),
+        setSupportResistance: (patch) => commit({ supportResistance: { ...get().supportResistance, ...patch } }),
+        setSupportResistanceOptions: (patch) =>
+            commit({ supportResistanceOptions: { ...get().supportResistanceOptions, ...patch } }),
+        setSettings: (s) => commit({
+            movingAverages: s.movingAverages, maCross: s.maCross, adx: s.adx, utBot: s.utBot,
+            supportResistance: s.supportResistance, supportResistanceOptions: s.supportResistanceOptions,
+        }),
     };
 });
 
 /** The settings part of the store, as a plain object. */
 export function currentIndicatorSettings(): IndicatorSettings {
-    const { movingAverages, maCross, adx, utBot } = useIndicatorSettingsStore.getState();
-    return { movingAverages, maCross, adx, utBot };
+    const { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions } = useIndicatorSettingsStore.getState();
+    return { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions };
 }

@@ -31,6 +31,7 @@ export const setChartConfigArgsSchema = z.object({
   footprint: z.boolean().optional(),
   liquidationLevels: z.boolean().optional(),
   cotReport: z.boolean().optional(),
+  supportResistance: z.boolean().optional(),
 });
 
 export type SetChartConfigArgs = z.infer<typeof setChartConfigArgsSchema>;

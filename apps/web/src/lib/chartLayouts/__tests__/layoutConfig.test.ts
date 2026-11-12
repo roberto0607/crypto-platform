@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { CHART_LAYOUT_CATALOG } from "../catalog";
 import {
+    INDICATOR_IDS,
     PANE_IDS,
     PRESETS,
     allIndicators,
@@ -59,7 +60,7 @@ describe("presets", () => {
 
     it("Everything: every indicator on, plus EMA 20/50/200", () => {
         expect(Object.values(get("Everything").indicators).every(Boolean)).toBe(true);
-        expect(Object.keys(get("Everything").indicators)).toHaveLength(21);
+        expect(Object.keys(get("Everything").indicators)).toHaveLength(22);
         expect(get("Everything").settings).toEqual(LEGACY_SETTINGS);
     });
 
@@ -193,11 +194,45 @@ describe("ADX / UT Bot settings in a layout", () => {
     });
 });
 
+describe("support/resistance settings in a layout", () => {
+    const SR_DEFAULT = {
+        left: 10, right: 10, mergeAtr: 0.5, breakAtr: 0.25, maxZoneAtr: 1.5, volumeMult: 1.5,
+        nearest: 3, maxAgeBars: 200, htfLeft: 5, htfRight: 5,
+    };
+    const SR_OPT_DEFAULT = { htf: "off", showBroken: "on", volumeFilter: "off", maxAge: "off" };
+
+    it("default to the approved rules (10/10 pivots, 0.5/0.25/1.5 × ATR, 3 nearest, HTF/volume/max age off)", () => {
+        expect(DEFAULT_INDICATOR_SETTINGS.supportResistance).toEqual(SR_DEFAULT);
+        expect(DEFAULT_INDICATOR_SETTINGS.supportResistanceOptions).toEqual(SR_OPT_DEFAULT);
+    });
+
+    it("a layout without them gets the defaults; bad values fall back or clamp per key", () => {
+        expect(resolveConfig({ version: 1, indicators: { supportResistance: true } }, base()).settings.supportResistance).toEqual(SR_DEFAULT);
+        const s = resolveConfig({
+            version: 1,
+            params: {
+                supportResistance: { left: 1, right: 99, mergeAtr: 0.33, breakAtr: "x", maxAgeBars: 0 },
+                supportResistanceOptions: { htf: "4h", showBroken: "off", volumeFilter: true, maxAge: "on" },
+            },
+        }, base()).settings;
+        expect(s.supportResistance).toEqual({ ...SR_DEFAULT, left: 2, right: 50, mergeAtr: 0.35, maxAgeBars: 1 });
+        expect(s.supportResistanceOptions).toEqual({ ...SR_OPT_DEFAULT, showBroken: "off", maxAge: "on" });
+    });
+
+    it("is a toggleable indicator in the catalog, and editing it marks the layout modified", () => {
+        expect(INDICATOR_IDS).toContain("supportResistance");
+        const s = base();
+        const cfg = captureConfig(s);
+        expect(isModified(cfg, { ...s, settings: { ...s.settings, supportResistance: { ...s.settings.supportResistance, left: 5 } } })).toBe(true);
+        expect(isModified(cfg, { ...s, settings: { ...s.settings, supportResistanceOptions: { ...s.settings.supportResistanceOptions, htf: "1w" } } })).toBe(true);
+    });
+});
+
 describe("resolveConfig (forward-compatible reader)", () => {
     it("skips an indicator this build doesn't know, silently", () => {
         const s = resolveConfig({ version: 1, indicators: { rsi: true, stochRsi: true, ema21: true } }, base());
         expect(s.indicators.rsi).toBe(true);
-        expect(Object.keys(s.indicators)).toHaveLength(21);
+        expect(Object.keys(s.indicators)).toHaveLength(22);
         expect("stochRsi" in s.indicators).toBe(false);
     });
 
@@ -241,6 +276,11 @@ describe("captureConfig + isModified", () => {
                 ...DEFAULT_INDICATOR_SETTINGS,
                 adx: { diLength: 10, adxSmoothing: 20, threshold: 30 },
                 utBot: { keyValue: 2.5, atrPeriod: 14 },
+                supportResistance: {
+                    left: 8, right: 6, mergeAtr: 0.35, breakAtr: 0, maxZoneAtr: 2.5, volumeMult: 2.2,
+                    nearest: 4, maxAgeBars: 300, htfLeft: 3, htfRight: 4,
+                },
+                supportResistanceOptions: { htf: "1d+1w", showBroken: "off", volumeFilter: "on", maxAge: "on" },
                 movingAverages: [
                     { id: "ma1", type: "SMA", length: 20, color: "#3b82f6" },
                     { id: "ma2", type: "EMA", length: 200, color: "#ef4444" },
@@ -268,6 +308,11 @@ describe("captureConfig + isModified", () => {
             movingAverages: [],
             adx: { diLength: 14, adxSmoothing: 14, threshold: 25 },
             utBot: { keyValue: 1, atrPeriod: 10 },
+            supportResistance: {
+                left: 10, right: 10, mergeAtr: 0.5, breakAtr: 0.25, maxZoneAtr: 1.5, volumeMult: 1.5,
+                nearest: 3, maxAgeBars: 200, htfLeft: 5, htfRight: 5,
+            },
+            supportResistanceOptions: { htf: "off", showBroken: "on", volumeFilter: "off", maxAge: "off" },
         });
     });
 

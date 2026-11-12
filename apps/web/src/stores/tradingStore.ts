@@ -87,6 +87,7 @@ const defaultIndicatorConfig = {
   adx: false,
   utBot: false,
   swings: false,
+  supportResistance: false,
 };
 
 export type IndicatorConfig = typeof defaultIndicatorConfig;

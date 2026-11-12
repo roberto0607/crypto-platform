@@ -23,7 +23,7 @@ function auth(app: FastifyInstance, sub: string) {
 
 const swingConfig = {
     version: 1,
-    indicators: { keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true, adx: true, utBot: true, swings: false },
+    indicators: { keyLevels: true, vpvr: true, rsi: true, atr: true, volume: true, adx: true, utBot: true, swings: false, supportResistance: true },
     params: {
         vpvr: { mode: "visible" }, rsi: { period: 14 }, atr: { period: 14 },
         movingAverages: [
@@ -37,10 +37,21 @@ const swingConfig = {
         maCross: { fast: "ma2", slow: "ma3" },
         adx: { diLength: 10, adxSmoothing: 20, threshold: 20 },
         utBot: { keyValue: 2.5, atrPeriod: 14 },
+        supportResistance: {
+            left: 8, right: 6, mergeAtr: 0.35, breakAtr: 0, maxZoneAtr: 2.5, volumeMult: 2.2,
+            nearest: 4, maxAgeBars: 300, htfLeft: 3, htfRight: 4,
+        },
+        supportResistanceOptions: { htf: "1d+1w", showBroken: "off", volumeFilter: "on", maxAge: "on" },
     },
     panes: { order: ["rsi", "adx", "atr", "volume"], collapsed: { rsi: false, atr: true, adx: false }, heights: { rsi: 120, adx: 150 } },
     timeframe: "4h",
 };
+
+const srNum = {
+    left: 10, right: 10, mergeAtr: 0.5, breakAtr: 0.25, maxZoneAtr: 1.5, volumeMult: 1.5,
+    nearest: 3, maxAgeBars: 200, htfLeft: 5, htfRight: 5,
+};
+const srOpt = { htf: "off", showBroken: "on", volumeFilter: "off", maxAge: "off" };
 
 const ma = (over: Record<string, unknown> = {}) => ({ id: "ma1", type: "EMA", length: 20, color: "#3b82f6", ...over });
 
@@ -187,6 +198,18 @@ describe("/v1/chart-layouts", () => {
         ["UT Bot key value off the 0.1 step", { version: 1, params: { utBot: { keyValue: 1.25, atrPeriod: 10 } } }],
         ["UT Bot key value over 20", { version: 1, params: { utBot: { keyValue: 20.1, atrPeriod: 10 } } }],
         ["UT Bot ATR period string", { version: 1, params: { utBot: { keyValue: 1, atrPeriod: "10" } } }],
+        ["S/R pivot length 1", { version: 1, params: { supportResistance: { ...srNum, left: 1 } } }],
+        ["S/R pivot length 51", { version: 1, params: { supportResistance: { ...srNum, right: 51 } } }],
+        ["S/R merge distance off the 0.05 step", { version: 1, params: { supportResistance: { ...srNum, mergeAtr: 0.33 } } }],
+        ["S/R negative break buffer", { version: 1, params: { supportResistance: { ...srNum, breakAtr: -0.25 } } }],
+        ["S/R zone cap over 5", { version: 1, params: { supportResistance: { ...srNum, maxZoneAtr: 5.1 } } }],
+        ["S/R nearest 0", { version: 1, params: { supportResistance: { ...srNum, nearest: 0 } } }],
+        ["S/R max age 0", { version: 1, params: { supportResistance: { ...srNum, maxAgeBars: 0 } } }],
+        ["S/R missing a key", { version: 1, params: { supportResistance: { left: 10 } } }],
+        ["S/R unknown key", { version: 1, params: { supportResistance: { ...srNum, touchAtr: 0.2 } } }],
+        ["S/R bad HTF", { version: 1, params: { supportResistanceOptions: { ...srOpt, htf: "4h" } } }],
+        ["S/R volume filter boolean", { version: 1, params: { supportResistanceOptions: { ...srOpt, volumeFilter: true } } }],
+        ["S/R options missing a key", { version: 1, params: { supportResistanceOptions: { htf: "off" } } }],
         ["cross without MAs", { version: 1, params: { maCross: { fast: "a", slow: "b" } } }],
         ["unknown pane", { version: 1, panes: { order: ["rsi", "stoch"] } }],
         ["duplicate pane in order", { version: 1, panes: { order: ["rsi", "rsi"] } }],
