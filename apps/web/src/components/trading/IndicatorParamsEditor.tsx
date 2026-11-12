@@ -18,6 +18,18 @@ const FIELDS: { [G in Group]: Array<{ key: keyof (typeof P)[G] & string; label: 
         { key: "keyValue", label: "KEY", aria: "UT Bot key value" },
         { key: "atrPeriod", label: "ATR", aria: "UT Bot ATR period" },
     ],
+    supportResistance: [
+        { key: "left", label: "LEFT", aria: "S/R pivot bars left" },
+        { key: "right", label: "RIGHT", aria: "S/R pivot bars right" },
+        { key: "mergeAtr", label: "MERGE", aria: "S/R merge distance (× ATR)" },
+        { key: "breakAtr", label: "BREAK", aria: "S/R break buffer (× ATR)" },
+        { key: "maxZoneAtr", label: "ZONE", aria: "S/R max zone width (× ATR)" },
+        { key: "volumeMult", label: "VOL×", aria: "S/R break volume multiple" },
+        { key: "nearest", label: "SHOW", aria: "S/R levels shown each side" },
+        { key: "maxAgeBars", label: "AGE", aria: "S/R max age (bars)" },
+        { key: "htfLeft", label: "HTF L", aria: "S/R higher-timeframe pivot bars left" },
+        { key: "htfRight", label: "HTF R", aria: "S/R higher-timeframe pivot bars right" },
+    ],
 };
 
 /** A typed number; only a value in range reaches the store (which rounds it to the step). Blur restores it. */
@@ -25,6 +37,7 @@ function ParamInput<G extends Group>({ group, field, aria }: { group: G; field: 
     const value = useIndicatorSettingsStore((s) => (s[group] as unknown as Record<string, number>)[field]!);
     const setAdx = useIndicatorSettingsStore((s) => s.setAdx);
     const setUtBot = useIndicatorSettingsStore((s) => s.setUtBot);
+    const setSupportResistance = useIndicatorSettingsStore((s) => s.setSupportResistance);
     const range = (P[group] as Record<string, { min: number; max: number; step: number }>)[field]!;
     const [draft, setDraft] = useState(String(value));
     useEffect(() => setDraft(String(value)), [value]);
@@ -35,7 +48,8 @@ function ParamInput<G extends Group>({ group, field, aria }: { group: G; field: 
         if (text.trim() === "" || !Number.isFinite(n) || n < range.min) return;
         const patch = { [field]: n };
         if (group === "adx") setAdx(patch);
-        else setUtBot(patch);
+        else if (group === "utBot") setUtBot(patch);
+        else setSupportResistance(patch);
     }
 
     return (

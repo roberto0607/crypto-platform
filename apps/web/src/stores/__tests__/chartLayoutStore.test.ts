@@ -138,7 +138,7 @@ describe("presets", () => {
 
     it("Everything then Clean", () => {
         useChartLayoutStore.getState().applyLayout("preset:everything");
-        expect(on()).toHaveLength(21);
+        expect(on()).toHaveLength(22);
         useChartLayoutStore.getState().applyLayout("preset:clean");
         expect(on()).toEqual([]);
         expect(useIndicatorSettingsStore.getState().movingAverages).toEqual([]);

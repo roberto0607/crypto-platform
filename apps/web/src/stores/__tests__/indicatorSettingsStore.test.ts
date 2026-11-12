@@ -111,3 +111,24 @@ describe("ADX / UT Bot settings", () => {
         expect(loadIndicatorSettings()).toMatchObject({ adx: store().adx, utBot: store().utBot });
     });
 });
+
+describe("support/resistance settings", () => {
+    it("settings saved before S/R existed load with the defaults", () => {
+        localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({ movingAverages: [], maCross: null }));
+        const s = loadIndicatorSettings();
+        expect(s.supportResistance).toMatchObject({ left: 10, right: 10, nearest: 3 });
+        expect(s.supportResistanceOptions).toEqual({ htf: "off", showBroken: "on", volumeFilter: "off", maxAge: "off" });
+    });
+
+    it("edits are clamped, persisted, and survive reload", () => {
+        store().setSupportResistance({ left: 5 });
+        store().setSupportResistance({ mergeAtr: 0.42 });
+        store().setSupportResistanceOptions({ htf: "1d", maxAge: "on" });
+        expect(store().supportResistance).toMatchObject({ left: 5, right: 10, mergeAtr: 0.4 });
+        expect(store().supportResistanceOptions).toEqual({ htf: "1d", showBroken: "on", volumeFilter: "off", maxAge: "on" });
+        expect(loadIndicatorSettings()).toMatchObject({
+            supportResistance: store().supportResistance,
+            supportResistanceOptions: store().supportResistanceOptions,
+        });
+    });
+});

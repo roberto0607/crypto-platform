@@ -33,6 +33,11 @@ export const WARMUP = {
   /** First bar that can CONFIRM a pivot (the pivot itself is `left` bars in). */
   swings: (left = 5, right = 5) => left + right,
   /**
+   * First bar that can CONFIRM a support/resistance level: a pivot's
+   * confirmation bar, once ATR exists (earlier confirmations are skipped).
+   */
+  supportResistance: (left = 10, right = 10, atrPeriod = 14) => Math.max(left + right, atrPeriod - 1),
+  /**
    * VWAP resets at UTC midnight, so it is real from the first bar of the first
    * day the data covers from its start (bar 0 if the data starts at midnight).
    */
