@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  computeParitySeries, compareSeries, fingerprint, fixtureCandles, fromGolden,
+  computeParitySeries, computeHtfParitySeries, compareSeries, fingerprint, fixtureCandles, fromGolden,
   PARITY_TIMEFRAME_SEC, type CandleFixture, type GoldenFile,
 } from "../shared";
 import * as shared from "../shared";
@@ -32,9 +32,15 @@ describe.each(Object.keys(PARITY_TIMEFRAME_SEC))("shared indicators on %s BTC-US
   });
 });
 
+describe("higher-timeframe lines on 4h BTC-USD", () => {
+  it("match the committed golden values (the chart suite checks its line assembly against the same)", () => {
+    expect(compareSeries(fingerprint(computeHtfParitySeries(fixture)), fromGolden(golden.htf!))).toEqual([]);
+  });
+});
+
 describe("API indicator exports", () => {
   it("are the shared implementations, not a separate copy", () => {
-    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta", "prevPeriodHighLow", "computeSMA", "computePineATR", "computeADX", "computeUTBot", "prevPeriodLevelSeries", "findSwingPoints", "firstRealTime"] as const) {
+    for (const name of ["computeEMA", "computeRSI", "computeATR", "computeMACD", "computeBollingerBands", "computeVWAP", "computeCandleDelta", "prevPeriodHighLow", "computeSMA", "computePineATR", "computeADX", "computeUTBot", "prevPeriodLevelSeries", "findSwingPoints", "firstRealTime", "htfValueAt", "htfStepSeries", "htfFormingMovingAverage", "computeMovingAverage"] as const) {
       expect(publicApi[name]).toBe(shared[name]);
     }
   });

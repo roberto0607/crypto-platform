@@ -81,7 +81,8 @@ const MA_COLOR = new RegExp(MA.colorPattern);
 
 /**
  * The valid lines of a saved list, in order: bad entries and repeated ids are
- * dropped, lengths rounded and clamped, at most `maxLines`.
+ * dropped, lengths rounded and clamped, at most `maxLines`. A line keeps
+ * `timeframe` only when it is a higher one, and `forming` only with it.
  */
 export function sanitizeMovingAverages(raw: unknown): MovingAverageSpec[] {
     if (!Array.isArray(raw)) return [];
@@ -93,7 +94,13 @@ export function sanitizeMovingAverages(raw: unknown): MovingAverageSpec[] {
         if (typeof m.length !== "number" || !Number.isFinite(m.length)) continue;
         if (typeof m.color !== "string" || !MA_COLOR.test(m.color)) continue;
         const length = Math.round(Math.max(MA.length.min, Math.min(MA.length.max, m.length)));
-        out.push({ id: m.id, type: m.type as MovingAverageSpec["type"], length, color: m.color });
+        const line: MovingAverageSpec = { id: m.id, type: m.type as MovingAverageSpec["type"], length, color: m.color };
+        // Unknown/"chart" timeframe → the chart's (key left out, so old and new configs compare equal).
+        if (typeof m.timeframe === "string" && m.timeframe !== "chart" && (MA.timeframes as readonly string[]).includes(m.timeframe)) {
+            line.timeframe = m.timeframe as MovingAverageSpec["timeframe"];
+            if (m.forming === true) line.forming = true;
+        }
+        out.push(line);
     }
     return out;
 }

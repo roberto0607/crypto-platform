@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CHART_LAYOUT_CATALOG, type MovingAverageSpec } from "@/lib/chartLayouts/catalog";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { movingAverageLabel, timeframeLabel } from "@/lib/htfLines";
 
 const MA = CHART_LAYOUT_CATALOG.movingAverages;
 const FONT = "'Space Mono', monospace";
@@ -37,7 +38,9 @@ function LengthInput({ line }: { line: MovingAverageSpec }) {
 
 /**
  * The moving-average lines (any number up to the catalog max), each with
- * type, length and color, plus golden/death-cross markers on two of them.
+ * type, length, timeframe and color, plus golden/death-cross markers on two
+ * of them. A higher timeframe (1H/4H/1D/1W) draws that timeframe's line from
+ * its closed bars; "live" adds the forming bar's value, dotted.
  */
 export function MovingAveragesEditor() {
     const lines = useIndicatorSettingsStore((s) => s.movingAverages);
@@ -46,7 +49,7 @@ export function MovingAveragesEditor() {
     const update = useIndicatorSettingsStore((s) => s.updateMovingAverage);
     const remove = useIndicatorSettingsStore((s) => s.removeMovingAverage);
     const setCross = useIndicatorSettingsStore((s) => s.setMaCross);
-    const label = (m: MovingAverageSpec) => `${m.type} ${m.length}`;
+    const label = movingAverageLabel;
 
     function pickFast(id: string) {
         if (!id) return setCross(null);
@@ -69,6 +72,15 @@ export function MovingAveragesEditor() {
                         {MA.types.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                     <LengthInput line={m} />
+                    <select
+                        aria-label="Timeframe"
+                        title="Timeframe the line is computed on"
+                        value={m.timeframe ?? "chart"}
+                        onChange={(e) => update(m.id, { timeframe: e.target.value as MovingAverageSpec["timeframe"] })}
+                        style={{ ...control, width: 52 }}
+                    >
+                        {MA.timeframes.map((t) => <option key={t} value={t}>{t === "chart" ? "Chart" : timeframeLabel(t)}</option>)}
+                    </select>
                     <input
                         aria-label="Color"
                         type="color"
@@ -77,6 +89,21 @@ export function MovingAveragesEditor() {
                         onChange={(e) => update(m.id, { color: e.target.value })}
                         style={{ ...control, width: 26, padding: 1, cursor: "pointer" }}
                     />
+                    {m.timeframe && (
+                        <label
+                            title="Also show the still-forming bar's value (dotted, changes until that bar closes)"
+                            style={{ display: "flex", alignItems: "center", gap: 2, fontFamily: FONT, fontSize: 9, color: "rgba(255,255,255,0.5)", cursor: "pointer" }}
+                        >
+                            <input
+                                aria-label="Show forming value"
+                                type="checkbox"
+                                checked={m.forming === true}
+                                onChange={(e) => update(m.id, { forming: e.target.checked })}
+                                style={{ margin: 0 }}
+                            />
+                            LIVE
+                        </label>
+                    )}
                     <button
                         aria-label="Remove"
                         onClick={() => remove(m.id)}
@@ -98,7 +125,7 @@ export function MovingAveragesEditor() {
             {lines.length >= 2 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
                     <span style={{ fontFamily: FONT, fontSize: 9, letterSpacing: 1, color: "rgba(255,255,255,0.35)" }}>CROSS</span>
-                    <select aria-label="Cross fast line" value={cross?.fast ?? ""} onChange={(e) => pickFast(e.target.value)} style={{ ...control, width: 74 }}>
+                    <select aria-label="Cross fast line" value={cross?.fast ?? ""} onChange={(e) => pickFast(e.target.value)} style={{ ...control, width: 96 }}>
                         <option value="">Off</option>
                         {lines.map((m) => <option key={m.id} value={m.id}>{label(m)}</option>)}
                     </select>
@@ -108,7 +135,7 @@ export function MovingAveragesEditor() {
                         value={cross?.slow ?? ""}
                         disabled={!cross}
                         onChange={(e) => cross && setCross({ fast: cross.fast, slow: e.target.value })}
-                        style={{ ...control, width: 74, opacity: cross ? 1 : 0.4 }}
+                        style={{ ...control, width: 96, opacity: cross ? 1 : 0.4 }}
                     >
                         {!cross && <option value="">—</option>}
                         {lines.filter((m) => m.id !== cross?.fast).map((m) => <option key={m.id} value={m.id}>{label(m)}</option>)}

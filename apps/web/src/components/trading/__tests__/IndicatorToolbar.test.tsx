@@ -63,6 +63,27 @@ describe("moving average editor", () => {
         expect(settings().movingAverages.map((m) => m.id)).toEqual(["ma1"]);
     });
 
+    it("a line's timeframe: 1D adds the timeframe to its label and offers LIVE; Chart removes both", async () => {
+        const user = await openAndSearch("higher timeframe");
+        await user.click(screen.getByRole("button", { name: "Add moving average" }));
+        const row = within(screen.getByTestId("ma-row-ma1"));
+        expect(row.queryByLabelText("Show forming value")).toBeNull();
+        await user.selectOptions(row.getByLabelText("Timeframe"), "1d");
+        expect(settings().movingAverages[0]).toMatchObject({ timeframe: "1d" });
+        await user.click(row.getByLabelText("Show forming value"));
+        expect(settings().movingAverages[0]).toMatchObject({ timeframe: "1d", forming: true });
+        await user.selectOptions(row.getByLabelText("Timeframe"), "chart");
+        expect(settings().movingAverages[0]).toEqual({ id: "ma1", type: "EMA", length: 20, color: "#3b82f6" });
+    });
+
+    it("cross pickers name the timeframe", async () => {
+        const user = await openAndSearch("moving");
+        await user.click(screen.getByRole("button", { name: "Add moving average" }));
+        await user.click(screen.getByRole("button", { name: "Add moving average" }));
+        await user.selectOptions(within(screen.getByTestId("ma-row-ma2")).getByLabelText("Timeframe"), "1w");
+        expect(within(screen.getByLabelText("Cross fast line")).getByRole("option", { name: "EMA 50 (1W)" })).toBeTruthy();
+    });
+
     it("an empty or out-of-range length never reaches the chart", async () => {
         const user = await openAndSearch("sma");
         await user.click(screen.getByRole("button", { name: "Add moving average" }));

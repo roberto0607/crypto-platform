@@ -25,6 +25,8 @@ const movingAverageSchema = z
         type: z.enum(MA.types as unknown as [string, ...string[]]),
         length: z.number().int().min(MA.length.min).max(MA.length.max),
         color: z.string().regex(new RegExp(MA.colorPattern)),
+        timeframe: z.enum(MA.timeframes as unknown as [string, ...string[]]).optional(),
+        forming: z.boolean().optional(),
     })
     .strict();
 

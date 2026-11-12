@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  computeParitySeries, fingerprint, fixtureCandles, toGolden,
+  computeParitySeries, computeHtfParitySeries, fingerprint, fixtureCandles, toGolden,
   PARITY_TIMEFRAME_SEC, type CandleFixture,
 } from "../src/index";
 
@@ -15,9 +15,13 @@ const dir = new URL("../fixtures/", import.meta.url);
 const fixture = JSON.parse(readFileSync(new URL("btcusd-coinbase.json", dir), "utf8")) as CandleFixture;
 
 const lines = ["{"];
-const tfs = Object.keys(PARITY_TIMEFRAME_SEC);
+// Per timeframe, plus "htf": higher-timeframe lines on the 4h bars.
+const tfs = [...Object.keys(PARITY_TIMEFRAME_SEC), "htf"];
 tfs.forEach((tf, ti) => {
-  const golden = toGolden(fingerprint(computeParitySeries(fixtureCandles(fixture.timeframes[tf]!), PARITY_TIMEFRAME_SEC[tf]!)));
+  const series = tf === "htf"
+    ? computeHtfParitySeries(fixture)
+    : computeParitySeries(fixtureCandles(fixture.timeframes[tf]!), PARITY_TIMEFRAME_SEC[tf]!);
+  const golden = toGolden(fingerprint(series));
   const names = Object.keys(golden);
   lines.push(`  "${tf}": {`);
   names.forEach((name, ni) => lines.push(`    "${name}": ${JSON.stringify(golden[name])}${ni < names.length - 1 ? "," : ""}`));
