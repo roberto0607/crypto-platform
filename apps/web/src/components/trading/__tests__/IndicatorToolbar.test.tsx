@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { IndicatorToolbar } from "@/components/trading/IndicatorToolbar";
 import { useTradingStore, DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
+import { useChartLayoutStore } from "@/stores/chartLayoutStore";
 import { DEFAULT_INDICATOR_SETTINGS } from "@/lib/chartLayouts/layoutConfig";
 
 const settings = () => useIndicatorSettingsStore.getState();
@@ -174,5 +175,65 @@ describe("ADX, UT Bot, key levels, swings", () => {
         await user.clear(atr);
         await user.type(atr, "14");
         expect(settings().utBot).toEqual({ keyValue: 2.5, atrPeriod: 14 });
+    });
+});
+
+describe("support & resistance", () => {
+    const sr = () => settings().supportResistance;
+    const srOpt = () => settings().supportResistanceOptions;
+
+    for (const q of ["support", "resistance", "s/r", "sr", "levels", "Support and resistance"]) {
+        it(`"${q}" finds Support & Resistance`, async () => {
+            await openAndSearch(q);
+            expect(screen.getByText("Support & Resistance")).toBeTruthy();
+        });
+    }
+
+    it("off by default; turning it on shows its settings with the confirmation delay for the chart timeframe", async () => {
+        useChartLayoutStore.setState({ timeframe: "4h" });
+        expect(useTradingStore.getState().indicatorConfig.supportResistance).toBe(false);
+        const user = await openAndSearch("support");
+        expect(screen.queryByLabelText("S/R pivot bars right")).toBeNull();
+        await user.click(screen.getByText("Support & Resistance"));
+        expect(useTradingStore.getState().indicatorConfig.supportResistance).toBe(true);
+        expect(screen.getByText("confirms after 40h")).toBeTruthy();
+
+        const right = screen.getByLabelText("S/R pivot bars right");
+        await user.clear(right);
+        await user.type(right, "6");
+        expect(sr().right).toBe(6);
+        expect(screen.getByText("confirms after 24h")).toBeTruthy();
+    });
+
+    it("switches: HTF levels, broken history, volume filter and max age (their numbers show only when on)", async () => {
+        useChartLayoutStore.setState({ timeframe: "4h" });
+        useTradingStore.setState({ indicatorConfig: { ...DEFAULT_INDICATOR_CONFIG, supportResistance: true } });
+        const user = await openAndSearch("s/r");
+        expect(screen.queryByLabelText("S/R break volume multiple")).toBeNull();
+        expect(screen.queryByLabelText("S/R max age (bars)")).toBeNull();
+        expect(screen.queryByLabelText("S/R higher-timeframe pivot bars right")).toBeNull();
+
+        await user.selectOptions(screen.getByLabelText("S/R higher-timeframe levels"), "1d+1w");
+        expect(srOpt().htf).toBe("1d+1w");
+        expect(screen.getByText("1D confirms after 5d")).toBeTruthy();
+        expect(screen.getByText("1W confirms after 5w")).toBeTruthy();
+        expect(screen.getByLabelText("S/R higher-timeframe pivot bars right")).toBeTruthy();
+
+        await user.click(screen.getByLabelText("S/R show broken levels"));
+        expect(srOpt().showBroken).toBe("off");
+
+        await user.click(screen.getByLabelText("S/R volume filter"));
+        expect(srOpt().volumeFilter).toBe("on");
+        const vol = screen.getByLabelText("S/R break volume multiple");
+        await user.clear(vol);
+        await user.type(vol, "2");
+        expect(sr().volumeMult).toBe(2);
+
+        await user.click(screen.getByLabelText("S/R max age"));
+        expect(srOpt().maxAge).toBe("on");
+        const age = screen.getByLabelText("S/R max age (bars)");
+        await user.clear(age);
+        await user.type(age, "120");
+        expect(sr().maxAgeBars).toBe(120);
     });
 });

@@ -3,6 +3,7 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { MovingAveragesEditor } from "./MovingAveragesEditor";
 import { IndicatorParamsEditor } from "./IndicatorParamsEditor";
+import { SupportResistanceEditor } from "./SupportResistanceEditor";
 
 /** Not a toggle: a list of lines (indicatorSettingsStore), edited inline. */
 const MOVING_AVERAGES_KEY = "movingAverages";
@@ -45,6 +46,10 @@ const ADVANCED_INDICATORS: readonly MenuItem[] = [
   {
     key: "swings", label: "Swing Highs/Lows", color: "#e5e7eb",
     aliases: ["swing", "swing high", "swing low", "pivot", "pivots", "fractal"],
+  },
+  {
+    key: "supportResistance", label: "Support & Resistance", color: "#ef4444",
+    aliases: ["support", "resistance", "s/r", "sr", "s&r", "levels", "support and resistance", "support resistance", "zones", "role flip", "breakout"],
   },
   { key: "liquidityZones", label: "Liquidity Zones", color: "#f59e0b" },
   { key: "orderBlocks", label: "Order Blocks", color: "#00ff41" },
@@ -115,6 +120,14 @@ export function IndicatorToolbar({ vpvrMode = "visible", onVpvrModeChange }: Ind
   function renderRow(ind: MenuItem) {
     if (ind.key === MOVING_AVERAGES_KEY) return renderMovingAverages(ind);
     const active = config[ind.key as keyof typeof config];
+    if (ind.key === "supportResistance") {
+      return (
+        <div key={ind.key}>
+          {renderToggle(ind, active)}
+          {active && <SupportResistanceEditor />}
+        </div>
+      );
+    }
     const settings = ind.key === "adx" || ind.key === "utBot" ? ind.key : null;
     if (settings) {
       return (

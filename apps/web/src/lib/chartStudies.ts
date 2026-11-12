@@ -13,6 +13,7 @@ import {
     type UTBotSignal,
 } from "./indicators";
 import type { EMACross } from "./indicators";
+import { SR_COLORS } from "./srDisplay";
 
 export interface KeyLevelPair {
     high: number;
@@ -58,12 +59,14 @@ export function utBotLine(candles: Candle[], stop: Point[]): Array<{ time: numbe
 /**
  * Every marker on the candle series, in one list (the series has one markers
  * plugin, and lightweight-charts needs them in time order): MA golden/death
- * crosses, UT Bot buy/sell signals, swing highs/lows.
+ * crosses, UT Bot buy/sell signals, swing highs/lows, support/resistance
+ * breaks (in the broken level's color).
  */
 export function buildStudyMarkers(src: {
     crosses?: EMACross[];
     utSignals?: UTBotSignal[];
     swings?: { highs: SwingPoint[]; lows: SwingPoint[] };
+    srBreaks?: Array<{ time: number; direction: "up" | "down" }>;
 }): SeriesMarker<Time>[] {
     const out: SeriesMarker<Time>[] = [];
     for (const c of src.crosses ?? []) {
@@ -78,6 +81,11 @@ export function buildStudyMarkers(src: {
     }
     for (const h of src.swings?.highs ?? []) out.push({ time: h.time as Time, position: "aboveBar", shape: "circle", color: "rgba(255,255,255,0.55)", size: 0.5 });
     for (const l of src.swings?.lows ?? []) out.push({ time: l.time as Time, position: "belowBar", shape: "circle", color: "rgba(255,255,255,0.55)", size: 0.5 });
+    for (const b of src.srBreaks ?? []) {
+        out.push(b.direction === "up"
+            ? { time: b.time as Time, position: "belowBar", shape: "arrowUp", color: SR_COLORS.resistance, size: 0.7 }
+            : { time: b.time as Time, position: "aboveBar", shape: "arrowDown", color: SR_COLORS.support, size: 0.7 });
+    }
     return out
         .map((m, i) => ({ m, i }))
         .sort((a, b) => (a.m.time as number) - (b.m.time as number) || a.i - b.i)

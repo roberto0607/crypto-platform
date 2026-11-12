@@ -23,6 +23,8 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { buildHtfLine, htfBarsNeeded, lineMode, movingAverageLabel, timeframeLabel } from "@/lib/htfLines";
 import { peekHtfCandles } from "@/lib/htfCandleCache";
+import { srApproach, srChartState, srHtfTimeframes, type SRBanner, type SRDrawable } from "@/lib/srDisplay";
+import { SRLevelsPrimitive } from "@/lib/srLevelsPrimitive";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
 import { usePairPricesStore } from "@/stores/pairPricesStore";
@@ -119,6 +121,12 @@ const LIVE_VIEW_BARS = 120;
 // stack from a top:12-or-48 base — shift that base down by this much so they
 // land below the legend instead of underneath it.
 const CHART_LEGEND_STACK_OFFSET = 64;
+/** Vertical step between stacked alert banners (PDH, S/R) — the badge height + gap. */
+const BANNER_STEP = 36;
+
+function sameBanner(a: SRBanner | null, b: SRBanner | null): boolean {
+    return a === b || (!!a && !!b && a.role === b.role && a.price === b.price && a.label === b.label);
+}
 const EMPTY_ADX: ADXResult = { plusDI: [], minusDI: [], adx: [] };
 
 // The study-values row (moving averages) under O/H/L/C, when it shows.
@@ -535,6 +543,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const [cvdDivergences, setCvdDivergences] = useState<CvdDivergence[]>([]);
     const [cvdDataSource, setCvdDataSource] = useState<CvdDataSource>("PROXY");
     const [pdhProximity, setPdhProximity] = useState<"pdh" | "pdl" | null>(null);
+    // Support/resistance banners: price near a full level (live ticks), and the
+    // level the last closed candle broke (until the next close).
+    const [srApproachBanner, setSrApproachBanner] = useState<SRBanner | null>(null);
+    const [srBrokeBanner, setSrBrokeBanner] = useState<SRBanner | null>(null);
+    const srLiveRef = useRef<{ drawables: SRDrawable[]; atr: number } | null>(null);
+    const srPrimitiveRef = useRef<SRLevelsPrimitive | null>(null);
     const [livePrice, setLivePrice] = useState(0);
     const currentPriceRef = useRef(0);
     // True when the time scale is parked at the live edge. Drives the
@@ -626,6 +640,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const maCross = useIndicatorSettingsStore((s) => s.maCross);
     const adxParams = useIndicatorSettingsStore((s) => s.adx);
     const utBotParams = useIndicatorSettingsStore((s) => s.utBot);
+    const srParams = useIndicatorSettingsStore((s) => s.supportResistance);
+    const srOptions = useIndicatorSettingsStore((s) => s.supportResistanceOptions);
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
@@ -815,6 +831,11 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         const pdhPdlZonePrimitive = new PdhPdlZonePrimitive();
         series.attachPrimitive(pdhPdlZonePrimitive);
         pdhPdlZonePrimitiveRef.current = pdhPdlZonePrimitive;
+
+        // Support/resistance zones, lines and labels (lib/srLevelsPrimitive)
+        const srPrimitive = new SRLevelsPrimitive();
+        series.attachPrimitive(srPrimitive);
+        srPrimitiveRef.current = srPrimitive;
 
         // Attach Bollinger Bands fill primitive (faint slate channel between the
         // upper/lower bands; zOrder "bottom" so candles read through it). Toggled
@@ -1436,13 +1457,43 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 chart.removeSeries(utBotSeriesRef.current); utBotSeriesRef.current = null;
             }
 
+            // Support & resistance from confirmed pivots (shared math, closed
+            // candles only), plus 1D/1W levels from closed HTF candles loaded in
+            // the background like the HTF moving averages (redraw when they land).
+            let srBreaks: Array<{ time: number; direction: "up" | "down" }> = [];
+            if (indicatorConfig.supportResistance) {
+                const htf: Array<{ tf: "1d" | "1w"; candles: IndicatorCandle[] }> = [];
+                const first = indCandles[0]!;
+                const last = indCandles[indCandles.length - 1]!;
+                for (const tf of srHtfTimeframes(srOptions, chartTf)) {
+                    const sec = TIMEFRAME_SECONDS[tf];
+                    // The span the chart shows + pivot and ATR(14) warm-up.
+                    const need = Math.ceil((last.time - first.time) / sec) + 2 * (srParams.htfLeft + srParams.htfRight) + 60;
+                    const got = pairId ? peekHtfCandles(pairId, tf, need, redraw) : null;
+                    if (got) htf.push({ tf, candles: got.map(apiCandleToIndicator) });
+                }
+                const sr = srChartState({ candles: indCandles, htf, params: srParams, options: srOptions, chartTf });
+                srPrimitiveRef.current?.setData(sr.drawables, indCandles.map((c) => c.time));
+                srLiveRef.current = { drawables: sr.drawables, atr: sr.atr };
+                srBreaks = sr.breaks;
+                setSrBrokeBanner((prev) => (sameBanner(prev, sr.broke) ? prev : sr.broke));
+                const approach = srApproach(sr.drawables, currentPriceRef.current || last.close, sr.atr);
+                setSrApproachBanner((prev) => (sameBanner(prev, approach) ? prev : approach));
+            } else {
+                srPrimitiveRef.current?.setData([], []);
+                srLiveRef.current = null;
+                setSrBrokeBanner(null);
+                setSrApproachBanner(null);
+            }
+
             // One markers list on the candle series: MA crosses (when a pair is
             // chosen), UT Bot signals, swing highs/lows (confirmed pivots only:
-            // closed candles, `right` bars after).
+            // closed candles, `right` bars after), S/R breaks.
             const markers = buildStudyMarkers({
                 crosses: maCross ? emaCrosses : [],
                 utSignals: ut?.signals ?? [],
                 swings: indicatorConfig.swings ? findSwingPoints(indCandles) : undefined,
+                srBreaks,
             });
             if (!emaCrossMarkersRef.current) {
                 if (markers.length > 0) emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, markers);
@@ -1582,7 +1633,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, clearPriceLines, fundingRateHourly, addToast]);
+    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, srParams, srOptions, clearPriceLines, fundingRateHourly, addToast]);
 
     // History fetching and the live handlers call renderOverlays through this
     // ref, so an indicator toggle or a funding-rate update re-renders overlays
@@ -1919,6 +1970,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setVwapBias((prev) => (prev === bias ? prev : bias));
             }
 
+            const sr = srLiveRef.current;
+            if (sr && indicatorConfig.supportResistance) {
+                const approach = srApproach(sr.drawables, price, sr.atr);
+                setSrApproachBanner((prev) => (sameBanner(prev, approach) ? prev : approach));
+            }
+
             const levels = keyLevelsRef.current;
             if (levels && indicatorConfig.keyLevels) {
                 setLivePrice(price);
@@ -2182,6 +2239,14 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         CHART_LEGEND_STACK_OFFSET + (maLegendRef.current.length > 0 ? STUDY_LEGEND_ROW_H : 0),
         legendHeight,
     );
+    // Alert banners stack under the legend: PDH/PDL first, then S/R; the
+    // VWAP/BB chips go below them.
+    const srBanners = [
+        ...(srApproachBanner ? [{ kind: "APPROACHING" as const, b: srApproachBanner }] : []),
+        ...(srBrokeBanner ? [{ kind: "BROKE" as const, b: srBrokeBanner }] : []),
+    ];
+    const srBannerTop = 12 + legendStackOffset + (pdhProximity ? BANNER_STEP : 0);
+    const chipTop = srBannerTop + srBanners.length * BANNER_STEP;
 
     return (
         <div className="tr-chart-wrap flex flex-col h-full">
@@ -2533,6 +2598,34 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     </div>
                 )}
 
+                {/* ── Support/resistance banners (same style as the PDH badge) ── */}
+                {srBanners.map(({ kind, b }, i) => {
+                    const color = b.role === "resistance" ? "#ff4d4d" : "#00e676";
+                    return (
+                        <div key={kind} data-testid={`sr-banner-${kind.toLowerCase()}`} style={{
+                            position: "absolute", top: srBannerTop + i * BANNER_STEP, left: 12, zIndex: 10,
+                            background: "rgba(8,12,18,0.85)",
+                            border: `1px solid ${b.role === "resistance" ? "rgba(255,77,77,0.5)" : "rgba(0,230,118,0.5)"}`,
+                            borderLeft: `3px solid ${color}`,
+                            borderRadius: 4,
+                            padding: "7px 14px 7px 11px",
+                            display: "flex", alignItems: "center", gap: 8,
+                        }}>
+                            <span style={{
+                                width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: color,
+                                animation: kind === "APPROACHING" ? "pdhPdlDotPulse 1.2s ease-in-out infinite" : undefined,
+                                display: "inline-block",
+                            }} />
+                            <span style={{
+                                fontFamily: "monospace", fontSize: 10, letterSpacing: 2.5, color,
+                                textTransform: "uppercase", whiteSpace: "nowrap", fontWeight: 600,
+                            }}>
+                                {kind} {b.role} {b.price.toLocaleString(undefined, { maximumFractionDigits: 2 })} · {b.label}
+                            </span>
+                        </div>
+                    );
+                })}
+
                 {/* ── VWAP legend chip ──
                     Top-left; stacks below the proximity badge when both show.
                     Label in VWAP lavender; ▲/▼ + value tinted by bias (green on
@@ -2543,7 +2636,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     const tint = below ? "#ff3b3b" : "#00ff41";
                     return (
                         <div style={{
-                            position: "absolute", top: (pdhProximity ? 48 : 12) + legendStackOffset, left: 12, zIndex: 10,
+                            position: "absolute", top: chipTop, left: 12, zIndex: 10,
                             background: "rgba(8,12,18,0.85)",
                             border: "1px solid rgba(196,181,253,0.35)",
                             borderLeft: `3px solid ${VWAP_COLOR}`,
@@ -2567,7 +2660,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     %. SQUEEZE flag tints amber (neutral-bright, NOT green/red which
                     mean direction) when bandwidth sits at/near its lookback low. */}
                 {indicatorConfig.bollingerBands && bbBandwidth != null && (() => {
-                    const base = (pdhProximity ? 48 : 12) + legendStackOffset;
+                    const base = chipTop;
                     const vwapShown = indicatorConfig.vwap && vwapValue != null;
                     const top = base + (vwapShown ? 36 : 0);
                     return (
@@ -2777,7 +2870,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             {/* Dominant side badge */}
                             <div style={{
                                 position: "absolute",
-                                top: (pdhProximity ? 48 : 12) + legendStackOffset,
+                                top: chipTop,
                                 left: 12, zIndex: 10,
                                 background: "rgba(8,12,18,0.85)",
                                 border: `1px solid ${isBalanced ? "rgba(255,255,255,0.25)" : isSellHeavy ? "rgba(255,60,60,0.45)" : "rgba(0,230,118,0.45)"}`,

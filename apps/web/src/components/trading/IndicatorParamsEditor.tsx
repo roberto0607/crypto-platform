@@ -32,8 +32,11 @@ const FIELDS: { [G in Group]: Array<{ key: keyof (typeof P)[G] & string; label: 
     ],
 };
 
+/** Support/resistance inputs (laid out by SupportResistanceEditor). */
+export const SR_FIELDS = FIELDS.supportResistance;
+
 /** A typed number; only a value in range reaches the store (which rounds it to the step). Blur restores it. */
-function ParamInput<G extends Group>({ group, field, aria }: { group: G; field: string; aria: string }) {
+export function ParamInput<G extends Group>({ group, field, aria }: { group: G; field: string; aria: string }) {
     const value = useIndicatorSettingsStore((s) => (s[group] as unknown as Record<string, number>)[field]!);
     const setAdx = useIndicatorSettingsStore((s) => s.setAdx);
     const setUtBot = useIndicatorSettingsStore((s) => s.setUtBot);
