@@ -196,12 +196,15 @@ describe("support & resistance", () => {
         expect(screen.queryByLabelText("S/R pivot bars right")).toBeNull();
         await user.click(screen.getByText("Support & Resistance"));
         expect(useTradingStore.getState().indicatorConfig.supportResistance).toBe(true);
+        // Auto on 4h = 10 bars.
         expect(screen.getByText("confirms after 40h")).toBeTruthy();
+        expect(screen.queryByLabelText("S/R pivot bars right")).toBeNull();
 
+        await user.click(screen.getByLabelText("S/R pivot length auto"));
         const right = screen.getByLabelText("S/R pivot bars right");
         await user.clear(right);
         await user.type(right, "6");
-        expect(sr().right).toBe(6);
+        expect(settings().supportResistancePivots["4h"]).toEqual({ left: 10, right: 6 });
         expect(screen.getByText("confirms after 24h")).toBeTruthy();
     });
 

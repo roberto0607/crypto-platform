@@ -25,6 +25,8 @@ import {
     type UtBotParams,
     type SupportResistanceParams,
     type SupportResistanceOptions,
+    type SupportResistancePivot,
+    type ChartTimeframe,
     type MaCrossSpec,
     type MovingAverageSpec,
     type VpvrMode,
@@ -43,6 +45,8 @@ export interface IndicatorSettings {
     supportResistance: SupportResistanceParams;
     /** HTF levels, broken-level history, volume filter, max-age flag. */
     supportResistanceOptions: SupportResistanceOptions;
+    /** Chart timeframes whose pivot length is set by hand; the rest are on Auto. */
+    supportResistancePivots: Partial<Record<ChartTimeframe, SupportResistancePivot>>;
 }
 
 type NumericGroup = keyof typeof C.numericParams;
@@ -72,6 +76,7 @@ export const DEFAULT_INDICATOR_SETTINGS: Readonly<IndicatorSettings> = {
     utBot: numericDefaults("utBot") as unknown as UtBotParams,
     supportResistance: numericDefaults("supportResistance") as unknown as SupportResistanceParams,
     supportResistanceOptions: sanitizeSupportResistanceOptions(null),
+    supportResistancePivots: {},
 };
 
 export interface ChartState {
@@ -148,6 +153,47 @@ export function sanitizeNumeric<G extends NumericGroup>(group: G, raw: unknown):
     })) as unknown as IndicatorSettings[G];
 }
 
+const SR_RANGE = C.numericParams.supportResistance;
+
+/**
+ * The hand-set pivot lengths, by chart timeframe (catalog order). With no
+ * `supportResistancePivots` key the params were saved before Auto existed:
+ * their supportResistance.left/right (when present) are kept as hand-set on
+ * every timeframe, so an existing layout draws exactly what it did. Without
+ * either, every timeframe is on Auto. Unknown timeframes / bad entries are
+ * dropped; lengths clamp to the left/right ranges.
+ */
+export function sanitizeSupportResistancePivots(params: Record<string, unknown>): Partial<Record<ChartTimeframe, SupportResistancePivot>> {
+    const out: Partial<Record<ChartTimeframe, SupportResistancePivot>> = {};
+    const raw = params.supportResistancePivots;
+    if (raw === undefined) {
+        if (!isObj(params.supportResistance)) return out;
+        const { left, right } = sanitizeNumeric("supportResistance", params.supportResistance);
+        for (const tf of C.timeframes) out[tf] = { left, right };
+        return out;
+    }
+    if (!isObj(raw)) return out;
+    for (const tf of C.timeframes) {
+        const e = raw[tf];
+        if (!isObj(e)) continue;
+        const { left, right } = e;
+        if (typeof left !== "number" || !Number.isFinite(left) || typeof right !== "number" || !Number.isFinite(right)) continue;
+        out[tf] = { left: clampParam(SR_RANGE.left, left), right: clampParam(SR_RANGE.right, right) };
+    }
+    return out;
+}
+
+/** The S/R pivot length used on chart timeframe `tf`: hand-set, or Auto from the catalog table. */
+export function srPivotFor(
+    s: Pick<IndicatorSettings, "supportResistancePivots">,
+    tf: string,
+): { left: number; right: number; auto: boolean } {
+    const manual = s.supportResistancePivots[tf as ChartTimeframe];
+    if (manual) return { left: manual.left, right: manual.right, auto: false };
+    const n = (C.supportResistanceAutoPivot as Record<string, number>)[tf] ?? SR_RANGE.left.default;
+    return { left: n, right: n, auto: true };
+}
+
 /** Settings from a config's `params`: unmentioned lines → none drawn, unmentioned ADX/UT Bot/S/R → defaults. */
 export function resolveSettings(params: unknown): IndicatorSettings {
     const p = isObj(params) ? params : {};
@@ -159,6 +205,7 @@ export function resolveSettings(params: unknown): IndicatorSettings {
         utBot: sanitizeNumeric("utBot", p.utBot),
         supportResistance: sanitizeNumeric("supportResistance", p.supportResistance),
         supportResistanceOptions: sanitizeSupportResistanceOptions(p.supportResistanceOptions),
+        supportResistancePivots: sanitizeSupportResistancePivots(p),
     };
 }
 
@@ -240,6 +287,9 @@ export function captureConfig(s: ChartState): ChartLayoutConfig {
             utBot: { ...s.settings.utBot },
             supportResistance: { ...s.settings.supportResistance },
             supportResistanceOptions: { ...s.settings.supportResistanceOptions },
+            supportResistancePivots: Object.fromEntries(
+                Object.entries(s.settings.supportResistancePivots).map(([tf, v]) => [tf, { ...v }]),
+            ),
         },
         panes: {
             order: [...s.paneOrder],

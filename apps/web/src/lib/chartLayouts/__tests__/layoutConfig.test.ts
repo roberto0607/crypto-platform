@@ -8,6 +8,7 @@ import {
     captureConfig,
     isModified,
     resolveConfig,
+    srPivotFor,
     type ChartState,
 } from "../layoutConfig";
 import { DEFAULT_INDICATOR_CONFIG } from "@/stores/tradingStore";
@@ -228,6 +229,68 @@ describe("support/resistance settings in a layout", () => {
     });
 });
 
+describe("support/resistance pivot length: Auto per timeframe, manual per timeframe", () => {
+    const TFS = ["1m", "5m", "15m", "1h", "4h", "1d", "1w"] as const;
+
+    it("Auto: 1m–15m → 5, 1h → 8, 4h → 10, 1D → 5, 1W → 3 (left = right)", () => {
+        const auto = Object.fromEntries(TFS.map((tf) => [tf, srPivotFor(DEFAULT_INDICATOR_SETTINGS, tf)]));
+        expect(auto).toEqual({
+            "1m": { left: 5, right: 5, auto: true },
+            "5m": { left: 5, right: 5, auto: true },
+            "15m": { left: 5, right: 5, auto: true },
+            "1h": { left: 8, right: 8, auto: true },
+            "4h": { left: 10, right: 10, auto: true },
+            "1d": { left: 5, right: 5, auto: true },
+            "1w": { left: 3, right: 3, auto: true },
+        });
+    });
+
+    it("new settings and layouts that don't mention S/R are on Auto everywhere", () => {
+        expect(DEFAULT_INDICATOR_SETTINGS.supportResistancePivots).toEqual({});
+        expect(resolveConfig({ version: 1, indicators: { supportResistance: true } }, base()).settings.supportResistancePivots).toEqual({});
+        expect(resolveConfig(PRESETS[1]!.config, base()).settings.supportResistancePivots).toEqual({});
+    });
+
+    it("a manual value applies to its own timeframe only; the others stay on Auto", () => {
+        const s = resolveConfig({ version: 1, params: { supportResistancePivots: { "4h": { left: 7, right: 6 } } } }, base()).settings;
+        expect(srPivotFor(s, "4h")).toEqual({ left: 7, right: 6, auto: false });
+        expect(srPivotFor(s, "1m")).toEqual({ left: 5, right: 5, auto: true });
+        expect(srPivotFor(s, "1w")).toEqual({ left: 3, right: 3, auto: true });
+    });
+
+    it("an existing layout (saved before Auto) keeps its manual left/right on every timeframe", () => {
+        const old = { version: 1, params: { supportResistance: { ...DEFAULT_INDICATOR_SETTINGS.supportResistance, left: 12, right: 9 } } };
+        const s = resolveConfig(old, base()).settings;
+        for (const tf of TFS) expect(srPivotFor(s, tf)).toEqual({ left: 12, right: 9, auto: false });
+        // The untouched 10/10 default of an old layout is a value it was saved with, too.
+        const plain = resolveConfig({ version: 1, params: { supportResistance: DEFAULT_INDICATOR_SETTINGS.supportResistance } }, base()).settings;
+        for (const tf of TFS) expect(srPivotFor(plain, tf)).toEqual({ left: 10, right: 10, auto: false });
+    });
+
+    it("drops unknown timeframes and bad entries, clamps lengths to the catalog range", () => {
+        const s = resolveConfig({
+            version: 1,
+            params: { supportResistancePivots: { "4h": { left: 1, right: 80 }, "2h": { left: 5, right: 5 }, "1h": { left: "x", right: 4 }, "1d": 7 } },
+        }, base()).settings;
+        expect(s.supportResistancePivots).toEqual({ "4h": { left: 2, right: 50 } });
+    });
+
+    it("is saved per timeframe: capture → resolve round-trips, and editing one marks the layout modified", () => {
+        const s: ChartState = {
+            ...base(),
+            settings: { ...DEFAULT_INDICATOR_SETTINGS, supportResistancePivots: { "1m": { left: 4, right: 3 }, "1w": { left: 2, right: 2 } } },
+        };
+        const cfg = captureConfig(s);
+        expect(cfg.params!.supportResistancePivots).toEqual({ "1m": { left: 4, right: 3 }, "1w": { left: 2, right: 2 } });
+        expect(resolveConfig(cfg, base())).toEqual(s);
+        expect(isModified(cfg, s)).toBe(false);
+        expect(isModified(cfg, { ...s, settings: { ...s.settings, supportResistancePivots: { "1m": { left: 4, right: 3 } } } })).toBe(true);
+        // A layout saved with everything on Auto stays on Auto (not the old-layout rule).
+        const autoCfg = captureConfig(base());
+        for (const tf of TFS) expect(srPivotFor(resolveConfig(autoCfg, base()).settings, tf).auto).toBe(true);
+    });
+});
+
 describe("resolveConfig (forward-compatible reader)", () => {
     it("skips an indicator this build doesn't know, silently", () => {
         const s = resolveConfig({ version: 1, indicators: { rsi: true, stochRsi: true, ema21: true } }, base());
@@ -313,6 +376,7 @@ describe("captureConfig + isModified", () => {
                 nearest: 3, maxAgeBars: 200, htfLeft: 5, htfRight: 5,
             },
             supportResistanceOptions: { htf: "off", showBroken: "on", volumeFilter: "off", maxAge: "off" },
+            supportResistancePivots: {},
         });
     });
 

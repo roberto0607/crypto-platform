@@ -9,6 +9,7 @@ import {
     srComputeOpts,
     srConfirmText,
     srLabel,
+    srParamsForTimeframe,
     SR_COLORS,
 } from "../srDisplay";
 import { computeSupportResistance, type SRLevel } from "../sharedIndicators";
@@ -178,3 +179,24 @@ describe("srChartState (what the chart draws from its closed candles + HTF candl
         expect(at(21 * D - H).breaks).toEqual([]);
     });
 });
+
+describe("pivot length on the chart's timeframe (Auto / hand-set)", () => {
+    it("Auto picks the timeframe's length for left and right; other params unchanged", () => {
+        expect(srParamsForTimeframe(P, {}, "1m")).toEqual({ ...P, left: 5, right: 5 });
+        expect(srParamsForTimeframe(P, {}, "1h")).toEqual({ ...P, left: 8, right: 8 });
+        expect(srParamsForTimeframe(P, {}, "4h")).toEqual({ ...P, left: 10, right: 10 });
+        expect(srParamsForTimeframe(P, {}, "1d")).toEqual({ ...P, left: 5, right: 5 });
+        expect(srParamsForTimeframe(P, {}, "1w")).toEqual({ ...P, left: 3, right: 3 });
+    });
+
+    it("a hand-set timeframe uses its own left/right", () => {
+        expect(srParamsForTimeframe(P, { "4h": { left: 7, right: 6 } }, "4h")).toEqual({ ...P, left: 7, right: 6 });
+        expect(srParamsForTimeframe(P, { "4h": { left: 7, right: 6 } }, "15m")).toEqual({ ...P, left: 5, right: 5 });
+    });
+
+    it("the confirmation text follows the pivot length in use", () => {
+        expect(srConfirmText(srParamsForTimeframe(P, {}, "1w"), O, "1w")).toEqual(["confirms after 3w"]);
+        expect(srConfirmText(srParamsForTimeframe(P, {}, "1m"), O, "1m")).toEqual(["confirms after 5m"]);
+    });
+});
+

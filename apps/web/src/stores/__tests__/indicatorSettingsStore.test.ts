@@ -132,3 +132,32 @@ describe("support/resistance settings", () => {
         });
     });
 });
+
+describe("support/resistance pivot length per timeframe", () => {
+    it("starts on Auto everywhere; a hand-set timeframe persists, survives reload, and can go back to Auto", () => {
+        expect(store().supportResistancePivots).toEqual({});
+        store().setSupportResistancePivot("4h", { left: 7, right: 6 });
+        store().setSupportResistancePivot("1m", { left: 3, right: 3 });
+        expect(store().supportResistancePivots).toEqual({ "1m": { left: 3, right: 3 }, "4h": { left: 7, right: 6 } });
+        expect(loadIndicatorSettings().supportResistancePivots).toEqual(store().supportResistancePivots);
+        store().setSupportResistancePivot("4h", null);
+        expect(loadIndicatorSettings().supportResistancePivots).toEqual({ "1m": { left: 3, right: 3 } });
+    });
+
+    it("editing another S/R setting never turns Auto timeframes into hand-set ones", () => {
+        store().setSupportResistance({ mergeAtr: 0.6 });
+        store().setSupportResistanceOptions({ htf: "1w" });
+        expect(store().supportResistancePivots).toEqual({});
+        expect(loadIndicatorSettings().supportResistancePivots).toEqual({});
+    });
+
+    it("settings saved before Auto existed keep their left/right on every timeframe", () => {
+        localStorage.setItem(INDICATOR_SETTINGS_KEY, JSON.stringify({
+            movingAverages: [], maCross: null,
+            supportResistance: { ...DEFAULT_INDICATOR_SETTINGS.supportResistance, left: 6, right: 4 },
+        }));
+        const s = loadIndicatorSettings();
+        expect(Object.keys(s.supportResistancePivots)).toEqual(["1m", "5m", "15m", "1h", "4h", "1d", "1w"]);
+        expect(s.supportResistancePivots["1w"]).toEqual({ left: 6, right: 4 });
+    });
+});

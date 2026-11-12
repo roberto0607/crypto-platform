@@ -42,6 +42,14 @@ function numericGroup(spec: Record<string, { min: number; max: number; step: num
         .strict();
 }
 
+const SR_NUM = C.numericParams.supportResistance;
+
+/** Hand-set S/R pivot lengths by chart timeframe (a timeframe left out is on Auto). */
+const srPivotsSchema = optionalRecord(
+    C.timeframes,
+    numericGroup({ left: SR_NUM.left, right: SR_NUM.right }),
+);
+
 const paramsSchema = z
     .object({
         ...Object.fromEntries(Object.entries(C.params).map(([group, spec]) => [group, paramGroup(spec).optional()])),
@@ -52,6 +60,7 @@ const paramsSchema = z
             .refine((a) => new Set(a.map((m) => m.id)).size === a.length, { message: "duplicate moving average id" })
             .optional(),
         maCross: z.object({ fast: maId, slow: maId }).strict().optional(),
+        supportResistancePivots: srPivotsSchema.optional(),
     })
     .strict()
     .superRefine((p, ctx) => {

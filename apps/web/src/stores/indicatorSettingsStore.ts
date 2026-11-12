@@ -18,6 +18,8 @@ import {
     type MovingAverageSpec,
     type SupportResistanceOptions,
     type SupportResistanceParams,
+    type SupportResistancePivot,
+    type ChartTimeframe,
     type UtBotParams,
 } from "@/lib/chartLayouts/catalog";
 import {
@@ -91,6 +93,8 @@ interface IndicatorSettingsState extends IndicatorSettings {
     setUtBot: (patch: Partial<UtBotParams>) => void;
     setSupportResistance: (patch: Partial<SupportResistanceParams>) => void;
     setSupportResistanceOptions: (patch: Partial<SupportResistanceOptions>) => void;
+    /** Hand-set the pivot length on one chart timeframe, or null = back to Auto there. */
+    setSupportResistancePivot: (tf: ChartTimeframe, pivot: SupportResistancePivot | null) => void;
     /** Replace everything (applying a chart layout). */
     setSettings: (s: IndicatorSettings) => void;
 }
@@ -107,6 +111,8 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
             utBot: next.utBot ?? cur.utBot,
             supportResistance: next.supportResistance ?? cur.supportResistance,
             supportResistanceOptions: next.supportResistanceOptions ?? cur.supportResistanceOptions,
+            // Always present, so the "saved before Auto" rule never applies to the store's own writes.
+            supportResistancePivots: next.supportResistancePivots ?? cur.supportResistancePivots,
         });
         persist(s);
         set(s);
@@ -128,15 +134,22 @@ export const useIndicatorSettingsStore = create<IndicatorSettingsState>((set, ge
         setSupportResistance: (patch) => commit({ supportResistance: { ...get().supportResistance, ...patch } }),
         setSupportResistanceOptions: (patch) =>
             commit({ supportResistanceOptions: { ...get().supportResistanceOptions, ...patch } }),
+        setSupportResistancePivot: (tf, pivot) => {
+            const next = { ...get().supportResistancePivots };
+            if (pivot) next[tf] = pivot;
+            else delete next[tf];
+            commit({ supportResistancePivots: next });
+        },
         setSettings: (s) => commit({
             movingAverages: s.movingAverages, maCross: s.maCross, adx: s.adx, utBot: s.utBot,
             supportResistance: s.supportResistance, supportResistanceOptions: s.supportResistanceOptions,
+            supportResistancePivots: s.supportResistancePivots,
         }),
     };
 });
 
 /** The settings part of the store, as a plain object. */
 export function currentIndicatorSettings(): IndicatorSettings {
-    const { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions } = useIndicatorSettingsStore.getState();
-    return { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions };
+    const { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions, supportResistancePivots } = useIndicatorSettingsStore.getState();
+    return { movingAverages, maCross, adx, utBot, supportResistance, supportResistanceOptions, supportResistancePivots };
 }

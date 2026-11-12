@@ -23,7 +23,7 @@ import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
 import { buildHtfLine, htfBarsNeeded, lineMode, movingAverageLabel, timeframeLabel } from "@/lib/htfLines";
 import { peekHtfCandles } from "@/lib/htfCandleCache";
-import { srApproach, srChartState, srHtfTimeframes, type SRBanner, type SRDrawable } from "@/lib/srDisplay";
+import { srApproach, srChartState, srHtfTimeframes, srParamsForTimeframe, type SRBanner, type SRDrawable } from "@/lib/srDisplay";
 import { SRLevelsPrimitive } from "@/lib/srLevelsPrimitive";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
@@ -642,6 +642,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const utBotParams = useIndicatorSettingsStore((s) => s.utBot);
     const srParams = useIndicatorSettingsStore((s) => s.supportResistance);
     const srOptions = useIndicatorSettingsStore((s) => s.supportResistanceOptions);
+    const srPivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
     const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
@@ -1472,7 +1473,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     const got = pairId ? peekHtfCandles(pairId, tf, need, redraw) : null;
                     if (got) htf.push({ tf, candles: got.map(apiCandleToIndicator) });
                 }
-                const sr = srChartState({ candles: indCandles, htf, params: srParams, options: srOptions, chartTf });
+                // Pivot length: Auto for this timeframe, or the one set by hand on it.
+                const params = srParamsForTimeframe(srParams, srPivots, chartTf);
+                const sr = srChartState({ candles: indCandles, htf, params, options: srOptions, chartTf });
                 srPrimitiveRef.current?.setData(sr.drawables, indCandles.map((c) => c.time));
                 srLiveRef.current = { drawables: sr.drawables, atr: sr.atr };
                 srBreaks = sr.breaks;
@@ -1633,7 +1636,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setDeltaData([]);
             }
         }
-    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, srParams, srOptions, clearPriceLines, fundingRateHourly, addToast]);
+    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, srParams, srOptions, srPivots, clearPriceLines, fundingRateHourly, addToast]);
 
     // History fetching and the live handlers call renderOverlays through this
     // ref, so an indicator toggle or a funding-rate update re-renders overlays
