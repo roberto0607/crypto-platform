@@ -220,12 +220,19 @@ function apiCandleToIndicator(c: Candle): IndicatorCandle {
 const CONTEXT_BAR_CSS = `
   .tr-chart-wrap { display:flex; flex-direction:column; }
   .tr-chart-legend {
-    position:absolute; top:8px; left:12px; z-index:9;
-    display:flex; flex-direction:column; gap:4px;
+    position:absolute; top:6px; left:6px; z-index:9;
+    display:flex; flex-direction:column; align-items:flex-start; gap:2px;
     pointer-events:none;
     font-family:'Space Mono',monospace;
   }
-  .tr-chart-legend-row { display:flex; align-items:baseline; gap:0; pointer-events:auto; }
+  /* Each row sits on its own dark backing (as wide as its text) so indicator
+     lines and levels never run through the legend. left/top/gap are 6/2px
+     less to offset the padding: the text stays where it was. */
+  .tr-chart-legend-row {
+    display:flex; align-items:baseline; gap:0; pointer-events:auto;
+    padding:2px 6px; border-radius:3px;
+    background:rgba(8,12,18,0.78);
+  }
   .tr-cr-divider {
     width:1px;align-self:stretch;flex-shrink:0;
     margin:3px 6px;
