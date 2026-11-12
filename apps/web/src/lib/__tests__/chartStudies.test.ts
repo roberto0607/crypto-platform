@@ -88,6 +88,14 @@ describe("buildStudyMarkers", () => {
         ]);
     });
 
+    it("S/R breaks: a small text-less arrow (up under the bar through resistance, down over it through support)", () => {
+        const m = buildStudyMarkers({ srBreaks: [{ time: 50, direction: "down" }, { time: 20, direction: "up" }] });
+        expect(m.map((x) => [x.time, x.text, x.position, x.shape, x.color, x.size])).toEqual([
+            [20, undefined, "belowBar", "arrowUp", "#ef4444", 0.7],
+            [50, undefined, "aboveBar", "arrowDown", "#22c55e", 0.7],
+        ]);
+    });
+
     it("nothing on → no markers", () => {
         expect(buildStudyMarkers({})).toEqual([]);
     });
