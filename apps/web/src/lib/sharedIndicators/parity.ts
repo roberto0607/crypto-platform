@@ -19,6 +19,7 @@ import { computePineATR } from "./pineAtr";
 import { computeADX } from "./adx";
 import { computeUTBot } from "./utBot";
 import { findSwingPoints, type SwingPoint } from "./swings";
+import { computeSupportResistance } from "./supportResistance";
 import { computeMovingAverage, htfStepSeries, TIMEFRAME_SEC, type MovingAverageKind } from "./htf";
 
 export interface CandleFixture {
@@ -66,6 +67,9 @@ export function computeParitySeries(candles: Candle[], timeframeSec: number): Se
   // Signals/pivots as points: time = the bar, value = +1 buy / -1 sell, or the pivot price.
   const pivots = (s: SwingPoint[]): Point[] => s.map((p) => ({ time: p.time, value: p.price }));
   const confirmations = (s: SwingPoint[]): Point[] => s.map((p) => ({ time: p.confirmedTime, value: p.index }));
+  // Support/resistance (defaults), one point per level keyed by its confirmation time.
+  const sr = computeSupportResistance(candles);
+  const srPts = (f: (l: (typeof sr)[number]) => number): Point[] => sr.map((l) => ({ time: l.confirmedTime, value: f(l) }));
   return {
     ema20: computeEMA(candles, 20),
     ema50: computeEMA(candles, 50),
@@ -102,6 +106,14 @@ export function computeParitySeries(candles: Candle[], timeframeSec: number): Se
     swingHighConfirmed: confirmations(swings.highs),
     swingLow: pivots(swings.lows),
     swingLowConfirmed: confirmations(swings.lows),
+    srPrice: srPts((l) => l.price),
+    srTop: srPts((l) => l.top),
+    srBottom: srPts((l) => l.bottom),
+    srTouches: srPts((l) => l.touches.length),
+    /** +1 resistance / −1 support; ×2 for a flip. */
+    srRole: srPts((l) => (l.role === "resistance" ? 1 : -1) * (l.flippedFrom ? 2 : 1)),
+    srBrokenIndex: srPts((l) => l.brokenIndex ?? -1),
+    srAge: srPts((l) => l.ageBars),
   };
 }
 

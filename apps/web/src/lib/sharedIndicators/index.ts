@@ -14,6 +14,18 @@ export { computePineATR } from "./pineAtr";
 export { computeADX, type ADXResult } from "./adx";
 export { computeUTBot, type UTBotResult, type UTBotSignal } from "./utBot";
 export { findSwingPoints, type SwingPoint } from "./swings";
+export {
+  computeSupportResistance,
+  srConfirmationDelay,
+  srLevelsAsOf,
+  activeSRLevelsAt,
+  srHtfLevelsAt,
+  SR_DEFAULTS,
+  type SRLevel,
+  type SRParams,
+  type SRRole,
+  type SRTouch,
+} from "./supportResistance";
 export { WARMUP, firstRealTime } from "./warmup";
 export { pineRma, pineTrueRange } from "./pine";
 export {
