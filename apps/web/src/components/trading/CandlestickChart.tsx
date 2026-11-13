@@ -210,6 +210,17 @@ function apiCandleToIndicator(c: Candle): IndicatorCandle {
     };
 }
 
+/** Raw candles by chart time (crosshair / magnet lookups), built once per candle array. */
+const rawByTimeCache = new WeakMap<Candle[], Map<number, Candle>>();
+function rawCandleAt(candles: Candle[], time: number): Candle | undefined {
+    let m = rawByTimeCache.get(candles);
+    if (!m) {
+        m = new Map(candles.map((c) => [new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC, c]));
+        rawByTimeCache.set(candles, m);
+    }
+    return m.get(time);
+}
+
 
 /* ── Chart legend overlay CSS ──
    Injected once into <head>. Colour vars (--g, --red, …) cascade down
@@ -650,7 +661,6 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const srParams = useIndicatorSettingsStore((s) => s.supportResistance);
     const srOptions = useIndicatorSettingsStore((s) => s.supportResistanceOptions);
     const srPivots = useIndicatorSettingsStore((s) => s.supportResistancePivots);
-    const liveOrderBook = useTradingStore((s) => s.orderBook);
     const pairs = useAppStore((s) => s.pairs);
     const selectedPairSymbol = pairs.find((p) => p.id === selectedPairId)?.symbol ?? "BTC/USD";
     const footprintPair = selectedPairSymbol.split("/")[0] ?? "BTC";
@@ -901,9 +911,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         // bar internally), so there's nothing to snap there.
         const resolveDrawingPrice = (time: number, rawPrice: number): number => {
             if (!useDrawingStore.getState().snapEnabled) return rawPrice;
-            const candle = rawCandlesRef.current.find(
-                (c) => new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC === time,
-            );
+            const candle = rawCandleAt(rawCandlesRef.current, time);
             if (!candle) return rawPrice;
             const candidates = [candle.open, candle.high, candle.low, candle.close].map(parseFloat);
             return candidates.reduce((closest, v) =>
@@ -1061,9 +1069,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // the raw candle cache by matching the converted bucket time. The
             // live (forming) candle isn't in the cache, so hovering it yields
             // null and the volume slot stays an em-dash.
-            const raw = rawCandlesRef.current.find(
-                (c) => new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC === t,
-            );
+            const raw = rawCandleAt(rawCandlesRef.current, t);
             setCrosshairData({
                 open: bar.open,
                 high: bar.high,
@@ -1804,26 +1810,37 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     });
 
     // Order book heatmap — update from live order book data
+    // Subscribes to the book directly (not via a hook): a book update repaints
+    // the heatmap without re-rendering the chart component.
     useEffect(() => {
         const heatmap = heatmapPrimitiveRef.current;
         if (!heatmap) return;
 
-        if (!indicatorConfig.orderbook || !liveOrderBook) {
+        if (!indicatorConfig.orderbook) {
             heatmap.clear();
             return;
         }
 
-        const bids: HeatmapLevel[] = liveOrderBook.bids.slice(0, 10).map((l) => ({
-            price: parseFloat(l.price),
-            quantity: parseFloat(l.qty),
-        }));
-        const asks: HeatmapLevel[] = liveOrderBook.asks.slice(0, 10).map((l) => ({
-            price: parseFloat(l.price),
-            quantity: parseFloat(l.qty),
-        }));
-
-        heatmap.update(bids, asks);
-    }, [indicatorConfig.orderbook, liveOrderBook]);
+        const apply = (liveOrderBook: ReturnType<typeof useTradingStore.getState>["orderBook"]) => {
+            if (!liveOrderBook) {
+                heatmap.clear();
+                return;
+            }
+            const bids: HeatmapLevel[] = liveOrderBook.bids.slice(0, 10).map((l) => ({
+                price: parseFloat(l.price),
+                quantity: parseFloat(l.qty),
+            }));
+            const asks: HeatmapLevel[] = liveOrderBook.asks.slice(0, 10).map((l) => ({
+                price: parseFloat(l.price),
+                quantity: parseFloat(l.qty),
+            }));
+            heatmap.update(bids, asks);
+        };
+        apply(useTradingStore.getState().orderBook);
+        return useTradingStore.subscribe((st, prev) => {
+            if (st.orderBook !== prev.orderBook) apply(st.orderBook);
+        });
+    }, [indicatorConfig.orderbook]);
 
     // Footprint chart — update from footprint data
     useEffect(() => {
@@ -2097,7 +2114,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         return () => clearInterval(id);
     }, []);
 
-    // RAF loop: position DOM label overlays with collision avoidance
+    // RAF loop: position DOM label overlays with collision avoidance.
+    //
+    // No forced layout: heights come from a ResizeObserver (measured by the
+    // browser after its own layout), y positions from the chart (no DOM), and
+    // a style is written only when it differs from what this loop last wrote
+    // to that element — an unchanged frame does no DOM reads or writes.
     useEffect(() => {
         const allRefs = [pdhLabelRef, pdlLabelRef, priceLabelRef, pdhConnectorRef, pdlConnectorRef, pwhLabelRef, pwlLabelRef];
         if (!indicatorConfig.keyLevels) {
@@ -2107,6 +2129,36 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
         let active = true;
         const GAP = 6; // px — minimum gap between live price box and cards
         const CLEARANCE = 4; // px — trigger threshold
+
+        const heights = new WeakMap<Element, number>();
+        const observed = new WeakSet<Element>();
+        const ro = typeof ResizeObserver === "undefined"
+            ? null
+            : new ResizeObserver((entries) => {
+                for (const e of entries) {
+                    const el = e.target as HTMLElement;
+                    heights.set(el, el === containerRef.current ? el.clientHeight : el.offsetHeight);
+                }
+            });
+        const heightOf = (el: HTMLElement | null, fallback: number): number => {
+            if (!el) return fallback;
+            if (!observed.has(el)) {
+                observed.add(el);
+                if (ro) ro.observe(el);
+                else return el === containerRef.current ? el.clientHeight : el.offsetHeight;
+            }
+            return heights.get(el) ?? fallback;
+        };
+        // What this loop last wrote, per element (React never touches these styles after mount).
+        const written = new WeakMap<HTMLElement, Record<string, string>>();
+        const put = (el: HTMLElement, prop: "top" | "height" | "display", value: string) => {
+            let w = written.get(el);
+            if (!w) { w = {}; written.set(el, w); }
+            if (w[prop] === value) return;
+            w[prop] = value;
+            el.style[prop] = value;
+        };
+
         const tick = () => {
             if (!active) return;
             const series = seriesRef.current;
@@ -2114,30 +2166,32 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             const price = currentPriceRef.current;
 
             if (series && levels) {
+                const priceLabel = priceLabelRef.current;
+                const pdhLabel = pdhLabelRef.current;
+                const pdlLabel = pdlLabelRef.current;
                 const yPdh = series.priceToCoordinate(levels.pdh);
                 const yPdl = series.priceToCoordinate(levels.pdl);
                 const yPrice = price > 0 ? series.priceToCoordinate(price) : null;
 
                 // Live price label — always anchored, never moves
-                if (priceLabelRef.current) {
+                if (priceLabel) {
                     if (yPrice != null) {
-                        priceLabelRef.current.style.top = `${yPrice}px`;
-                        priceLabelRef.current.style.display = "flex";
+                        put(priceLabel, "top", `${yPrice}px`);
+                        put(priceLabel, "display", "flex");
                     } else {
-                        priceLabelRef.current.style.display = "none";
+                        put(priceLabel, "display", "none");
                     }
                 }
 
-                // Measure live price box height for collision math
-                const priceBoxH = priceLabelRef.current?.offsetHeight ?? 18;
+                // Live price box height for the collision math
+                const priceBoxH = heightOf(priceLabel, 18);
                 const priceBoxHalf = priceBoxH / 2;
 
                 // PDH card — shift UP if it overlaps the live price box
                 let adjustedPdhY = yPdh;
                 let pdhShifted = false;
                 if (yPdh != null && yPrice != null) {
-                    const pdhCardH = pdhLabelRef.current?.offsetHeight ?? 60;
-                    const pdhCardHalf = pdhCardH / 2;
+                    const pdhCardHalf = heightOf(pdhLabel, 60) / 2;
                     // PDH card bottom edge vs price box top edge
                     const pdhBottom = yPdh + pdhCardHalf;
                     const priceTop = yPrice - priceBoxHalf;
@@ -2146,24 +2200,23 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         pdhShifted = true;
                     }
                 }
-                if (pdhLabelRef.current) {
+                if (pdhLabel) {
                     if (adjustedPdhY != null) {
-                        pdhLabelRef.current.style.top = `${adjustedPdhY}px`;
-                        pdhLabelRef.current.style.display = "flex";
+                        put(pdhLabel, "top", `${adjustedPdhY}px`);
+                        put(pdhLabel, "display", "flex");
                     } else {
-                        pdhLabelRef.current.style.display = "none";
+                        put(pdhLabel, "display", "none");
                     }
                 }
                 // PDH connector line (actual level → shifted label)
                 if (pdhConnectorRef.current) {
+                    const el = pdhConnectorRef.current;
                     if (pdhShifted && yPdh != null && adjustedPdhY != null) {
-                        const top = Math.min(yPdh, adjustedPdhY);
-                        const h = Math.abs(yPdh - adjustedPdhY);
-                        pdhConnectorRef.current.style.top = `${top}px`;
-                        pdhConnectorRef.current.style.height = `${h}px`;
-                        pdhConnectorRef.current.style.display = "block";
+                        put(el, "top", `${Math.min(yPdh, adjustedPdhY)}px`);
+                        put(el, "height", `${Math.abs(yPdh - adjustedPdhY)}px`);
+                        put(el, "display", "block");
                     } else {
-                        pdhConnectorRef.current.style.display = "none";
+                        put(el, "display", "none");
                     }
                 }
 
@@ -2171,8 +2224,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 let adjustedPdlY = yPdl;
                 let pdlShifted = false;
                 if (yPdl != null && yPrice != null) {
-                    const pdlCardH = pdlLabelRef.current?.offsetHeight ?? 60;
-                    const pdlCardHalf = pdlCardH / 2;
+                    const pdlCardHalf = heightOf(pdlLabel, 60) / 2;
                     // Price box bottom edge vs PDL card top edge
                     const priceBottom = yPrice + priceBoxHalf;
                     const pdlTop = yPdl - pdlCardHalf;
@@ -2181,39 +2233,38 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         pdlShifted = true;
                     }
                 }
-                if (pdlLabelRef.current) {
+                if (pdlLabel) {
                     if (adjustedPdlY != null) {
-                        pdlLabelRef.current.style.top = `${adjustedPdlY}px`;
-                        pdlLabelRef.current.style.display = "flex";
+                        put(pdlLabel, "top", `${adjustedPdlY}px`);
+                        put(pdlLabel, "display", "flex");
                     } else {
-                        pdlLabelRef.current.style.display = "none";
+                        put(pdlLabel, "display", "none");
                     }
                 }
                 // PDL connector line (actual level → shifted label)
                 if (pdlConnectorRef.current) {
+                    const el = pdlConnectorRef.current;
                     if (pdlShifted && yPdl != null && adjustedPdlY != null) {
-                        const top = Math.min(yPdl, adjustedPdlY);
-                        const h = Math.abs(yPdl - adjustedPdlY);
-                        pdlConnectorRef.current.style.top = `${top}px`;
-                        pdlConnectorRef.current.style.height = `${h}px`;
-                        pdlConnectorRef.current.style.display = "block";
+                        put(el, "top", `${Math.min(yPdl, adjustedPdlY)}px`);
+                        put(el, "height", `${Math.abs(yPdl - adjustedPdlY)}px`);
+                        put(el, "display", "block");
                     } else {
-                        pdlConnectorRef.current.style.display = "none";
+                        put(el, "display", "none");
                     }
                 }
 
                 // PWH / PWL cards: at their level, pushed away from the live
                 // price (up above it, down below) past the price box and the
                 // PDH/PDL cards so nothing overlaps.
-                const boxOf = (el: HTMLDivElement | null, y: number | null) => {
-                    if (!el || y == null || el.style.display === "none") return null;
-                    const half = el.offsetHeight / 2;
+                const boxOf = (el: HTMLDivElement | null, y: number | null, shown: boolean) => {
+                    if (!el || y == null || !shown) return null;
+                    const half = heightOf(el, 0) / 2;
                     return { top: y - half, bottom: y + half };
                 };
                 const boxes = [
-                    boxOf(priceLabelRef.current, yPrice),
-                    boxOf(pdhLabelRef.current, adjustedPdhY),
-                    boxOf(pdlLabelRef.current, adjustedPdlY),
+                    boxOf(priceLabel, yPrice, yPrice != null),
+                    boxOf(pdhLabel, adjustedPdhY, adjustedPdhY != null),
+                    boxOf(pdlLabel, adjustedPdlY, adjustedPdlY != null),
                 ].filter((b): b is { top: number; bottom: number } => b != null);
                 const weekly = weeklyLevelsRef.current;
                 // Nearest-to-price first, so a farther level is pushed further
@@ -2221,26 +2272,29 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 const weeklyCards = ([[pwhLabelRef.current, weekly?.pwh], [pwlLabelRef.current, weekly?.pwl]] as const)
                     .slice()
                     .sort((a, b) => Math.abs((a[1] ?? 0) - price) - Math.abs((b[1] ?? 0) - price));
+                const paneH = heightOf(containerRef.current, Infinity);
                 for (const [el, level] of weeklyCards) {
                     if (!el) continue;
                     const y = level != null ? series.priceToCoordinate(level) : null;
-                    if (y == null) { el.style.display = "none"; continue; }
-                    el.style.display = "flex";
-                    const half = el.offsetHeight / 2;
+                    if (y == null) { put(el, "display", "none"); continue; }
+                    const half = heightOf(el, 0) / 2;
                     const dir = price > 0 && level! < price ? 1 : -1;
-                    const paneH = containerRef.current?.clientHeight ?? Infinity;
                     const fits = (v: number) => v - half >= 0 && v + half <= paneH;
                     let placed = nudgeClear(y, half, boxes, dir, GAP);
                     if (!fits(placed)) placed = nudgeClear(y, half, boxes, dir === 1 ? -1 : 1, GAP);
-                    if (!fits(placed)) { el.style.display = "none"; continue; }
-                    el.style.top = `${placed}px`;
+                    if (!fits(placed)) { put(el, "display", "none"); continue; }
+                    put(el, "top", `${placed}px`);
+                    put(el, "display", "flex");
                     boxes.push({ top: placed - half, bottom: placed + half });
                 }
             }
             requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
-        return () => { active = false; };
+        return () => {
+            active = false;
+            ro?.disconnect();
+        };
     }, [indicatorConfig.keyLevels]);
 
     // Chips stack under the legend: its measured height (it wraps on narrow
