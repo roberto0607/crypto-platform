@@ -1,8 +1,12 @@
 /**
  * replayService.ts — DB read layer for match replay.
  *
- * Loads a completed match's positions + 5m candle window and runs
- * reconstructPnlCurve per player into a per-candle equity/P&L curve.
+ * Loads a completed match's trades (or the demo seed's match_positions) and
+ * the price candles over the match, and builds each player's equity/P&L curve
+ * on one clock (replayClock.ts): the match start, every candle close, every
+ * fill, the match end. The candle size follows the match length (1m up to
+ * 1h, 5m up to 6h, 1h beyond), falling back to coarser candles when the finer
+ * ones are no longer stored (1m is kept 30 days).
  *
  * SOURCES, in order:
  *   1. match_positions: per-position rows with side, entry, exit and stored
@@ -21,12 +25,21 @@ import {
     reconstructPnlCurve,
     type NormalizedPosition,
     type CurvePoint,
-    type MarkPriceLookup,
 } from "./reconstructPnlCurve.js";
+import {
+    TIMEFRAME_MS,
+    candleWindow,
+    replayClock,
+    replayMarkPrice,
+    timeframeFallbacks,
+    type ReplayTimeframe,
+} from "./replayClock.js";
+import { logger } from "../../observability/logContext.js";
 
-const HOUR_MS = 3_600_000;
-const CANDLE_MS = 300_000; // 5m
-const WINDOW_PAD_MS = HOUR_MS; // ±1h padding, matching the PR1 candle backfill
+/** A timeframe is used when every traded pair has at least this share of its candles. */
+const MIN_COVERAGE = 0.5;
+/** A final point further than this from the stored headline (in percent) is logged. */
+const HEADLINE_TOLERANCE_PCT = 1e-6;
 
 export class ReplayError extends Error {
     constructor(public code: "match_not_found" | "no_replay_data" | "insufficient_candle_data") {
@@ -63,6 +76,8 @@ export interface ReplayData {
         challenger: { id: string; name: string; finalPnlPct: number | null };
         opponent: { id: string; name: string; finalPnlPct: number | null };
     };
+    /** The size of the candles in `candles` (chosen from the match length). */
+    candleTimeframe: ReplayTimeframe;
     candles: Record<string, ReplayCandle[]>;
     positions: ReplayPosition[];
     curves: Record<string, CurvePoint[]>;
@@ -82,60 +97,82 @@ interface RawPosition {
     closed_at: Date | null;
 }
 
-/** Build a forward-filling markPrice lookup over per-pair ascending [ts, close]. */
-function buildMarkPrice(byPair: Map<string, ReplayCandle[]>): MarkPriceLookup {
-    return (pairId, ts) => {
-        const series = byPair.get(pairId);
-        if (!series || series.length === 0) return null;
-        // Binary search: last candle with ts <= T.
-        let lo = 0;
-        let hi = series.length - 1;
-        let idx = -1;
-        while (lo <= hi) {
-            const mid = (lo + hi) >> 1;
-            if (series[mid]!.ts <= ts) {
-                idx = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        return idx === -1 ? null : series[idx]!.c;
-    };
-}
-
 type MatchRow = NonNullable<Awaited<ReturnType<typeof getMatchById>>>;
 
-/** 5m candles per traded pair over [start, end], every pair covered or insufficient_candle_data. */
-async function loadCandles(
-    pairIds: string[],
-    windowStart: Date,
-    windowEnd: Date,
-): Promise<{ byPairId: Map<string, ReplayCandle[]>; times: number[] }> {
-    const { rows: rawCandles } = await pool.query<{
-        pair_id: string; ts: Date; open: string; high: string; low: string; close: string;
-    }>(
-        `SELECT pair_id, ts, open, high, low, close
-         FROM candles
-         WHERE pair_id = ANY($1) AND timeframe = '5m' AND ts >= $2 AND ts <= $3
-         ORDER BY ts ASC`,
-        [pairIds, windowStart, windowEnd],
-    );
-    const byPairId = new Map<string, ReplayCandle[]>();
-    for (const pid of pairIds) byPairId.set(pid, []);
-    const allTimes = new Set<number>();
-    for (const r of rawCandles) {
-        const ts = r.ts.getTime();
-        byPairId.get(r.pair_id)!.push({
-            ts, o: parseFloat(r.open), h: parseFloat(r.high), l: parseFloat(r.low), c: parseFloat(r.close),
-        });
-        allTimes.add(ts);
+interface LoadedCandles {
+    timeframe: ReplayTimeframe;
+    bucketMs: number;
+    byPairId: Map<string, ReplayCandle[]>;
+}
+
+/**
+ * Candles for every traded pair over the match, at the size the match length
+ * calls for. When that size isn't stored well enough (under MIN_COVERAGE of
+ * its buckets for some pair: 1m ages out after 30 days, a feed gap), the next
+ * coarser one is tried; failing all, the best-covered size any pair has data
+ * for. No candles at all for a pair is insufficient_candle_data.
+ */
+async function loadCandles(pairIds: string[], startMs: number, endMs: number): Promise<LoadedCandles> {
+    let best: { loaded: LoadedCandles; coverage: number } | null = null;
+    for (const timeframe of timeframeFallbacks(endMs - startMs)) {
+        const bucketMs = TIMEFRAME_MS[timeframe];
+        const { from, to, buckets } = candleWindow(startMs, endMs, bucketMs);
+        const { rows } = await pool.query<{
+            pair_id: string; ts: Date; open: string; high: string; low: string; close: string;
+        }>(
+            `SELECT pair_id, ts, open, high, low, close
+             FROM candles
+             WHERE pair_id = ANY($1) AND timeframe = $2 AND ts >= $3 AND ts < $4
+             ORDER BY ts ASC`,
+            [pairIds, timeframe, new Date(from), new Date(to)],
+        );
+        const byPairId = new Map<string, ReplayCandle[]>(pairIds.map((pid) => [pid, []]));
+        for (const r of rows) {
+            byPairId.get(r.pair_id)!.push({
+                ts: r.ts.getTime(), o: parseFloat(r.open), h: parseFloat(r.high), l: parseFloat(r.low), c: parseFloat(r.close),
+            });
+        }
+        const coverage = Math.min(...pairIds.map((pid) => byPairId.get(pid)!.length / buckets));
+        const loaded = { timeframe, bucketMs, byPairId };
+        if (coverage >= MIN_COVERAGE) return loaded;
+        if (coverage > 0 && (!best || coverage > best.coverage)) best = { loaded, coverage };
     }
-    // Honest gap handling: every traded pair must have candle coverage.
-    for (const pid of pairIds) {
-        if (byPairId.get(pid)!.length === 0) throw new ReplayError("insufficient_candle_data");
+    if (!best) throw new ReplayError("insufficient_candle_data");
+    return best.loaded;
+}
+
+/** Candle closes inside the match, for the clock. */
+function candleCloses(loaded: LoadedCandles): number[] {
+    const out: number[] = [];
+    for (const candles of loaded.byPairId.values()) for (const k of candles) out.push(k.ts + loaded.bucketMs);
+    return out;
+}
+
+function candlesBySymbol(loaded: LoadedCandles, symbolByPairId: Map<string, string>): Record<string, ReplayCandle[]> {
+    const out: Record<string, ReplayCandle[]> = {};
+    for (const [pid, candles] of loaded.byPairId) out[symbolByPairId.get(pid)!] = candles;
+    return out;
+}
+
+/**
+ * The match end is the result the match recorded: the curve's last point is
+ * the stored headline. The fills reach it on their own (oracle-tested); one
+ * that doesn't (an ISOLATED loss capped at the margin, which the walk doesn't
+ * model) is logged, and the end point still shows the recorded result.
+ */
+function endOnHeadline(
+    curve: CurvePoint[], headlinePct: number | null, startingCapital: number, matchId: string, userId: string,
+): CurvePoint[] {
+    const last = curve.at(-1);
+    if (!last || headlinePct == null) return curve;
+    if (Math.abs(last.pnlPct - headlinePct) > HEADLINE_TOLERANCE_PCT) {
+        logger.warn({ matchId, userId, replayPnlPct: last.pnlPct, headlinePnlPct: headlinePct }, "replay_headline_mismatch");
     }
-    return { byPairId, times: [...allTimes].sort((a, b) => a - b) };
+    const equity = startingCapital + (startingCapital * headlinePct) / 100;
+    curve[curve.length - 1] = {
+        ts: last.ts, equity, pnlPct: headlinePct, realizedPnl: equity - startingCapital, unrealizedPnl: 0,
+    };
+    return curve;
 }
 
 function matchHeader(match: MatchRow, startingCapital: number): ReplayData["match"] {
@@ -200,6 +237,15 @@ async function loadMatchFills(matchId: string, playerIds: string[]): Promise<Raw
     return rows;
 }
 
+/** The match's span: started → completed, widened to cover every event. */
+function matchSpan(match: MatchRow, eventTimes: number[]): { startMs: number; endMs: number } {
+    const first = Math.min(...eventTimes);
+    const last = Math.max(...eventTimes);
+    const started = match.started_at ? new Date(match.started_at).getTime() : first;
+    const completed = match.completed_at ? new Date(match.completed_at).getTime() : last;
+    return { startMs: Math.min(started, first), endMs: Math.max(completed, last) };
+}
+
 async function getFillReplay(match: MatchRow): Promise<ReplayData> {
     const players = [match.challenger_id, match.opponent_id];
     const raw = await loadMatchFills(match.id, players);
@@ -214,23 +260,28 @@ async function getFillReplay(match: MatchRow): Promise<ReplayData> {
         fee: computeFee(r.quote_amount, r.role, r, r.user_id).feeAmount,
         ts: r.executed_at.getTime(),
     });
+    const allFills = raw.map(toFill);
     const fillsByUser = new Map(players.map((u) => [u, raw.filter((r) => r.user_id === u).map(toFill)]));
 
-    const first = raw[0]!.executed_at.getTime();
-    const last = raw[raw.length - 1]!.executed_at.getTime();
+    const fillTimes = allFills.map((f) => f.ts);
+    const { startMs, endMs } = matchSpan(match, fillTimes);
     const pairIds = [...new Set(raw.map((r) => r.pair_id))];
     const symbolByPairId = new Map(raw.map((r) => [r.pair_id, r.symbol]));
-    const { byPairId, times } = await loadCandles(
-        pairIds, new Date(first - WINDOW_PAD_MS), new Date(last + WINDOW_PAD_MS),
-    );
-    const markPrice = buildMarkPrice(byPairId);
+    const loaded = await loadCandles(pairIds, startMs, endMs);
+    const clock = replayClock(startMs, endMs, candleCloses(loaded), fillTimes);
+    const markPrice = replayMarkPrice(loaded.byPairId, loaded.bucketMs, allFills);
     const startingCapital = parseFloat(match.starting_capital);
+    const header = matchHeader(match, startingCapital);
+    const headline = new Map([[header.challenger.id, header.challenger.finalPnlPct], [header.opponent.id, header.opponent.finalPnlPct]]);
 
     const curves: Record<string, CurvePoint[]> = {};
     const positions: ReplayPosition[] = [];
     for (const userId of players) {
         const fills = fillsByUser.get(userId)!;
-        curves[userId] = reconstructFillCurve(fills, times, markPrice, startingCapital, CANDLE_MS);
+        curves[userId] = endOnHeadline(
+            reconstructFillCurve(fills, clock, markPrice, startingCapital),
+            headline.get(userId) ?? null, startingCapital, match.id, userId,
+        );
         for (const trip of fillTrips(fills)) {
             positions.push({
                 userId,
@@ -247,10 +298,14 @@ async function getFillReplay(match: MatchRow): Promise<ReplayData> {
     }
     positions.sort((a, b) => a.openedAt - b.openedAt);
 
-    const candles: Record<string, ReplayCandle[]> = {};
-    for (const pid of pairIds) candles[symbolByPairId.get(pid)!] = byPairId.get(pid)!;
-
-    return { match: matchHeader(match, startingCapital), candles, positions, curves, source: "fills" };
+    return {
+        match: header,
+        candleTimeframe: loaded.timeframe,
+        candles: candlesBySymbol(loaded, symbolByPairId),
+        positions,
+        curves,
+        source: "fills",
+    };
 }
 
 export async function getMatchReplay(matchId: string): Promise<ReplayData> {
@@ -271,23 +326,14 @@ export async function getMatchReplay(matchId: string): Promise<ReplayData> {
     // A real match: no match_positions, replay its fills.
     if (rawPositions.length === 0) return getFillReplay(match);
 
-    // Window = [min(opened_at), max(closed_at)] padded ±1h.
-    let minOpen = Infinity;
-    let maxClose = -Infinity;
-    for (const p of rawPositions) {
-        const o = p.opened_at.getTime();
-        const c = (p.closed_at ?? p.opened_at).getTime();
-        if (o < minOpen) minOpen = o;
-        if (c > maxClose) maxClose = c;
-    }
-    const windowStart = new Date(minOpen - WINDOW_PAD_MS);
-    const windowEnd = new Date(maxClose + WINDOW_PAD_MS);
-
+    const eventTimes = rawPositions.flatMap((p) => [p.opened_at.getTime(), (p.closed_at ?? p.opened_at).getTime()]);
+    const { startMs, endMs } = matchSpan(match, eventTimes);
     const pairIds = [...new Set(rawPositions.map((p) => p.pair_id))];
     const symbolByPairId = new Map(rawPositions.map((p) => [p.pair_id, p.symbol]));
 
-    const { byPairId: candlesByPairId, times: candleTimes } = await loadCandles(pairIds, windowStart, windowEnd);
-    const markPrice = buildMarkPrice(candlesByPairId);
+    const loaded = await loadCandles(pairIds, startMs, endMs);
+    const clock = replayClock(startMs, endMs, candleCloses(loaded), eventTimes);
+    const markPrice = replayMarkPrice(loaded.byPairId, loaded.bucketMs, []);
     const startingCapital = parseFloat(match.starting_capital);
 
     // Reconstruct per player.
@@ -304,13 +350,7 @@ export async function getMatchReplay(matchId: string): Promise<ReplayData> {
                 closedAt: (p.closed_at ?? p.opened_at).getTime(),
                 realizedPnl: parseFloat(p.pnl ?? "0"),
             }));
-        curves[userId] = reconstructPnlCurve(positions, candleTimes, markPrice, startingCapital);
-    }
-
-    // Candles keyed by symbol for the response.
-    const candles: Record<string, ReplayCandle[]> = {};
-    for (const pid of pairIds) {
-        candles[symbolByPairId.get(pid)!] = candlesByPairId.get(pid)!;
+        curves[userId] = reconstructPnlCurve(positions, clock, markPrice, startingCapital);
     }
 
     const positions: ReplayPosition[] = rawPositions.map((p) => ({
@@ -327,7 +367,8 @@ export async function getMatchReplay(matchId: string): Promise<ReplayData> {
 
     return {
         match: matchHeader(match, startingCapital),
-        candles,
+        candleTimeframe: loaded.timeframe,
+        candles: candlesBySymbol(loaded, symbolByPairId),
         positions,
         curves,
         source: "match_positions",
