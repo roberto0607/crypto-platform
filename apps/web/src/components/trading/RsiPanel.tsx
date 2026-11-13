@@ -8,6 +8,7 @@ import {
     type Time,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { applySeriesData } from "@/lib/liveIndicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 import { usePaneCollapsed } from "@/stores/chartLayoutStore";
@@ -87,7 +88,8 @@ export function RsiPanel({ rsiData, mainChart, height: externalHeight }: RsiPane
 
     useEffect(() => {
         if (!seriesRef.current || rsiData.length === 0) return;
-        seriesRef.current.setData(rsiData.map((p) => ({ time: p.time as Time, value: p.value })));
+        // A live tick only moves the forming point: applySeriesData sends just that point.
+        applySeriesData(seriesRef.current, rsiData, (p) => ({ time: p.time as Time, value: p.value }));
         if (mainChart && chartRef.current) {
             const range = mainChart.timeScale().getVisibleRange();
             if (range) requestAnimationFrame(() => { chartRef.current?.timeScale().setVisibleRange(range); });

@@ -9,6 +9,7 @@ import {
     type IPriceLine,
 } from "lightweight-charts";
 import type { Point } from "@/lib/indicators";
+import { applySeriesData } from "@/lib/liveIndicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 import { usePaneCollapsed } from "@/stores/chartLayoutStore";
@@ -86,7 +87,8 @@ export function ATRPanel({ atrData, mainChart, height: externalHeight }: ATRPane
 
     useEffect(() => {
         if (!seriesRef.current || atrData.length === 0) return;
-        seriesRef.current.setData(atrData.map((p) => ({ time: p.time as Time, value: p.value })));
+        // A live tick only moves the forming point: applySeriesData sends just that point.
+        applySeriesData(seriesRef.current, atrData, (p) => ({ time: p.time as Time, value: p.value }));
 
         if (avgLineRef.current) { seriesRef.current.removePriceLine(avgLineRef.current); avgLineRef.current = null; }
         let sum = 0;
