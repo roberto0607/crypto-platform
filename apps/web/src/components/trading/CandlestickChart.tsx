@@ -1,4 +1,3 @@
-import { PRICE_HELP } from "@/lib/priceHelp";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import {
     createChart,
@@ -21,27 +20,14 @@ import { createDatafeedAdapter, type PriceTick, type CandleClosedTick } from "@/
 import { applyTick, bucketTime, planClosedCandle, reconcileForming, withForming, type Bar } from "@/lib/formingCandle";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useIndicatorSettingsStore } from "@/stores/indicatorSettingsStore";
-import { buildHtfLine, htfBarsNeeded, lineMode, movingAverageLabel, timeframeLabel } from "@/lib/htfLines";
 import { peekHtfCandles } from "@/lib/htfCandleCache";
-import { srApproach, srChartState, srHtfTimeframes, srParamsForTimeframe, type SRBanner, type SRDrawable } from "@/lib/srDisplay";
+import { type SRBanner, type SRDrawable } from "@/lib/srDisplay";
+import { keepBanner, keyLevelProximity, nextSrApproach } from "@/lib/chartTickBanners";
 import { SRLevelsPrimitive } from "@/lib/srLevelsPrimitive";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/stores/appStore";
-import { usePairPricesStore } from "@/stores/pairPricesStore";
 import {
-    computeEMA,
-    computeSMA,
-    computeADX,
-    computeUTBot,
-    findSwingPoints,
     type ADXResult,
-    computeVWAP,
-    computeBollingerBands,
-    computeRSI,
-    computeMACD,
-    computeATR,
-    computeCandleDelta,
-    detectEMACrosses,
     type Candle as IndicatorCandle,
     type Point,
     type MACDResult,
@@ -55,8 +41,8 @@ import { FootprintPrimitive } from "@/lib/footprintPrimitive";
 import { useFootprint } from "@/lib/useFootprint";
 import { LiquidationLevelsPrimitive, type LiquidationCluster } from "@/lib/liquidationLevelsPrimitive";
 import { fetchLiquidationLevels, getLiquidityZones, type LiquidityZone } from "@/api/endpoints/marketData";
-import { detectOrderBlocks, type OrderBlock } from "@/lib/orderBlocks";
-import { computeCVD, type CvdPoint, type CvdDivergence, type CvdDataSource } from "@/lib/cvd";
+import type { OrderBlock } from "@/lib/orderBlocks";
+import type { CvdPoint, CvdDivergence, CvdDataSource } from "@/lib/cvd";
 import { CvdPanel } from "./CvdPanel";
 import { VolumePanel } from "./VolumePanel";
 import { RsiPanel } from "./RsiPanel";
@@ -65,8 +51,7 @@ import { ATRPanel } from "./ATRPanel";
 import { DeltaPanel } from "./DeltaPanel";
 import { PdhPdlZonePrimitive } from "@/lib/pdhPdlZonePrimitive";
 import { BollingerFillPrimitive } from "@/lib/bollingerFillPrimitive";
-import { usePairChange } from "@/hooks/usePairChange";
-import { dayDirection } from "@/lib/priceChange";
+import { usePairDayDirection } from "@/hooks/usePairChange";
 import { DragHandle } from "./DragHandle";
 import { PaneMoveContext } from "./PaneMoveControls";
 import { useChartLayoutStore } from "@/stores/chartLayoutStore";
@@ -83,8 +68,11 @@ import { computeMeasureStats, formatDuration, TIMEFRAME_SECONDS } from "@/lib/dr
 import { DrawingToolStrip } from "./DrawingToolStrip";
 import { COTPanel } from "./COTPanel";
 import { ADXPanel } from "./ADXPanel";
-import { buildStudyMarkers, keyLevelSets, nudgeClear, utBotLine, UT_LONG } from "@/lib/chartStudies";
+import { nudgeClear, UT_LONG } from "@/lib/chartStudies";
 import { PressureCell } from "./PressureCell";
+import { ChartHeroPrice, LiveTick, createLiveTick } from "./ChartLiveReadouts";
+import { apiCandleToIndicator as toIndicatorCandle, computeChartIndicators, EMPTY_ADX, MemoCache } from "@/lib/chartIndicators";
+import { applySeriesData, formingIndicators, liveIndicatorState, type LiveIndicatorState } from "@/lib/liveIndicators";
 import { SHOW_FUNDING_IN_CHART_HEADER } from "@/lib/featureFlags";
 import { formatFundingRate } from "@/lib/fundingFormat";
 
@@ -124,10 +112,11 @@ const CHART_LEGEND_STACK_OFFSET = 64;
 /** Vertical step between stacked alert banners (PDH, S/R) — the badge height + gap. */
 const BANNER_STEP = 36;
 
-function sameBanner(a: SRBanner | null, b: SRBanner | null): boolean {
-    return a === b || (!!a && !!b && a.role === b.role && a.price === b.price && a.label === b.label);
-}
-const EMPTY_ADX: ADXResult = { plusDI: [], minusDI: [], adx: [] };
+// Constant empties: setting one again is a no-op (no re-render).
+const EMPTY_POINTS: Point[] = [];
+const EMPTY_MACD: MACDResult = { macd: [], signal: [], histogram: [] };
+const EMPTY_CVD: CvdPoint[] = [];
+const EMPTY_CVD_DIV: CvdDivergence[] = [];
 
 // The study-values row (moving averages) under O/H/L/C, when it shows.
 const STUDY_LEGEND_ROW_H = 18;
@@ -200,14 +189,7 @@ function toLW(bar: Bar): CandlestickData<Time> {
 }
 
 function apiCandleToIndicator(c: Candle): IndicatorCandle {
-    return {
-        time: new Date(c.ts).getTime() / 1000 + TZ_OFFSET_SEC,
-        open: parseFloat(c.open),
-        high: parseFloat(c.high),
-        low: parseFloat(c.low),
-        close: parseFloat(c.close),
-        volume: parseFloat(c.volume),
-    };
+    return toIndicatorCandle(c, TZ_OFFSET_SEC);
 }
 
 /** Raw candles by chart time (crosshair / magnet lookups), built once per candle array. */
@@ -567,7 +549,10 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     const [srBrokeBanner, setSrBrokeBanner] = useState<SRBanner | null>(null);
     const srLiveRef = useRef<{ drawables: SRDrawable[]; atr: number } | null>(null);
     const srPrimitiveRef = useRef<SRLevelsPrimitive | null>(null);
-    const [livePrice, setLivePrice] = useState(0);
+    // A price tick re-renders only the readouts subscribed to liveTick
+    // (ChartLiveReadouts), never this whole component; hasLivePrice flips once.
+    const [liveTick] = useState(createLiveTick);
+    const [hasLivePrice, setHasLivePrice] = useState(false);
     const currentPriceRef = useRef(0);
     // True when the time scale is parked at the live edge. Drives the
     // scroll-to-realtime button (hidden at the edge) and the pinned live line
@@ -585,6 +570,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // Overlay line series refs
     // Moving-average lines by id (the list lives in indicatorSettingsStore).
     const maSeriesRef = useRef(new Map<string, ISeriesApi<"Line">>());
+    // Indicator results cached per input (lib/chartIndicators), and what the
+    // primitives were last given (so an unchanged result isn't re-sent).
+    const indicatorCacheRef = useRef(new MemoCache());
+    const liveIndicatorsRef = useRef<{ raw: Candle[]; state: LiveIndicatorState } | null>(null);
+    const srAppliedRef = useRef<{ sr: unknown; candles: unknown }>({ sr: null, candles: null });
+    const markersAppliedRef = useRef<unknown>(null);
+    const bbFillAppliedRef = useRef<unknown>(null);
     // Legend readout per line: value by (chart) time + the last closed value.
     const maLegendRef = useRef<Array<{ id: string; label: string; color: string; byTime: Map<number, number>; last: number | null }>>([]);
     const [, setMaLegendVersion] = useState(0);
@@ -683,46 +675,17 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
     // not the last tick. Hold the last known direction across transient null
     // windows (missing open / disconnect) and reset on pair switch — mirrors the
     // hero's lastDayDirRef pattern so the two never disagree.
-    const dayChange = usePairChange(selectedPairId ?? "");
+    const dayDirNow = usePairDayDirection(selectedPairId ?? "");
     const lastDayDirRef = useRef<"up" | "down" | "flat">("flat");
     const lastPairForDirRef = useRef<string | null>(selectedPairId);
     if (lastPairForDirRef.current !== selectedPairId) {
         lastPairForDirRef.current = selectedPairId;
         lastDayDirRef.current = "flat";
     }
-    const dayDir = dayChange === null ? lastDayDirRef.current : dayDirection(dayChange);
+    const dayDir = dayDirNow ?? lastDayDirRef.current;
     lastDayDirRef.current = dayDir;
 
-    // Hero price + FILL SPREAD for the chart legend overlay — ported verbatim
-    // from TradingPage.tsx's old .tr-price-hero (snapshot-first is load-bearing
-    // for replay mode; see AssetTab.tsx's note on the same pattern).
-    const snapshot = useTradingStore((s) => s.snapshot);
-    const pairPrice = usePairPricesStore((s) => (selectedPairId ? s.prices[selectedPairId] : undefined));
-    const heroPrice = snapshot?.last ? parseFloat(snapshot.last) : pairPrice ?? 0;
-
-    // Tick FLASH — brief pulse on real movement between ticks, layered on top
-    // of the persistent day color. Same pattern as TradingPage.tsx's old hero.
-    const heroPrevPriceRef = useRef<number | null>(null);
-    const [heroTickFlash, setHeroTickFlash] = useState<"" | "tick-up" | "tick-down">("");
-    const heroFlashTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-    useEffect(() => {
-        heroPrevPriceRef.current = null;
-        clearTimeout(heroFlashTimerRef.current);
-        setHeroTickFlash("");
-    }, [selectedPairId]);
-
-    useEffect(() => {
-        if (!heroPrice) return;
-        const prev = heroPrevPriceRef.current;
-        heroPrevPriceRef.current = heroPrice;
-        if (prev === null || heroPrice === prev) return;
-        setHeroTickFlash(heroPrice > prev ? "tick-up" : "tick-down");
-        clearTimeout(heroFlashTimerRef.current);
-        heroFlashTimerRef.current = setTimeout(() => setHeroTickFlash(""), 150);
-    }, [heroPrice]);
-
-    useEffect(() => () => clearTimeout(heroFlashTimerRef.current), []);
+    // Hero price + FILL SPREAD: ChartHeroPrice (its own subscriptions, so ticks don't re-render the chart).
 
     // Repaint only the price line + its axis label when the DAY direction flips
     // (not per tick). Candle bodies keep their own per-candle up/down coloring.
@@ -749,7 +712,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             return;
         }
 
-        const price = currentPriceRef.current || livePrice;
+        const price = currentPriceRef.current;
         if (!(price > 0)) return;
 
         const color = priceLineColorForDay(dayDir);
@@ -765,7 +728,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 title: "LIVE",
             });
         }
-    }, [atLiveEdge, dayDir, livePrice]);
+    }, [atLiveEdge, dayDir, hasLivePrice]);
 
     // Create chart instance
     useEffect(() => {
@@ -1111,6 +1074,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // The markers plugin lives on the (now-removed) series; drop the ref
             // so the next mount recreates it cleanly.
             emaCrossMarkersRef.current = null;
+            markersAppliedRef.current = null;
+            srAppliedRef.current = { sr: null, candles: null };
+            bbFillAppliedRef.current = null;
             maSeriesRef.current.clear();
             // Detach any drawing primitives too — the next mount's sync effect
             // starts from an empty map and re-attaches from the store's array.
@@ -1282,21 +1248,40 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
         clearPriceLines();
 
-        const indCandles = candles.map(apiCandleToIndicator);
+        // Every indicator value comes from computeChartIndicators (lib/chartIndicators):
+        // memoized per input, so an HTF load / toggle / settings edit recomputes
+        // only what it changes, and unchanged results keep their identity (their
+        // series aren't re-sent; React state setters bail out).
+        const chartTf = timeframeRef.current;
+        const pairId = selectedPairIdRef.current;
+        const redraw = () => {
+            if (selectedPairIdRef.current === pairId) renderOverlaysRef.current(rawCandlesRef.current);
+        };
+        const r = computeChartIndicators({
+            candles,
+            pairId,
+            chartTf,
+            tzOffsetSec: TZ_OFFSET_SEC,
+            toggles: indicatorConfig,
+            movingAverages,
+            maCross,
+            adx: adxParams,
+            utBot: utBotParams,
+            srParams,
+            srOptions,
+            srPivots,
+            // Higher-timeframe candles load in the background (lib/htfCandleCache); redraw when they land.
+            peekHtf: (tf, bars) => (pairId ? peekHtfCandles(pairId, tf, bars, redraw) : null),
+        }, indicatorCacheRef.current);
+        liveIndicatorsRef.current = { raw: candles, state: r.live };
+        const indCandles = r.candles;
 
         // Key Levels — PDH/PDL (+ PWH/PWL below 1w)
         // Lines + zone fills drawn by PdhPdlZonePrimitive; labels are DOM overlays.
-        if (indicatorConfig.keyLevels) {
+        // Previous UTC day (previous week on 1w) — never the viewer's local day.
+        if (indicatorConfig.keyLevels && r.keyLevels) {
             candleSeries.applyOptions({ lastValueVisible: false, priceLineVisible: false });
-            // Previous UTC day (previous week on 1w) — never the viewer's local day.
-            // timeframeRef, not the prop: renderOverlays must not re-run (on the
-            // old candles) when the timeframe changes — see the cross alert below.
-            const levelsTf = timeframeRef.current;
-            const sets = keyLevelSets(indCandles, {
-                timeframe: levelsTf,
-                candleSec: TIMEFRAME_SECONDS[levelsTf],
-                tzOffsetSec: TZ_OFFSET_SEC,
-            });
+            const sets = r.keyLevels;
             const levels = sets.daily ? { pdh: sets.daily.high, pdl: sets.daily.low } : null;
             weeklyLevelsRef.current = sets.weekly ? { pwh: sets.weekly.high, pwl: sets.weekly.low } : null;
             if (levels) {
@@ -1307,15 +1292,11 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 // Seed live price from candle data if SSE hasn't ticked yet
                 if (currentPriceRef.current === 0 && price > 0) {
                     currentPriceRef.current = price;
-                    setLivePrice(price);
+                    liveTick.publish();
                 }
 
-                // Proximity check (1.5%)
-                const pdhDist = Math.abs(levels.pdh - price);
-                const pdlDist = Math.abs(price - levels.pdl);
-                const pdhProx = price > 0 && (pdhDist / price) * 100 <= 1.5;
-                const pdlProx = price > 0 && (pdlDist / price) * 100 <= 1.5;
-                setPdhProximity(pdhProx ? "pdh" : pdlProx ? "pdl" : null);
+                const { pdhProx, pdlProx, banner } = keyLevelProximity(levels, price);
+                setPdhProximity(banner);
 
                 // Primitive handles: dashed lines + zone fills
                 pdhPdlZonePrimitiveRef.current?.setData({
@@ -1344,51 +1325,30 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             liquidityPrimitiveRef.current?.setZones([]);
         }
 
-        // Order Blocks — detect + DOM overlay
-        const orderBlocks = indicatorConfig.orderBlocks ? detectOrderBlocks(indCandles) : [];
-        if (indicatorConfig.orderBlocks && orderBlocks.length > 0) {
-            const bullish = orderBlocks.filter(ob => ob.type === "bullish").slice(-3);
-            const bearish = orderBlocks.filter(ob => ob.type === "bearish").slice(-3);
-            setOrderBlocksState([...bullish, ...bearish]);
-        } else {
-            setOrderBlocksState([]);
-        }
+        // Order Blocks — DOM overlay (memoized list: same array → no re-render)
+        setOrderBlocksState(r.orderBlocks);
 
         // CVD
-        if (indicatorConfig.cvd) {
-            const cvdResult = computeCVD(candles);
-            setCvdData(cvdResult.values);
-            setCvdDivergences(cvdResult.divergences);
-            setCvdDataSource(cvdResult.dataSource);
+        if (r.cvd) {
+            setCvdData(r.cvd.values);
+            setCvdDivergences(r.cvd.divergences);
+            setCvdDataSource(r.cvd.dataSource);
         } else {
-            setCvdData([]);
-            setCvdDivergences([]);
+            setCvdData(EMPTY_CVD);
+            setCvdDivergences(EMPTY_CVD_DIV);
         }
 
         // ── Standard overlay indicators ──
         const chart = chartRef.current;
         if (chart) {
-            const toLineData = (pts: Point[]) => pts.map((p) => ({ time: p.time as Time, value: p.value }));
+            const toLW = (p: Point) => ({ time: p.time as Time, value: p.value });
 
-            // Moving averages — one line per entry in the list (indicator
-            // settings store / chart layout), keyed by id so editing a line's
-            // length or color updates it in place.
-            //
-            // A line with a higher timeframe (e.g. SMA 200 on 1D, on a 4h
-            // chart) runs on that timeframe's CLOSED candles, drawn as a step
-            // that changes on the first bar after each HTF close (lib/htfLines,
-            // shared rule in packages/indicators htf.ts). Those candles load in
-            // the background (lib/htfCandleCache) and redraw when they land;
-            // until then the line is empty. A timeframe below the chart's is
-            // not drawn.
-            const maPoints = new Map<string, Point[]>();
+            // Moving averages — one line per entry in the list, keyed by id so
+            // editing a line's length or color updates it in place. A higher
+            // timeframe line is a step line (empty until its candles load); a
+            // timeframe below the chart's is not drawn.
             const maSeries = maSeriesRef.current;
             const liveSeries = new Set<string>();
-            const chartTf = timeframeRef.current;
-            const pairId = selectedPairIdRef.current;
-            const redraw = () => {
-                if (selectedPairIdRef.current === pairId) renderOverlaysRef.current(rawCandlesRef.current);
-            };
             const lineSeries = (key: string, opts: { color: string; step: boolean; dotted?: boolean }) => {
                 let series = maSeries.get(key);
                 const style = {
@@ -1405,120 +1365,74 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 liveSeries.add(key);
                 return series;
             };
-            for (const ma of movingAverages) {
-                const mode = lineMode(ma, chartTf);
-                let pts: Point[] = [];
-                if (mode === "chart") {
-                    pts = ma.type === "SMA" ? computeSMA(indCandles, ma.length) : computeEMA(indCandles, ma.length);
-                } else if (mode === "htf" && pairId && ma.timeframe && ma.timeframe !== "chart") {
-                    const tf = ma.timeframe;
-                    const need = htfBarsNeeded(ma, indCandles, TIMEFRAME_SECONDS[tf]);
-                    const htf = peekHtfCandles(pairId, tf, need, redraw);
-                    if (htf) {
-                        const built = buildHtfLine(ma, tf, indCandles, htf.map(apiCandleToIndicator));
-                        pts = built.step;
-                        if (ma.forming && built.forming) {
-                            const f = built.forming;
-                            lineSeries(`${ma.id}~forming`, { color: ma.color, step: false, dotted: true }).setData(
-                                toLineData(f.from === f.to ? [{ time: f.from, value: f.value }] : [{ time: f.from, value: f.value }, { time: f.to, value: f.value }]),
-                            );
-                        }
-                    }
+            for (const line of r.movingAverages) {
+                if (line.forming) {
+                    const f = line.forming;
+                    lineSeries(`${line.id}~forming`, { color: line.color, step: false, dotted: true }).setData(
+                        (f.from === f.to ? [{ time: f.from, value: f.value }] : [{ time: f.from, value: f.value }, { time: f.to, value: f.value }]).map(toLW),
+                    );
                 }
-                maPoints.set(ma.id, pts);
-                lineSeries(ma.id, { color: ma.color, step: mode === "htf" }).setData(toLineData(pts));
+                applySeriesData(lineSeries(line.id, { color: line.color, step: line.mode === "htf" }), line.points, toLW);
             }
             for (const [id, series] of maSeries) {
                 if (!liveSeries.has(id)) { chart.removeSeries(series); maSeries.delete(id); }
             }
-            maLegendRef.current = movingAverages.map((ma) => ({
-                id: ma.id,
-                label: lineMode(ma, chartTf) === "lower"
-                    ? `${movingAverageLabel(ma)} n/a on ${timeframeLabel(chartTf)}`
-                    : movingAverageLabel(ma),
-                color: ma.color,
-                byTime: new Map(maPoints.get(ma.id)!.map((p) => [p.time, p.value])),
-                last: maPoints.get(ma.id)!.at(-1)?.value ?? null,
-            }));
-
-            // Golden/death crosses between the two chosen lines: chart markers
-            // + live alert. With no pair chosen the alert still watches EMA
-            // 50/200 (hidden), as it always has; markers need a chosen pair.
-            const crossPts = maCross
-                ? { fast: maPoints.get(maCross.fast) ?? [], slow: maPoints.get(maCross.slow) ?? [] }
-                : { fast: computeEMA(indCandles, 50), slow: computeEMA(indCandles, 200) };
-            const emaCrosses = detectEMACrosses(crossPts.fast, crossPts.slow);
+            maLegendRef.current = r.movingAverages.map((l) => ({ id: l.id, label: l.label, color: l.color, byTime: l.byTime, last: l.last }));
 
             // UT Bot — trailing stop (green on the long side, red short) +
-            // buy/sell markers. renderOverlays only gets CLOSED candles, so a
-            // signal never appears on the forming bar.
-            const ut = indicatorConfig.utBot ? computeUTBot(indCandles, utBotParams) : null;
-            if (ut) {
+            // buy/sell markers. Closed candles only, so a signal never appears
+            // on the forming bar.
+            if (r.utBot) {
                 if (!utBotSeriesRef.current) {
                     utBotSeriesRef.current = chart.addSeries(LineSeries, { lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
                 }
-                const line = utBotLine(indCandles, ut.stop);
-                utBotSeriesRef.current.setData(line.map((p) => ({ time: p.time as Time, value: p.value, color: p.color })));
+                const line = r.utBot.line;
+                applySeriesData(utBotSeriesRef.current, line, (p) => ({ time: p.time as Time, value: p.value, color: p.color }));
                 const lastPt = line.at(-1);
                 maLegendRef.current.push({
                     id: "utBot",
                     label: `UT Bot ${utBotParams.keyValue}/${utBotParams.atrPeriod}`,
                     color: lastPt?.color ?? UT_LONG,
-                    byTime: new Map(line.map((p) => [p.time, p.value])),
+                    byTime: r.utBot.byTime,
                     last: lastPt?.value ?? null,
                 });
             } else if (utBotSeriesRef.current) {
                 chart.removeSeries(utBotSeriesRef.current); utBotSeriesRef.current = null;
             }
 
-            // Support & resistance from confirmed pivots (shared math, closed
-            // candles only), plus 1D/1W levels from closed HTF candles loaded in
-            // the background like the HTF moving averages (redraw when they land).
-            let srBreaks: Array<{ time: number; direction: "up" | "down" }> = [];
-            if (indicatorConfig.supportResistance) {
-                const htf: Array<{ tf: "1d" | "1w"; candles: IndicatorCandle[] }> = [];
-                const first = indCandles[0]!;
-                const last = indCandles[indCandles.length - 1]!;
-                for (const tf of srHtfTimeframes(srOptions, chartTf)) {
-                    const sec = TIMEFRAME_SECONDS[tf];
-                    // The span the chart shows + pivot and ATR(14) warm-up.
-                    const need = Math.ceil((last.time - first.time) / sec) + 2 * (srParams.htfLeft + srParams.htfRight) + 60;
-                    const got = pairId ? peekHtfCandles(pairId, tf, need, redraw) : null;
-                    if (got) htf.push({ tf, candles: got.map(apiCandleToIndicator) });
+            // Support & resistance from confirmed pivots (+ 1D/1W levels).
+            if (r.sr) {
+                const sr = r.sr;
+                if (srAppliedRef.current.sr !== sr || srAppliedRef.current.candles !== indCandles) {
+                    srAppliedRef.current = { sr, candles: indCandles };
+                    srPrimitiveRef.current?.setData(sr.drawables, indCandles.map((c) => c.time));
                 }
-                // Pivot length: Auto for this timeframe, or the one set by hand on it.
-                const params = srParamsForTimeframe(srParams, srPivots, chartTf);
-                const sr = srChartState({ candles: indCandles, htf, params, options: srOptions, chartTf });
-                srPrimitiveRef.current?.setData(sr.drawables, indCandles.map((c) => c.time));
                 srLiveRef.current = { drawables: sr.drawables, atr: sr.atr };
-                srBreaks = sr.breaks;
-                setSrBrokeBanner((prev) => (sameBanner(prev, sr.broke) ? prev : sr.broke));
-                const approach = srApproach(sr.drawables, currentPriceRef.current || last.close, sr.atr);
-                setSrApproachBanner((prev) => (sameBanner(prev, approach) ? prev : approach));
+                setSrBrokeBanner((prev) => keepBanner(prev, sr.broke));
+                const srPrice = currentPriceRef.current || indCandles[indCandles.length - 1]!.close;
+                setSrApproachBanner((prev) => nextSrApproach(prev, sr.drawables, srPrice, sr.atr));
             } else {
-                srPrimitiveRef.current?.setData([], []);
+                if (srAppliedRef.current.sr !== null) {
+                    srAppliedRef.current = { sr: null, candles: null };
+                    srPrimitiveRef.current?.setData([], []);
+                }
                 srLiveRef.current = null;
                 setSrBrokeBanner(null);
                 setSrApproachBanner(null);
             }
 
             // One markers list on the candle series: MA crosses (when a pair is
-            // chosen), UT Bot signals, swing highs/lows (confirmed pivots only:
-            // closed candles, `right` bars after), S/R breaks.
-            const markers = buildStudyMarkers({
-                crosses: maCross ? emaCrosses : [],
-                utSignals: ut?.signals ?? [],
-                swings: indicatorConfig.swings ? findSwingPoints(indCandles) : undefined,
-                srBreaks,
-            });
+            // chosen), UT Bot signals, swing highs/lows (confirmed pivots only),
+            // S/R breaks.
             if (!emaCrossMarkersRef.current) {
-                if (markers.length > 0) emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, markers);
-            } else {
-                emaCrossMarkersRef.current.setMarkers(markers);
+                if (r.markers.length > 0) emaCrossMarkersRef.current = createSeriesMarkers(candleSeries, r.markers);
+            } else if (markersAppliedRef.current !== r.markers) {
+                emaCrossMarkersRef.current.setMarkers(r.markers);
             }
+            markersAppliedRef.current = r.markers;
 
-            // ADX / DMI (computed here, rendered in the ADX pane)
-            setAdxData(indicatorConfig.adx ? computeADX(indCandles, adxParams) : EMPTY_ADX);
+            // ADX / DMI (rendered in the ADX pane)
+            setAdxData(r.adx);
             setMaLegendVersion((v) => v + 1);
 
             // Live alert: detection runs regardless of toggle, but the toast is
@@ -1532,12 +1446,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
             // The key also names the two lines and whether both have data, so
             // editing them or a higher-timeframe line loading in the
             // background re-primes instead of toasting an old cross.
+            const emaCrosses = r.crosses;
             const tf = timeframeRef.current;
             const crossLines = maCross
                 ? JSON.stringify([maCross.fast, maCross.slow].map((id) => movingAverages.find((m) => m.id === id)))
                 : "ema50/ema200";
-            const crossReady = crossPts.fast.length > 0 && crossPts.slow.length > 0;
-            const alertKey = `${selectedPairIdRef.current ?? ""}:${tf}:${crossLines}:${crossReady}`;
+            const alertKey = `${selectedPairIdRef.current ?? ""}:${tf}:${crossLines}:${r.crossReady}`;
             const newestCross = emaCrosses.length > 0 ? emaCrosses[emaCrosses.length - 1]! : null;
             if (lastAlertKeyRef.current !== alertKey) {
                 lastAlertKeyRef.current = alertKey;
@@ -1554,12 +1468,12 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
             // VWAP — brightened lavender, 2px, dashed (reference, not price).
             // We render our own legend chip, so keep the axis label off.
-            if (indicatorConfig.vwap) {
+            if (r.vwap) {
                 if (!vwapSeriesRef.current) {
                     vwapSeriesRef.current = chart.addSeries(LineSeries, { color: VWAP_COLOR, lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false });
                 }
-                const vwapPts = computeVWAP(indCandles, TZ_OFFSET_SEC);
-                vwapSeriesRef.current.setData(toLineData(vwapPts));
+                const vwapPts = r.vwap;
+                applySeriesData(vwapSeriesRef.current, vwapPts, toLW);
                 // Latest VWAP feeds the legend chip. Keep it in a ref too so the
                 // per-tick bias recompute can read it without a stale closure.
                 const lastVwap = vwapPts.length > 0 ? vwapPts[vwapPts.length - 1]!.value : null;
@@ -1576,80 +1490,41 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 setVwapBias(null);
             }
 
-            // Bollinger Bands
-            if (indicatorConfig.bollingerBands) {
-                const bb = computeBollingerBands(indCandles, 20, 2);
+            // Bollinger Bands (+ faint channel fill between the bands, and the
+            // squeeze chip: latest bandwidth at/near its 100-bar low).
+            if (r.bollinger) {
+                const bb = r.bollinger;
                 if (!bbMiddleSeriesRef.current) {
                     bbMiddleSeriesRef.current = chart.addSeries(LineSeries, { color: BB_MID, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                     bbUpperSeriesRef.current = chart.addSeries(LineSeries, { color: BB_EDGE, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                     bbLowerSeriesRef.current = chart.addSeries(LineSeries, { color: BB_EDGE, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
                 }
-                bbMiddleSeriesRef.current.setData(toLineData(bb.middle));
-                bbUpperSeriesRef.current!.setData(toLineData(bb.upper));
-                bbLowerSeriesRef.current!.setData(toLineData(bb.lower));
-
-                // Faint channel fill between the bands. upper/middle/lower are
-                // index-aligned (same loop in computeBollingerBands), so we pair
-                // them by index to feed the primitive.
-                bbFillPrimitiveRef.current?.setData(
-                    bb.upper.map((u, i) => ({ time: u.time, upper: u.value, lower: bb.lower[i]!.value })),
-                );
-
-                // Squeeze chip: per-bar bandwidth = (upper − lower) / middle.
-                // SQUEEZE fires when the latest bandwidth sits at/near a lookback
-                // low (≤ 1.05× the min of the last 100 bars) — a volatility pinch
-                // that often precedes expansion.
-                const bw = bb.middle.map((m, i) =>
-                    m.value !== 0 ? (bb.upper[i]!.value - bb.lower[i]!.value) / m.value : 0,
-                );
-                if (bw.length > 0) {
-                    const latest = bw[bw.length - 1]!;
-                    const lookback = bw.slice(-100);
-                    const minBw = Math.min(...lookback);
-                    setBbBandwidth(latest);
-                    setBbSqueeze(lookback.length >= 20 && latest <= minBw * 1.05);
-                } else {
-                    setBbBandwidth(null);
-                    setBbSqueeze(false);
+                applySeriesData(bbMiddleSeriesRef.current, bb.middle, toLW);
+                applySeriesData(bbUpperSeriesRef.current!, bb.upper, toLW);
+                applySeriesData(bbLowerSeriesRef.current!, bb.lower, toLW);
+                if (bbFillAppliedRef.current !== bb.fill) {
+                    bbFillAppliedRef.current = bb.fill;
+                    bbFillPrimitiveRef.current?.setData(bb.fill);
                 }
+                setBbBandwidth(bb.bandwidth);
+                setBbSqueeze(bb.squeeze);
             } else {
                 if (bbMiddleSeriesRef.current) { chart.removeSeries(bbMiddleSeriesRef.current); bbMiddleSeriesRef.current = null; }
                 if (bbUpperSeriesRef.current) { chart.removeSeries(bbUpperSeriesRef.current); bbUpperSeriesRef.current = null; }
                 if (bbLowerSeriesRef.current) { chart.removeSeries(bbLowerSeriesRef.current); bbLowerSeriesRef.current = null; }
+                bbFillAppliedRef.current = null;
                 bbFillPrimitiveRef.current?.setData([]);
                 setBbBandwidth(null);
                 setBbSqueeze(false);
             }
 
-            // RSI (computed here, rendered in sub-panel)
-            if (indicatorConfig.rsi) {
-                setRsiData(computeRSI(indCandles, 14));
-            } else {
-                setRsiData([]);
-            }
-
-            // MACD (computed here, rendered in sub-panel)
-            if (indicatorConfig.macd) {
-                setMacdData(computeMACD(indCandles));
-            } else {
-                setMacdData({ macd: [], signal: [], histogram: [] });
-            }
-
-            // ATR (computed here, rendered in sub-panel)
-            if (indicatorConfig.atr) {
-                setAtrData(computeATR(indCandles, 14));
-            } else {
-                setAtrData([]);
-            }
-
-            // Per-candle delta (computed here, rendered in sub-panel)
-            if (indicatorConfig.delta) {
-                setDeltaData(computeCandleDelta(indCandles));
-            } else {
-                setDeltaData([]);
-            }
+            // RSI / MACD / ATR / Delta (rendered in their sub-panels)
+            setRsiData(r.rsi ?? EMPTY_POINTS);
+            setMacdData(r.macd ?? EMPTY_MACD);
+            setAtrData(r.atr ?? EMPTY_POINTS);
+            setDeltaData(r.delta ?? EMPTY_POINTS);
         }
-    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, srParams, srOptions, srPivots, clearPriceLines, fundingRateHourly, addToast]);
+    }, [indicatorConfig, movingAverages, maCross, adxParams, utBotParams, srParams, srOptions, srPivots, clearPriceLines, addToast, liveTick]);
 
     // History fetching and the live handlers call renderOverlays through this
     // ref, so an indicator toggle or a funding-rate update re-renders overlays
@@ -1954,6 +1829,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
             // Update PDH/PDL proximity, zone fills, and label data on each tick
             currentPriceRef.current = price;
+            setHasLivePrice(true);
 
             // Live price-derived indicators (RSI/MACD/ATR): recompute over
             // [closed candles + the forming candle] so each panel's last point
@@ -1976,11 +1852,21 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                         open: live.open, high: live.high, low: live.low, close: live.close,
                         volume: 0,
                     };
-                    // Build the forming-candle series ONCE, reuse for all three.
-                    const series = withForming(rawCandlesRef.current.map(apiCandleToIndicator), liveInd);
-                    if (indicatorConfig.rsi && series.length >= 15) setRsiData(computeRSI(series, 14));
-                    if (indicatorConfig.macd && series.length >= 35) setMacdData(computeMACD(series));
-                    if (indicatorConfig.atr && series.length >= 15) setAtrData(computeATR(series, 14));
+                    // One step from the closed series' state (lib/liveIndicators) —
+                    // === recomputing over [closed + forming], without the full pass.
+                    // The state follows rawCandlesRef (scroll-back prepends history
+                    // without a re-render of the overlays).
+                    const raw = rawCandlesRef.current;
+                    const on = { rsi: indicatorConfig.rsi, macd: indicatorConfig.macd, atr: indicatorConfig.atr };
+                    let liveInds = liveIndicatorsRef.current;
+                    if (!liveInds || liveInds.raw !== raw || liveInds.state.on.rsi !== on.rsi || liveInds.state.on.macd !== on.macd || liveInds.state.on.atr !== on.atr) {
+                        liveInds = { raw, state: liveIndicatorState(raw.map(apiCandleToIndicator), on) };
+                        liveIndicatorsRef.current = liveInds;
+                    }
+                    const f = formingIndicators(liveInds.state, liveInd);
+                    if (f.rsi) setRsiData(f.rsi);
+                    if (f.macd) setMacdData(f.macd);
+                    if (f.atr) setAtrData(f.atr);
                 }
             }
             // Keep the pinned live line (if shown — i.e. scrolled into history)
@@ -1999,18 +1885,13 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
             const sr = srLiveRef.current;
             if (sr && indicatorConfig.supportResistance) {
-                const approach = srApproach(sr.drawables, price, sr.atr);
-                setSrApproachBanner((prev) => (sameBanner(prev, approach) ? prev : approach));
+                setSrApproachBanner((prev) => nextSrApproach(prev, sr.drawables, price, sr.atr));
             }
 
             const levels = keyLevelsRef.current;
             if (levels && indicatorConfig.keyLevels) {
-                setLivePrice(price);
-                const pdhDist = Math.abs(levels.pdh - price);
-                const pdlDist = Math.abs(price - levels.pdl);
-                const pdhProx = price > 0 && (pdhDist / price) * 100 <= 1.5;
-                const pdlProx = price > 0 && (pdlDist / price) * 100 <= 1.5;
-                setPdhProximity(pdhProx ? "pdh" : pdlProx ? "pdl" : null);
+                const { pdhProx, pdlProx, banner } = keyLevelProximity(levels, price);
+                setPdhProximity(banner);
 
                 pdhPdlZonePrimitiveRef.current?.setData({
                     pdh: levels.pdh,
@@ -2021,6 +1902,8 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     pdlProximity: pdlProx,
                 });
             }
+            // The readouts that show the live price / forming candle re-render now.
+            liveTick.publish();
         };
 
         const handleCandleClosed = (candle: CandleClosedTick) => {
@@ -2060,7 +1943,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
 
         const handle = datafeedRef.current.subscribeBars(selectedPairId, timeframe, handlePriceTick, handleCandleClosed);
         return () => datafeedRef.current.unsubscribeBars(handle);
-    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr]);
+    }, [selectedPairId, timeframe, indicatorConfig.keyLevels, indicatorConfig.vwap, indicatorConfig.rsi, indicatorConfig.macd, indicatorConfig.atr, liveTick]);
 
     // Liquidity zones: fetch on mount + 60s refresh
     useEffect(() => {
@@ -2397,33 +2280,11 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                     top-left corner; the proximity/VWAP/BB chips below stack
                     beneath it (see CHART_LEGEND_HEIGHT). */}
                 <div className="tr-chart-legend" ref={legendRef}>
-                    <div className="tr-chart-legend-row">
-                        <span className={`tr-price-big ${dayDir} ${heroTickFlash}`} title={PRICE_HELP.last}>
-                            ${heroPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </span>
-                        <span className="tr-price-tag" title={PRICE_HELP.last}>LAST</span>
-                        <div className="tr-price-meta">
-                            <div className="tr-pm-item">
-                                <div className="tr-pm-val" style={{ color: "rgba(255,255,255,0.7)" }}>
-                                    {(() => {
-                                        const ask = snapshot?.ask ? parseFloat(snapshot.ask) : 0;
-                                        const bid = snapshot?.bid ? parseFloat(snapshot.bid) : 0;
-                                        if (!(ask > 0) || !(bid > 0)) return "—";
-                                        const spreadDollars = ask - bid;
-                                        const midPrice = (ask + bid) / 2;
-                                        if (midPrice === 0) return "—";
-                                        const spreadPct = (spreadDollars / midPrice) * 100;
-                                        return `$${spreadDollars.toFixed(2)} (${spreadPct.toFixed(4)}%)`;
-                                    })()}
-                                </div>
-                                <div className="tr-pm-lbl">FILL SPREAD</div>
-                            </div>
-                        </div>
-                    </div>
+                    <ChartHeroPrice pairId={selectedPairId} dayDir={dayDir} />
 
                     <div className="tr-chart-legend-row">
                         <div className="tr-cr-ohlc">
-                            {(() => {
+                            <LiveTick store={liveTick}>{() => {
                                 const c = crosshairData ?? liveCandleRef.current;
                                 const fmt = (n: number | undefined) =>
                                     n == null
@@ -2438,7 +2299,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                                         <span>C <span className="val" style={{ color: c == null ? undefined : up ? "var(--g)" : "var(--red)" }}>{fmt(c?.close)}</span></span>
                                     </>
                                 );
-                            })()}
+                            }}</LiveTick>
                             {loading && <span className="text-gray-600 text-xs ml-1">Loading...</span>}
                         </div>
 
@@ -2502,10 +2363,10 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             overflow: "visible",
                         }}
                     >
-                        {(() => {
+                        <LiveTick store={liveTick}>{() => {
                             const levels = keyLevelsRef.current;
                             if (!levels) return null;
-                            const price = livePrice || currentPriceRef.current;
+                            const price = currentPriceRef.current;
                             const fmtP = (n: number) => "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                             const isPdhProx = pdhProximity === "pdh";
                             const isPdlProx = pdhProximity === "pdl";
@@ -2631,7 +2492,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                                     })}
                                 </>
                             );
-                        })()}
+                        }}</LiveTick>
                     </div>
                 )}
 
@@ -2748,9 +2609,9 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                 })()}
 
                 {/* ── Liquidity Zones: gradient bands + pill labels + badge ── */}
-                {indicatorConfig.liquidityZones && liquidityZonesRef.current.length > 0 && (() => {
+                {indicatorConfig.liquidityZones && liquidityZonesRef.current.length > 0 && <LiveTick store={liveTick}>{() => {
                     const allZones = liquidityZonesRef.current;
-                    const price = livePrice || currentPriceRef.current;
+                    const price = currentPriceRef.current;
                     const series = seriesRef.current;
 
                     // Compute dominant side (from ALL zones, before filtering)
@@ -2953,7 +2814,7 @@ export function CandlestickChart({ timeframe, vpvrMode, fundingRateHourly = null
                             </div>
                         </>
                     );
-                })()}
+                }}</LiveTick>}
 
                 {/* Scroll-to-realtime button — appears only when scrolled off
                     the live edge (its presence IS the "viewing history"

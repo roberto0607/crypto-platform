@@ -9,6 +9,7 @@ import {
     type Time,
 } from "lightweight-charts";
 import type { MACDResult } from "@/lib/indicators";
+import { applySeriesData } from "@/lib/liveIndicators";
 import { usePanelCrosshairHover } from "@/hooks/usePanelCrosshairHover";
 import { SubPanelHeader } from "./SubPanelHeader";
 import { usePaneCollapsed } from "@/stores/chartLayoutStore";
@@ -100,9 +101,10 @@ export function MACDPanel({ data, mainChart, height: externalHeight }: MACDPanel
     useEffect(() => {
         if (!macdSeriesRef.current || !signalSeriesRef.current || !histSeriesRef.current) return;
         if (data.macd.length === 0) return;
-        macdSeriesRef.current.setData(data.macd.map((p) => ({ time: p.time as Time, value: p.value })));
-        signalSeriesRef.current.setData(data.signal.map((p) => ({ time: p.time as Time, value: p.value })));
-        histSeriesRef.current.setData(data.histogram.map((p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#16a34a" : "#dc2626" })));
+        // A live tick only moves the forming point: applySeriesData sends just that point.
+        applySeriesData(macdSeriesRef.current, data.macd, (p) => ({ time: p.time as Time, value: p.value }));
+        applySeriesData(signalSeriesRef.current, data.signal, (p) => ({ time: p.time as Time, value: p.value }));
+        applySeriesData(histSeriesRef.current, data.histogram, (p) => ({ time: p.time as Time, value: p.value, color: p.value >= 0 ? "#16a34a" : "#dc2626" }));
         // Sync range after data loads
         if (mainChart && chartRef.current) {
             const range = mainChart.timeScale().getVisibleRange();
