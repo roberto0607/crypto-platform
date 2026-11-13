@@ -212,6 +212,8 @@ export function srChartState(input: {
     params: SupportResistanceParams;
     options: SupportResistanceOptions;
     chartTf: string;
+    /** How HTF levels are computed (the chart passes a cached computeSupportResistance; same values). */
+    htfLevels?: (candles: Candle[], opts: Partial<SRParams>) => SRLevel[];
 }): SRChartState {
     const { candles, params, options } = input;
     const last = candles[candles.length - 1];
@@ -222,7 +224,7 @@ export function srChartState(input: {
     const drawables = buildSRDrawables({ levels, ...show });
     const formingOpen = last.time + (TIMEFRAME_SEC[input.chartTf as IndicatorTimeframe] ?? 0);
     for (const { tf, candles: htfCandles } of input.htf) {
-        const all = computeSupportResistance(htfCandles, srComputeOpts(params, options, true));
+        const all = (input.htfLevels ?? computeSupportResistance)(htfCandles, srComputeOpts(params, options, true));
         const known = srHtfLevelsAt(all, htfCandles.map((c) => c.time), TIMEFRAME_SEC[tf], formingOpen);
         drawables.push(...buildSRDrawables({ levels: known, ...show, tag: tf === "1d" ? "1D" : "1W" }));
     }
