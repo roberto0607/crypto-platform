@@ -10,10 +10,12 @@
  * the stored headline: Σ realized − Σ fees over starting capital, the same sum
  * calculatePlayerStats takes.
  *
- * Per candle (ts = the 5m bucket's start, marked at its close):
- *   - fills that landed in or before this candle are applied;
+ * Per clock time T (replayClock.ts: the match start, each candle close, every
+ * fill, the match end):
+ *   - fills at or before T are applied;
  *   - realizedPnl = realized P&L − fees paid so far;
- *   - unrealizedPnl = each open size marked at the candle's close.
+ *   - unrealizedPnl = each open size marked at the latest price known at T
+ *     (replayMarkPrice: a candle that has closed by T, or a fill).
  *
  * ISOLATED positions are walked the same way. The one thing not reproduced
  * is the loss cap at the margin (a gap past bankruptcy), which only matters
@@ -127,19 +129,21 @@ export function fillTrips(fills: ReplayFill[]): FillTrip[] {
     return trips;
 }
 
+/**
+ * A player's P&L at each clock time T: every fill at or before T applied
+ * (its fee taken), open size marked at the latest price known at T.
+ */
 export function reconstructFillCurve(
     fills: ReplayFill[],
-    candleTimes: number[],
+    clock: number[],
     markPrice: MarkPriceLookup,
     startingCapital: number,
-    bucketMs: number,
 ): CurvePoint[] {
     const pos = new Map<string, PositionState>();
     let fees = ZERO;
     let i = 0;
-    return candleTimes.map((T) => {
-        // Fills inside this candle count: it's marked at its close.
-        while (i < fills.length && fills[i]!.ts < T + bucketMs) {
+    return clock.map((T) => {
+        while (i < fills.length && fills[i]!.ts <= T) {
             const f = fills[i++]!;
             pos.set(f.pairId, step(pos.get(f.pairId) ?? FLAT, f));
             fees = fees.plus(D(f.fee));
