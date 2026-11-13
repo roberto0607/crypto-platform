@@ -23,6 +23,7 @@ export interface ReplayPosition {
     pnl: number;
 }
 
+/** A point at the match start, each candle close, every fill (fee taken) and the match end; both curves share the times. */
 export interface ReplayCurvePoint {
     ts: number;
     equity: number;
@@ -49,6 +50,8 @@ export interface MatchReplay {
         challenger: ReplayPlayer;
         opponent: ReplayPlayer;
     };
+    /** Candle size, picked from the match length (1m up to 1h, 5m up to 6h, 1h beyond). */
+    candleTimeframe: "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
     candles: Record<string, ReplayCandle[]>;
     positions: ReplayPosition[];
     curves: Record<string, ReplayCurvePoint[]>;

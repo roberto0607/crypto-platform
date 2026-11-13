@@ -13,16 +13,45 @@ import {
     type Time,
     type SeriesMarker,
 } from "lightweight-charts";
-import { getMatchReplay, type MatchReplay } from "@/api/endpoints/matchReplay";
-import { formatPnlPct } from "@/lib/matchPnl";
+import { getMatchReplay, type MatchReplay, type ReplayCurvePoint } from "@/api/endpoints/matchReplay";
+import { formatMatchPnlPair } from "@/lib/matchPnl";
 
 const CHAL = "#FF6B00"; // challenger (war-theme orange)
 const OPP = "#22D3EE"; // opponent (cyan)
 const GRID = "rgba(255,255,255,0.04)";
 const TEXT = "rgba(255,255,255,0.5)";
 
-const STEP_MS = 45; // wall-clock ms per candle at 1× (≈5s for a 24h match)
+/** Wall-clock length of a full replay at 1×, whatever the match length. */
+const PLAY_MS = 8000;
 const sec = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp;
+
+/**
+ * Curve points as line data. The curve has a point at every fill (ms), and
+ * lightweight-charts takes one point per whole second, ascending: within a
+ * second the last value stands (the state after every fill in it).
+ */
+export function toLineData(points: ReplayCurvePoint[]): { time: UTCTimestamp; value: number }[] {
+    const out: { time: UTCTimestamp; value: number }[] = [];
+    for (const p of points) {
+        const time = sec(p.ts);
+        const last = out[out.length - 1];
+        if (last && last.time === time) last.value = p.pnlPct;
+        else out.push({ time, value: p.pnlPct });
+    }
+    return out;
+}
+
+/** The last clock index at or before `t`. */
+function indexAt(clock: number[], t: number): number {
+    let lo = 0;
+    let hi = clock.length - 1;
+    let idx = 0;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (clock[mid]! <= t) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return idx;
+}
 
 type ErrCode = "no_replay_data" | "insufficient_candle_data" | "forbidden" | "match_not_found" | "error";
 
@@ -78,7 +107,7 @@ export default function MatchReplayPage() {
         return () => { cancelled = true; };
     }, [id]);
 
-    // Canonical clock = challenger curve timestamps (same length as opponent's).
+    // The replay's clock: both curves share it (match start, candle closes, every fill, match end).
     const clock = useMemo<number[]>(() => {
         if (!data) return [];
         const c = data.curves[data.match.challenger.id] ?? [];
@@ -178,41 +207,46 @@ export default function MatchReplayPage() {
         // Both P&L curves draw forward to the playhead.
         const chal = data.curves[data.match.challenger.id] ?? [];
         const opp = data.curves[data.match.opponent.id] ?? [];
-        chalLineRef.current?.setData(chal.slice(0, index + 1).map((p) => ({ time: sec(p.ts), value: p.pnlPct })));
-        oppLineRef.current?.setData(opp.slice(0, index + 1).map((p) => ({ time: sec(p.ts), value: p.pnlPct })));
+        chalLineRef.current?.setData(toLineData(chal.slice(0, index + 1)));
+        oppLineRef.current?.setData(toLineData(opp.slice(0, index + 1)));
 
         // Keep both axes pinned to the full match window so the lines draw left→right.
-        const from = sec(clock[0]!);
+        const from = sec(Math.min(clock[0]!, pairCandles[0]?.ts ?? Infinity));
         const to = sec(clock[N - 1]!);
         priceChartRef.current?.timeScale().setVisibleRange({ from, to });
         pnlChartRef.current?.timeScale().setVisibleRange({ from, to });
     }, [data, index, selectedPair, clock, N]);
 
     // ── Animation loop ──
+    // The playhead moves through match time at a steady pace (a full match
+    // takes PLAY_MS at 1×), so a burst of fills doesn't race and a quiet
+    // stretch doesn't crawl. floatRef holds the playhead's match time.
     const rafRef = useRef<number | null>(null);
     const lastRef = useRef<number>(0);
     const floatRef = useRef<number>(0);
     useEffect(() => {
         if (!playing || N === 0) return;
-        floatRef.current = index;
+        const t0 = clock[0]!;
+        const t1 = clock[N - 1]!;
+        floatRef.current = clock[Math.min(index, N - 1)]!;
         lastRef.current = 0;
         const tick = (now: number) => {
             if (lastRef.current === 0) lastRef.current = now;
             const dt = now - lastRef.current;
             lastRef.current = now;
-            floatRef.current += (dt / STEP_MS) * speed;
-            if (floatRef.current >= N - 1) {
+            floatRef.current += (dt / PLAY_MS) * (t1 - t0) * speed;
+            if (floatRef.current >= t1) {
                 setIndex(N - 1);
                 setPlaying(false);
                 return;
             }
-            setIndex(Math.floor(floatRef.current));
+            setIndex(indexAt(clock, floatRef.current));
             rafRef.current = requestAnimationFrame(tick);
         };
         rafRef.current = requestAnimationFrame(tick);
         return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [playing, speed, N]);
+    }, [playing, speed, N, clock]);
 
     // ── Render ──
     if (err) {
@@ -242,8 +276,13 @@ export default function MatchReplayPage() {
             : ((match.challenger.finalPnlPct ?? 0) > (match.opponent.finalPnlPct ?? 0)
                 ? uid === match.challenger.id
                 : uid === match.opponent.id);
-    const fmt = (v: number | null | undefined) =>
-        v == null ? "--" : formatPnlPct(v);
+    // Both players at one precision, as every other match view shows them.
+    const pair = (a: number | null, b: number | null): [string, string] =>
+        a == null || b == null
+            ? [a == null ? "--" : formatMatchPnlPair(a, a, match.startingCapital)[0], b == null ? "--" : formatMatchPnlPair(b, b, match.startingCapital)[0]]
+            : formatMatchPnlPair(a, b, match.startingCapital);
+    const [chalLive, oppLive] = pair(cur(match.challenger.id), cur(match.opponent.id));
+    const [chalFinal, oppFinal] = pair(match.challenger.finalPnlPct, match.opponent.finalPnlPct);
     const pairs = Object.keys(data.candles);
 
     return (
@@ -261,13 +300,13 @@ export default function MatchReplayPage() {
                     <span className="mr-dot" style={{ background: CHAL }} />
                     <span className="mr-pname" style={{ color: CHAL }}>{match.challenger.name}</span>
                     {winnerIs(match.challenger.id) && <span className="mr-crown">WINNER</span>}
-                    <span className="mr-live" style={{ color: cur(match.challenger.id) >= 0 ? "#16a34a" : "#dc2626" }}>{fmt(cur(match.challenger.id))}</span>
-                    <span className="mr-final">final {fmt(match.challenger.finalPnlPct)}</span>
+                    <span className="mr-live" style={{ color: cur(match.challenger.id) >= 0 ? "#16a34a" : "#dc2626" }}>{chalLive}</span>
+                    <span className="mr-final">final {chalFinal}</span>
                 </div>
                 <div className="mr-vs">VS</div>
                 <div className="mr-player mr-player-r">
-                    <span className="mr-final">final {fmt(match.opponent.finalPnlPct)}</span>
-                    <span className="mr-live" style={{ color: cur(match.opponent.id) >= 0 ? "#16a34a" : "#dc2626" }}>{fmt(cur(match.opponent.id))}</span>
+                    <span className="mr-final">final {oppFinal}</span>
+                    <span className="mr-live" style={{ color: cur(match.opponent.id) >= 0 ? "#16a34a" : "#dc2626" }}>{oppLive}</span>
                     {winnerIs(match.opponent.id) && <span className="mr-crown">WINNER</span>}
                     <span className="mr-pname" style={{ color: OPP }}>{match.opponent.name}</span>
                     <span className="mr-dot" style={{ background: OPP }} />
@@ -289,9 +328,9 @@ export default function MatchReplayPage() {
             <div ref={pnlElRef} className="mr-chart" />
 
             <div className="mr-controls">
-                <button className="mr-btn" onClick={() => { setIndex(0); floatRef.current = 0; setPlaying(false); }}>⏮ RESTART</button>
+                <button className="mr-btn" onClick={() => { setIndex(0); setPlaying(false); }}>⏮ RESTART</button>
                 <button className="mr-btn mr-btn-primary" onClick={() => {
-                    if (index >= N - 1) { setIndex(0); floatRef.current = 0; }
+                    if (index >= N - 1) setIndex(0);
                     setPlaying((p) => !p);
                 }}>{playing ? "⏸ PAUSE" : "▶ PLAY"}</button>
                 <input
@@ -300,7 +339,7 @@ export default function MatchReplayPage() {
                     min={0}
                     max={Math.max(0, N - 1)}
                     value={index}
-                    onChange={(e) => { setPlaying(false); setIndex(Number(e.target.value)); floatRef.current = Number(e.target.value); }}
+                    onChange={(e) => { setPlaying(false); setIndex(Number(e.target.value)); }}
                 />
                 <div className="mr-speeds">
                     {[1, 2, 4].map((s) => (
