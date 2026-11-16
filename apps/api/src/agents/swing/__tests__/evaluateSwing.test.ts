@@ -48,6 +48,7 @@ function longSnap(over: Partial<SwingSnapshot> = {}): SwingSnapshot {
       level({ id: "S4", tf: "4h", role: "support", bottom: 98_200, top: 98_500 }),
       level({ id: "R4", tf: "4h", role: "resistance", bottom: 106_000, top: 106_500 }),
     ],
+    levels1w: [],
     ...over,
   };
 }

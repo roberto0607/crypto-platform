@@ -26,6 +26,12 @@ export interface RunStats extends TradeStats {
   cagrPct: number;
   maxDrawdownPct: number;
   timeInMarketPct: number;
+  /** CAGR ÷ max drawdown; null when there was no drawdown. */
+  mar: number | null;
+}
+
+export function marOf(cagrPct: number, maxDrawdownPct: number): number | null {
+  return maxDrawdownPct > 0 ? cagrPct / maxDrawdownPct : null;
 }
 
 export function tradeStats(trades: Pick<SimTrade, "pnlUsd" | "rMultiple">[]): TradeStats {
@@ -64,16 +70,22 @@ function cagr(start: number, end: number, seconds: number): number {
   return Math.pow(end / start, YEAR_SEC / seconds) - 1;
 }
 
-export function summarize(sim: SimResult, startEquity: number): RunStats {
+export function summarize(
+  sim: Pick<SimResult, "equity" | "barsTotal" | "barsInMarket"> & { trades: Pick<SimTrade, "pnlUsd" | "rMultiple">[] },
+  startEquity: number,
+): RunStats {
   const first = sim.equity[0];
   const last = sim.equity[sim.equity.length - 1];
   const end = last?.equity ?? startEquity;
+  const cagrPct = first && last ? cagr(startEquity, end, last.time - first.time) : 0;
+  const dd = maxDrawdownPct([startEquity, ...sim.equity.map((e) => e.equity)]);
   return {
     ...tradeStats(sim.trades),
     returnPct: end / startEquity - 1,
-    cagrPct: first && last ? cagr(startEquity, end, last.time - first.time) : 0,
-    maxDrawdownPct: maxDrawdownPct([startEquity, ...sim.equity.map((e) => e.equity)]),
+    cagrPct,
+    maxDrawdownPct: dd,
     timeInMarketPct: sim.barsTotal ? sim.barsInMarket / sim.barsTotal : 0,
+    mar: marOf(cagrPct, dd),
   };
 }
 
@@ -82,19 +94,17 @@ export function summarize(sim: SimResult, startEquity: number): RunStats {
  * the taker fee on both legs; drawdown on the position marked at each close.
  */
 export function buyAndHold(
-  h4: Candle[], startIndex: number, costs: SwingCosts, startEquity: number,
-): { returnPct: number; cagrPct: number; maxDrawdownPct: number } {
+  h4: Candle[], startIndex: number, costs: SwingCosts, startEquity: number, endIndex = h4.length,
+): { returnPct: number; cagrPct: number; maxDrawdownPct: number; mar: number | null } {
   const slip = costs.slippageBps / 10_000;
   const fee = costs.takerFeeBps / 10_000;
   const first = h4[startIndex];
-  const last = h4[h4.length - 1];
-  if (!first || !last) return { returnPct: 0, cagrPct: 0, maxDrawdownPct: 0 };
+  const last = h4[Math.min(endIndex, h4.length) - 1];
+  if (!first || !last) return { returnPct: 0, cagrPct: 0, maxDrawdownPct: 0, mar: null };
   const qty = startEquity / (first.open * (1 + slip) * (1 + fee));
   const end = qty * last.close * (1 - slip) * (1 - fee);
-  const marks = h4.slice(startIndex).map((c) => qty * c.close);
-  return {
-    returnPct: end / startEquity - 1,
-    cagrPct: cagr(startEquity, end, last.time + 14_400 - first.time),
-    maxDrawdownPct: maxDrawdownPct(marks),
-  };
+  const marks = h4.slice(startIndex, endIndex).map((c) => qty * c.close);
+  const cagrPct = cagr(startEquity, end, last.time + 14_400 - first.time);
+  const dd = maxDrawdownPct(marks);
+  return { returnPct: end / startEquity - 1, cagrPct, maxDrawdownPct: dd, mar: marOf(cagrPct, dd) };
 }

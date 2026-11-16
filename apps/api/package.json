@@ -38,6 +38,7 @@
     "candles:backfill": "tsx scripts/backfill-candles.ts",
     "backfill:history": "tsx src/scripts/backfillMarketHistory.ts",
     "agent:backtest": "tsx src/scripts/swingBacktest.ts",
+    "agent:backtest:v2": "tsx src/scripts/swingBacktestV2.ts",
     "pairs:restrict": "tsx src/scripts/restrictPairs.ts",
     "candles:reroll": "tsx src/scripts/rerollCandles.ts",
     "season:create": "tsx src/scripts/season.ts create",

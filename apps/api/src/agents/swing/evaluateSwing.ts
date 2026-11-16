@@ -50,7 +50,8 @@ export interface SwingPosition {
   qty: number;
   entryPrice: number;
   stop: number;
-  target: number;
+  /** null = no fixed target (v2 exits on the EMA 50 close instead). */
+  target: number | null;
 }
 
 export interface SwingAccount {
@@ -135,7 +136,7 @@ const floor8 = (v: number): number => Math.floor(v * 1e8 + 1e-6) / 1e8;
 /** Tolerance for "exactly at the boundary" comparisons on prices. */
 const EPS = 1e-9;
 
-const STOP_TEXT: Record<SwingStopSource, string> = {
+export const STOP_TEXT: Record<SwingStopSource, string> = {
   structure_4h: "behind the 4h S/R zone",
   structure_1d: "behind the daily S/R zone",
   atr: `${P.stop.atrMult} ATR`,
@@ -152,9 +153,9 @@ const TARGET_TEXT: Record<SwingTargetSource, string> = {
 
 // ── stop / room / target ──
 
-interface StopCalc { stop: number; source: SwingStopSource; r: number; pctOfPrice: number }
+export interface StopCalc { stop: number; source: SwingStopSource; r: number; pctOfPrice: number }
 
-function computeStop(side: SwingSide, entry: number, atr: number, levels: SwingLevel[]): StopCalc {
+export function computeStop(side: SwingSide, entry: number, atr: number, levels: SwingLevel[]): StopCalc {
   const S = P.stop;
   let structural: { stop: number; tf: SwingLevel["tf"] } | null = null;
   if (side === "long") {
@@ -179,7 +180,7 @@ function computeStop(side: SwingSide, entry: number, atr: number, levels: SwingL
 }
 
 /** The nearest opposing S/R zone edge: resistances above a long, supports below a short. */
-function nearestOpposing(side: SwingSide, entry: number, levels: SwingLevel[]): { level: SwingLevel; dist: number } | null {
+export function nearestOpposing(side: SwingSide, entry: number, levels: SwingLevel[]): { level: SwingLevel; dist: number } | null {
   let best: { level: SwingLevel; dist: number } | null = null;
   for (const l of levels) {
     let dist: number;
@@ -222,6 +223,52 @@ function computeTarget(
   return { target: best.price, source: best.source, targetR: (long ? best.price - entry : entry - best.price) / r };
 }
 
+/**
+ * Variant A's pullback setup rules for `side` (shared by v1 and v2, so the
+ * setup is the same code in both). pass = null when it can't be tested yet.
+ */
+export function pullbackRules(s: SwingSnapshot, side: SwingSide | null): SwingRule[] {
+  const long = side === "long";
+  const out: SwingRule[] = [];
+  const rule = (id: string, label: string, pass: boolean | null, value: string, threshold: string) => {
+    out.push({ id, label, pass, value, threshold });
+  };
+  const ok = side !== null && s.ema20 !== null && s.ema50 !== null;
+  const e20 = s.ema20 ?? NaN;
+  const e50 = s.ema50 ?? NaN;
+  const fullWindow = s.window.length >= P.pullback.lookbackBars && s.window.every((b) => b.ema20 !== null && b.ema50 !== null);
+  const [rLo, rHi] = long ? P.pullback.rsiLong : P.pullback.rsiShort;
+  rule("a_trend", long ? "EMA 20 above EMA 50" : "EMA 20 below EMA 50",
+    ok ? (long ? e20 > e50 : e20 < e50) : null, `EMA 20 ${px(s.ema20)} · EMA 50 ${px(s.ema50)}`, long ? "EMA 20 > EMA 50" : "EMA 20 < EMA 50");
+  rule("a_above_ema50", long ? "Close above EMA 50" : "Close below EMA 50",
+    ok ? (long ? s.close > e50 : s.close < e50) : null, `close ${px(s.close)}`, `${long ? ">" : "<"} ${px(s.ema50)}`);
+  rule("a_pullback",
+    long ? `Pullback: a low in the last ${P.pullback.lookbackBars} bars reached EMA 20` : `Pullback: a high in the last ${P.pullback.lookbackBars} bars reached EMA 20`,
+    ok && fullWindow ? s.window.some((b) => (long ? b.low <= b.ema20! : b.high >= b.ema20!)) : null,
+    s.window.map((b) => (long ? `low ${px(b.low)} / EMA 20 ${px(b.ema20)}` : `high ${px(b.high)} / EMA 20 ${px(b.ema20)}`)).join(" · "),
+    long ? "a low <= EMA 20" : "a high >= EMA 20");
+  rule("a_reclaim", long ? "Reclaim: close above EMA 20 and above the open" : "Reject: close below EMA 20 and below the open",
+    ok ? (long ? s.close > e20 && s.close > s.open : s.close < e20 && s.close < s.open) : null,
+    `open ${px(s.open)} · close ${px(s.close)} · EMA 20 ${px(s.ema20)}`, long ? "close > EMA 20, close > open" : "close < EMA 20, close < open");
+  rule("a_hold_ema50", long ? `No close below EMA 50 in the last ${P.pullback.lookbackBars} bars` : `No close above EMA 50 in the last ${P.pullback.lookbackBars} bars`,
+    ok && fullWindow ? s.window.every((b) => (long ? b.close >= b.ema50! : b.close <= b.ema50!)) : null,
+    s.window.map((b) => `close ${px(b.close)} / EMA 50 ${px(b.ema50)}`).join(" · "), long ? "closes >= EMA 50" : "closes <= EMA 50");
+  rule("a_rsi", `RSI 14 in [${rLo}, ${rHi}]`,
+    side !== null && s.rsi14 !== null ? s.rsi14 >= rLo - EPS && s.rsi14 <= rHi + EPS : null, f2(s.rsi14), `${rLo}–${rHi}`);
+  return out;
+}
+
+/** Inputs Variant A needs that are still in warm-up. */
+export function pullbackMissing(s: SwingSnapshot): string[] {
+  const missing: string[] = [];
+  if (s.ema20 === null || s.ema50 === null) missing.push("EMA 20/50");
+  if (s.rsi14 === null) missing.push("RSI 14");
+  if (s.window.length < P.pullback.lookbackBars || s.window.some((b) => b.ema20 === null || b.ema50 === null)) {
+    missing.push(`${P.pullback.lookbackBars} bars of EMA 20/50`);
+  }
+  return missing;
+}
+
 // ── evaluation ──
 
 export function evaluateSwing(
@@ -262,11 +309,7 @@ export function evaluateSwing(
   if (s.adx === null) missing.push("ADX 14");
   if (s.atr14 === null) missing.push("ATR 14");
   if (variant === "A") {
-    if (s.ema20 === null || s.ema50 === null) missing.push("EMA 20/50");
-    if (s.rsi14 === null) missing.push("RSI 14");
-    if (s.window.length < P.pullback.lookbackBars || s.window.some((b) => b.ema20 === null || b.ema50 === null)) {
-      missing.push(`${P.pullback.lookbackBars} bars of EMA 20/50`);
-    }
+    missing.push(...pullbackMissing(s));
   } else if (s.utStop === null) {
     missing.push("UT Bot stop");
   }
@@ -306,28 +349,7 @@ export function evaluateSwing(
     add(id, label, pass, value, threshold);
   };
   if (variant === "A") {
-    const ok = side !== null && s.ema20 !== null && s.ema50 !== null;
-    const e20 = s.ema20 ?? NaN;
-    const e50 = s.ema50 ?? NaN;
-    const fullWindow = s.window.length >= P.pullback.lookbackBars && s.window.every((b) => b.ema20 !== null && b.ema50 !== null);
-    const [rLo, rHi] = long ? P.pullback.rsiLong : P.pullback.rsiShort;
-    setup("a_trend", long ? "EMA 20 above EMA 50" : "EMA 20 below EMA 50",
-      ok ? (long ? e20 > e50 : e20 < e50) : null, `EMA 20 ${px(s.ema20)} · EMA 50 ${px(s.ema50)}`, long ? "EMA 20 > EMA 50" : "EMA 20 < EMA 50");
-    setup("a_above_ema50", long ? "Close above EMA 50" : "Close below EMA 50",
-      ok ? (long ? s.close > e50 : s.close < e50) : null, `close ${px(s.close)}`, `${long ? ">" : "<"} ${px(s.ema50)}`);
-    setup("a_pullback",
-      long ? `Pullback: a low in the last ${P.pullback.lookbackBars} bars reached EMA 20` : `Pullback: a high in the last ${P.pullback.lookbackBars} bars reached EMA 20`,
-      ok && fullWindow ? s.window.some((b) => (long ? b.low <= b.ema20! : b.high >= b.ema20!)) : null,
-      s.window.map((b) => (long ? `low ${px(b.low)} / EMA 20 ${px(b.ema20)}` : `high ${px(b.high)} / EMA 20 ${px(b.ema20)}`)).join(" · "),
-      long ? "a low <= EMA 20" : "a high >= EMA 20");
-    setup("a_reclaim", long ? "Reclaim: close above EMA 20 and above the open" : "Reject: close below EMA 20 and below the open",
-      ok ? (long ? s.close > e20 && s.close > s.open : s.close < e20 && s.close < s.open) : null,
-      `open ${px(s.open)} · close ${px(s.close)} · EMA 20 ${px(s.ema20)}`, long ? "close > EMA 20, close > open" : "close < EMA 20, close < open");
-    setup("a_hold_ema50", long ? `No close below EMA 50 in the last ${P.pullback.lookbackBars} bars` : `No close above EMA 50 in the last ${P.pullback.lookbackBars} bars`,
-      ok && fullWindow ? s.window.every((b) => (long ? b.close >= b.ema50! : b.close <= b.ema50!)) : null,
-      s.window.map((b) => `close ${px(b.close)} / EMA 50 ${px(b.ema50)}`).join(" · "), long ? "closes >= EMA 50" : "closes <= EMA 50");
-    setup("a_rsi", `RSI 14 in [${rLo}, ${rHi}]`,
-      side !== null && s.rsi14 !== null ? s.rsi14 >= rLo - EPS && s.rsi14 <= rHi + EPS : null, f2(s.rsi14), `${rLo}–${rHi}`);
+    for (const r of pullbackRules(s, side)) setup(r.id, r.label, r.pass, r.value, r.threshold);
   } else {
     const want = long ? "buy" : "sell";
     setup("b_signal", `UT Bot ${side ? want : "buy/sell"} signal on this bar`,

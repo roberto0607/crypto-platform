@@ -14,7 +14,7 @@ function t(pnlUsd: number, year: number, regime: BacktestTrade["regime"]): Backt
 }
 
 function input(trades: BacktestTrade[]): ReportInput {
-  const stats = { ...tradeStats(trades), returnPct: 0.05, cagrPct: 0.02, maxDrawdownPct: 0.08, timeInMarketPct: 0.1, haltedAt: null, skippedDrift: 0 };
+  const stats = { ...tradeStats(trades), returnPct: 0.05, cagrPct: 0.02, maxDrawdownPct: 0.08, timeInMarketPct: 0.1, mar: 0.25, haltedAt: null, skippedDrift: 0 };
   const run = { stats, trades, reasonCounts: { entry: trades.length, bias_neutral: 10 } };
   return {
     generatedAt: "2026-11-15",

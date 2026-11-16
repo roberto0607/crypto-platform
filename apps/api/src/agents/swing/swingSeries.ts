@@ -9,7 +9,7 @@
  *   depends on bars 0..k only.
  * - 4h S/R levels come from `activeSRLevelsAt(levels, k)`: only levels and
  *   touches confirmed by bar k's close, no later break.
- * - Daily/weekly values (closes, SMAs, daily S/R) are the ones in force at bar
+ * - Daily/weekly values (closes, SMAs, daily/weekly S/R) are the ones in force at bar
  *   k's CLOSE instant by the HTF rule (`htfValueAt` / `srHtfLevelsAt`): only
  *   daily/weekly bars that had closed by then.
  * The test builds the snapshot from only the data known at k and checks it is
@@ -36,6 +36,7 @@ import {
   type SRLevel,
 } from "../../indicators/shared";
 import { SWING_PARAMS as P } from "./swingParams";
+import { SWING_PARAMS_V2 as P2 } from "./swingParamsV2";
 
 const H4 = P.timeframeSec;
 const D1 = 86_400;
@@ -49,7 +50,7 @@ export interface SwingCandles {
 
 export interface SwingLevel {
   id: string;
-  tf: "4h" | "1d";
+  tf: "4h" | "1d" | "1w";
   role: "support" | "resistance";
   top: number;
   bottom: number;
@@ -97,6 +98,11 @@ export interface SwingSnapshot {
    * `levelsPerSide` supports with bottom < close and resistances with top > close.
    */
   levels: SwingLevel[];
+  /**
+   * Active weekly S/R levels (pivots 3/3, v2's room check), nearest first, same
+   * shape. Kept apart from `levels` so the v1 rules read exactly what they did.
+   */
+  levels1w: SwingLevel[];
 }
 
 export interface SwingSeries {
@@ -116,7 +122,9 @@ export interface SwingSeries {
   pwl: Float64Array;
   sr4h: SRLevel[];
   sr1d: SRLevel[];
+  sr1w: SRLevel[];
   d1Times: number[];
+  w1Times: number[];
   weekly: { close: Point[]; time: Point[]; sma50: Point[]; sma200: Point[] };
   daily: { close: Point[]; time: Point[]; sma200: Point[] };
 }
@@ -165,7 +173,9 @@ export function buildSwingSeries(candles: SwingCandles): SwingSeries {
     pwl: align(h4, index, week.low),
     sr4h: computeSupportResistance(h4, { left: P.sr4h.left, right: P.sr4h.right }),
     sr1d: computeSupportResistance(d1, { left: P.sr1d.left, right: P.sr1d.right }),
+    sr1w: computeSupportResistance(w1, { left: P2.sr1w.left, right: P2.sr1w.right }),
     d1Times: d1.map((c) => c.time),
+    w1Times: w1.map((c) => c.time),
     weekly: {
       close: closes(w1),
       time: times(w1),
@@ -218,6 +228,8 @@ export function snapshotAt(series: SwingSeries, k: number): SwingSnapshot {
     ...nearestLevels(activeSRLevelsAt(series.sr4h, k), "4h", c.close, P.levelsPerSide),
     ...nearestLevels(sr1d, "1d", c.close, P.levelsPerSide),
   ];
+  const sr1w = srHtfLevelsAt(series.sr1w, series.w1Times, W1, closeTime).filter((l) => l.brokenIndex === null);
+  const levels1w = nearestLevels(sr1w, "1w", c.close, P.levelsPerSide);
 
   return {
     barTime: c.time,
@@ -243,5 +255,6 @@ export function snapshotAt(series: SwingSeries, k: number): SwingSnapshot {
     pwh: num(series.pwh[k]),
     pwl: num(series.pwl[k]),
     levels,
+    levels1w,
   };
 }

@@ -12,8 +12,10 @@
  *   target fills at that open; otherwise a low/high through the stop fills at
  *   the stop, through the target at the target; both in one bar → the stop.
  *   Fills are STOP_MARKET / TAKE_PROFIT_MARKET: slippage against the trade.
- * - EXIT_TIME closes at the next 4h open. A position open at the end closes
- *   at the last close ("end_of_data").
+ * - EXIT_TIME (v1 time stop) and EXIT_TREND (v2 EMA 50 close) close at the
+ *   next 4h open. A plan without a target (v2) exits only on its stop or that
+ *   signal. A position open at the end (the last bar, or `endIndex`) closes
+ *   at that bar's close ("end_of_data").
  * - requestHalt kills the agent for the rest of the run (no admin re-arm).
  *
  * Nothing here reads a bar before it happens: bar k's 1h bars are walked
@@ -21,7 +23,7 @@
  */
 import type { Candle } from "../../../indicators/shared";
 import type {
-  SwingAccount, SwingCosts, SwingDecision, SwingPosition, SwingSide, SwingStopSource, SwingTargetSource,
+  SwingAccount, SwingCosts, SwingPosition, SwingSide, SwingStopSource, SwingTargetSource,
 } from "../evaluateSwing";
 import { SWING_PARAMS as P } from "../swingParams";
 
@@ -30,7 +32,31 @@ const H4 = P.timeframeSec;
 /** Max distance of the fill from the decision close, in R (the live drift guard). */
 export const DRIFT_GUARD_R = 0.25;
 
-export type ExitReason = "stop" | "target" | "time" | "end_of_data";
+export type ExitReason = "stop" | "target" | "time" | "trend" | "end_of_data";
+
+/** What the fill model needs from an entry plan (v1's SwingPlan and v2's plan both fit). */
+export interface SimPlan {
+  side: SwingSide;
+  entryRef: number;
+  stop: number;
+  stopSource: SwingStopSource;
+  r: number;
+  /** null = no fixed target. */
+  target: number | null;
+  targetSource: SwingTargetSource | null;
+  qty: number;
+}
+
+/** What the fill model needs from a decision (v1's SwingDecision and v2's both fit). */
+export interface SimDecision {
+  barTime: number;
+  action: "ENTER_LONG" | "ENTER_SHORT" | "EXIT_TIME" | "EXIT_TREND" | "HOLD" | "NO_TRADE";
+  candidateSide: SwingSide | null;
+  reasonCode: string;
+  requestHalt: boolean;
+  plan: SimPlan | null;
+  inputs: { adx: number | null };
+}
 
 export interface SimTrade {
   side: SwingSide;
@@ -40,7 +66,7 @@ export interface SimTrade {
   entryPrice: number;
   qty: number;
   stop: number;
-  target: number;
+  target: number | null;
   /** The plan's stop distance at the decision close. */
   plannedR: number;
   /** qty × |entry fill − stop|: what one R costs at the actual fill. */
@@ -55,7 +81,7 @@ export interface SimTrade {
   /** 4h bars the position was held in, entry bar included. */
   barsHeld: number;
   stopSource: SwingStopSource;
-  targetSource: SwingTargetSource;
+  targetSource: SwingTargetSource | null;
   /** 4h ADX at the decision. */
   adx: number | null;
 }
@@ -70,16 +96,18 @@ export interface SimResult {
   fallbackBars: number;
   haltedAt: number | null;
   reasonCounts: Record<string, number>;
-  /** Every decision, in order: the 4h bar it read (barTime), what it did and why. */
-  decisions: Array<{ time: number; barTime: number; action: SwingDecision["action"]; reasonCode: string }>;
+  /** Every decision, in order: the 4h bar it read (barTime), what it did and why, for which side. */
+  decisions: Array<{ time: number; barTime: number; action: SimDecision["action"]; reasonCode: string; side: SwingSide | null }>;
 }
 
 export interface SimInput {
   h4: Candle[];
   h1: Candle[];
-  decide: (k: number, account: SwingAccount) => SwingDecision;
+  decide: (k: number, account: SwingAccount) => SimDecision;
   costs: SwingCosts;
   startIndex: number;
+  /** Exclusive; default h4.length. Bars from here on are never read. */
+  endIndex?: number;
   startEquity: number;
 }
 
@@ -90,12 +118,13 @@ interface Open {
   plannedR: number;
   entryFee: number;
   stopSource: SwingStopSource;
-  targetSource: SwingTargetSource;
+  targetSource: SwingTargetSource | null;
   adx: number | null;
 }
 
 export function simulate(input: SimInput): SimResult {
   const { h4, costs, startIndex } = input;
+  const endIndex = Math.min(input.endIndex ?? h4.length, h4.length);
   const slip = costs.slippageBps / 10_000;
   const fee = costs.takerFeeBps / 10_000;
   const h1ByTime = new Map(input.h1.map((c) => [c.time, c]));
@@ -105,9 +134,9 @@ export function simulate(input: SimInput): SimResult {
   };
   let cash = input.startEquity;
   let open: Open | null = null;
-  let pending: SwingDecision | null = null;
+  let pending: SimDecision | null = null;
   let pendingTime = 0;
-  let pendingExit = false;
+  let pendingExit: ExitReason | null = null;
   let killed = false;
   let peak = input.startEquity;
   let day = -1;
@@ -152,14 +181,14 @@ export function simulate(input: SimInput): SimResult {
     lastExitTime = time;
   };
 
-  for (let k = startIndex; k < h4.length; k++) {
+  for (let k = startIndex; k < endIndex; k++) {
     const bar = h4[k]!;
     const closeTime = bar.time + H4;
     result.barsTotal++;
 
-    // ── at the open: a time exit or an entry decided at the previous close ──
-    if (pendingExit && open) close(bar.open, bar.time, "time", k - 1);
-    pendingExit = false;
+    // ── at the open: a time/trend exit or an entry decided at the previous close ──
+    if (pendingExit && open) close(bar.open, bar.time, pendingExit, k - 1);
+    pendingExit = null;
     if (pending?.plan) {
       const p = pending.plan;
       if (Math.abs(bar.open - p.entryRef) > DRIFT_GUARD_R * p.r + 1e-9) {
@@ -204,9 +233,9 @@ export function simulate(input: SimInput): SimResult {
         const long = o.pos.side === "long";
         const { stop, target } = o.pos;
         if (long ? c.open <= stop : c.open >= stop) { close(c.open, c.time, "stop", k); break; }
-        if (long ? c.open >= target : c.open <= target) { close(c.open, c.time, "target", k); break; }
+        if (target !== null && (long ? c.open >= target : c.open <= target)) { close(c.open, c.time, "target", k); break; }
         if (long ? c.low <= stop : c.high >= stop) { close(stop, c.time + sec, "stop", k); break; }
-        if (long ? c.high >= target : c.low <= target) { close(target, c.time + sec, "target", k); break; }
+        if (target !== null && (long ? c.high >= target : c.low <= target)) { close(target, c.time + sec, "target", k); break; }
       }
     }
 
@@ -228,15 +257,16 @@ export function simulate(input: SimInput): SimResult {
     };
     const d = input.decide(k, account);
     result.reasonCounts[d.reasonCode] = (result.reasonCounts[d.reasonCode] ?? 0) + 1;
-    result.decisions.push({ time: closeTime, barTime: d.barTime, action: d.action, reasonCode: d.reasonCode });
+    result.decisions.push({ time: closeTime, barTime: d.barTime, action: d.action, reasonCode: d.reasonCode, side: d.candidateSide });
     if (d.requestHalt && !killed) { killed = true; result.haltedAt = closeTime; }
-    if (d.action === "EXIT_TIME" && open) pendingExit = true;
+    if (d.action === "EXIT_TIME" && open) pendingExit = "time";
+    if (d.action === "EXIT_TREND" && open) pendingExit = "trend";
     if ((d.action === "ENTER_LONG" || d.action === "ENTER_SHORT") && !open && d.plan) { pending = d; pendingTime = closeTime; }
   }
 
-  const last = h4[h4.length - 1];
+  const last = h4[endIndex - 1];
   if (open && last) {
-    close(last.close, last.time + H4, "end_of_data", h4.length - 1);
+    close(last.close, last.time + H4, "end_of_data", endIndex - 1);
     const e = result.equity[result.equity.length - 1];
     if (e) e.equity = cash;
   }
