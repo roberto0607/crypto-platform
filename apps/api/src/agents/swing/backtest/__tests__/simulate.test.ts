@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import type { Candle } from "../../../../indicators/shared";
 import type { SwingAccount, SwingDecision, SwingPlan } from "../../evaluateSwing";
-import { simulate, type SimInput } from "../simulate";
+import { simulate, type SimDecision, type SimInput } from "../simulate";
 
 const H1 = 3_600;
 const H4 = 14_400;
@@ -61,7 +61,7 @@ const ENTER_SHORT = decision({
 });
 
 /** Scripted rules: `script[k]` at bar k's close; otherwise HOLD while in a position, NO_TRADE when flat. */
-function scripted(script: Record<number, SwingDecision>, seen: SwingAccount[] = []): SimInput["decide"] {
+function scripted(script: Record<number, SimDecision>, seen: SwingAccount[] = []): SimInput["decide"] {
   return (k, acct) => {
     seen[k] = structuredClone(acct);
     if (script[k]) return script[k]!;
@@ -154,6 +154,35 @@ describe("simulate", () => {
     expect(t.exitTime).toBe(h4[6]!.time);
     expect(t.exitPrice).toBeCloseTo(100 * (1 - s), 12);
     expect(t.barsHeld).toBe(3); // bars 3, 4, 5
+  });
+
+  it("trend exit: an EXIT_TREND decision closes at the next 4h open with reason trend", () => {
+    const { h4, h1 } = market(8);
+    // A v2 decision: the fill model takes any SimDecision.
+    const exit = { ...decision({ side: "long" }), action: "EXIT_TREND" as const, reasonCode: "trend_exit" };
+    const t = run(h4, h1, scripted({ 2: ENTER_LONG, 4: exit })).trades[0]!;
+    expect(t.exitReason).toBe("trend");
+    expect(t.exitTime).toBe(h4[5]!.time);
+    expect(t.exitPrice).toBeCloseTo(100 * (1 - s), 12);
+  });
+
+  it("a plan without a target never exits on a target; only the stop or a signal closes it", () => {
+    const { h4, h1 } = market(8, { "4:1": { high: 1_000 } });
+    const noTarget = decision({ action: "ENTER_LONG", side: "long", reasonCode: "entry", plan: plan({ target: null, targetSource: null } as unknown as Partial<SwingPlan>) });
+    const t = run(h4, h1, scripted({ 2: noTarget })).trades[0]!;
+    expect(t.exitReason).toBe("end_of_data");
+    expect(t.target).toBeNull();
+  });
+
+  it("endIndex: never reads a bar at or after it, and closes an open position at the bar before", () => {
+    const { h4, h1 } = market(10, { "6:0": { open: 50, low: 40 } });
+    const seen: SwingAccount[] = [];
+    const r = simulate({ h4, h1, decide: scripted({ 2: ENTER_LONG }, seen), costs: COSTS, startIndex: 0, endIndex: 6, startEquity: 100_000 });
+    expect(seen.length).toBe(6);
+    expect(r.equity).toHaveLength(6);
+    const t = r.trades[0]!;
+    expect(t.exitReason).toBe("end_of_data");
+    expect(t.exitTime).toBe(h4[5]!.time + H4);
   });
 
   it("a position still open at the end is closed at the last close", () => {

@@ -94,6 +94,23 @@ describe("swing series on the BTC-USD fixture", () => {
     expect(snapshotAt(series, last).levels.some((l) => l.tf === "1d")).toBe(true);
   });
 
+  it("keeps weekly levels (pivots 3/3) apart from `levels`, active and on the right side of the close", () => {
+    let seen = 0;
+    for (const k of [300, 800, last]) {
+      const s = snapshotAt(series, k);
+      expect(s.levels.some((l) => l.tf === "1w")).toBe(false);
+      for (const l of s.levels1w) {
+        expect(l.tf).toBe("1w");
+        if (l.role === "support") expect(l.bottom).toBeLessThan(s.close);
+        else expect(l.top).toBeGreaterThan(s.close);
+      }
+      expect(s.levels1w.filter((l) => l.role === "support").length).toBeLessThanOrEqual(5);
+      expect(s.levels1w.filter((l) => l.role === "resistance").length).toBeLessThanOrEqual(5);
+      seen += s.levels1w.length;
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
   it("has no lookahead: the snapshot at k equals one built only from data known at k's close", () => {
     const ks = [0, 1, 2, 30, 61, 120, 250, 499, 777, 1000, 1234, last - 1, last];
     for (const k of ks) {

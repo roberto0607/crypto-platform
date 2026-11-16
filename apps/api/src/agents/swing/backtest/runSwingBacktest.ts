@@ -101,10 +101,10 @@ export function runSwingBacktest(input: RunInput): RunOutput {
 }
 
 /** Share of the tested 4h bars in each regime (by the daily ADX at each close). */
-export function regimeShare(candles: BacktestCandles, startIndex: number): Record<Regime, number> {
+export function regimeShare(candles: BacktestCandles, startIndex: number, endIndex = candles.h4.length): Record<Regime, number> {
   const adxAt = dailyAdxAt(candles.d1);
   const out: Record<Regime, number> = { trending: 0, transitional: 0, ranging: 0, unknown: 0 };
-  const bars = candles.h4.slice(startIndex);
+  const bars = candles.h4.slice(startIndex, endIndex);
   for (const c of bars) out[regimeOf(adxAt(c.time + 14_400))]++;
   for (const k of Object.keys(out) as Regime[]) out[k] = bars.length ? out[k] / bars.length : 0;
   return out;
