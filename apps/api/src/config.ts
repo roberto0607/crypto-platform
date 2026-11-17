@@ -47,6 +47,18 @@ export function parseMarketSymbols(raw: string | undefined): ReadonlySet<string>
   return new Set(list.map(normalizeMarketSymbol));
 }
 
+/**
+ * EXTERNAL_SERIES_RESOLUTION: how external_series stores raw points. "1h"
+ * (default, prod) keeps the last point per UTC hour; "full" keeps every
+ * point and is for local research DBs only. A typo fails loudly at boot.
+ */
+export function parseExternalSeriesResolution(raw: string | undefined): "1h" | "full" {
+  const v = (raw ?? "").trim();
+  if (v === "" || v === "1h") return "1h";
+  if (v === "full") return "full";
+  throw new Error(`EXTERNAL_SERIES_RESOLUTION must be "1h" or "full", got "${v}"`);
+}
+
 const nodeEnv = process.env.NODE_ENV ?? "development";
 const isProd = nodeEnv === "production";
 
@@ -266,6 +278,8 @@ export const config = {
   // Set DB_SIZE_LIMIT_MB to the Postgres volume size (MB). 0/unset = size is
   // still logged hourly but the warn/pause thresholds are inactive.
   dbSizeLimitMb: numberEnv("DB_SIZE_LIMIT_MB", 0),
+  // ── Confluence feature recorder: external_series storage (agents/confluence/external) ──
+  externalSeriesResolution: parseExternalSeriesResolution(process.env.EXTERNAL_SERIES_RESOLUTION),
   dbSizeWarnPct: numberEnv("DB_SIZE_WARN_PCT", 70),
   dbSizeCriticalPct: numberEnv("DB_SIZE_CRITICAL_PCT", 85),
   dbSizeCheckIntervalMs: numberEnv("DB_SIZE_CHECK_INTERVAL_MS", 3_600_000),

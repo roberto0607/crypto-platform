@@ -194,6 +194,7 @@ All new indicators follow this pattern:
 | `ELO_INTEGRITY_ENABLED` | no | `false` | Anti-farming ELO + season rules (`competitions/eloIntegrity.ts`): blocked wins are unrated, 24h same-opponent scale 100/50/0%, upset bonus needs a 50+ gap, season points stored per match. Off = ELO exactly as before |
 | `MARKET_SYMBOLS` | no | `BTC-USD,ETH-USD,SOL-USD` | Only pairs whose candle/footprint history is written to Postgres |
 | `DB_SIZE_LIMIT_MB` | no (set in prod) | `0` (guardrail off) | Postgres volume size; warn at 70%, pause non-essential writes at 85%. See `docs/runbooks/db-recovery.md` |
+| `EXTERNAL_SERIES_RESOLUTION` | no | `1h` | How `external_series` (confluence feature recorder: funding, OI, Fear & Greed) stores raw points. `1h` keeps the last point per UTC hour (prod); `full` keeps every point (local research DBs only). Any other value fails at boot |
 | `TRUST_PROXY_HOPS` | no | `0` | Reverse-proxy hops to trust for `req.ip` (X-Forwarded-For). `0` = TCP peer, which on Railway is the edge proxy — per-IP limits (quick-call 30/hr, global limiter's IP fallback) bucket all visitors together until set |
 
 ## Visual verification: Playwright MCP
