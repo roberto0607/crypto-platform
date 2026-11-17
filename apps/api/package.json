@@ -40,6 +40,7 @@
     "agent:backtest": "tsx src/scripts/swingBacktest.ts",
     "agent:backtest:v2": "tsx src/scripts/swingBacktestV2.ts",
     "agent:features:backfill": "tsx src/scripts/confluenceFeatureBackfill.ts",
+    "agent:features:external-backfill": "tsx src/scripts/confluenceExternalBackfill.ts",
     "pairs:restrict": "tsx src/scripts/restrictPairs.ts",
     "candles:reroll": "tsx src/scripts/rerollCandles.ts",
     "season:create": "tsx src/scripts/season.ts create",
