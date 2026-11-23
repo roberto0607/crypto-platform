@@ -52,3 +52,12 @@ export async function loadExternalSeries(series: string, from: number, toExclusi
   );
   return rows.map((r) => ({ time: Number(r.t), value: r.value }));
 }
+
+/** Time of the latest stored point, or null. */
+export async function latestExternalTime(series: string): Promise<number | null> {
+  const { rows } = await pool.query<{ t: string | null }>(
+    `SELECT extract(epoch FROM max(ts))::bigint::text AS t FROM external_series WHERE series = $1`,
+    [series],
+  );
+  return rows[0]?.t ? Number(rows[0].t) : null;
+}

@@ -88,6 +88,7 @@ describe("AGENTS_ENABLED master switch", () => {
     RISK_AGENT_ENABLED: "true",
     EXECUTION_AGENT_ENABLED: "true",
     NEWS_AGENT_ENABLED: "true",
+    FEATURE_RECORDER_ENABLED: "true",
   };
 
   it("defaults off in production and overrides every per-agent flag", async () => {
@@ -98,6 +99,12 @@ describe("AGENTS_ENABLED master switch", () => {
     expect(c.riskAgentEnabled).toBe(false);
     expect(c.executionAgentEnabled).toBe(false);
     expect(c.newsAgentEnabled).toBe(false);
+    expect(c.featureRecorderEnabled).toBe(false);
+  });
+
+  it("the feature recorder is off unless FEATURE_RECORDER_ENABLED=true", async () => {
+    expect((await loadConfig({ NODE_ENV: "development", AGENTS_ENABLED: "true", FEATURE_RECORDER_ENABLED: "" })).featureRecorderEnabled).toBe(false);
+    expect((await loadConfig({ NODE_ENV: "development", AGENTS_ENABLED: "true", FEATURE_RECORDER_ENABLED: "true" })).featureRecorderEnabled).toBe(true);
   });
 
   it("AGENTS_ENABLED=true in production defers to the per-agent flags", async () => {
@@ -111,5 +118,6 @@ describe("AGENTS_ENABLED master switch", () => {
     const c = await loadConfig({ NODE_ENV: "development", AGENTS_ENABLED: "false", ...ALL_ON });
     expect(c.scannerAgentEnabled).toBe(false);
     expect(c.riskAgentEnabled).toBe(false);
+    expect(c.featureRecorderEnabled).toBe(false);
   });
 });

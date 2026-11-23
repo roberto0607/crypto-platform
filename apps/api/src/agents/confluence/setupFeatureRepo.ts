@@ -33,7 +33,7 @@ export async function upsertFeatureRows(
   symbol: string,
   origin: FeatureOrigin,
   rows: FeatureRow[],
-  opts: { recordedLate?: boolean } = {},
+  opts: { recordedLate?: boolean; ifAbsent?: boolean } = {},
 ): Promise<number> {
   const cols = ["symbol", "bar_time", "feature_version", "origin", "recorded_late", "close", "atr14_4h", ...SETUP_FEATURE_COLUMNS, "missing"];
   const width = cols.length;
@@ -57,9 +57,11 @@ export async function upsertFeatureRows(
       return `(${cols.map((_, c) => `$${j * width + c + 1}`).join(", ")})`;
     });
     const update = cols.filter((c) => !["symbol", "bar_time", "feature_version"].includes(c)).map((c) => `${c} = EXCLUDED.${c}`);
+    // ifAbsent (the live recorder): a row already recorded is never rewritten.
+    const onConflict = opts.ifAbsent ? "DO NOTHING" : `DO UPDATE SET ${update.join(", ")}, recorded_at = now()`;
     const { rowCount } = await pool.query(
       `INSERT INTO setup_features (${cols.join(", ")}) VALUES ${tuples.join(", ")}
-       ON CONFLICT (symbol, bar_time, feature_version) DO UPDATE SET ${update.join(", ")}, recorded_at = now()`,
+       ON CONFLICT (symbol, bar_time, feature_version) ${onConflict}`,
       params,
     );
     written += rowCount ?? 0;
