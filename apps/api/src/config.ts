@@ -409,4 +409,10 @@ export const config = {
   // opt-in per environment. Default disabled, same as every other agent
   // flag here.
   newsAgentEnabled: agentsEnabled && booleanEnv("NEWS_AGENT_ENABLED", false),
+
+  // Confluence feature recorder (featureRecorderJob): one setup_features row
+  // per closed BTC 4h bar. Data only -- no orders, no LLM -- but it calls
+  // Coinbase, Deribit, Gate.io, OKX and Alternative.me and writes rows, so it
+  // is opt-in per environment like the agents above.
+  featureRecorderEnabled: agentsEnabled && booleanEnv("FEATURE_RECORDER_ENABLED", false),
 };
