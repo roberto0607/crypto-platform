@@ -104,31 +104,35 @@ describe("readNewsGate (test DB)", () => {
   });
 
   it("is true only while a negative flag is unexpired", async () => {
-    const { rows } = await pool.query<{ id: string }>(`SELECT id FROM trading_pairs WHERE symbol = 'BTC/USD'`);
-    const pairId = rows[0]!.id;
-    const before = await pool.query(`SELECT * FROM pair_news_flags WHERE pair_id = $1`, [pairId]);
+    // Its own pair: other suites truncate trading_pairs, so BTC/USD may not exist.
+    const id = Math.random().toString(36).slice(2, 7).toUpperCase();
+    const asset = async (sym: string) =>
+      (await pool.query<{ id: string }>(`INSERT INTO assets (symbol, name, decimals) VALUES ($1, $1, 8) RETURNING id`, [sym])).rows[0]!.id;
+    const base = await asset(`B${id}`);
+    const quote = await asset(`Q${id}`);
+    const symbol = `B${id}/Q${id}`;
+    const pairId = (await pool.query<{ id: string }>(
+      `INSERT INTO trading_pairs (base_asset_id, quote_asset_id, symbol, is_active, last_price, maker_fee_bps, taker_fee_bps)
+       VALUES ($1, $2, $3, false, '1', 0, 0) RETURNING id`,
+      [base, quote, symbol],
+    )).rows[0]!.id;
     const now = Math.floor(Date.now() / 1000);
     try {
+      expect(await readNewsGate({ enabled: true, symbol, atSec: now })).toEqual({ value: false, reason: "" });
       await pool.query(
         `INSERT INTO pair_news_flags (pair_id, flagged_negative, reason, expires_at, updated_at)
-         VALUES ($1, true, 'test', to_timestamp($2), now())
-         ON CONFLICT (pair_id) DO UPDATE SET flagged_negative = true, expires_at = EXCLUDED.expires_at`,
+         VALUES ($1, true, 'test', to_timestamp($2), now())`,
         [pairId, now + 600],
       );
-      expect(await readNewsGate({ enabled: true, symbol: "BTC/USD", atSec: now })).toEqual({ value: true, reason: "" });
-      expect(await readNewsGate({ enabled: true, symbol: "BTC/USD", atSec: now + 601 })).toEqual({ value: false, reason: "" });
+      expect(await readNewsGate({ enabled: true, symbol, atSec: now })).toEqual({ value: true, reason: "" });
+      expect(await readNewsGate({ enabled: true, symbol, atSec: now + 601 })).toEqual({ value: false, reason: "" });
       await pool.query(`UPDATE pair_news_flags SET flagged_negative = false WHERE pair_id = $1`, [pairId]);
-      expect(await readNewsGate({ enabled: true, symbol: "BTC/USD", atSec: now })).toEqual({ value: false, reason: "" });
-      expect(await readNewsGate({ enabled: true, symbol: "NOPE/USD", atSec: now })).toEqual({ value: null, reason: "no_pair" });
+      expect(await readNewsGate({ enabled: true, symbol, atSec: now })).toEqual({ value: false, reason: "" });
+      expect(await readNewsGate({ enabled: true, symbol: `NOPE${id}/USD`, atSec: now })).toEqual({ value: null, reason: "no_pair" });
     } finally {
       await pool.query(`DELETE FROM pair_news_flags WHERE pair_id = $1`, [pairId]);
-      const b = before.rows[0];
-      if (b) {
-        await pool.query(
-          `INSERT INTO pair_news_flags (pair_id, flagged_negative, reason, source_headline, expires_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [pairId, b.flagged_negative, b.reason, b.source_headline, b.expires_at, b.updated_at],
-        );
-      }
+      await pool.query(`DELETE FROM trading_pairs WHERE id = $1`, [pairId]);
+      await pool.query(`DELETE FROM assets WHERE id = ANY($1)`, [[base, quote]]);
     }
   });
 });
