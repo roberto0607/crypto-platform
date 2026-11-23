@@ -13,6 +13,9 @@ import { loadFeatureCandles } from "./featureCandleRepo";
 import { syncCoinbaseCandles, type FetchPage } from "./featureCandleSync";
 import { FEATURE_PERIODS, FEATURE_SYMBOL } from "./featureParams";
 import { upsertFeatureRows } from "./setupFeatureRepo";
+import { EXTERNAL_LOOKBACK, SERIES } from "./external/externalBackfill";
+import { externalFeaturesAt, prepareExternal, type ExternalInput, type PreparedExternal } from "./external/externalFeatures";
+import { loadExternalSeries } from "./external/externalSeriesRepo";
 
 const H4 = 14_400;
 
@@ -45,14 +48,38 @@ export interface BackfillSummary {
   nullCounts: Record<string, number>;
 }
 
+/** Merge the external (positioning / sentiment) features into a row, as of its close. */
+export function withExternal(row: FeatureRow, ext: PreparedExternal): FeatureRow {
+  const e = externalFeaturesAt(row.closeTime, ext);
+  return { ...row, values: { ...row.values, ...e.values }, missing: { ...row.missing, ...e.missing } };
+}
+
+/**
+ * Backfill rows use the Binance archive for OI (the live recorder uses
+ * Gate.io + OKX). A series with no stored points is left unloaded, so its
+ * columns read "source_not_wired" rather than a misleading warm-up.
+ */
+export async function loadBackfillExternal(from: number, toExclusive: number, prefix = ""): Promise<PreparedExternal> {
+  const load = async (series: string, back: number) => {
+    const pts = await loadExternalSeries(prefix + series, from - back, toExclusive);
+    return pts.length > 0 ? pts : undefined;
+  };
+  const input: ExternalInput = {
+    funding: await load(SERIES.funding, EXTERNAL_LOOKBACK.funding),
+    oi: await load(SERIES.binanceOi, EXTERNAL_LOOKBACK.oi),
+    fng: await load(SERIES.fng, EXTERNAL_LOOKBACK.fng),
+  };
+  return prepareExternal(input);
+}
+
 /** Rows for every 4h bar in [from, toExclusive) whose close is ≤ toExclusive, computed over the full stored history. */
-export function computeBackfillRows(h1: Candle[], d1: Candle[], from: number, toExclusive: number): FeatureRow[] {
+export function computeBackfillRows(h1: Candle[], d1: Candle[], from: number, toExclusive: number, ext: PreparedExternal = {}): FeatureRow[] {
   const h4 = rollup4h(h1);
   const series = buildFeatureSeries({ h4, d1, w1: rollupWeekly(d1) });
   const rows: FeatureRow[] = [];
   for (let k = 0; k < h4.length; k++) {
     const t = h4[k]!.time;
-    if (t >= from && t + H4 <= toExclusive) rows.push(featureRowAt(series, k));
+    if (t >= from && t + H4 <= toExclusive) rows.push(withExternal(featureRowAt(series, k), ext));
   }
   return rows;
 }
@@ -64,6 +91,8 @@ export async function runFeatureBackfill(opts: {
   fetchPage?: FetchPage;
   sleepMs?: number;
   skipSync?: boolean;
+  /** Test isolation: prefix for external_series names. */
+  seriesPrefix?: string;
   log?: (msg: string) => void;
 }): Promise<BackfillSummary> {
   const symbol = opts.symbol ?? FEATURE_SYMBOL;
@@ -81,7 +110,9 @@ export async function runFeatureBackfill(opts: {
   const h1 = await loadFeatureCandles(symbol, "1h", opts.toExclusive);
   const d1 = await loadFeatureCandles(symbol, "1d", opts.toExclusive);
   log(`[features] loaded ${h1.length} 1h and ${d1.length} 1d bars closed by ${new Date(opts.toExclusive * 1000).toISOString()}`);
-  const rows = computeBackfillRows(h1, d1, opts.from, opts.toExclusive);
+  const ext = await loadBackfillExternal(opts.from, opts.toExclusive, opts.seriesPrefix);
+  log(`[features] external series loaded: ${Object.entries(ext).filter(([, v]) => v).map(([k, v]) => `${k} ${v!.pts.length}`).join(", ") || "none"}`);
+  const rows = computeBackfillRows(h1, d1, opts.from, opts.toExclusive, ext);
   const written = await upsertFeatureRows(symbol, "backfill", rows);
   const nullCounts: Record<string, number> = {};
   for (const r of rows) for (const [k] of Object.entries(r.missing)) nullCounts[k] = (nullCounts[k] ?? 0) + 1;
