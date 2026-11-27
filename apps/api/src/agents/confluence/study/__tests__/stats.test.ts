@@ -47,6 +47,36 @@ describe("blockBootstrapP", () => {
     expect(blockBootstrapP(x, y, 6, 2000, 20261116)).toBeGreaterThan(0.2);
   });
 
+  it("equals ranking each resampled array (the naive way), ties included", () => {
+    const naive = (xs: number[], ys: number[], block: number, B: number, seed: number) => {
+      const g = mulberry32(seed);
+      let lo = 0;
+      let hi = 0;
+      for (let r = 0; r < B; r++) {
+        const bx: number[] = [];
+        const by: number[] = [];
+        while (bx.length < xs.length) {
+          const st = Math.floor(g() * (xs.length - block + 1));
+          for (let j = 0; j < block && bx.length < xs.length; j++) {
+            bx.push(xs[st + j]!);
+            by.push(ys[st + j]!);
+          }
+        }
+        const ic = spearman(bx, by);
+        if (Number.isNaN(ic)) continue;
+        if (ic <= 0) lo++;
+        if (ic >= 0) hi++;
+      }
+      return Math.min(1, (2 * (1 + Math.min(lo, hi))) / (B + 1));
+    };
+    const r3 = mulberry32(5);
+    const xs = Array.from({ length: 97 }, () => Math.round(r3() * 10)); // many ties
+    const ys = xs.map((v) => (r3() < 0.6 ? v : Math.round(r3() * 10)));
+    for (const [block, B, seed] of [[1, 300, 1], [6, 300, 2], [18, 200, 3]] as const) {
+      expect(blockBootstrapP(xs, ys, block, B, seed)).toBe(naive(xs, ys, block, B, seed));
+    }
+  });
+
   it("is reproducible for a seed", () => {
     const y = x.map((v, i) => v * 0.1 + noise[(i * 13) % n]!);
     expect(blockBootstrapP(x, y, 18, 500, 7)).toBe(blockBootstrapP(x, y, 18, 500, 7));

@@ -5,18 +5,34 @@
  * Deterministic: the bootstrap uses a seeded generator.
  */
 
-/** Ranks 1..n, ties get the average of their ranks. */
+/**
+ * Ranks 1..n, ties get the average of their ranks. Sorts a typed copy
+ * (native numeric sort) and finds each value's tie run by binary search:
+ * the bootstrap calls this hundreds of thousands of times.
+ */
 export function ranks(xs: number[]): number[] {
-  const idx = xs.map((_, i) => i).sort((a, b) => xs[a]! - xs[b]!);
-  const out = new Array<number>(xs.length);
-  for (let i = 0; i < idx.length; ) {
-    let j = i;
-    while (j + 1 < idx.length && xs[idx[j + 1]!] === xs[idx[i]!]) j++;
-    const r = (i + j) / 2 + 1;
-    for (let m = i; m <= j; m++) out[idx[m]!] = r;
-    i = j + 1;
-  }
-  return out;
+  const sorted = Float64Array.from(xs).sort();
+  const lowerBound = (v: number) => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid]! < v) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const upperBound = (v: number) => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid]! <= v) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  return xs.map((v) => (lowerBound(v) + upperBound(v) - 1) / 2 + 1);
 }
 
 function pearson(x: number[], y: number[]): number {
@@ -59,31 +75,83 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+/** Original indices sorted by value, cut into runs of equal values. */
+function tieGroups(xs: number[]): { order: Int32Array; groupEnd: Int32Array } {
+  const order = Int32Array.from(xs.map((_, i) => i)).sort((a, b) => xs[a]! - xs[b]!);
+  const groupEnd = new Int32Array(order.length);
+  for (let i = order.length - 1; i >= 0; i--) {
+    groupEnd[i] = i + 1 < order.length && xs[order[i + 1]!] === xs[order[i]!] ? groupEnd[i + 1]! : i + 1;
+  }
+  return { order, groupEnd };
+}
+
+/** Average ranks of a resample given how many times each original row was drawn. */
+function rankFromCounts(g: { order: Int32Array; groupEnd: Int32Array }, counts: Int32Array, out: Float64Array): void {
+  let cum = 0;
+  for (let i = 0; i < g.order.length; ) {
+    const end = g.groupEnd[i]!;
+    let c = 0;
+    for (let j = i; j < end; j++) c += counts[g.order[j]!]!;
+    const r = cum + (c + 1) / 2;
+    for (let j = i; j < end; j++) out[g.order[j]!] = r;
+    cum += c;
+    i = end;
+  }
+}
+
 /**
  * Two-sided p-value of IC = 0. Resample the (x, y) pairs as moving blocks of
  * `block` consecutive rows (uniform start, with replacement) until n rows,
  * B times; p = min(1, 2 × (1 + resampled ICs on the minority side of 0) ÷ (B + 1)).
+ *
+ * A resample only repeats original rows, so its Spearman IC is computed
+ * exactly from draw counts: average ranks from a sort done once, then a
+ * count-weighted Pearson. The same number as ranking the resampled arrays,
+ * in O(n) per resample.
  */
 export function blockBootstrapP(x: number[], y: number[], block: number, resamples: number, seed: number): number {
   const n = x.length;
   if (n < 2 || block < 1) return 1;
   const b = Math.min(block, n);
   const rng = mulberry32(seed);
-  const bx = new Array<number>(n);
-  const by = new Array<number>(n);
+  const gx = tieGroups(x);
+  const gy = tieGroups(y);
+  const counts = new Int32Array(n);
+  const rx = new Float64Array(n);
+  const ry = new Float64Array(n);
   let atOrBelow = 0;
   let atOrAbove = 0;
   for (let r = 0; r < resamples; r++) {
+    counts.fill(0);
     let filled = 0;
     while (filled < n) {
       const start = Math.floor(rng() * (n - b + 1));
-      for (let j = 0; j < b && filled < n; j++, filled++) {
-        bx[filled] = x[start + j]!;
-        by[filled] = y[start + j]!;
-      }
+      for (let j = 0; j < b && filled < n; j++, filled++) counts[start + j]!++;
     }
-    const ic = spearman(bx, by);
-    if (Number.isNaN(ic)) continue;
+    rankFromCounts(gx, counts, rx);
+    rankFromCounts(gy, counts, ry);
+    let mx = 0;
+    let my = 0;
+    for (let i = 0; i < n; i++) {
+      mx += counts[i]! * rx[i]!;
+      my += counts[i]! * ry[i]!;
+    }
+    mx /= n;
+    my /= n;
+    let sxy = 0;
+    let sxx = 0;
+    let syy = 0;
+    for (let i = 0; i < n; i++) {
+      const c = counts[i]!;
+      if (c === 0) continue;
+      const dx = rx[i]! - mx;
+      const dy = ry[i]! - my;
+      sxy += c * dx * dy;
+      sxx += c * dx * dx;
+      syy += c * dy * dy;
+    }
+    if (!(sxx > 0 && syy > 0)) continue;
+    const ic = sxy / Math.sqrt(sxx * syy);
     if (ic <= 0) atOrBelow++;
     if (ic >= 0) atOrAbove++;
   }
