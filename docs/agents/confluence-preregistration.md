@@ -122,3 +122,52 @@ PR 2a's test compares `studyParams.ts` with this block. `gateFeatures` maps the 
   }
 }
 ```
+
+## Addendum, 2026-11-26: implementation choices (approved before any study run)
+
+These were approved on 2026-11-26, before any study code existed or ran on real data. They settle points the rules above left open. None of the numbers above changes. The JSON block below is part of the pre-registration and PR 2a's test compares it with `studyParams.ts` the same way.
+
+1. **Nested check, selection window only (2019-05-19 → 2021-12-31):** coverage needs at least 2 years (90% non-null unchanged). The IC must have the same sign in all 3 calendar years (2019 partial, 2020, 2021), and OI in both 2020 and 2021. The no-opposite-year rule (|IC| > 0.05) is unchanged. The gate rule needs 3 of 3 years. Everything else is unchanged. Selection rows must have their 7-day target closed before 2022-01-01, so selection never reads the test window.
+2. **Targets:**
+   - Entry is bar k+1's open. Forward return = ln(close of bar k+h ÷ open of bar k+1).
+   - Stop = entry − side × 1.5 × ATR 14 (4h) at bar k, and 1R = 1.5 × ATR 14.
+   - R after costs = (side × (exit fill − entry fill) − fees) ÷ 1R. Fills carry slippage against the trade; the fee is charged on both legs' notional.
+   - The stop is checked on 4h bars k+1 … k+42. A bar that opens beyond the stop exits at that open; otherwise a low (long) or high (short) through the stop exits at the stop. Otherwise the exit is bar k+42's close.
+   - A row gets no target if bar k+42's close is at or after the window's end (2024-01-01), or if any of bars k+1 … k+42 is missing.
+3. **Bootstrap p-value:** moving blocks of (feature, return) pairs, block length = the horizon in bars, 2,000 resamples, fixed seed. Two-sided percentile p = min(1, 2 × (1 + number of resampled ICs on the minority side of 0) ÷ 2,001).
+4. **Benjamini–Hochberg family:** every non-live numeric feature × the 3 horizons (45 features, 135 tests).
+5. **Votes:** the sign of the pooled IC₇d decides which extreme tercile votes long (+1) and which votes short (−1). The middle tercile votes 0. A feature that qualifies on one side votes only on that side; its other extreme votes 0. A NULL value votes 0.
+6. **Gate features** must pass rule 1 (coverage) and the gate rule. Rules 2–5 don't apply to them.
+7. **Excluded from voting:** the `*_within_7d` booleans (no terciles; their IC is reported) and the live-only columns (`f_cvd_real_*`, `f_book_imbalance`, `e_news_gate`).
+8. **Years:** a calendar year counts for a feature if the feature has at least one value with a target in it.
+9. **Independence:** Spearman ρ between two groups' representatives, over rows where both are non-null.
+10. **Scorecard backtest:**
+    - Positions use the R definition in point 2. A NO-TRADE gate is active when any qualifying gate feature's value is in its no-trade tercile.
+    - After an exit, the next decision is at the close of the exit bar. Calls = trades.
+    - MAR = CAGR ÷ max drawdown, at base costs, with 1% of equity at risk per trade, notional ≤ 1× equity, $100,000 starting equity, equity marked at each 4h close. This is the same accounting as Swing v2's baseline (b) (0.23).
+11. **OI:** the OI features are excluded from the scorecard tested against the Phase 3 bar, because the live OI overlap check failed (2026-11-23). They are still studied and reported.
+
+```json
+{
+  "addendum": "2026-11-26",
+  "nestedSelection": {
+    "minYears": 2,
+    "sameSignYears": { "required": 3, "of": 3 },
+    "sameSignYearsOi": { "required": 2, "of": 2 },
+    "gateRuleYears": { "required": 3, "of": 3 }
+  },
+  "targetMethod": {
+    "returnFrom": "open_k_plus_1",
+    "stopFrom": "entry",
+    "stopCheck": "4h_bars",
+    "dropIfTargetCloseAtOrAfterWindowEnd": true,
+    "dropIfBarMissing": true
+  },
+  "bootstrapMethod": { "resample": "moving_blocks_of_pairs", "pValue": "two_sided_percentile_plus_one", "seed": 20261116 },
+  "bhFamily": { "features": 45, "horizons": 3, "tests": 135 },
+  "excludedFromVoting": ["e_fomc_within_7d", "e_cpi_within_7d", "f_cvd_real_24h", "f_cvd_real_7d", "f_book_imbalance", "e_news_gate"],
+  "oiFeatures": ["p_oi_usd", "p_oi_chg_24h", "p_oi_chg_7d"],
+  "excludeOiFromScorecard": true,
+  "backtest": { "riskPerTrade": 0.01, "maxNotionalToEquity": 1, "startEquity": 100000, "marCosts": "base" }
+}
+```
